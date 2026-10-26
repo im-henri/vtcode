@@ -1,0 +1,207 @@
+[package]
+name = "vtcode"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+# Syntect 5.3.0 is the newest crates.io release, but it predates Sublime
+# Build 4075 grammar features used by the current official packages. Pin the
+# upstream implementation so release builds are reproducible while retaining
+# support for version-2 inheritance and branch/fail parsing.
+syntect = { git = "https://github.com/trishume/syntect", rev = "4aa78031e93ebd3e0be7278120d0bd9d2508b1a3", default-features = false, features = ["default-themes", "regex-fancy", "plist-load", "yaml-load"] }
+ropey = { version = "1", default-features = false, features = ["simd", "cr_lines"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+walkdir = "2"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
+wasmtime = "30"
+arboard = { version = "3", features = ["wayland-data-control"] }
+git2 = { version = "0.20", default-features = false }
+regex = "1"
+regress = { version = "0.12", features = ["utf16"] }
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-pcre2 = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+memchr = "2.8"
+base64 = "0.22"
+flate2 = "1"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+semver = "1"
+agent-client-protocol-schema = { version = "1.9.1", default-features = false }
+yaml-rust2 = { version = "0.10.4", default-features = false }
+similar = "2"
+fuzzy-matcher = "0.3"
+portable-pty = "0.8"
+# Reuse the tokenizer already used by portable-pty; no local shell is launched.
+shell-words = "1"
+# The default no_std parser truncates OSC payloads at 1 KiB, including clipboard copies.
+vte = { version = "0.13", default-features = false }
+rustc-hash = "2.1.1"
+notify = "7"
+lsp-types = "0.95"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+tempfile = "3.26.0"
+ureq = "3.4"
+url = "2"
+
+# Local Windows input fixes and portable underline-color SGR encoding.
+# See vendor/crossterm/VTCODE-PATCH.md.
+[patch.crates-io]
+crossterm = { path = "vendor/crossterm" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_Com", "Win32_System_Registry", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
+windows = { version = "0.58", features = ["implement", "Win32_UI_Accessibility", "Win32_System_Com", "Win32_System_Ole"] }
+windows-core = "0.58"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+signal-hook = { version = "0.3.18", default-features = false }
+
+# Syntect's pure-Rust regex engine is otherwise exceptionally slow in a dev
+# build. Keep the application debuggable while compiling its parsing hot path
+# with optimization, matching the behavior expected from an interactive IDE.
+[profile.dev.package.syntect]
+opt-level = 3
+
+[profile.dev.package.fancy-regex]
+opt-level = 3
+
+[profile.dev.package.regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+# Terminal buffer diffing and Unicode layout run on every interactive frame.
+# Keep those dependencies optimized in development and test builds too.
+[profile.dev.package.ratatui-core]
+opt-level = 3
+
+[profile.dev.package.ratatui-widgets]
+opt-level = 3
+
+[profile.dev.package.unicode-width]
+opt-level = 3
+
+[profile.dev.package.unicode-segmentation]
+opt-level = 3
+
+[profile.test.package.syntect]
+opt-level = 3
+
+[profile.test.package.fancy-regex]
+opt-level = 3
+
+[profile.test.package.regex]
+opt-level = 3
+
+[profile.test.package.regex-automata]
+opt-level = 3
+
+[profile.test.package.regex-syntax]
+opt-level = 3
+
+[profile.test.package.ratatui-core]
+opt-level = 3
+
+[profile.test.package.ratatui-widgets]
+opt-level = 3
+
+[profile.test.package.unicode-width]
+opt-level = 3
+
+[profile.test.package.unicode-segmentation]
+opt-level = 3
+
+# Remote transfers exercise these native byte/rope kernels even when the
+# application is being debugged. Otherwise a tiny save in a large file can
+# spend hundreds of milliseconds in unoptimized hashing/compression code.
+# A slow terminal decoder lets ConPTY's expanded input queue grow while a
+# large paste is arriving. Keep its byte/record kernels optimized too.
+[profile.dev.package.crossterm]
+opt-level = 3
+
+[profile.dev.package.crossterm_winapi]
+opt-level = 3
+
+[profile.test.package.crossterm]
+opt-level = 3
+
+[profile.test.package.crossterm_winapi]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.base64]
+opt-level = 3
+
+[profile.dev.package.ropey]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3
+
+[profile.test.package.flate2]
+opt-level = 3
+
+[profile.test.package.miniz_oxide]
+opt-level = 3
+
+[profile.test.package.base64]
+opt-level = 3
+
+[profile.test.package.ropey]
+opt-level = 3
+
+# Framing and structured tool/LSP data are on every remote transfer. Keep their
+# byte scanning and JSON parser/serializer optimized in development too; the
+# native application remains debuggable. Release already optimizes all crates.
+[profile.dev.package.memchr]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
+[profile.dev.package.serde_core]
+opt-level = 3
+
+[profile.test.package.memchr]
+opt-level = 3
+
+[profile.test.package.serde_json]
+opt-level = 3
+
+[profile.test.package.serde_core]
+opt-level = 3
+
+# Keep release builds practical for iteration without link-time optimization.
+[profile.release]
+lto = false
+codegen-units = 1
+
+# Optimized edit/build cycles; production release settings stay independent.
+[profile.fastrelease]
+inherits = "release"
+opt-level = 3
+codegen-units = 16
+incremental = true

@@ -1,0 +1,30 @@
+{
+  "protocol": "completion-final-validation-v1",
+  "provenance": {
+    "scope": "Fresh validation selected strictly by corrected root metadata after production freeze; original missing-root zero coverage preserved",
+    "selectionRevision": "availability-correction-v1a",
+    "selectionLedgerSha256": "9427404E5B77D1D2CC53842C5AB5FDD4CF0233EC9D6D10643C6CEA45F1BD84DE",
+    "predictorBinarySha256": "02B0A84267214A119D470086CA6C29105120B43FE7B25C57B01FF55DC529935F",
+    "python": "agent-client-protocol0.12.1 installed Windows distribution; exact package metadata/license copied",
+    "rust": "vtcode-ext-waveform-viewer local source at Git9dfa8c71aa1211ecad3d00a4fc44af838eabf15a; exact MIT license copied",
+    "copiedAtUtc": "2026-10-25T16:33:55.7420369Z"
+  },
+  "sources": [
+    {
+      "label": "python/__init__.py",
+      "language": "Python",
+      "path": "python/source.py",
+      "sha256": "6E82C06B2698C709E214DA26A1CC2D4F91EBA21AF83D803FE53A41C7280F9FF9",
+      "bytes": 6703,
+      "original": "C:\\Users\\henri\\Desktop\\vtcode_git\\.venv\\local-ci-win32\\Lib\\site-packages\\acp\\__init__.py"
+    },
+    {
+      "label": "rust/controls.rs",
+      "language": "Rust",
+      "path": "rust/source.rs",
+      "sha256": "3FCCD8CE20A7827454236B30C431DB916137D6C08B922A00AA32281AA83570BC",
+      "bytes": 18883,
+      "original": "C:\\Users\\henri\\Desktop\\vtcode_extensions\\vtcode-ext-waveform-viewer\\src\\controls.rs"
+    }
+  ]
+}

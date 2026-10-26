@@ -1,0 +1,59 @@
+diff --git a/src/analysis.rs b/src/analysis.rs
+index b78b2f2..6aed709 100644
+--- a/src/analysis.rs
++++ b/src/analysis.rs
+@@ -463,8 +463,15 @@ impl ProfileJob {
+             .into_iter()
+             .map(|((_, text), count)| (text, count))
+             .collect();
+-        frequencies.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
++        let rank =
++            |a: &(String, usize), b: &(String, usize)| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0));
++        // Only the 24 most frequent values are displayed. Sorting every unique
++        // value can exhaust the worker's fuel before it can publish the frame.
++        if frequencies.len() > 24 {
++            frequencies.select_nth_unstable_by(24, rank);
++        }
+         frequencies.truncate(24);
++        frequencies.sort_by(rank);
+         self.profile.frequencies = frequencies;
+         if !self.numbers.is_empty() {
+             self.numbers.sort_unstable_by(f64::total_cmp);
+diff --git a/src/tests.rs b/src/tests.rs
+index 819ed42..2b67bd2 100644
+--- a/src/tests.rs
++++ b/src/tests.rs
+@@ -21,6 +21,33 @@ fn query(table: Arc<Table>, query: Query, formulas: Vec<FormulaDef>) -> QueryJob
+     }
+     panic!("query did not terminate")
+ }
++
++#[test]
++fn profile_top_frequencies_match_full_sort_with_many_unique_values_and_ties() {
++    let mut source = String::from("value\n");
++    let mut expected = Vec::new();
++    for value in (0..45_000).rev() {
++        let text = format!("界{value:05}");
++        let count = value % 3 + 1;
++        for _ in 0..count {
++            source.push_str(&text);
++            source.push('\n');
++        }
++        expected.push((text, count));
++    }
++    let queried = query(csv(&source), Query::default(), vec![]);
++    let data = Arc::new(queried.data);
++    let order = Arc::new((0..data.table.rows.len()).collect());
++    let mut profile = ProfileJob::new(data, order, 0);
++    while !profile.step(127) {}
++    let result = profile.finish();
++    expected.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
++    expected.truncate(24);
++    assert_eq!(result.frequencies, expected);
++    assert_eq!(result.unique, 45_000);
++    assert_eq!(result.count, 90_000);
++    assert!(!result.limited);
++}
+ #[test]
+ fn csv_streaming_preserves_quotes_newlines_bom_and_source_offsets() {
+     let source =

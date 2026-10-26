@@ -1,0 +1,39 @@
+{
+  "toolCallId": "cursor-todos",
+  "title": "Update TODOs: Getting your pet ready., Imagining your pet's main look.",
+  "kind": "think",
+  "status": "in_progress",
+  "rawInput": {
+    "tool_name": "updateTodos",
+    "todos": [
+      {
+        "id": "1",
+        "content": "Getting your pet ready.",
+        "status": "TODO_STATUS_IN_PROGRESS",
+        "createdAt": 1791026631347,
+        "updatedAt": 1791026631347
+      },
+      {
+        "id": "2",
+        "content": "Imagining your pet's main look.",
+        "status": "TODO_STATUS_PENDING",
+        "createdAt": 1791026631347,
+        "updatedAt": 1791026631347
+      },
+      {
+        "id": "3",
+        "content": "Picturing your pet's poses.",
+        "status": "TODO_STATUS_PENDING",
+        "createdAt": 1791026631347,
+        "updatedAt": 1791026631347
+      },
+      {
+        "id": "4",
+        "content": "Hatching your pet.",
+        "status": "TODO_STATUS_PENDING",
+        "createdAt": 1791026631347,
+        "updatedAt": 1791026631347
+      }
+    ]
+  }
+}

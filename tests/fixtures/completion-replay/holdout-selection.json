@@ -1,0 +1,17 @@
+{
+  "status": "configuration frozen; fixture copied and evaluated only after all regression gates passed",
+  "selectionDate": "2026-10-25",
+  "selectionRule": "Choose the lexicographically first non-test production Rust source file between 5,000 and 30,000 bytes under the independent hex-editor extension src directory. Inspect filenames and sizes only before selection.",
+  "sourcePath": "C:/Users/henri/Desktop/vtcode_extensions/vtcode-ext-hex-editor/src/editor.rs",
+  "sourceBytesAtSelection": 19720,
+  "fixturePath": "tests/fixtures/completion-replay/heldout-hex-editor.rs",
+  "licenseSourcePath": "C:/Users/henri/Desktop/vtcode_extensions/vtcode-ext-hex-editor/LICENSE",
+  "licenseFixturePath": "tests/fixtures/completion-replay/HELDOUT-LICENSE",
+  "contentInspectedBeforeSelection": false,
+  "effectScoresObservedBeforeSelection": false,
+  "copyCondition": "Copied after build 97127 passed autocomplete, index/model and snippet/editor gates and production cargo check; no predictor changes after this point.",
+  "evaluationRule": "Use the existing chronological recorded-source selection rule and Unknown language. Supply the copied fixture through VTCODE_LEARNING_HOLDOUT_FIXTURE with VTCODE_LEARNING_HOLDOUT=1. Do not tune the predictor after observing these holdout outcomes.",
+  "frozenBinarySha256": "2581D3C03D8537B8D361FF95C908E8DD16D06F9A94F1012F2E4DAB965CD5255B",
+  "fixtureSha256": "A02F83B91EA5AAB104DFF9A416D95B39E2CE4E5AA45C5345FC51F298598A6FF0",
+  "licenseSha256": "060B277BFA3FA37D1E8FD27BA2271B62C4C2111D5259B987325021EAA6BFD610"
+}

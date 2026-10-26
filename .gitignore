@@ -1,0 +1,25 @@
+# Build and release output
+/target/
+/dist/
+/extension-api/target/
+/extension-api/Cargo.lock
+/syntaxes/.cache/
+
+# Editor settings, sessions, recovery data and local tooling
+.vtcode/
+/settings.json
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
+
+# Python caches and local virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+
+# OS metadata and scratch captures
+.DS_Store
+Thumbs.db
+/scratch/

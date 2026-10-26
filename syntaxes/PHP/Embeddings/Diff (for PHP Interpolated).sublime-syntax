@@ -1,0 +1,12 @@
+%YAML 1.2
+---
+scope: source.diff.interpolated.php
+version: 2
+hidden: true
+
+extends: Diff/Diff.sublime-syntax
+
+contexts:
+  prototype:
+    - meta_prepend: true
+    - include: PHP/PHP Source.sublime-syntax#interpolations

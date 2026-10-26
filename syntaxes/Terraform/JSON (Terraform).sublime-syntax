@@ -1,0 +1,25 @@
+%YAML 1.2
+---
+# http://www.sublimetext.com/docs/syntax.html
+name: JSON (Terraform)
+scope: source.json.terraform
+version: 2
+
+extends: JSON/JSON.sublime-syntax
+
+file_extensions:
+  - tfstate
+
+contexts:
+  double-quoted-string-body:
+    - meta_prepend: true
+    - include: Terraform/Terraform.sublime-syntax#string-interpolation
+    - include: Terraform/Terraform.sublime-syntax#aws-acl
+
+  strings:
+    - meta_prepend: true
+    - include: Terraform/Terraform.sublime-syntax#ip-address-strings
+
+  line-comments:
+    - meta_append: true
+    - include: Terraform/Terraform.sublime-syntax#inline-comments

@@ -1,0 +1,26 @@
+case,suite,status,duration_ms,iterations,memory_kib,owner,notes
+parse_small,parser,passed,2.41,10000,412,Alice,"UTF-8, ordinary input"
+parse_unicode,parser,passed,3.88,10000,608,Henri,"日本語 · emoji 👩‍💻"
+parse_multiline,parser,passed,4.62,10000,640,Alice,"Quoted fields contain
+multiple lines"
+parse_large,parser,passed,187.44,200,9216,Bob,16 MiB fixture
+parse_malformed,parser,failed,12.71,1000,832,Bob,Unexpected trailing quote
+sort_numbers,analysis,passed,18.25,1000,2048,Henri,Stable ordering
+sort_text,analysis,passed,26.93,1000,2456,Alice,Case insensitive
+filter_numeric,analysis,passed,7.66,2000,1152,Bob,
+filter_regex,analysis,passed,34.18,1000,1536,Henri,Unicode expression
+formula_basic,analysis,passed,11.52,1000,1792,Alice,Arithmetic
+formula_chain,analysis,failed,52.33,1000,2304,Bob,Missing-value regression
+group_category,analysis,passed,15.81,1000,1920,Henri,Three groups
+group_multi,analysis,passed,23.08,1000,2176,Alice,
+jsonl_nested,import,passed,8.44,2000,1280,Bob,"Objects, arrays, null"
+jsonl_sparse,import,passed,6.72,2000,960,Henri,Absent keys
+tsv_quoted,import,passed,3.24,5000,512,Alice,
+csv_semicolon,import,passed,2.98,5000,448,Bob,Autodetection
+csv_bom,import,passed,2.51,5000,448,Henri,UTF-8 BOM
+grid_scroll,ui,passed,0.83,10000,768,Alice,Virtualized rows
+grid_resize,ui,passed,1.21,10000,832,Bob,Narrow split
+grid_unicode,ui,passed,1.65,10000,896,Henri,Wide graphemes
+copy_rectangle,ui,passed,2.72,5000,1024,Alice,Quoted TSV
+save_atomic,io,passed,14.46,500,1536,Bob,External-change protection
+reload_large,io,failed,211.63,100,11264,Henri,Source changed on disk

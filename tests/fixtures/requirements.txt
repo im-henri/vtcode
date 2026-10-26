@@ -1,0 +1,6 @@
+agent-client-protocol==0.12.1
+pydantic==2.13.5
+pydantic-core==2.46.5
+annotated-types==0.8.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4

@@ -1,0 +1,9 @@
+{
+  "id": "vtcode.tabular-workbench",
+  "name": "Tabular Data Workbench",
+  "version": "0.1.0",
+  "repository": "https://github.com/im-henri/vtcode-ext-tabular-workbench",
+  "description": "Explore and edit CSV, TSV, and JSON Lines with typed sorting, filters, formulas, groups, charts, and dataset comparison.",
+  "apiVersion": "2",
+  "main": "tabular-workbench.wasm"
+}

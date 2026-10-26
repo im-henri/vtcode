@@ -1,0 +1,9 @@
+{
+  "id": "vtcode.hex-editor",
+  "name": "Hex Editor",
+  "version": "0.1.0",
+  "repository": "https://github.com/im-henri/vtcode-ext-hex-editor",
+  "description": "Inspect and edit binary files with a hex/ASCII grid, data inspector, search, and undo history.",
+  "apiVersion": "2",
+  "main": "hex-editor.wasm"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "vtcode.waveform-viewer",
+  "name": "Waveform Viewer",
+  "version": "0.1.0",
+  "repository": "https://github.com/im-henri/vtcode-ext-waveform-viewer",
+  "description": "Explore VCD and FST simulations with a hierarchy browser, digital and analog traces, cursors, markers, transition search, and saved sessions.",
+  "apiVersion": "2",
+  "main": "waveform-viewer.wasm"
+}

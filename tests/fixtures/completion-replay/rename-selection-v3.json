@@ -1,0 +1,309 @@
+{
+  "protocol": "source-copy-single-rename-v3",
+  "selectionParentSha256": "6CF5A414FBEA28317DB9D00F7E383FBC3E311F703958F08B89B3A18C1EF11C48",
+  "rules": "v1 selection unchanged: 32-token contiguous witness ending at code target; earlier same target in witness; target is argument or receiver with preceding receiver/assignment evidence; preserve all other words/callees; rename target to targetNext; no string/comment/callee occurrence renamed in witness; first code-word witness start; every third eligible event; cap24 per source, round-robin cap64; typed2/3 character prefix only; no future copy suffix or index; render-only v3: teacher is full original source prefix through target line end, copied query begins on whole line containing witness start, rename only code tokens through target begin, preserve same witness/case IDs",
+  "sources": [
+    {
+      "path": "history.rs",
+      "sha256": "2F50EDE4D4EFA58BCE7DA8DED88F43117C2E07435A9A9631BF99C233C48D482A"
+    },
+    {
+      "path": "peer.py",
+      "sha256": "F8071B25B9EC7ACA22B58EEB668321C542ABF17B7E62AB81AEF7908CDA7D8C41"
+    },
+    {
+      "path": "bridge.c",
+      "sha256": "83A669A086B969701C35AB514571F891B0E939607D2030039E286CB3939B477F"
+    }
+  ],
+  "cases": [
+    {
+      "source": "history.rs",
+      "byte": 801,
+      "begin": 684,
+      "old": "context",
+      "expected": "contextNext",
+      "prefix": "co",
+      "windowTokens": 26
+    },
+    {
+      "source": "peer.py",
+      "byte": 937,
+      "begin": 830,
+      "old": "identity",
+      "expected": "identityNext",
+      "prefix": "id",
+      "windowTokens": 31
+    },
+    {
+      "source": "history.rs",
+      "byte": 938,
+      "begin": 801,
+      "old": "context",
+      "expected": "contextNext",
+      "prefix": "con",
+      "windowTokens": 29
+    },
+    {
+      "source": "peer.py",
+      "byte": 2054,
+      "begin": 1914,
+      "old": "session",
+      "expected": "sessionNext",
+      "prefix": "ses",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 1288,
+      "begin": 1202,
+      "old": "context",
+      "expected": "contextNext",
+      "prefix": "co",
+      "windowTokens": 23
+    },
+    {
+      "source": "peer.py",
+      "byte": 2169,
+      "begin": 2054,
+      "old": "session",
+      "expected": "sessionNext",
+      "prefix": "se",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 1526,
+      "begin": 1439,
+      "old": "choice",
+      "expected": "choiceNext",
+      "prefix": "cho",
+      "windowTokens": 32
+    },
+    {
+      "source": "peer.py",
+      "byte": 2355,
+      "begin": 2236,
+      "old": "message",
+      "expected": "messageNext",
+      "prefix": "mes",
+      "windowTokens": 30
+    },
+    {
+      "source": "history.rs",
+      "byte": 1722,
+      "begin": 1619,
+      "old": "clock",
+      "expected": "clockNext",
+      "prefix": "cl",
+      "windowTokens": 32
+    },
+    {
+      "source": "peer.py",
+      "byte": 3233,
+      "begin": 3111,
+      "old": "session",
+      "expected": "sessionNext",
+      "prefix": "se",
+      "windowTokens": 30
+    },
+    {
+      "source": "history.rs",
+      "byte": 2037,
+      "begin": 1946,
+      "old": "prefix",
+      "expected": "prefixNext",
+      "prefix": "pre",
+      "windowTokens": 31
+    },
+    {
+      "source": "peer.py",
+      "byte": 3691,
+      "begin": 3552,
+      "old": "message",
+      "expected": "messageNext",
+      "prefix": "mes",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 2304,
+      "begin": 2190,
+      "old": "choice",
+      "expected": "choiceNext",
+      "prefix": "ch",
+      "windowTokens": 32
+    },
+    {
+      "source": "peer.py",
+      "byte": 4447,
+      "begin": 4384,
+      "old": "session",
+      "expected": "sessionNext",
+      "prefix": "se",
+      "windowTokens": 19
+    },
+    {
+      "source": "history.rs",
+      "byte": 2560,
+      "begin": 2434,
+      "old": "choice",
+      "expected": "choiceNext",
+      "prefix": "cho",
+      "windowTokens": 32
+    },
+    {
+      "source": "peer.py",
+      "byte": 4589,
+      "begin": 4511,
+      "old": "session",
+      "expected": "sessionNext",
+      "prefix": "ses",
+      "windowTokens": 31
+    },
+    {
+      "source": "history.rs",
+      "byte": 2955,
+      "begin": 2876,
+      "old": "choices",
+      "expected": "choicesNext",
+      "prefix": "ch",
+      "windowTokens": 20
+    },
+    {
+      "source": "peer.py",
+      "byte": 4735,
+      "begin": 4637,
+      "old": "message",
+      "expected": "messageNext",
+      "prefix": "me",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 3647,
+      "begin": 3544,
+      "old": "choice",
+      "expected": "choiceNext",
+      "prefix": "cho",
+      "windowTokens": 31
+    },
+    {
+      "source": "history.rs",
+      "byte": 3798,
+      "begin": 3673,
+      "old": "prefix",
+      "expected": "prefixNext",
+      "prefix": "pr",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 3863,
+      "begin": 3750,
+      "old": "prefix",
+      "expected": "prefixNext",
+      "prefix": "pre",
+      "windowTokens": 25
+    },
+    {
+      "source": "history.rs",
+      "byte": 4346,
+      "begin": 4250,
+      "old": "choice",
+      "expected": "choiceNext",
+      "prefix": "ch",
+      "windowTokens": 25
+    },
+    {
+      "source": "history.rs",
+      "byte": 4771,
+      "begin": 4673,
+      "old": "Context",
+      "expected": "ContextNext",
+      "prefix": "Con",
+      "windowTokens": 30
+    },
+    {
+      "source": "history.rs",
+      "byte": 5339,
+      "begin": 5228,
+      "old": "history",
+      "expected": "historyNext",
+      "prefix": "hi",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 6014,
+      "begin": 5910,
+      "old": "history",
+      "expected": "historyNext",
+      "prefix": "his",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 6614,
+      "begin": 6509,
+      "old": "history",
+      "expected": "historyNext",
+      "prefix": "hi",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 6975,
+      "begin": 6891,
+      "old": "history",
+      "expected": "historyNext",
+      "prefix": "his",
+      "windowTokens": 31
+    },
+    {
+      "source": "history.rs",
+      "byte": 7218,
+      "begin": 7118,
+      "old": "history",
+      "expected": "historyNext",
+      "prefix": "hi",
+      "windowTokens": 29
+    },
+    {
+      "source": "history.rs",
+      "byte": 7951,
+      "begin": 7777,
+      "old": "history",
+      "expected": "historyNext",
+      "prefix": "his",
+      "windowTokens": 31
+    },
+    {
+      "source": "history.rs",
+      "byte": 8134,
+      "begin": 8067,
+      "old": "Context",
+      "expected": "ContextNext",
+      "prefix": "Co",
+      "windowTokens": 24
+    },
+    {
+      "source": "history.rs",
+      "byte": 8242,
+      "begin": 8134,
+      "old": "choices",
+      "expected": "choicesNext",
+      "prefix": "cho",
+      "windowTokens": 32
+    },
+    {
+      "source": "history.rs",
+      "byte": 8321,
+      "begin": 8234,
+      "old": "choices",
+      "expected": "choicesNext",
+      "prefix": "ch",
+      "windowTokens": 32
+    }
+  ]
+}

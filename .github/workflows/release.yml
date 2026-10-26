@@ -1,0 +1,71 @@
+name: Release
+
+# Tags never start hosted builds. Publishing and asset uploads are manual.
+on:
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: Build a preview instead of publishable release artifacts
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: always
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PREVIEW: ${{ inputs.preview }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.13'
+      - name: Set up local checks
+        if: runner.os == 'Windows'
+        run: python scripts/local.py setup
+      - name: Test, build and verify portable archives
+        run: |
+          command=release
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            command=linux-release
+          fi
+          if [[ "$PREVIEW" == true ]]; then
+            python scripts/local.py "$command" --preview
+          else
+            python scripts/local.py "$command"
+          fi
+      - name: Upload artifacts for manual release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/**/*.zip
+            dist/**/*.tar.gz
+            dist/**/*.sha256
+          if-no-files-found: error
+          retention-days: 14
