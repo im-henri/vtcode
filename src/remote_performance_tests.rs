@@ -515,7 +515,7 @@ fn path(value: &str) -> RemotePath {
 }
 
 #[test]
-fn transport_heartbeat_bypasses_a_blocked_file_worker() {
+fn legacy_heartbeat_request_bypasses_a_blocked_file_worker() {
     use std::{io::{BufRead, Write}, net::{TcpListener, TcpStream}};
     let root = tempfile::tempdir().unwrap();
     let service = Service::new(root.path()).unwrap();
@@ -551,7 +551,7 @@ fn transport_heartbeat_bypasses_a_blocked_file_worker() {
     drop(held);
     let _ = client.shutdown(std::net::Shutdown::Both);
     let _ = worker.join().unwrap();
-    let response = result.expect("Transport health must not depend on the blocked file worker");
+    let response = result.expect("A legacy request must not depend on the blocked file worker");
     assert_eq!(response.id, 2);
     assert!(matches!(response.result, Ok(Reply::Heartbeat { nonce: 77 })));
 }

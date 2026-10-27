@@ -169,11 +169,20 @@ fn write_frame(
     writer.write_all(record.as_bytes())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Order {
+    Request(u64),
+    Process(u64),
+}
 struct Packet {
     id: u64,
     data: Vec<u8>,
     offset: usize,
     event: bool,
+    interactive: bool,
+    search: bool,
+    order: Option<Order>,
+    serial: u64,
 }
 /// Fairly multiplex file responses. Small process events complete between
 /// file frames, so a large open cannot monopolize a slow connection.
@@ -182,59 +191,121 @@ pub(crate) struct OutputQueue {
     packets: std::collections::VecDeque<Packet>,
     bytes: usize,
     next_event: u64,
+    next_packet: u64,
+    orders: HashMap<Order, u64>,
     frame: String,
+    interactive_turns: u8,
 }
 impl OutputQueue {
+    pub(crate) fn available_slots(&self) -> usize {
+        256usize.saturating_sub(self.packets.len())
+    }
     pub(crate) fn is_empty(&self) -> bool {
         self.packets.is_empty()
     }
+    pub(crate) fn discard_obsolete_search(&mut self, current: u64) -> io::Result<()> {
+        // A partially transmitted message must finish reassembly. Unstarted
+        // batches can be dropped as soon as a newer query or Stop arrives.
+        self.packets.retain(|packet| !packet.search || packet.offset != 0
+            || !packet.event || packet.order == Some(Order::Request(current)));
+        for packet in &mut self.packets {
+            if packet.search && packet.offset == 0 && packet.order != Some(Order::Request(current)) {
+                packet.data = encode(&Response { id: packet.id,
+                    result: Err(io::Error::from(io::ErrorKind::Interrupted).into()) })?;
+                packet.search = false;
+            }
+        }
+        self.bytes = self.packets.iter().map(|packet| packet.data.len()).sum();
+        Ok(())
+    }
     pub(crate) fn push(&mut self, response: Response) -> io::Result<()> {
-        if self.packets.len() >= 256 {
+        if self.available_slots() == 0 {
             return Err(io::Error::other("Remote output queue limit exceeded"));
         }
+        // Search progress and its terminal reply share an ordering barrier.
+        // A small final reply must not overtake a partially written batch.
+        let order = if response.id != 0 { Some(Order::Request(response.id)) } else {
+            match &response.result {
+                Ok(Reply::SearchProgress { request, .. }) => Some(Order::Request(*request)),
+                // Larger process chunks can span frames. A short final chunk
+                // or EOF must never overtake older output from the same PTY.
+                Ok(Reply::ProcessData { process, .. } | Reply::ProcessEnd { process, .. }) => Some(Order::Process(*process)),
+                _ => None,
+            }
+        };
+        let interactive = matches!(response.result, Ok(Reply::ProcessData { .. }
+            | Reply::ProcessEnd { .. } | Reply::ProcessInputConsumed { .. }));
+        let search = matches!(response.result, Ok(Reply::SearchProgress { .. } | Reply::Search { .. }));
+        let mut response_id = response.id;
+        let failure_id = match order { Some(Order::Request(id)) => id, _ => response.id };
         let mut data = encode(&response).or_else(|error| {
+            response_id = failure_id;
             encode(&Response {
-                id: response.id,
+                id: response_id,
                 result: Err(error.into()),
             })
         })?;
         if data.len() > (MAX_MESSAGE * 2).saturating_sub(self.bytes) {
+            response_id = failure_id;
             data = encode(&Response {
-                id: response.id,
+                id: response_id,
                 result: Err(
                     "Remote transfer queue is full; retry after current transfers finish".into(),
                 ),
             })?;
         }
         self.bytes += data.len();
-        let event = response.id == 0;
+        let event = response_id == 0;
         let id = if event {
             self.next_event = self.next_event.wrapping_add(1) & !EVENT_ID;
             EVENT_ID | self.next_event
         } else {
-            response.id
+            response_id
         };
         self.packets.push_back(Packet {
             id,
             data,
             offset: 0,
             event,
+            interactive,
+            search,
+            order,
+            serial: self.next_packet,
         });
+        self.next_packet = self.next_packet.wrapping_add(1);
         Ok(())
     }
     pub(crate) fn step(&mut self, writer: &mut impl Write, session: u64) -> io::Result<()> {
         let begun = self.packets.iter().filter(|p| p.offset != 0).count();
-        let index = self
+        self.orders.clear();
+        for packet in &self.packets {
+            if let Some(order) = packet.order {
+                self.orders.entry(order).and_modify(|first| *first = (*first).min(packet.serial)).or_insert(packet.serial);
+            }
+        }
+        let ready = |packet: &Packet| packet.order.is_none_or(|order| self.orders.get(&order) == Some(&packet.serial));
+        let can_start = |p: &Packet| p.offset != 0 || begun < MAX_PENDING - 1 || p.data.len() <= CHUNK;
+        let interactive = self
             .packets
             .iter()
-            .position(|p| p.event && p.data.len() <= CHUNK * 4)
+            .position(|p| ready(p) && p.interactive && p.data.len() <= CHUNK * 4)
+            .or_else(|| self.packets.iter().position(|p| ready(p) && p.interactive && can_start(p)));
+        let ordinary = self.packets.iter()
+            .position(|p| ready(p) && !p.interactive && p.event && p.data.len() <= CHUNK * 4)
             .or_else(|| {
                 self.packets
                     .iter()
-                    .position(|p| p.offset != 0 || begun < MAX_PENDING - 1 || p.data.len() <= CHUNK)
-            })
-            .unwrap();
+                    .position(|p| ready(p) && !p.interactive && can_start(p))
+            });
+        // Favor echo without letting a continuously drained, noisy terminal
+        // starve file replies or workspace updates indefinitely.
+        let index = if self.interactive_turns < 8 {
+            interactive.or(ordinary)
+        } else {
+            ordinary.or(interactive)
+        }.unwrap();
         let mut packet = self.packets.remove(index).unwrap();
+        self.interactive_turns = if packet.interactive { self.interactive_turns.saturating_add(1) } else { 0 };
         // Small process events finish promptly. Larger notifications (such as
         // a history page) have unique transfer IDs and rotate with file replies.
         loop {

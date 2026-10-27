@@ -10,6 +10,36 @@ pub(crate) struct TerminalSurface {
     pub group: Option<usize>,
 }
 
+#[derive(Default)]
+pub(crate) struct TerminalClicks {
+    serial: u64,
+    last: Option<TerminalClick>,
+}
+
+struct TerminalClick {
+    surface: TerminalSurface,
+    position: (u16, u16),
+    time: std::time::Instant,
+    serial: u64,
+    count: u8,
+}
+
+impl TerminalClicks {
+    /// Count every workbench press, including clicks intercepted by overlays.
+    pub(crate) fn press(&mut self) { self.serial = self.serial.wrapping_add(1); }
+
+    fn count(&mut self, surface: TerminalSurface, mouse: MouseEvent) -> u8 {
+        let time = std::time::Instant::now();
+        let position = (mouse.column, mouse.row);
+        let count = self.last.as_ref().filter(|last| last.surface == surface
+            && last.position == position && last.serial.wrapping_add(1) == self.serial
+            && time.duration_since(last.time) < std::time::Duration::from_millis(400))
+            .map_or(1, |last| (last.count + 1).min(3));
+        self.last = Some(TerminalClick { surface, position, time, serial: self.serial, count });
+        count
+    }
+}
+
 impl App {
     pub(crate) fn focused_terminal_index(&self) -> Option<usize> {
         let index = if self.docked_terminal_has_focus() {
@@ -101,6 +131,11 @@ impl App {
 
     /// Capture a selection until release, even when the pointer leaves its pane.
     pub(crate) fn handle_terminal_selection_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+            || (matches!(mouse.kind, MouseEventKind::Drag(_))
+                && self.terminal_clicks.last.as_ref().is_some_and(|last| last.position != (mouse.column, mouse.row))) {
+            self.terminal_clicks.last = None;
+        }
         if let Some(capture) = self.terminal_mouse_capture {
             if matches!(mouse.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_)) {
                 if self.terminal_surfaces.contains(&capture) {
@@ -199,11 +234,15 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.focus_terminal_surface(surface);
+                let clicks = self.terminal_clicks.count(surface, mouse);
                 if let Some(pty) = self.terminals[surface.index].terminal_pty.as_mut() {
-                    pty.grid.begin_selection(
-                        (mouse.row - surface.area.y) as usize,
-                        (mouse.column - surface.area.x) as usize,
-                    );
+                    let row = (mouse.row - surface.area.y) as usize;
+                    let column = (mouse.column - surface.area.x) as usize;
+                    match clicks {
+                        1 => pty.grid.begin_selection(row, column),
+                        2 => pty.grid.begin_word_selection(row, column),
+                        _ => pty.grid.begin_line_selection(row, column),
+                    }
                     self.terminal_selection_drag = Some(surface);
                 }
                 true

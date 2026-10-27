@@ -1180,9 +1180,10 @@ impl TerminalEmulator {
             self.output_batch.clear();
             self.output_offset = 0;
             if let Some((reader, _)) = &mut self.remote {
-                let mut bytes = [0; 4096];
+                let mut bytes = [0; 32 * 1024];
                 while self.output_batch.len() < MAX_PTY_BYTES_PER_TICK {
-                    match reader.try_read(&mut bytes) {
+                    let take = bytes.len().min(MAX_PTY_BYTES_PER_TICK - self.output_batch.len());
+                    match reader.try_read(&mut bytes[..take]) {
                         Ok(0) => { self._alive.store(false, Ordering::Relaxed); break; }
                         Ok(count) => self.output_batch.extend_from_slice(&bytes[..count]),
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,

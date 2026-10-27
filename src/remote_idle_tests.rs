@@ -6,9 +6,32 @@ use std::io::{self, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
+
+#[test]
+#[ignore = "32-second idle transport soak; run explicitly"]
+fn idle_headless_connection_sends_no_periodic_traffic_and_resumes_on_demand() {
+    let root = tempfile::tempdir().unwrap();
+    let outgoing = Arc::new(AtomicUsize::new(0));
+    let incoming = Arc::new(AtomicUsize::new(0));
+    let client = super::tests::connection_with_traffic(
+        root.path(), Arc::default(), outgoing.clone(), Arc::default(), incoming.clone(),
+    );
+    client.call(Command::Ping).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let before = (outgoing.load(Ordering::Relaxed), incoming.load(Ordering::Relaxed));
+    // Cross the former 30-second idle-probe interval using the real transport.
+    std::thread::sleep(Duration::from_secs(32));
+    let after = (outgoing.load(Ordering::Relaxed), incoming.load(Ordering::Relaxed));
+    let connected = client.connected();
+    let resumed = client.call_timeout(Command::Ping, Duration::from_secs(5));
+    let _ = client.call_timeout(Command::Shutdown, Duration::from_secs(5));
+    assert_eq!(after, before, "An idle connection sent or received protocol traffic");
+    assert!(connected, "Silence must not expire a healthy transport");
+    assert!(matches!(resumed, Ok(Reply::Done)), "{resumed:?}");
+}
 
 struct Saving {
     app: App,

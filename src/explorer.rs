@@ -157,6 +157,8 @@ pub struct FileExplorer {
     expanded_dirs: FxHashSet<PathBuf>,
     /// File to select after the next asynchronous tree rebuild.
     pending_reveal: Option<PathBuf>,
+    /// A tab reveal is centered again once its actual viewport is laid out.
+    center_reveal_pending: bool,
     /// Parent lookup follows tree depth, independent of wide sibling lists.
     parent_indices: Vec<Option<usize>>,
     /// Compact path fingerprints avoid duplicating every full workspace path.
@@ -210,6 +212,7 @@ impl FileExplorer {
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
+            center_reveal_pending: false,
             path_indices: FxHashMap::default(),
             directory_cache,
             ignore_cache: IgnoreCache::default(),
@@ -236,6 +239,7 @@ impl FileExplorer {
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
+            center_reveal_pending: false,
             path_indices: FxHashMap::default(),
             directory_cache: DirectoryCache::default(),
             ignore_cache: IgnoreCache::default(),
@@ -301,6 +305,7 @@ impl FileExplorer {
             expanded_dirs: request.expanded_dirs,
             pending_reveal: None,
             parent_indices: Vec::new(),
+            center_reveal_pending: false,
             path_indices: FxHashMap::default(),
             directory_cache: request.directory_cache,
             ignore_cache: request.ignore_cache,
@@ -388,15 +393,22 @@ impl FileExplorer {
         self.rebuild_parent_indices();
         self.refresh_visible_git_statuses();
         let reveal_path = self.pending_reveal.take();
-        self.selected = reveal_path
+        let revealed = reveal_path
             .as_ref()
-            .and_then(|path| self.find_path(path))
+            .and_then(|path| self.find_path(path));
+        if reveal_path.is_some() && revealed.is_none() {
+            self.center_reveal_pending = false;
+        }
+        self.selected = revealed
             .or_else(|| selected_path.as_ref().and_then(|path| self.find_visible_selection(path)))
             .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
         if std::mem::take(&mut self.find.select_first) {
             self.select_find_match(false, true);
         }
         self.ensure_selection_visible();
+        if self.center_reveal_pending {
+            self.center_selection();
+        }
     }
 
     /// A filtered folder toggle changes visibility only, not the search results.
@@ -474,6 +486,21 @@ impl FileExplorer {
             self.selected = index;
             self.ensure_selection_visible();
         }
+    }
+
+    pub(crate) fn set_viewport_height(&mut self, height: usize) {
+        self.visible_height = height;
+        if height > 0 && self.pending_reveal.is_none()
+            && std::mem::take(&mut self.center_reveal_pending)
+        {
+            self.center_selection();
+        }
+    }
+
+    fn center_selection(&mut self) {
+        if self.visible_height == 0 { return; }
+        self.scroll_offset = self.selected.saturating_sub(self.visible_height / 2);
+        self.ensure_selection_visible();
     }
 
     fn ensure_selection_visible(&mut self) {
@@ -899,6 +926,7 @@ impl FileExplorer {
             parent = p.parent();
         }
         self.pending_reveal = None;
+        self.center_reveal_pending = false;
         self.entries.clear();
         let root = self.root.clone();
         self.scan_dir(&root, 0, false, None);
@@ -1062,6 +1090,7 @@ impl FileExplorer {
     /// Record a file to reveal after the worker rebuilds the tree. This method
     /// performs no filesystem I/O and is safe to call from the render loop.
     pub(crate) fn reveal_file_deferred(&mut self, file_path: &Path) -> bool {
+        self.center_reveal_pending = false;
         if let Some(position) = self.find_path(file_path) {
             self.pending_reveal = None;
             self.selected = position;
@@ -1101,6 +1130,23 @@ impl FileExplorer {
         self.pending_reveal = Some(file_path.to_path_buf());
         true
     }
+
+    pub(crate) fn reveal_file_centered_deferred(&mut self, file_path: &Path) -> bool {
+        // Check the rendered rows before revealing scrolls the selection into
+        // view. Visible files must stay put so a preview click can be repeated.
+        let already_visible = self.find_path(file_path).is_some_and(|position| {
+            self.viewport_indices(self.visible_height).contains(&position)
+        });
+        let refresh = self.reveal_file_deferred(file_path);
+        if already_visible { return refresh; }
+        if self.pending_reveal.as_deref() == Some(file_path) {
+            self.center_reveal_pending = true;
+        } else if self.entries.get(self.selected).is_some_and(|entry| entry.path == file_path) {
+            self.center_reveal_pending = true;
+            self.center_selection();
+        }
+        refresh
+    }
 }
 
 #[cfg(test)]
@@ -1133,6 +1179,7 @@ mod tests {
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
+            center_reveal_pending: false,
             path_indices: FxHashMap::default(),
             directory_cache: DirectoryCache::default(),
             ignore_cache: IgnoreCache::default(),
@@ -1647,6 +1694,87 @@ mod tests {
     }
 
     #[test]
+    fn centered_reveal_moves_only_files_outside_the_viewport_to_the_middle() {
+        let mut explorer = wide_explorer(100);
+        explorer.visible_height = 11;
+        // Row 30 is covered by the sticky folder at offset 30; row 31 lies
+        // just below the viewport at offset 20.
+        for (selected, offset) in [(30, 30), (31, 20), (70, 0), (20, 80)] {
+            explorer.scroll_offset = offset;
+            let target = explorer.entries[selected].path.clone();
+            assert!(!explorer.reveal_file_centered_deferred(&target));
+            assert_eq!(explorer.viewport_indices(11)[5], selected);
+        }
+        let first = explorer.entries[1].path.clone();
+        explorer.reveal_file_centered_deferred(&first);
+        assert_eq!(explorer.scroll_offset, 0);
+        let last = explorer.entries[100].path.clone();
+        explorer.reveal_file_centered_deferred(&last);
+        assert_eq!(explorer.scroll_offset, 90);
+        assert_eq!(explorer.viewport_indices(11).last(), Some(&100));
+    }
+
+    #[test]
+    fn centered_reveal_keeps_visible_files_at_their_current_rows() {
+        let mut explorer = wide_explorer(100);
+        explorer.visible_height = 11;
+        for offset in [0, 20, 90] {
+            explorer.scroll_offset = offset;
+            let visible_files: Vec<_> = explorer.viewport_indices(11).into_iter()
+                .filter(|&index| !explorer.entries[index].is_dir).collect();
+            for selected in visible_files {
+                let target = explorer.entries[selected].path.clone();
+                // Both the preview and the subsequent permanent open leave
+                // visible rows in place, including the top and bottom edges.
+                for _ in 0..2 {
+                    assert!(!explorer.reveal_file_centered_deferred(&target));
+                    assert_eq!(explorer.selected, selected);
+                    assert_eq!(explorer.scroll_offset, offset);
+                    explorer.set_viewport_height(11);
+                    assert_eq!(explorer.scroll_offset, offset);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn centered_reveal_uses_the_first_actual_viewport_and_then_allows_manual_scrolling() {
+        let mut explorer = wide_explorer(100);
+        explorer.visible_height = 0;
+        let target = explorer.entries[50].path.clone();
+        explorer.reveal_file_centered_deferred(&target);
+        explorer.set_viewport_height(0);
+        explorer.set_viewport_height(9);
+        assert_eq!(explorer.viewport_indices(9)[4], 50);
+        explorer.scroll_down(3);
+        let manual = explorer.scroll_offset;
+        explorer.set_viewport_height(9);
+        assert_eq!(explorer.scroll_offset, manual);
+        explorer.apply_refresh_entries(explorer.root.clone(), explorer.entries.clone(), Default::default());
+        assert_eq!(explorer.scroll_offset, manual);
+    }
+
+    #[test]
+    fn centered_reveal_waits_for_async_folder_expansion_and_final_layout() {
+        let temp = tempfile::tempdir().unwrap();
+        let nested = temp.path().join("one/two");
+        std::fs::create_dir_all(&nested).unwrap();
+        for index in 0..100 {
+            std::fs::write(nested.join(format!("file-{index:03}.rs")), "source").unwrap();
+        }
+        let target = nested.join("file-050.rs");
+        let mut explorer = FileExplorer::new_deferred(temp.path().to_path_buf());
+        assert!(explorer.reveal_file_centered_deferred(&target));
+        explorer.set_viewport_height(11);
+        let request = explorer.refresh_request();
+        let (root, entries, matches) = FileExplorer::build_refresh_entries(request);
+        explorer.apply_refresh_entries(root, entries, matches);
+        assert_eq!(explorer.entries[explorer.viewport_indices(11)[5]].path, target);
+        explorer.set_viewport_height(9);
+        assert_eq!(explorer.entries[explorer.viewport_indices(9)[4]].path, target);
+    }
+
+    #[test]
     fn deferred_reveal_selects_after_worker_tree_rebuild() {
         let temp = tempfile::tempdir().expect("temporary workspace");
         let nested = temp.path().join("one").join("two");
@@ -1702,6 +1830,7 @@ mod tests {
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
+            center_reveal_pending: false,
             path_indices: FxHashMap::default(),
             directory_cache: DirectoryCache::default(),
             ignore_cache: IgnoreCache::default(),

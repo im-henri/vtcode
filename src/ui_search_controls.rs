@@ -29,6 +29,7 @@ pub(crate) enum SearchControl {
     ReplaceAll,
     Close,
     Refresh,
+    Stop,
     Clear,
     CollapseResults,
 }
@@ -128,6 +129,7 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
         SearchControl::ReplaceAll => "Replace All (Ctrl+Alt+Enter)",
         SearchControl::Close => "Close (Escape)",
         SearchControl::Refresh => "Refresh Search",
+        SearchControl::Stop => "Stop Search (Escape)",
         SearchControl::Clear => "Clear Search Results",
         SearchControl::CollapseResults => {
             if app.global_search_all_files_toggle_label() == "⊞" {
@@ -244,6 +246,7 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
             crate::input::handle_search_key(app, KeyCode::Esc, KeyModifiers::NONE)
         }
         SearchControl::Refresh => app.update_global_search(),
+        SearchControl::Stop => app.stop_global_search(),
         SearchControl::Clear => app.clear_global_search(),
         SearchControl::CollapseResults => app.toggle_global_search_all_files_collapsed(),
     }

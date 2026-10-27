@@ -1909,6 +1909,7 @@ mod tests {
     fn slow_animation_pacing_preserves_immediate_input_and_worker_redraws() {
         use crate::animation_config::AnimationEffect;
         let mut app = animation_fixture();
+        app.animation_settings.fps = 60;
         app.animation_settings.set(AnimationEffect::CursorSmear, true);
         draw_animation_fixture(&mut app);
         app.tabs[0].editor.cursor_col = 4;
@@ -3462,7 +3463,7 @@ pub(crate) fn run_app<W: io::Write>(
                     let current_path = app.editor().and_then(|e| e.file_path.clone());
                     last_revealed_tab = Some(app.active_tab);
                     if let Some(ref path) = current_path {
-                        if app.explorer.reveal_file_deferred(path) {
+                        if app.explorer.reveal_file_centered_deferred(path) {
                             app.refresh_explorer_tree_async();
                         }
                     }

@@ -54,7 +54,7 @@ fn replacing_a_running_request_cancels_it_without_relying_on_the_callers_token()
 }
 
 #[test]
-fn automatic_comment_queries_do_not_build_the_local_word_index() {
+fn automatic_comment_queries_use_the_local_word_index() {
     let active = snapshot(3, "identifierUseful\n// commentIdentifier co", 1, true);
     let mut active = active;
     active.cursor_col = active.rope.line(1).len_chars();
@@ -69,8 +69,8 @@ fn automatic_comment_queries_do_not_build_the_local_word_index() {
         || false,
     )
     .unwrap();
-    assert!(result.suggestions.is_empty());
-    assert!(cache.documents.is_empty());
+    assert!(result.suggestions.iter().any(|word| word == "commentIdentifier"));
+    assert_eq!(cache.documents.len(), 1);
     let result = compute_contextual_invoked(
         &active,
         "co",
@@ -85,6 +85,23 @@ fn automatic_comment_queries_do_not_build_the_local_word_index() {
         !result.suggestions.is_empty(),
         "manual completion remains available in comments"
     );
+    assert_eq!(cache.documents.len(), 1);
+}
+
+#[test]
+fn automatic_quoted_queries_do_not_build_the_local_word_index() {
+    let mut active = snapshot(4, "identifierUseful\nlet value = \"identifierU", 1, true);
+    active.cursor_col = active.rope.line(1).len_chars();
+    let mut cache = TokenCache::default();
+    let result = compute_contextual_invoked(
+        &active, "identifierU", "Rust", &Default::default(), &mut cache, false, || false,
+    ).unwrap();
+    assert!(result.suggestions.is_empty());
+    assert!(cache.documents.is_empty());
+    let result = compute_contextual_invoked(
+        &active, "identifierU", "Rust", &Default::default(), &mut cache, true, || false,
+    ).unwrap();
+    assert!(result.suggestions.iter().any(|word| word == "identifierUseful"));
     assert_eq!(cache.documents.len(), 1);
 }
 

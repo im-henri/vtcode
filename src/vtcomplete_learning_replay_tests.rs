@@ -208,16 +208,6 @@ fn designed_sessions() -> Vec<Session> {
     }
     let negatives = [
         (
-            "line comment",
-            "// repeatedCandidate repeatedCandidate\n// rep⟂",
-            "rep",
-        ),
-        (
-            "block comment",
-            "/* repeatedCandidate repeatedCandidate\nrep⟂",
-            "rep",
-        ),
-        (
             "quoted text",
             "value = \"repeatedCandidate repeatedCandidate\nrep⟂",
             "rep",
@@ -290,6 +280,16 @@ fn designed_sessions() -> Vec<Session> {
             language: "Unknown",
             files: vec![],
             probes: negatives,
+        },
+        Session {
+            name: "comments",
+            path: "current.unknown",
+            language: "Unknown",
+            files: vec![],
+            probes: vec![
+                probe("line comment", "// repeatedCandidate repeatedCandidate\n// rep⟂", "rep", "repeatedCandidate"),
+                probe("block comment", "/* repeatedCandidate repeatedCandidate\nrep⟂", "rep", "repeatedCandidate"),
+            ],
         },
         Session {
             name: "cold-start",

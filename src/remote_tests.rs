@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "remote_terminal_transport_tests.rs"]
+mod terminal_transport;
+
 #[test]
 fn displayed_remote_paths_roundtrip_all_roots_and_filename_bytes() {
     for (native, uri) in [

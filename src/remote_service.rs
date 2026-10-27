@@ -541,12 +541,13 @@ impl Service {
                 args,
                 cwd,
                 terminal,
+                output_window,
             } => {
                 let cwd = cwd.resolve(&self.root)?;
                 self.processes
                     .as_mut()
                     .ok_or_else(|| io::Error::other("Remote process transport unavailable"))?
-                    .spawn(process, &program, &args, &cwd, terminal)?;
+                    .spawn(process, &program, &args, &cwd, terminal, output_window)?;
                 Ok(Reply::Done)
             }
             Command::ProcessInput { process, data } => {
@@ -955,6 +956,7 @@ fn serve_service(
     reader: impl Read,
     mut writer: impl Write + Send + 'static,
 ) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
     let process_ownership = process::Ownership::default();
     service.process_ownership = Some(process_ownership.clone());
     use std::hash::BuildHasher;
@@ -976,24 +978,35 @@ fn serve_service(
     let writer = std::sync::Arc::new(std::sync::Mutex::new(writer));
     let output_writer = writer.clone();
     let (output, messages) = std::sync::mpsc::sync_channel::<Response>(128);
+    let current_search = std::sync::Arc::new(AtomicU64::new(0));
+    let output_search = current_search.clone();
     std::thread::Builder::new()
         .name("headless-output".into())
         .spawn(move || {
             let mut queue = wire::OutputQueue::default();
             let _ = (|| -> io::Result<()> {
                 loop {
+                    let prepare_deadline = std::time::Instant::now()
+                        + std::time::Duration::from_millis(1);
+                    queue.discard_obsolete_search(output_search.load(Ordering::Acquire))?;
                     if queue.is_empty() {
                         let Ok(message) = messages.recv() else {
                             return Ok(());
                         };
                         queue.push(message)?;
                     }
-                    // Bounded intake also prevents continuous output from starving
-                    // transport writes. No waiting for another message mid-transfer.
-                    for message in messages.try_iter().take(16) {
+                    // Bound encoding time as well as message count. Preparing
+                    // sixteen bulk chunks before the first write adds visible
+                    // latency even when the output pipe is otherwise idle.
+                    for _ in 0..16.min(queue.available_slots()) {
+                        if std::time::Instant::now() >= prepare_deadline { break; }
+                        let Ok(message) = messages.try_recv() else { break; };
                         queue.push(message)?;
                     }
-                    queue.step(&mut *output_writer.lock().unwrap(), session)?;
+                    queue.discard_obsolete_search(output_search.load(Ordering::Acquire))?;
+                    if !queue.is_empty() {
+                        queue.step(&mut *output_writer.lock().unwrap(), session)?;
+                    }
                 }
             })();
         })?;
@@ -1146,8 +1159,8 @@ fn serve_service(
             return Err(io::Error::other("Remote request ID mismatch"));
         }
         if let Command::Heartbeat { nonce } = &request.command {
-            // Transport liveness must not queue behind an arbitrarily slow
-            // file save, metadata call, Git scan or external tool.
+            // Answer only legacy peers that explicitly send this request.
+            // Current clients have no idle timer or automatic probes.
             if id == 0 {
                 output.send(Response { id, result: Ok(Reply::Heartbeat { nonce: *nonce }) })
                     .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error))?;
@@ -1220,6 +1233,7 @@ fn serve_service(
             break;
         }
         if let Command::Cancel { request: cancelled } = &request.command {
+            let _ = current_search.compare_exchange(*cancelled, 0, Ordering::AcqRel, Ordering::Acquire);
             if let Some(cancel) = cancels.lock().unwrap().get(cancelled) {
                 cancel.cancel();
             } else if decoder.in_progress(*cancelled) {
@@ -1284,10 +1298,9 @@ fn serve_service(
                 | Command::GitDiffSources { .. }
         ) {
             let cancel = crate::background::CancellationToken::new();
-            if matches!(request.command, Command::Search(_))
-                && let Some(old) = active_search.replace(cancel.clone())
-            {
-                old.cancel();
+            if matches!(request.command, Command::Search(_)) {
+                current_search.store(id, Ordering::Release);
+                if let Some(old) = active_search.replace(cancel.clone()) { old.cancel(); }
             }
             cancels.lock().unwrap().insert(id, cancel.clone());
             Some(cancel)
@@ -1611,7 +1624,12 @@ fn actor(
     let worker = std::thread::Builder::new()
         .name(name.into())
         .spawn(move || {
-            crate::worker_priority::lower_current_thread();
+            // Linux children inherit their spawning thread's nice value.
+            // Shells and tools must retain the service's priority, rather than
+            // inherit the scheduling hint intended for background file jobs.
+            if !join {
+                crate::worker_priority::lower_current_thread();
+            }
             let mut completed = 0;
             let mut ready = Vec::new();
             for message in requests {
@@ -1718,7 +1736,14 @@ fn actor(
                             cancel.as_ref().unwrap(),
                         ),
                         Command::Search(query) => {
-                            search::execute(&service.root, query, cancel.as_ref().unwrap())
+                            if query.stream {
+                                search::execute_streaming(&service.root, query, cancel.as_ref().unwrap(), |hits| {
+                                    output.send(Response { id: 0, result: Ok(Reply::SearchProgress { request: request.id, hits }) })
+                                        .map_err(io::Error::other)
+                                })
+                            } else {
+                                search::execute(&service.root, query, cancel.as_ref().unwrap())
+                            }
                         }
                         Command::SearchScope(query) => search::scope(&service.root, query, cancel.as_ref().unwrap()),
                         Command::Replace(query) => search::replace(

@@ -22,6 +22,7 @@ struct PaneChromeKey {
     editor: u64,
     active: usize,
     scroll: usize,
+    strip_scroll: Option<crate::ui_chrome_tabs::StripScroll>,
     tabs: bool,
     breadcrumb: bool,
 }
@@ -142,6 +143,7 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
         editor: app.groups[group_idx].tabs[split_idx].editor.navigation_id,
         active: split_idx,
         scroll: app.groups[group_idx].tab_scroll_offset,
+        strip_scroll: app.groups[group_idx].tab_strip_scroll,
         tabs: show_tabs,
         breadcrumb: show_breadcrumb,
     };

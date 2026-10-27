@@ -13,6 +13,7 @@ use std::{
 
 fn query(include: &str) -> Query {
     Query {
+        stream: false,
         text: "CoreProper".into(),
         case_sensitive: false,
         whole_word: false,

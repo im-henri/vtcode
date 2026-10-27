@@ -738,7 +738,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     let tree_content = tree_layout.content;
     let file_area = tree_layout.files;
     app.explorer.horizontal.offset = app.explorer.horizontal.offset.min(tree_layout.max_scroll);
-    app.explorer.visible_height = tree_content.height as usize;
+    app.explorer.set_viewport_height(tree_content.height as usize);
     if app.explorer.entries.is_empty() {
         if (app.bg_explorer_refresh_running || app.explorer.find.filtering()) && tree_content.height > 0
             && app.explorer.find.results.error.is_none() {

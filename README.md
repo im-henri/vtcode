@@ -90,6 +90,9 @@ Keep `settings.json` and `.vtcode/` beside the executable when updating.
 File search and workspace search each remember their last 50 queries per
 workspace, including after restarting VTCode. Use **↑/↓** in the search field
 to recall them; **Alt+↑/↓** navigates workspace search results.
+While a workspace search is running, click **■** in the Search header or press
+**Escape** with search focused to stop searching and keep the results found so far.
+Click **↻** to run the search again.
 
 Some terminals send the same byte for `Ctrl+H` and `Ctrl+Backspace`. VTCode
 prioritizes deletion when they cannot be distinguished; use **Edit → Replace**

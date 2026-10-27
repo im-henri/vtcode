@@ -256,6 +256,16 @@ impl TabNameDuplicates {
         scroll: usize,
         width: u16,
     ) -> Option<Self> {
+        Self::for_candidates(app, tabs, active, scroll, if width == 0 { 0 } else { usize::from(width) / 4 + 2 })
+    }
+
+    /// Continuous scrolling needs widths across the whole strip. Share the
+    /// duplicate-name index rather than scanning all paths for every label.
+    pub(super) fn for_scroll(app: &App, tabs: &[Tab], active: usize) -> Option<Self> {
+        Self::for_candidates(app, tabs, active, 0, usize::MAX)
+    }
+
+    fn for_candidates(app: &App, tabs: &[Tab], active: usize, scroll: usize, limit: usize) -> Option<Self> {
         let count = active_tabs(app).len()
             + app
                 .groups
@@ -264,7 +274,7 @@ impl TabNameDuplicates {
                 .filter(|(index, _)| *index != app.active_group)
                 .map(|(_, group)| group.tabs.len())
                 .sum::<usize>();
-        if count <= 64 || width == 0 {
+        if count <= 64 || limit == 0 {
             return None;
         }
         // Collapsed groups do not consume tab cells. Count renderable tabs,
@@ -278,7 +288,7 @@ impl TabNameDuplicates {
                     || tab.pinned
                     || !app.tab_group(tab).is_some_and(|group| group.collapsed)
             })
-            .take(usize::from(width) / 4 + 2)
+            .take(limit)
             .map(|(_, tab)| tab)
             .collect();
         let universe = fingerprint(all_tabs(app));

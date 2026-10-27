@@ -330,7 +330,7 @@ impl Editor {
 
         if text.len() >= 4096 {
             let prefix = self.rope.line(self.cursor_line).slice(..self.cursor_col);
-            let indent = (smart && !line_paste && text.contains(['\r', '\n'])
+            let indent = (smart && !line_paste && self.cursor_col > 0 && text.contains(['\r', '\n'])
                 && prefix.chunks().all(|chunk| chunk.bytes().all(|ch| matches!(ch, b' ' | b'\t'))))
                 .then(|| prefix.to_string());
             let index = self.rope.line_to_char(self.cursor_line)
@@ -383,12 +383,12 @@ impl Editor {
             return;
         }
 
-        // Reindent only at a line's indentation, where a block's destination
-        // is unambiguous. Include the first line in the common prefix: ignoring
+        // Reindent only after existing indentation. At column zero, preserve
+        // the copied whitespace. Include the first line in the common prefix: ignoring
         // it stripped the body indentation from e.g. "if ready:\n    run()".
         // Remove an exact space/tab prefix, never an arbitrary byte count.
         let prefix = self.rope.line(self.cursor_line).slice(..self.cursor_col);
-        let paste_text = if smart && text.contains('\n')
+        let paste_text = if smart && self.cursor_col > 0 && text.contains('\n')
             && prefix.chars().all(|ch| matches!(ch, ' ' | '\t'))
         {
             let mut common: Option<&str> = None;
@@ -403,7 +403,7 @@ impl Editor {
                 });
                 if common == Some("") { break; }
             }
-            if common.is_none() || (common == Some("") && prefix.len_chars() == 0) {
+            if common.is_none() {
                 text
             } else {
                 let strip = common.unwrap_or_default().len();

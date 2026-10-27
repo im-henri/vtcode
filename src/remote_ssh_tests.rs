@@ -377,21 +377,19 @@ fn windows_ssh_five_minute_idle_resumes_editing_file_operations_and_quit() {
     println!("VTCODE_SSH_IDLE starting five minutes without user input");
     std::thread::sleep(Duration::from_secs(300));
     assert!(workspace.client.connected(), "A healthy idle connection disconnected");
-    let acknowledgements = workspace.client.heartbeat_nonce_for_test();
-    assert!(acknowledgements >= 5, "Heartbeat acknowledgements: {acknowledgements}");
     let metrics = workload(&mut app, &text);
     app.force_close_tab(app.active_tab);
     app.exit_confirm_active = true;
     assert!(crate::input_keyboard::handle_keyboard_event(&mut app,
         crossterm::event::KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)));
-    println!("VTCODE_SSH_IDLE {}", json!({"idle_seconds":300,"heartbeats":acknowledgements,"resumed":metrics}));
+    println!("VTCODE_SSH_IDLE {}", json!({"idle_seconds":300,"resumed":metrics}));
     shutdown(&workspace);
     drop((app, workspace, owner));
 }
 
 #[test]
-#[ignore = "Real SSH: disposable bridge_lab fixture stalls both directions after 6 seconds for 180 seconds"]
-fn windows_ssh_silent_link_releases_pending_save_and_keeps_quit_usable() {
+#[ignore = "Real SSH: disposable bridge_lab fixture stalls both directions after 6 seconds"]
+fn windows_ssh_stalled_link_can_disconnect_and_keep_quit_usable() {
     let (mut workspace, owner, _) = connect();
     workspace.connection = Some(owner.clone());
     let relative = RemotePath::new(b"silent-link.py".to_vec()).unwrap();
@@ -429,12 +427,8 @@ fn windows_ssh_silent_link_releases_pending_save_and_keeps_quit_usable() {
     }
     assert_eq!(app.editor().unwrap().rope.to_string(), expected);
     assert!(!app.pending_file_saves.is_empty(), "Save must still be awaiting the stalled peer");
-    let waiting = Instant::now();
-    while workspace.client.connected() && waiting.elapsed() < Duration::from_secs(160) {
-        app.poll_background_results();
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(!workspace.client.connected(), "A silent SSH stream must not stay connected forever");
+    assert!(workspace.client.connected(), "Silence alone must not disconnect the transport");
+    workspace.client.disconnect();
     app.wait_for_background(Duration::from_secs(5), |app| app.pending_file_saves.is_empty());
     assert_eq!(app.editor().unwrap().rope.to_string(), expected);
     assert!(app.editor().unwrap().modified);
@@ -453,7 +447,7 @@ fn windows_ssh_silent_link_releases_pending_save_and_keeps_quit_usable() {
     assert!(!session.tabs[0].undo_entries.as_ref().unwrap().is_empty());
     samples.sort_by(f64::total_cmp);
     println!("VTCODE_SSH_SILENT {}", json!({
-        "failed_after_wait_seconds":waiting.elapsed().as_secs_f64(),
+        "explicit_disconnect":true,
         "samples":samples.len(), "local_ops_p95_ms":samples[samples.len() * 95 / 100],
         "pending_saves":app.pending_file_saves.len(), "kept_local_edits":true,
     }));

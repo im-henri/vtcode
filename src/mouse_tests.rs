@@ -696,7 +696,6 @@ fn search_refresh_button_restarts_the_current_search() {
     app.show_explorer = true;
     app.sidebar_view = crate::app::SidebarView::Search;
     app.explorer_area = Some(area);
-    app.bg_global_search_running = true;
     render_search_controls(&mut app, area);
     let refresh = crate::ui_search_panel::search_header_action_areas(area)[0];
 
@@ -713,6 +712,7 @@ fn search_refresh_button_restarts_the_current_search() {
     // An empty current query is refreshed into the idle state. This proves
     // the header icon is a real action rather than decorative chrome.
     assert!(!app.bg_global_search_running);
+    assert_eq!(app.search_generation, 1);
 }
 
 #[test]

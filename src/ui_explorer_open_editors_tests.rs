@@ -68,6 +68,58 @@ fn mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
 }
 
 #[test]
+fn tab_reveal_is_centered_in_the_tree_below_open_editors_and_find_controls() {
+    for open_editors in [false, true] {
+        for find in [false, true] {
+            let area = Rect::new(5, 2, 40, 20);
+            let mut app = fixture(6);
+            app.show_open_editors = open_editors;
+            app.explorer.find.open = find;
+            app.explorer.visible_height = 0;
+            let target = app.explorer.entries[10].path.clone();
+            assert!(!app.explorer.reveal_file_centered_deferred(&target));
+            let buffer = draw(&mut app, area);
+            let content = explorer_tree_content_area(&app, area);
+            assert_eq!(row_for(&buffer, area, "tree-10.rs"), content.y + content.height / 2,
+                "open editors={open_editors}, find={find}");
+            app.explorer.scroll_down(2);
+            let manual = app.explorer.scroll_offset;
+            draw(&mut app, area);
+            assert_eq!(app.explorer.scroll_offset, manual);
+        }
+    }
+}
+
+#[test]
+fn explorer_preview_keeps_the_clicked_file_in_place_for_the_second_click() {
+    let workspace = tempfile::tempdir().unwrap();
+    for index in 0..40 {
+        std::fs::write(workspace.path().join(format!("tree-{index:02}.rs")), "source").unwrap();
+    }
+    let area = Rect::new(5, 2, 40, 20);
+    let mut app = fixture(0);
+    app.show_explorer = true;
+    app.show_open_editors = false;
+    app.explorer = crate::explorer::FileExplorer::new(workspace.path().to_path_buf());
+    app.explorer.scroll_offset = 5;
+    let buffer = draw(&mut app, area);
+    let row = row_for(&buffer, area, "tree-05.rs");
+    let target = app.explorer.entries[5].path.clone();
+
+    for preview in [true, false] {
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), area.x + 8, row);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), area.x + 8, row);
+        // Match the event loop's active-file reveal before the next paint.
+        assert!(!app.explorer.reveal_file_centered_deferred(&target));
+        let buffer = draw(&mut app, area);
+        assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&target));
+        assert_eq!(app.tabs[app.active_tab].preview, preview);
+        assert_eq!(app.explorer.scroll_offset, 5);
+        assert_eq!(row_for(&buffer, area, "tree-05.rs"), row);
+    }
+}
+
+#[test]
 fn explorer_open_editors_grows_past_five_and_keeps_tree_pointer_actions_aligned() {
     for sidebar_right in [false, true] {
         let area = Rect::new(5, 2, 40, 30);

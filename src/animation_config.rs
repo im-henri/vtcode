@@ -91,7 +91,7 @@ impl Default for AnimationSettings {
             durations: [None; 5],
             intensities: [None; 5],
             duration_ms: 240,
-            fps: 60,
+            fps: 90,
             intensity: 55,
             scope_tight: true,
             scope_fill: false,

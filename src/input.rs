@@ -88,7 +88,11 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
     match code {
         KeyCode::Esc => {
             app.push_global_search_history();
-            app.global_search_active = false;
+            if app.bg_global_search_running {
+                app.stop_global_search();
+            } else {
+                app.global_search_active = false;
+            }
         }
         KeyCode::Enter => {
             app.push_global_search_history();
@@ -575,6 +579,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 app.global_search_replace_query.clear();
                 app.global_search_results.clear();
                 app.global_search_truncated = false;
+                app.global_search_stopped = false;
                 app.global_search_selected = 0;
                 app.global_search_scroll = 0;
                 app.search_focus_field = 0;
@@ -600,6 +605,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 app.global_search_replace_query.clear();
                 app.global_search_results.clear();
                 app.global_search_truncated = false;
+                app.global_search_stopped = false;
                 app.global_search_selected = 0;
                 app.global_search_scroll = 0;
                 app.search_focus_field = 1;
@@ -1559,14 +1565,15 @@ mod tests {
     }
 
     #[test]
-    fn structural_triggers_are_configurable_and_stay_quiet_in_comments() {
+    fn structural_triggers_are_configurable_in_code_and_comments() {
         for (text, enabled, expected) in [
             (
                 "let source_value = 1;\nlet previous = &source_value;\nlet value = ",
                 false,
                 false,
             ),
-            ("let source_value = 1;\n// ", true, false),
+            ("let source_value = 1;\n// ", false, false),
+            ("let source_value = 1;\n// ", true, true),
             (
                 "let source_value = 1;\nlet previous = &source_value;\nlet value = ",
                 true,
@@ -1588,6 +1595,43 @@ mod tests {
                 app.vtcomplete_cancel_token.is_none()
             });
             assert_eq!(app.vtcomplete_active, expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn automatic_comment_suggestions_can_be_accepted_without_changing_comment_delimiters() {
+        for (language, source) in [
+            ("Rust", "// commentIdentifier\n// comment|"),
+            ("Rust", "fn commentIdentifier() {}\n// comment|"),
+            ("Rust", "let commentIdentifier = 1; // comment|"),
+            ("Rust", "/// commentIdentifier\n/// comment|"),
+            ("Rust", "/* commentIdentifier\n * comment| */"),
+            ("Rust", "/* outer /* nested */ commentIdentifier\n * comment| */"),
+            ("Rust", "// commentIdentifier\n// \"comment|"),
+            ("Python", "# commentIdentifier\n# comment|"),
+            ("SQL", "-- commentIdentifier\n-- comment|"),
+        ] {
+            let (before, after) = source.split_once('|').unwrap();
+            let mut app = App::test_new();
+            let mut editor = Editor::test_with_text(&format!("{before}{after}"));
+            editor.language_override = Some(language.into());
+            editor.cursor_line = before.bytes().filter(|&byte| byte == b'\n').count();
+            editor.cursor_col = before.rsplit('\n').next().unwrap().chars().count();
+            app.tabs.push(Tab::new_file(editor));
+            app.active_tab = 0;
+            handle_editor_key(&mut app, KeyCode::Char('I'), KeyModifiers::NONE);
+            app.wait_for_background(std::time::Duration::from_secs(3), |app| {
+                app.vtcomplete_cancel_token.is_none()
+            });
+            assert!(app.vtcomplete_active, "{language}: {source}");
+            assert!(!app.vtcomplete_explicit);
+            app.vtcomplete_selected = app.vtcomplete_suggestions.iter()
+                .position(|word| word == "commentIdentifier")
+                .unwrap_or_else(|| panic!("{source}: {:?}", app.vtcomplete_suggestions));
+            crate::input_keyboard::handle_keyboard_event(&mut app,
+                crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            assert_eq!(app.editor().unwrap().rope.to_string(), format!("{before}Identifier{after}"),
+                "{language}: {source}");
         }
     }
 

@@ -3768,6 +3768,9 @@ mod tests {
         let capture = |with_smear| {
             let mut app = fixture(text);
             app.tabs[0].editor.cursor_line = 3;
+            for effect in [Effect::CursorFire, Effect::CursorSmear] {
+                app.animation_settings.set_duration(effect, 420);
+            }
             app.animation_settings.set(Effect::CursorFire, true);
             app.animation_settings.set(Effect::CursorSmear, with_smear);
             animation_frame(&mut app, now);

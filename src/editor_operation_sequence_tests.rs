@@ -23,6 +23,63 @@ fn smart_paste_preserves_nested_blocks_and_relative_indentation() {
 }
 
 #[test]
+fn smart_paste_at_column_zero_preserves_copied_indentation() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    for body in [
+        "    // café comment",
+        "    // café comment\n",
+        "    // comment\n        // nested comment\n",
+        "\t// comment\r\n\t\t// nested comment\r\n",
+        " \t// comment\r \t    // nested comment\r",
+        "    // comment\n \t\n        // nested comment\n",
+    ] {
+        for repeats in [1, 256] {
+            let payload = body.repeat(repeats);
+            crate::clipboard::remember_line_copy(&payload, false);
+            let normalized = payload.replace("\r\n", "\n").replace('\r', "\n");
+            for (source, row, col, anchor, before, after) in [
+                ("", 0, 0, None, "", ""),
+                ("before\n", 1, 0, None, "before\n", ""),
+                ("before\n\nafter", 1, 0, None, "before\n", "\nafter"),
+                ("before\nold\nafter", 1, 3, Some((1, 0)), "before\n", "\nafter"),
+            ] {
+                let mut editor = Editor::test_with_text(source);
+                (editor.cursor_line, editor.cursor_col) = (row, col);
+                editor.selection_anchor = anchor;
+                editor.paste_with_text(&payload);
+                let expected = format!("{before}{normalized}{after}");
+                assert_eq!(editor.rope.to_string(), expected, "{body:?}, repeats={repeats}, source={source:?}");
+                let end = before.chars().count() + normalized.chars().count();
+                let line = editor.rope.char_to_line(end);
+                assert_eq!((editor.cursor_line, editor.cursor_col), (line, end - editor.rope.line_to_char(line)));
+                editor.undo();
+                assert_eq!(editor.rope.to_string(), source);
+                assert_eq!((editor.cursor_line, editor.cursor_col), (row, col));
+                assert_eq!(editor.selection_anchor, anchor);
+                assert!(!editor.can_undo());
+                editor.redo();
+                assert_eq!(editor.rope.to_string(), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn smart_paste_rebases_copied_blocks_at_existing_indentation() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    for source_indent in ["    ", "\t", " \t"] {
+        for destination in ["  ", "\t", " \t"] {
+            let payload = format!("{source_indent}// first\n{source_indent}    // nested\n{source_indent}// last");
+            crate::clipboard::remember_line_copy(&payload, false);
+            let mut editor = Editor::test_with_text(destination);
+            editor.cursor_col = destination.chars().count();
+            editor.paste_with_text(&payload);
+            assert_eq!(editor.rope.to_string(), format!("{destination}// first\n{destination}    // nested\n{destination}// last"));
+        }
+    }
+}
+
+#[test]
 fn smart_paste_in_the_middle_of_text_does_not_reindent_the_payload() {
     let mut editor = Editor::test_with_text("    prefix suffix");
     editor.cursor_col = 10;

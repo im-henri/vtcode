@@ -213,7 +213,7 @@ impl Watch {
                             let _ = callback_wake.try_send(());
                         }
                     },
-                    notify::Config::default(),
+                    native_watch_config(),
                 );
                 let mut watcher = match watcher.and_then(|mut watcher| {
                     watcher.watch(&root, RecursiveMode::Recursive)?;
@@ -304,6 +304,13 @@ impl Watch {
     }
 }
 
+fn native_watch_config() -> notify::Config {
+    // VTCode consumes modifications, including close-after-write, but ignores
+    // read-only opens. Filter those in the kernel, before allocating events or
+    // waking a thread for other tools' reads of the workspace and its caches.
+    notify::Config::default().with_open_events(false)
+}
+
 impl workspace::Workspace {
     pub(crate) fn save_is_watched(&self, key: &Path, checkpoint: Option<&Checkpoint>) -> bool {
         let Ok(path) = self.remote_path(key) else {
@@ -385,6 +392,56 @@ mod tests {
         Event, EventKind,
         event::{DataChange, ModifyKind},
     };
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_headless_watch_stays_asleep_for_reads_but_reports_writes_and_renames() {
+        use notify::{RecursiveMode, Watcher, event::{AccessKind, AccessMode}};
+        use std::time::{Duration, Instant};
+        let root = tempfile::tempdir().unwrap();
+        let nested = root.path().join("node_modules/cache");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("entry.txt");
+        std::fs::write(&file, "before").unwrap();
+        let (events, received) = mpsc::channel();
+        let mut watcher = notify::RecommendedWatcher::new(events, native_watch_config()).unwrap();
+        watcher.watch(root.path(), RecursiveMode::Recursive).unwrap();
+        for _ in 0..1000 { assert_eq!(std::fs::read(&file).unwrap(), b"before"); }
+        assert!(matches!(received.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)),
+            "read-only opens must not wake the native event handler");
+        std::fs::write(&file, "after").unwrap();
+        let changed = received.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        assert!(changed.paths.contains(&file));
+        assert!(matches!(changed.kind, EventKind::Modify(_) | EventKind::Access(AccessKind::Close(AccessMode::Write))));
+        let renamed = nested.join("renamed.txt");
+        std::fs::rename(&file, &renamed).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) && event.paths.contains(&renamed) { break; }
+        }
+        std::fs::remove_file(&renamed).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            if matches!(event.kind, EventKind::Remove(_)) && event.paths.contains(&renamed) { break; }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_watcher_default_still_supports_open_notifications() {
+        use notify::{RecursiveMode, Watcher, event::AccessKind};
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("entry.txt");
+        std::fs::write(&file, "content").unwrap();
+        let (events, received) = mpsc::channel();
+        let mut watcher = notify::RecommendedWatcher::new(events, notify::Config::default()).unwrap();
+        watcher.watch(&file, RecursiveMode::NonRecursive).unwrap();
+        std::fs::read(&file).unwrap();
+        let event = received.recv_timeout(std::time::Duration::from_secs(3)).unwrap().unwrap();
+        assert!(matches!(event.kind, EventKind::Access(AccessKind::Open(_))));
+    }
 
     #[test]
     fn metadata_batches_are_bounded_and_cancel_before_resolving_paths() {

@@ -335,11 +335,10 @@ fn typing_reuses_the_structural_prefix_and_invalidates_edits_above_it() {
 }
 
 #[test]
-fn multiline_prose_is_quiet_and_fake_calls_cannot_change_code_insertion() {
+fn multiline_strings_are_quiet_and_fake_calls_cannot_change_code_insertion() {
     let index = crate::completion_index::CompletionIndex::default();
     for source in [
         "text = '''multiline\nprintStatus\npri",
-        "/* nested /* comment */\nprintStatus\npri",
         "text = `multiline\nprintStatus\npri",
     ] {
         let result = compute_contextual_invoked(

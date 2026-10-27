@@ -23,6 +23,8 @@ impl<'a> Iterator for Lines<'a> {
 
 /// None means the original payload can be inserted directly without a rewrite.
 pub(super) fn prepare(text: &str, destination: Option<&str>, line_copy: bool) -> Option<Rope> {
+    // Column zero has no destination indentation to align the copied block to.
+    let destination = destination.filter(|indent| !indent.is_empty());
     let lines = Lines(Some(text));
     let common = destination.and_then(|_| {
         let mut common: Option<&str> = None;
@@ -45,7 +47,7 @@ pub(super) fn prepare(text: &str, destination: Option<&str>, line_copy: bool) ->
         }
         common
     });
-    let reindent = common.is_some_and(|indent| !indent.is_empty() || destination != Some(""));
+    let reindent = common.is_some();
     let trailing = line_copy && !text.ends_with(['\r', '\n']);
     if !reindent && !trailing && !text.contains('\r') {
         return None;
@@ -100,7 +102,7 @@ mod tests {
                 format!("{text}\n")
             };
         }
-        let Some(destination) = destination else {
+        let Some(destination) = destination.filter(|indent| !indent.is_empty()) else {
             return text;
         };
         let mut common: Option<&str> = None;
@@ -121,7 +123,7 @@ mod tests {
                 break;
             }
         }
-        if common.is_none() || (common == Some("") && destination.is_empty()) {
+        if common.is_none() {
             return text;
         }
         let strip = common.unwrap().len();

@@ -162,6 +162,32 @@ fn rejected_terminal_paste_stays_rejected_after_the_original_worker_finishes() {
 }
 
 #[test]
+fn large_smart_paste_at_column_zero_preserves_copied_indentation() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    for indent in ["    ", "\t "] {
+        let body = format!("{indent}// café comment\r\n{indent}    // nested comment\r\n");
+        let payload = body.repeat(BACKGROUND_BYTES / body.len() + 1);
+        let normalized = payload.replace("\r\n", "\n");
+        crate::clipboard::remember_line_copy(&payload, false);
+        let original = "before\n\nafter";
+        let mut app = app_with_text(original);
+        app.editor_mut().unwrap().cursor_line = 1;
+        app.paste_editor_text(payload, true);
+        assert!(app.paste_in_progress());
+        finish(&mut app);
+        let editor = app.editor_mut().unwrap();
+        let expected = format!("before\n{normalized}\nafter");
+        assert!(editor.rope == expected.as_str(), "background paste must preserve copied indentation at column zero");
+        assert_eq!((editor.cursor_line, editor.cursor_col), (1 + normalized.bytes().filter(|&byte| byte == b'\n').count(), 0));
+        assert_eq!(editor.undo_stack.len(), 1);
+        editor.undo();
+        assert_eq!(editor.rope.to_string(), original);
+        editor.redo();
+        assert_eq!(editor.rope.to_string(), expected);
+    }
+}
+
+#[test]
 fn prepared_paste_matches_inline_semantics_for_unicode_indentation_selection_and_multicursors() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
     for text in [

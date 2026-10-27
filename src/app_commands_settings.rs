@@ -997,7 +997,8 @@ mod tests {
                 "5000",
                 "240",
             ),
-            ("animation_fps", "0", "15", "60"),
+            ("animation_cursor_smear_duration_ms", "99999", "5000", "300"),
+            ("animation_fps", "0", "15", "90"),
             ("animation_scope_connector_intensity", "99999", "100", "55"),
         ] {
             app.begin_numeric_setting_edit(id, default);
@@ -1267,16 +1268,16 @@ mod tests {
         let mut app = make_app();
         assert_eq!(
             app.default_whitespace_mode,
-            crate::app::WhitespaceMode::Trailing
+            crate::app::WhitespaceMode::Boundary
         );
         app.toggle_setting("whitespace");
         assert_eq!(
             app.default_whitespace_mode,
-            crate::app::WhitespaceMode::All
+            crate::app::WhitespaceMode::Selection
         );
         assert_eq!(
             app.editor().unwrap().whitespace_mode,
-            crate::app::WhitespaceMode::All
+            crate::app::WhitespaceMode::Selection
         );
     }
 
@@ -1453,7 +1454,7 @@ mod tests {
             assert_eq!(app.comment_whitespace_mode.map_or("Inherit", |mode| mode.name()), value);
             assert_eq!(app.current_settings().comment_whitespace_mode, Some(value.to_lowercase()));
             assert_eq!(app.settings_workspace.comment_whitespace_mode, Some(value.to_lowercase()));
-            assert_eq!(app.default_whitespace_mode, crate::app::WhitespaceMode::Trailing);
+            assert_eq!(app.default_whitespace_mode, crate::app::WhitespaceMode::Boundary);
             assert_eq!(app.settings_global.comment_whitespace_mode.as_deref(), Some("none"));
         }
         assert!(app.reset_setting_in_selected_scope("comment_whitespace"));

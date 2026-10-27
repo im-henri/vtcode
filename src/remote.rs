@@ -378,6 +378,9 @@ pub(crate) enum Command {
         args: Vec<String>,
         cwd: RemotePath,
         terminal: Option<(u16, u16)>,
+        /// Older peers omit this and retain the original 64 KiB window.
+        #[serde(default)]
+        output_window: usize,
     },
     ProcessInput {
         process: u64,
@@ -498,6 +501,7 @@ pub(crate) enum Command {
     Cancel {
         request: u64,
     },
+    /// Legacy protocol-20 request. Current clients never send idle probes.
     Heartbeat { nonce: u64 },
     Ping,
     Shutdown,
@@ -625,6 +629,7 @@ impl Failure {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Reply {
     PerformanceSnapshot(observability::Snapshot),
+    /// Retained for protocol compatibility with older clients.
     Heartbeat { nonce: u64 },
     Context(context::Reply),
     Agent(agent::Reply),
@@ -700,6 +705,7 @@ pub(crate) enum Reply {
         hits: Vec<search::Hit>,
         truncated: bool,
     },
+    SearchProgress { request: u64, hits: Vec<search::Hit> },
     SearchScope { indices: Vec<usize> },
     Replaced(crate::workspace_replace::Outcome),
     Filesystem(fs::Outcome),

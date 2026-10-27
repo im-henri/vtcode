@@ -77,9 +77,9 @@ fn stalled_control_writes_do_not_hold_ui_mailbox_locks() {
 }
 
 #[test]
-fn silent_peer_failure_releases_file_waiters_capacity_and_transfer_permits() {
+fn transport_eof_releases_file_waiters_capacity_and_transfer_permits() {
     let root = tempfile::tempdir().unwrap();
-    let (client, _end) = silent_client(root.path());
+    let (client, end) = silent_client(root.path());
     let command = || Command::Open { path: super::super::RemotePath::new(b"file.rs".to_vec()).unwrap() };
     let mut replies = Vec::new();
     for _ in 0..8 { replies.push(client.submit_inner(command(), None).unwrap().1); }
@@ -91,7 +91,7 @@ fn silent_peer_failure_releases_file_waiters_capacity_and_transfer_permits() {
     let file = std::thread::spawn(move || file_done.send(file_client.call_file(command()).is_err()).unwrap());
     let permit_client = client.clone();
     let permit = std::thread::spawn(move || done.send(permit_client.text_permit().is_err()).unwrap());
-    liveness::expire_silent_peer_for_test(Arc::downgrade(&client.0.shared), Arc::downgrade(&client.0.sender)).unwrap();
+    end.send(()).unwrap();
     for reply in replies {
         assert!(reply.recv_timeout(Duration::from_secs(5)).unwrap().take().is_err());
     }

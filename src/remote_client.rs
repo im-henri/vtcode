@@ -4,16 +4,14 @@
 #[cfg(test)]
 #[path = "remote_client_deadline_tests.rs"]
 mod deadline_tests;
-#[path = "remote_liveness.rs"]
-mod liveness;
 #[path = "remote_cpu_capture.rs"]
 mod cpu_capture;
 use super::*;
 #[cfg(test)]
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::{
     collections::HashMap,
-    io::{BufRead, Read, Write},
+    io::{BufRead, Write},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -22,11 +20,23 @@ use std::{
     time::Duration,
 };
 
-type Completion = mpsc::SyncSender<Delivery>;
+enum Completion {
+    Single(mpsc::SyncSender<Delivery>),
+    Search(mpsc::Sender<Delivery>),
+}
+impl Completion {
+    fn try_send(&self, delivery: Delivery) -> Result<(), ()> {
+        match self {
+            Self::Single(sender) => sender.try_send(delivery).map_err(|_| ()),
+            Self::Search(sender) => sender.send(delivery).map_err(|_| ()),
+        }
+    }
+}
 struct Pending {
     completed: Completion,
     retained: usize,
     operation: Option<diagnostics::Operation>,
+    search_budget: Option<(usize, usize)>,
 }
 
 /// Own a newly allocated server handle until a worker actually accepts it.
@@ -135,7 +145,6 @@ struct Shared {
     git_output: OnceLock<super::diagnostics::Log>,
     capture: cpu_capture::CaptureState,
     failure: Mutex<Option<String>>,
-    liveness: liveness::State,
     pending: Mutex<HashMap<u64, Pending>>,
     capacity: Condvar,
     closed: AtomicBool,
@@ -188,7 +197,6 @@ impl Shared {
         *self.failure.lock().unwrap() = Some(error.clone());
         if let Some(trace) = &self.diagnostics { trace.event("Disconnected", &error); }
         self.capture.disconnected();
-        self.liveness.wake();
         let pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
         for (_, pending) in pending {
             if let Some(operation) = &pending.operation { operation.failed(&error); }
@@ -242,15 +250,9 @@ impl Drop for TextPermit {
 
 impl Client {
     #[cfg(test)]
-    pub(crate) fn expire_silent_peer_for_test(&self) {
-        liveness::expire_silent_peer_for_test(Arc::downgrade(&self.0.shared), Arc::downgrade(&self.0.sender)).unwrap();
-    }
-    #[cfg(test)]
     pub(crate) fn next_request_id_for_test(&self) -> u64 {
         self.0.next_id.load(Ordering::Relaxed)
     }
-    #[cfg(all(test, windows))]
-    pub(crate) fn heartbeat_nonce_for_test(&self) -> u64 { self.0.shared.liveness.acknowledged_for_test() }
 
     #[cfg(test)]
     pub(crate) fn connect(
@@ -326,7 +328,6 @@ impl Client {
             diagnostics,
             capture: Default::default(),
             failure: Mutex::default(),
-            liveness: Default::default(),
             pending: Mutex::new(HashMap::new()),
             capacity: Condvar::new(),
             closed: AtomicBool::new(false),
@@ -356,10 +357,11 @@ impl Client {
         let sender = Arc::new(sender);
         let (controls, input) = mpsc::sync_channel::<Request>(128);
         let output_shared = shared.clone();
-        let mut writer = liveness::Writer { inner: writer, shared: shared.clone() };
+        let mut writer = writer;
         let session = hello.session;
         std::thread::Builder::new().name("remote-output".into()).spawn(move || {
-            crate::worker_priority::lower_current_thread();
+            // This thread also carries terminal keystrokes and flow control.
+            // Keep interactive transport at the caller's scheduling priority.
             // Separate any setup keystrokes still in flight from the first
             // framed request after readiness; the service ignores this line.
             if let Err(error) = writer.write_all(b"\n").and_then(|_| writer.flush()) { output_shared.fail(error.to_string()); return; }
@@ -440,9 +442,9 @@ impl Client {
         })?;
         let input_shared = shared.clone();
         let input_wake = Arc::downgrade(&sender);
-        let mut reader = liveness::Reader { inner: reader, shared: shared.clone() };
+        let mut reader = reader;
         let spawn = std::thread::Builder::new().name("remote-input".into()).spawn(move || {
-            crate::worker_priority::lower_current_thread();
+            // Terminal echo must not run behind background analysis work.
             let mut decoder = wire::Decoder::new('S', session);
             let mut line = Vec::new();
             let result = (|| -> io::Result<()> {
@@ -462,12 +464,8 @@ impl Client {
                     }
                     if response.id == 0 {
                         match response.result.map_err(Failure::into_io)? {
-                            Reply::Heartbeat { nonce } => {
-                                input_shared.liveness.acknowledge(nonce);
-                                if let Some(trace) = &input_shared.diagnostics {
-                                    trace.event("Connection check", "Remote service responded");
-                                }
-                            }
+                            // Accept an in-flight reply from a legacy peer.
+                            Reply::Heartbeat { .. } => {}
                             Reply::AgentEvent(delivery) => {
                                 let channel = input_shared.agents.lock().unwrap().get(&delivery.agent).cloned();
                                 if let Some(channel) = channel { channel.push(delivery)?; }
@@ -495,6 +493,27 @@ impl Client {
                             }
                             Reply::DeletionProgress { request, progress } => {
                                 if let Some(current) = input_shared.deletion_progress.lock().unwrap().get_mut(&request) { *current = progress; }
+                            }
+                            Reply::SearchProgress { request, hits } => {
+                                let mut requests = input_shared.pending.lock().unwrap();
+                                if let Some(pending) = requests.get_mut(&request) {
+                                    let Some((remaining, bytes)) = pending.search_budget.as_mut() else {
+                                        return Err(io::Error::other("Unexpected remote search progress"));
+                                    };
+                                    let size = hits.iter().map(|hit| hit.text.len().saturating_add(hit.path.0.len()).saturating_add(128))
+                                        .fold(0usize, usize::saturating_add);
+                                    if hits.len() > *remaining || size > *bytes {
+                                        let completed = requests.remove(&request).unwrap();
+                                        drop(requests);
+                                        input_shared.capacity.notify_all();
+                                        let _ = completed.completed.try_send(Delivery::error("Remote search progress exceeds result budget".into()));
+                                    } else {
+                                        *remaining -= hits.len();
+                                        *bytes -= size;
+                                        let delivery = Delivery::new(Ok(Reply::SearchProgress { request, hits }), &input_shared, &input_wake);
+                                        let _ = pending.completed.try_send(delivery);
+                                    }
+                                }
                             }
                             Reply::WorkspaceChanges(batch) => {
                                 if let Some(trace) = &input_shared.diagnostics { trace.workspace_changes(&batch); }
@@ -531,7 +550,7 @@ impl Client {
             shared.fail(error.to_string());
             return Err(error);
         }
-        let client = Self(
+        Ok(Self(
             Arc::new(Handle {
                 sender,
                 controls,
@@ -540,12 +559,7 @@ impl Client {
                 hello,
             }),
             None,
-        );
-        if let Err(error) = liveness::start(Arc::downgrade(&shared), Arc::downgrade(&client.0.sender)) {
-            shared.fail(error.to_string());
-            return Err(error);
-        }
-        Ok(client)
+        ))
     }
     pub(crate) fn disconnect(&self) {
         self.0.shared.fail("Remote connection closed; verify any interrupted save before retrying. Your local edits are retained.".into());
@@ -934,6 +948,7 @@ impl Client {
             args,
             cwd,
             terminal,
+            output_window: process::OUTPUT_WINDOW,
         });
         let (request_id, result) = match submitted {
             Ok(submitted) => submitted,
@@ -1098,6 +1113,39 @@ impl Client {
     ) -> io::Result<Reply> {
         self.call_progress(command, cancel, |_| {})
     }
+    pub(crate) fn search(
+        &self,
+        mut query: search::Query,
+        cancel: &crate::background::CancellationToken,
+        mut consume: impl FnMut(Vec<search::Hit>) -> io::Result<()>,
+    ) -> io::Result<bool> {
+        query.stream = true;
+        let (id, replies) = self.submit_inner(Command::Search(query), Some((Duration::from_secs(120), Some(cancel))))?;
+        // A healthy scan on a slow remote filesystem has no fixed total
+        // deadline. Transport EOF and I/O errors handle disconnection.
+        let result = (|| loop {
+            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            let reply = match replies.recv_timeout(Duration::from_millis(20)) {
+                Ok(reply) => reply.take().map_err(Failure::into_io)?,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(error) => return Err(io::Error::other(error)),
+            };
+            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            match reply {
+                Reply::SearchProgress { request, hits } if request == id => consume(hits)?,
+                Reply::Search { hits, truncated } => {
+                    if !hits.is_empty() { consume(hits)?; }
+                    return Ok(truncated);
+                }
+                _ => return Err(io::Error::other("Invalid remote search reply")),
+            }
+        })();
+        if let Err(error) = &result {
+            self.0.shared.stop(id, error);
+            let _ = self.notify(Command::Cancel { request: id });
+        }
+        result
+    }
     pub(crate) fn call_progress(
         &self,
         command: Command,
@@ -1234,7 +1282,20 @@ impl Client {
             .as_ref()
             .and_then(|trace| trace.request(id, &command, &self.hello().root)));
         let submitted = (|| {
-            let (completed, result) = mpsc::sync_channel(1);
+            // Search batches wake their worker immediately, without blocking
+            // the transport reader. Their total count/bytes retain the same
+            // bounds as a single legacy search reply.
+            let search_budget = match &command {
+                Command::Search(query) if query.stream => Some((query.limit.min(100_000), MAX_PAYLOAD_BYTES)),
+                _ => None,
+            };
+            let (completed, result) = if search_budget.is_some() {
+                let (sender, receiver) = mpsc::channel();
+                (Completion::Search(sender), receiver)
+            } else {
+                let (sender, receiver) = mpsc::sync_channel(1);
+                (Completion::Single(sender), receiver)
+            };
             let retained = match &command {
                 Command::Canonicalize { paths } => paths
                     .iter()
@@ -1343,6 +1404,7 @@ impl Client {
                         completed,
                         retained,
                         operation: operation.clone(),
+                        search_budget,
                     },
                 );
             }
@@ -1404,11 +1466,6 @@ fn write_controls(
     input: &mpsc::Receiver<Request>,
     session: u64,
 ) -> io::Result<()> {
-    if let Some(nonce) = shared.liveness.take_outgoing() {
-        wire::write_message(writer, 'C', session, 0, &wire::encode(&Request {
-            id: 0, workspace: None, command: Command::Heartbeat { nonce },
-        })?)?;
-    }
     let batch = std::mem::take(&mut *shared.agent_closed.lock().unwrap());
     for agent in batch {
         wire::write_message(

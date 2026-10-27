@@ -90,6 +90,7 @@ impl App {
         self.search_generation = self.search_generation.wrapping_add(1);
         self.global_search_results.clear();
         self.global_search_truncated = false;
+        self.global_search_stopped = false;
         self.global_search_error = None;
         self.global_search_selected = 0;
         self.global_search_scroll = 0;
@@ -121,6 +122,7 @@ impl App {
         self.bg_global_search_running = true;
         if let Some(remote) = self.remote_workspace.clone() {
             let request = crate::remote::search::Query {
+                stream: true,
                 text: query.clone(), case_sensitive, whole_word, regex: is_regex,
                 include: include.clone(), exclude: exclude.clone(), limit: max_results,
                 files_exclude: settings.files_exclude, search_exclude: settings.search_exclude,
@@ -164,19 +166,22 @@ impl App {
                 if !local.is_empty() {
                     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results: local, done: false, generation, truncated: false });
                 }
-                let response = remote.client.call_cancellable(crate::remote::Command::Search(request), &cancel);
-                if cancel.is_cancelled() { return; }
-                match response {
-                    Ok(crate::remote::Reply::Search { hits, truncated }) => {
+                let response = remote.client.search(request, &cancel, |hits| {
+                        if cancel.is_cancelled() { return Err(std::io::ErrorKind::Interrupted.into()); }
                         let results = hits.into_iter().map(|hit| crate::app::GlobalSearchResult {
                             file_path: remote.view_key(&hit.path), line_num: hit.line, line_text: hit.text,
                             col_start: hit.start, col_end: hit.end, context_before: None, context_after: None,
                         }).collect();
-                        let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results, done: true, generation, truncated });
+                        sender.send(crate::background::BackgroundResult::GlobalSearchResults { results, done: false, generation, truncated: false })
+                            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Search result receiver closed"))
+                });
+                if cancel.is_cancelled() { return; }
+                match response {
+                    Ok(truncated) => {
+                        let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results: Vec::new(), done: true, generation, truncated });
                     }
-                    result => {
-                        let error = match result { Err(error) => error.to_string(), _ => "Invalid remote search reply".into() };
-                        search_failed(&sender, generation, error);
+                    Err(error) => {
+                        search_failed(&sender, generation, error.to_string());
                     }
                 }
             }));
@@ -232,6 +237,16 @@ impl App {
             }
         }));
     }
+    pub(crate) fn stop_global_search(&mut self) {
+        if !self.bg_global_search_running { return; }
+        if let Some(token) = self.search_cancel_token.take() { token.cancel(); }
+        // Reject queued results and failures as well as cancelling new work.
+        // Keep the query, results, selection, and scroll position intact.
+        self.search_generation = self.search_generation.wrapping_add(1);
+        self.bg_global_search_running = false;
+        self.global_search_stopped = true;
+    }
+
     pub(crate) fn clear_global_search(&mut self) {
         self.push_global_search_history();
         self.global_search_query.clear();

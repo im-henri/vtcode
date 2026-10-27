@@ -74,6 +74,7 @@ pub(crate) struct App {
     pub active_tab: usize,
     pub tab_scroll_offset: usize,
     pub tab_scroll_manual_anchor: Option<usize>,
+    pub(crate) tab_strip_scroll: Option<crate::ui_chrome_tabs::StripScroll>,
     // Editor groups — groups[i] stores saved state for non-active groups.
     // The active group's state lives in the flat App fields above.
     pub groups: Vec<EditorGroup>,
@@ -349,6 +350,7 @@ pub(crate) struct App {
     pub global_search_replace_visible: bool,
     pub global_search_results: crate::search_results::SearchResults,
     pub global_search_truncated: bool,
+    pub(crate) global_search_stopped: bool,
     pub global_search_selected: usize,
     pub global_search_scroll: usize,
     pub max_global_search_results: usize,
@@ -493,6 +495,7 @@ pub(crate) struct App {
     pub active_terminal: usize,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
+    pub(crate) terminal_clicks: crate::app_terminal_selection::TerminalClicks,
     pub(crate) terminal_selection_drag: Option<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_mouse_capture: Option<crate::app_terminal_selection::TerminalSurface>,
     pub task_list: Vec<TaskDefinition>,
@@ -1130,6 +1133,7 @@ impl App {
             active_tab: 0,
             tab_scroll_offset: 0,
             tab_scroll_manual_anchor: None,
+            tab_strip_scroll: None,
             groups: Vec::new(),
             active_group: 0,
             split_vertical: true,
@@ -1356,6 +1360,7 @@ impl App {
             global_search_replace_visible: true,
             global_search_results: Default::default(),
             global_search_truncated: false,
+            global_search_stopped: false,
             global_search_selected: 0,
             global_search_scroll: 0,
             max_global_search_results: 20_000,
@@ -1492,6 +1497,7 @@ impl App {
             active_terminal: 0,
             next_terminal_to_process: 0,
             terminal_surfaces: Vec::new(),
+            terminal_clicks: Default::default(),
             terminal_selection_drag: None,
             terminal_mouse_capture: None,
             task_list: Vec::new(),
@@ -1605,7 +1611,7 @@ impl App {
             default_tab_size: 4,
             default_use_tabs: false,
             default_word_wrap: false,
-            default_whitespace_mode: WhitespaceMode::Trailing,
+            default_whitespace_mode: WhitespaceMode::Boundary,
             comment_whitespace_mode: Some(WhitespaceMode::All),
             default_read_only: false,
             default_cursor_surrounding_lines: 5,
@@ -1906,6 +1912,9 @@ impl App {
             workspace_watcher_active: false,
             reap_frame_counter: 0,
         };
+        app.animation_settings.set_duration(
+            crate::animation_config::AnimationEffect::CursorSmear, 300,
+        );
         let defaults = app.current_settings();
         app.settings_defaults = defaults.clone();
         app.settings_effective = defaults;
@@ -6269,6 +6278,59 @@ mod tests {
         assert!(app.global_search_truncated);
         assert!(!app.bg_global_search_running);
         assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn stopping_global_search_keeps_results_and_rejects_queued_and_late_replies() {
+        let mut app = App::test_new();
+        app.search_generation = 7;
+        app.global_search_query = "needle".into();
+        app.global_search_results = (0..3).map(sample_global_search_result).collect();
+        app.global_search_selected = 1;
+        app.global_search_scroll = 1;
+        let token = crate::background::CancellationToken::new();
+        app.search_cancel_token = Some(token.clone());
+        app.bg_global_search_running = true;
+        app.background.sender.send(crate::background::BackgroundResult::GlobalSearchResults {
+            results: vec![sample_global_search_result(3)],
+            done: false,
+            generation: 7,
+            truncated: false,
+        }).unwrap();
+
+        app.stop_global_search();
+        assert!(token.is_cancelled());
+        assert!(app.search_cancel_token.is_none());
+        assert!(!app.bg_global_search_running);
+        assert!(app.global_search_stopped);
+        assert_eq!(app.search_generation, 8);
+
+        app.background.sender.send(crate::background::BackgroundResult::GlobalSearchResults {
+            results: vec![sample_global_search_result(4)],
+            done: true,
+            generation: 7,
+            truncated: true,
+        }).unwrap();
+        app.background.sender.send(crate::background::BackgroundResult::GlobalSearchFailed {
+            generation: 7,
+            error: "cancelled request failed".into(),
+        }).unwrap();
+        assert!(!app.poll_background_results());
+        assert_eq!(app.global_search_query, "needle");
+        assert_eq!(app.global_search_results.len(), 3);
+        for (id, result) in app.global_search_results.iter().enumerate() {
+            assert_eq!(result.file_path, sample_global_search_result(id).file_path);
+        }
+        assert_eq!(app.global_search_selected, 1);
+        assert_eq!(app.global_search_scroll, 1);
+        assert!(!app.global_search_truncated);
+        assert!(app.global_search_error.is_none());
+
+        app.stop_global_search();
+        assert_eq!(app.search_generation, 8, "stopping an idle search is a no-op");
+        app.clear_global_search();
+        assert!(!app.global_search_stopped);
+        assert!(app.global_search_results.is_empty());
     }
 
     #[test]

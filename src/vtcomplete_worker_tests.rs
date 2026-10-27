@@ -205,21 +205,24 @@ fn explicit_completion_supports_one_letter_and_empty_member_prefixes() {
 }
 
 #[test]
-fn automatic_completion_stays_quiet_in_comments_and_quotes() {
+fn automatic_completion_stays_quiet_in_quotes_and_allows_comments() {
     for text in [
-        "// logg",
-        "value // logg",
-        "# logg",
-        "-- logg",
         "value = \"logg",
         "value = 'logg",
-        "/* logg",
+        "value = `logg",
     ] {
         let mut active = snapshot(1, text, 0, true);
         active.cursor_col = text.chars().count();
         assert!(quiet_context(&active), "{text:?}");
     }
     for text in [
+        "// logg",
+        "value // logg",
+        "# logg",
+        "-- logg",
+        "/* logg",
+        "/* nested /* comment */\n * logg",
+        "// quote \"logg",
         "logger.pr",
         "f(\"value\"); logg",
         "&'static value",

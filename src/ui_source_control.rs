@@ -17,6 +17,7 @@ use crate::ui_pickers::truncate_to_width;
 
 const SC_ACTIONS_LABEL: &str = " Actions ▾ ";
 const SC_SECTION_ACTION_WIDTH: u16 = 3;
+pub(crate) const SC_FILE_ACTION_HIT_WIDTH: u16 = 5;
 const SC_CHANGES_FIXED_ROWS: u16 = 6;
 const SC_INITIALIZE_BUTTON_LABEL: &str = "Initialize Repository";
 
@@ -760,6 +761,12 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         // action hint: − = unstage, + = stage
         let action = if file.staged { "−" } else { "+" };
         let action_color = app.colors.ui.git_status_color(if file.staged { 'D' } else { 'A' }, row_bg);
+        let action_hovered = is_hovered
+            && app.mouse_col.saturating_sub(content_area.x) < SC_FILE_ACTION_HIT_WIDTH;
+        let action_style = if action_hovered {
+            app.colors.ui.toolbar_layer_style(app.colors.ui.git_decoration(if file.staged { 'D' } else { 'A' }),
+                row_bg, true, false, false)
+        } else { row_style.fg(action_color) };
 
         // Build file row: [indent][icon][name]...[parent][status]. Filename is
         // deliberately allocated before parent so narrow sidebars stay useful.
@@ -788,7 +795,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
             status_width,
         );
         lines.push(Line::from(vec![
-            Span::styled(action_span, row_style.fg(action_color)),
+            Span::styled(action_span, action_style),
             Span::styled(icon_span, row_style.fg(icon_color)),
             Span::styled(
                 display_name,

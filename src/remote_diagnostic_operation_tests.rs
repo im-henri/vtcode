@@ -97,6 +97,7 @@ fn chunk_input_and_polling_hot_paths_remain_silent_and_arguments_are_private() {
         args: vec!["--token=PRIVATE TOKEN".into()],
         cwd: path("src"),
         terminal: None,
+        output_window: crate::remote::process::OUTPUT_WINDOW,
     };
     trace
         .request(2, &command, "/project")

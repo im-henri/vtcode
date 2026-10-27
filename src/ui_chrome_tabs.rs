@@ -16,6 +16,10 @@ mod tab_path_labels;
 use tab_path_labels::TabNameDuplicates;
 pub(crate) use tab_path_labels::NameCache;
 
+#[path = "tab_strip_scroll.rs"]
+mod strip_scroll;
+pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, scroll_by as scroll_strip_by};
+
 /// Width of each tab-bar scroll indicator ("◂ " / " ▸").
 const TAB_SCROLL_INDICATOR_WIDTH: usize = 2;
 
@@ -44,6 +48,9 @@ pub(crate) struct TabBarHits {
     /// more tabs are clipped behind the right scroll indicator.
     pub after_tabs: Rect,
     pub groups: Vec<(u64, Rect)>,
+    tab_clips: Vec<usize>,
+    group_clips: Vec<(usize, usize)>,
+    new_tab_clip: usize,
 }
 
 impl TabBarHits {
@@ -56,6 +63,9 @@ impl TabBarHits {
     }
 
     fn for_group_with_names(app: &App, area: Rect, group: usize, names: Option<&TabNameDuplicates>) -> Self {
+        if let Some(scroll) = strip_scroll_position(app, group) {
+            return strip_scroll::hits(app, area, group, scroll, names);
+        }
         let mut hits = Self {
             tabs: Vec::new(),
             groups: Vec::new(),
@@ -63,6 +73,9 @@ impl TabBarHits {
             right: Rect::default(),
             new_tab: Rect::default(),
             after_tabs: Rect::default(),
+            tab_clips: Vec::new(),
+            group_clips: Vec::new(),
+            new_tab_clip: 0,
         };
         if area.is_empty() {
             return hits;
@@ -299,6 +312,7 @@ pub(crate) fn draw_tab_bar_for_group(
             if let Some(cache) = cache.as_ref().filter(|cache| {
                 cache.cells.area == area
                     && cache.scroll == app.tab_scroll_offset
+                    && cache.strip_scroll == strip_scroll_position(app, group)
                     && cache.editor == app.editor().map(|editor| editor.navigation_id)
             }) {
                 let buffer = f.buffer_mut();
@@ -309,7 +323,8 @@ pub(crate) fn draw_tab_bar_for_group(
                         &cache.cells.content[source..source + usize::from(area.width)],
                     );
                 }
-                draw_tab_indicator(f, app, area, cache.active, cache.track, cache.scroll, now);
+                draw_tab_indicator(f, app, area, cache.active, cache.track,
+                    cache.strip_scroll.map_or(cache.scroll, |scroll| scroll.columns), now);
                 return;
             }
         }
@@ -320,7 +335,9 @@ pub(crate) fn draw_tab_bar_for_group(
         } else {
             (&app.groups[group].tabs, app.groups[group].active_tab, app.groups[group].tab_scroll_offset)
         };
-    let duplicates = TabNameDuplicates::for_tabs(app, tabs, active, scroll, area.width);
+    let strip_scroll = strip_scroll_position(app, group);
+    let duplicates = if strip_scroll.is_some() { TabNameDuplicates::for_scroll(app, tabs, active) }
+        else { TabNameDuplicates::for_tabs(app, tabs, active, scroll, area.width) };
     let hits = TabBarHits::for_group_with_names(app, area, group, duplicates.as_ref());
     let bg = app.colors.bg_tabbar;
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
@@ -335,13 +352,14 @@ pub(crate) fn draw_tab_bar_for_group(
             }
         }
     }
-    for (id, rect) in &hits.groups {
+    for (position, (id, rect)) in hits.groups.iter().enumerate() {
+        let (clip, width) = hits.group_clips.get(position).copied().unwrap_or((0, usize::from(rect.width)));
         let named = &app.desks.groups[id];
         let (count, dirty) = group_stats.get(id).copied().unwrap_or_default();
         let suffix = format!(" {}{} ", count, if dirty { "●" } else { "" });
         let name = crate::ui_desks::clipped_name(
             &named.name,
-            usize::from(rect.width).saturating_sub(suffix.width() + 2),
+            width.saturating_sub(suffix.width() + 2),
         );
         let color = crate::ui_desks::group_color(app, named.color);
         let label = format!(
@@ -351,7 +369,7 @@ pub(crate) fn draw_tab_bar_for_group(
             suffix
         );
         f.render_widget(
-            Paragraph::new(label).style(
+            Paragraph::new(label).scroll((0, crate::helpers::len_as_u16(clip))).style(
                 Style::default()
                     .fg(color)
                     .bg(bg)
@@ -362,7 +380,9 @@ pub(crate) fn draw_tab_bar_for_group(
         );
     }
     let mut active_rect = None;
-    for &(i, rect, close) in &hits.tabs {
+    let mut file_icon_areas = Vec::new();
+    for (position, &(i, rect, close)) in hits.tabs.iter().enumerate() {
+        let clip = hits.tab_clips.get(position).copied().unwrap_or(0);
         let tab = &tabs[i];
         let is_active = i == active;
         let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
@@ -438,16 +458,26 @@ pub(crate) fn draw_tab_bar_for_group(
         } else {
             style
         };
+        if matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision) {
+            let start = if tab.pinned { " 📌".width() } else { 1 } + if tab.has_unsaved_changes() { 2 } else { 0 };
+            let first = start.max(clip);
+            let end = (start + icon.width()).min(clip + usize::from(rect.width));
+            if end > first {
+                file_icon_areas.push(Rect::new(rect.x + (first - clip) as u16, rect.y, (end - first) as u16, 1));
+            }
+        }
         spans.push(Span::styled(icon, icon_style));
         if tab.editor.disk_unavailable && tab.kind == crate::app::TabKind::File {
             spans.push(Span::styled("~", style));
         }
-        spans.push(Span::styled(tab_display_name_with_duplicates(app, i, tab, duplicates.as_ref()), style));
+        let display_name = tab_display_name_with_duplicates(app, i, tab, duplicates.as_ref());
+        let width = tab_label_width(app, tab, &display_name);
+        spans.push(Span::styled(display_name, style));
         spans.push(Span::styled("   ", style));
-        f.render_widget(Paragraph::new(Line::from(spans)).style(style), rect);
+        f.render_widget(Paragraph::new(Line::from(spans)).scroll((0, crate::helpers::len_as_u16(clip))).style(style), rect);
         if !close.is_empty() && (is_active || hovered) {
             f.render_widget(
-                Paragraph::new(" × ").style(app.colors.ui.toolbar_style(
+                Paragraph::new(" × ").scroll((0, crate::helpers::len_as_u16(clip.saturating_sub(width - 3)))).style(app.colors.ui.toolbar_style(
                     fg,
                     tab_bg,
                     close.contains((app.mouse_col, app.mouse_row).into()),
@@ -463,7 +493,7 @@ pub(crate) fn draw_tab_bar_for_group(
     }
     for (rect, label) in [(hits.left, "◂ "), (hits.right, " ▸"), (hits.new_tab, " + ")] {
         f.render_widget(
-            Paragraph::new(label).style(app.colors.ui.toolbar_style(
+            Paragraph::new(label).scroll((0, if rect == hits.new_tab { hits.new_tab_clip as u16 } else { 0 })).style(app.colors.ui.toolbar_style(
                 app.colors.ui.fg_tab_active,
                 bg,
                 rect.contains((app.mouse_col, app.mouse_row).into()),
@@ -472,6 +502,20 @@ pub(crate) fn draw_tab_bar_for_group(
             )),
             rect,
         );
+    }
+    if strip_scroll.is_some() && area.width > 0 {
+        let gradient = &app.colors.gradients.bg_tabbar;
+        if gradient.start != gradient.end {
+            let computed = crate::app_theme::GradientPrecomputed::new(area.width, 1, gradient.angle_deg);
+            for x in area.x..area.right() {
+                if let Some(cell) = f.buffer_mut().cell_mut((x, area.y))
+                    && (cell.bg == bg || cell.bg == app.colors.bg_tab_inactive)
+                {
+                    cell.set_bg(crate::app_theme::lerp_color(gradient.start, gradient.end, computed.t_at(x - area.x, 0)));
+                }
+            }
+            crate::ui_colors::ensure_control_row_contrast_except(f.buffer_mut(), area, &app.colors.ui, &file_icon_areas);
+        }
     }
     if group == app.active_group {
         let (_, _, prefix) = crate::ui_desks::controls(app, area, group);
@@ -485,6 +529,7 @@ pub(crate) fn draw_tab_bar_for_group(
                 active: active_rect,
                 track: (usize::from(prefix), end),
                 scroll: app.tab_scroll_offset,
+                strip_scroll,
                 editor: app.editor().map(|editor| editor.navigation_id),
             });
             cache.cells.resize(area);
@@ -498,6 +543,7 @@ pub(crate) fn draw_tab_bar_for_group(
             cache.active = active_rect;
             cache.track = (usize::from(prefix), end);
             cache.scroll = app.tab_scroll_offset;
+            cache.strip_scroll = strip_scroll;
             cache.editor = app.editor().map(|editor| editor.navigation_id);
         } else {
             *app.tab_animation_cache.borrow_mut() = None;
@@ -508,7 +554,7 @@ pub(crate) fn draw_tab_bar_for_group(
             area,
             active_rect,
             (usize::from(prefix), end),
-            app.tab_scroll_offset,
+            strip_scroll.map_or(app.tab_scroll_offset, |scroll| scroll.columns),
             now,
         );
     }
@@ -519,12 +565,14 @@ pub(crate) struct TabAnimationCache {
     active: Option<Rect>,
     track: (usize, usize),
     scroll: usize,
+    strip_scroll: Option<StripScroll>,
     editor: Option<u64>,
 }
 
 fn draw_tab_bar_at(f: &mut Frame, app: &App, area: Rect, now: std::time::Instant) {
     if app.tabs.iter().any(|tab| app.tab_group(tab).is_some())
         || !app.desks.selected_tabs.is_empty()
+        || strip_scroll_position(app, app.active_group).is_some()
     {
         draw_tab_bar_for_group(f, app, area, app.active_group, now);
         return;
@@ -546,6 +594,7 @@ fn draw_plain_tab_bar_at(f: &mut Frame, app: &App, area: Rect, now: std::time::I
         if let Some(cache) = cache.as_ref().filter(|cache| {
             cache.cells.area == area
                 && cache.scroll == app.tab_scroll_offset
+                && cache.strip_scroll.is_none()
                 && cache.editor == app.editor().map(|editor| editor.navigation_id)
         }) {
             let buffer = f.buffer_mut();
@@ -753,6 +802,7 @@ fn draw_tab_bar_labels(
             active: active_tab_area,
             track: (tab_track_start, tab_track_end),
             scroll,
+            strip_scroll: None,
             editor: app.editor().map(|editor| editor.navigation_id),
         });
         cache.cells.resize(area);
@@ -766,6 +816,7 @@ fn draw_tab_bar_labels(
         cache.active = active_tab_area;
         cache.track = (tab_track_start, tab_track_end);
         cache.scroll = scroll;
+        cache.strip_scroll = None;
         cache.editor = app.editor().map(|editor| editor.navigation_id);
     } else {
         *app.tab_animation_cache.borrow_mut() = None;

@@ -40,6 +40,7 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
+        app.terminal_clicks.press();
         app.context_menu_button_drag = None;
     }
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(MouseButton::Left)) {
@@ -112,15 +113,16 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         .and_then(crate::ui_chrome::agent_chat_button_area)
         .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_navigation = crate::ui_chrome::navigation_button_at(app, prev_mouse_col, prev_mouse_row).is_some();
-    let was_over_commit_action = app.show_explorer
+    let was_over_source_control = app.show_explorer
         && app.sidebar_view == crate::app::SidebarView::SourceControl
-        && [app.source_control_toggle_area, app.source_control_commit_area, app.source_control_amend_area,
+        && (app.source_control_detail_area().is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
+            || [app.source_control_toggle_area, app.source_control_commit_area, app.source_control_amend_area,
             app.source_control_stage_all_area, app.source_control_unstage_all_area, app.source_control_discard_all_area,
             app.source_control_untracked_stage_area, app.source_control_untracked_discard_area,
             app.source_control_actions_area, app.repositories.reopen_button]
             .into_iter()
             .flatten()
-            .any(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
+            .any(|area| area.contains((prev_mouse_col, prev_mouse_row).into())));
 
     if crate::ui_desks::handle_mouse(app, mouse) { return; }
     // Track mouse position for hover effects during rendering
@@ -411,7 +413,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // Only redraw if hover state actually changed or a painted tooltip
             // follows the pointer. Modifier/decorated/custom surfaces retain
             // their existing route, including removal of a previous hover.
-            let changed = modifiers_changed || had_chrome_hover || was_over_search_control || was_over_zen_exit || was_over_commit_action
+            let changed = modifiers_changed || had_chrome_hover || was_over_search_control || was_over_zen_exit || was_over_source_control
                 || was_over_agent_chat || was_over_navigation
                 || was_over_performance
                 || extension_hover || app.lsp_hover_active
@@ -1684,7 +1686,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                             crate::source_control_rows::Row::Section(group) => ClickAction::ToggleGroup(group),
                                             crate::source_control_rows::Row::File(i) => {
                                                 let rel_x = col.saturating_sub(exp_area.x);
-                                                if rel_x < 5 {
+                                                if rel_x < crate::ui_source_control::SC_FILE_ACTION_HIT_WIDTH {
                                                     if app.source_control_files[i].staged {
                                                         ClickAction::SelectAndUnstage(i)
                                                     } else {
@@ -1975,6 +1977,10 @@ fn tab_bar_right_indicator_start(app: &App, tab_area: ratatui::layout::Rect) -> 
 }
 
 pub(crate) fn ensure_group_active_tab_visible(group: &mut crate::app::EditorGroup) {
+    if let Some(scroll) = group.tab_strip_scroll {
+        if group.tabs.get(group.active_tab).is_some_and(|tab| tab.editor.navigation_id == scroll.anchor) { return; }
+        group.tab_strip_scroll = None;
+    }
     if group.tabs.is_empty() {
         group.tab_scroll_offset = 0;
         return;
@@ -2015,6 +2021,14 @@ pub(crate) fn handle_tab_click(app: &mut App, col: u16, tab_area: ratatui::layou
 }
 
 fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits: &TabBarHits) -> bool {
+    if crate::ui_chrome_tabs::strip_scroll_position(app, app.active_group).is_some() {
+        let direction = if TabBarHits::contains(hits.left, col) { Some(-1) }
+            else if TabBarHits::contains(hits.right, col) { Some(1) } else { None };
+        if let Some(direction) = direction {
+            crate::ui_chrome_tabs::scroll_strip_by(app, tab_area, app.active_group, direction * 3);
+            return true;
+        }
+    }
     if TabBarHits::contains(hits.left, col) {
         app.tab_scroll_offset = app.tab_scroll_offset.saturating_sub(1);
         app.tab_scroll_manual_anchor = Some(app.active_tab);
@@ -2027,6 +2041,7 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
     }
     let Some((index, rect, close)) = hits.tab_at(col) else { return false; };
     app.tab_scroll_manual_anchor = None;
+    app.tab_strip_scroll = None;
     if TabBarHits::contains(close, col) {
         reconcile_dragging_tab_after_close(app, index);
         app.close_tab(index);

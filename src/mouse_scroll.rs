@@ -15,6 +15,39 @@ fn docked_terminal_at(app: &App, col: u16, row: u16) -> Option<usize> {
     None
 }
 
+/// Wheel input belongs to the strip under the pointer, including unfocused
+/// panes. Manual movement must survive the active-tab reveal on the next frame.
+fn scroll_tabs_at(app: &mut App, col: u16, row: u16, down: bool, switch: bool) -> bool {
+    let point = (col, row).into();
+    let mut target = app.tab_bar_area.filter(|area| area.contains(point)).map(|area| (app.active_group, area));
+    if target.is_none() && app.split_active() {
+        target = app.groups.iter().enumerate().find_map(|(index, group)| {
+            if index == app.active_group || group.desk != app.desks.active { return None; }
+            group.tab_bar_area.filter(|area| area.contains(point)).map(|area| (index, area))
+        });
+    }
+    let Some((index, area)) = target else { return false; };
+    if !switch {
+        let distance = app.scroll_speed.max(1).min(isize::MAX as usize) as isize;
+        crate::ui_chrome_tabs::scroll_strip_by(app, area, index, if down { distance } else { -distance });
+    } else if index == app.active_group {
+        if !app.tabs.is_empty() {
+            app.active_tab = if down { (app.active_tab + 1) % app.tabs.len() }
+                else if app.active_tab == 0 { app.tabs.len() - 1 } else { app.active_tab - 1 };
+            app.validate_diff_state_for_active_tab();
+            app.tab_scroll_manual_anchor = None;
+            app.tab_strip_scroll = None;
+            app.ensure_active_tab_visible();
+        }
+    } else if let Some(group) = app.groups.get_mut(index) && !group.tabs.is_empty() {
+        group.active_tab = if down { (group.active_tab + 1) % group.tabs.len() }
+            else if group.active_tab == 0 { group.tabs.len() - 1 } else { group.active_tab - 1 };
+        group.tab_strip_scroll = None;
+        crate::mouse::ensure_group_active_tab_visible(group);
+    }
+    true
+}
+
 /// Settings panes register their rendered content even when another group has
 /// keyboard focus. Wheel input belongs to the visible pane under the pointer.
 fn scroll_settings_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
@@ -78,25 +111,7 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
         return;
     }
     if scroll_repositories_at(app, col, row, false) { return; }
-    // Scroll on tab bar = scroll tab bar, or switch tabs with Shift
-    if let Some(tab_area) = app.tab_bar_area {
-        if col >= tab_area.x
-            && col < tab_area.x + tab_area.width
-            && row >= tab_area.y
-            && row < tab_area.y + tab_area.height
-            && !app.tabs.is_empty()
-        {
-            if shift_scroll {
-                app.active_tab =
-                    if app.active_tab == 0 { app.tabs.len() - 1 } else { app.active_tab - 1 };
-                app.tab_scroll_manual_anchor = None;
-                app.ensure_active_tab_visible();
-            } else {
-                app.tab_scroll_offset = app.tab_scroll_offset.saturating_sub(1);
-            }
-            return;
-        }
-    }
+    if scroll_tabs_at(app, col, row, false, shift_scroll) { return; }
     if app.handle_extension_view_scroll_input(
         col,
         row,
@@ -187,15 +202,6 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
                     return;
                 }
             }
-            if let Some(tba) = group.tab_bar_area {
-                if row >= tba.y && row < tba.y + tba.height && col >= tba.x && col < tba.x + tba.width && !group.tabs.is_empty() {
-                    if shift_scroll {
-                        group.active_tab = if group.active_tab == 0 { group.tabs.len() - 1 } else { group.active_tab - 1 };
-                        crate::mouse::ensure_group_active_tab_visible(group);
-                    }
-                    return;
-                }
-            }
         }
     }
     // Terminal dock scrollback (scroll up)
@@ -223,25 +229,7 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
         return;
     }
     if scroll_repositories_at(app, col, row, true) { return; }
-    // Scroll on tab bar = scroll tab bar, or switch tabs with Shift
-    if let Some(tab_area) = app.tab_bar_area {
-        if col >= tab_area.x
-            && col < tab_area.x + tab_area.width
-            && row >= tab_area.y
-            && row < tab_area.y + tab_area.height
-            && !app.tabs.is_empty()
-        {
-            if shift_scroll {
-                app.active_tab = (app.active_tab + 1) % app.tabs.len();
-                app.validate_diff_state_for_active_tab();
-                app.tab_scroll_manual_anchor = None;
-                app.ensure_active_tab_visible();
-            } else {
-                app.tab_scroll_offset = (app.tab_scroll_offset + 1).min(app.max_tab_scroll_offset());
-            }
-            return;
-        }
-    }
+    if scroll_tabs_at(app, col, row, true, shift_scroll) { return; }
     if app.handle_extension_view_scroll_input(
         col,
         row,
@@ -338,15 +326,6 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
                     return;
                 }
             }
-            if let Some(tba) = group.tab_bar_area {
-                if row >= tba.y && row < tba.y + tba.height && col >= tba.x && col < tba.x + tba.width && !group.tabs.is_empty() {
-                    if shift_scroll {
-                        group.active_tab = (group.active_tab + 1) % group.tabs.len();
-                        crate::mouse::ensure_group_active_tab_visible(group);
-                    }
-                    return;
-                }
-            }
         }
     }
     // Terminal dock scrollback (scroll down)
@@ -363,46 +342,10 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
 
 /// Handle scroll-left events.
 pub(crate) fn handle_scroll_left(app: &mut App, col: u16, row: u16, modifiers: KeyModifiers) {
+    if scroll_tabs_at(app, col, row, false, modifiers.contains(KeyModifiers::SHIFT)) { return; }
     if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, -6) { return; }
     if app.handle_extension_view_scroll_input(col, row, -1, modifiers, "horizontal") { return; }
     if app.scroll_diff_at(col, row, true, -6) { return; }
-    if let Some(tab_area) = app.tab_bar_area {
-        if col >= tab_area.x
-            && col < tab_area.x + tab_area.width
-            && row >= tab_area.y
-            && row < tab_area.y + tab_area.height
-            && !app.tabs.is_empty()
-        {
-            app.active_tab =
-                if app.active_tab == 0 { app.tabs.len() - 1 } else { app.active_tab - 1 };
-            app.tab_scroll_manual_anchor = None;
-            app.ensure_active_tab_visible();
-            return;
-        }
-    }
-    if app.split_active() {
-        for (gi, group) in app.groups.iter_mut().enumerate() {
-            if gi == app.active_group {
-                continue;
-            }
-            if let Some(tba) = group.tab_bar_area {
-                if row >= tba.y
-                    && row < tba.y + tba.height
-                    && col >= tba.x
-                    && col < tba.x + tba.width
-                    && !group.tabs.is_empty()
-                {
-                    group.active_tab = if group.active_tab == 0 {
-                        group.tabs.len() - 1
-                    } else {
-                        group.active_tab - 1
-                    };
-                    crate::mouse::ensure_group_active_tab_visible(group);
-                    return;
-                }
-            }
-        }
-    }
     if let Some(ed) = app.editor_mut() {
         ed.horizontal_scroll = ed.horizontal_scroll.saturating_sub(6);
     }
@@ -410,42 +353,10 @@ pub(crate) fn handle_scroll_left(app: &mut App, col: u16, row: u16, modifiers: K
 
 /// Handle scroll-right events.
 pub(crate) fn handle_scroll_right(app: &mut App, col: u16, row: u16, modifiers: KeyModifiers) {
+    if scroll_tabs_at(app, col, row, true, modifiers.contains(KeyModifiers::SHIFT)) { return; }
     if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, 6) { return; }
     if app.handle_extension_view_scroll_input(col, row, 1, modifiers, "horizontal") { return; }
     if app.scroll_diff_at(col, row, true, 6) { return; }
-    if let Some(tab_area) = app.tab_bar_area {
-        if col >= tab_area.x
-            && col < tab_area.x + tab_area.width
-            && row >= tab_area.y
-            && row < tab_area.y + tab_area.height
-            && !app.tabs.is_empty()
-        {
-            app.active_tab = (app.active_tab + 1) % app.tabs.len();
-            app.validate_diff_state_for_active_tab();
-            app.tab_scroll_manual_anchor = None;
-            app.ensure_active_tab_visible();
-            return;
-        }
-    }
-    if app.split_active() {
-        for (gi, group) in app.groups.iter_mut().enumerate() {
-            if gi == app.active_group {
-                continue;
-            }
-            if let Some(tba) = group.tab_bar_area {
-                if row >= tba.y
-                    && row < tba.y + tba.height
-                    && col >= tba.x
-                    && col < tba.x + tba.width
-                    && !group.tabs.is_empty()
-                {
-                    group.active_tab = (group.active_tab + 1) % group.tabs.len();
-                    crate::mouse::ensure_group_active_tab_visible(group);
-                    return;
-                }
-            }
-        }
-    }
     let max_w = app.cached_max_line_width;
     if let Some(ed) = app.editor_mut() {
         let max_scroll = max_w.saturating_sub(ed.viewport_width);
@@ -518,23 +429,25 @@ mod tests {
     // --- Tab bar scroll ---
 
     #[test]
-    fn scroll_up_on_tab_bar_decrements_tab_scroll_offset() {
+    fn scroll_up_on_tab_bar_moves_columns_and_survives_active_tab_reveal() {
         let mut app = make_app();
-        app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 200, 1));
-        app.tab_scroll_offset = 5;
+        let area = ratatui::layout::Rect::new(0, 0, 20, 1);
+        app.tab_bar_area = Some(area);
+        crate::ui_chrome_tabs::scroll_strip_by(&mut app, area, 0, 10);
         handle_scroll_up(&mut app, 10, 0, KeyModifiers::NONE);
-        assert_eq!(app.tab_scroll_offset, 4);
+        assert_eq!(app.tab_strip_scroll.unwrap().columns, 7);
+        app.ensure_active_tab_visible();
+        assert_eq!(app.tab_strip_scroll.unwrap().columns, 7);
+        assert_eq!(app.active_tab, 0);
     }
 
     #[test]
-    fn scroll_down_on_tab_bar_increments_tab_scroll_offset() {
+    fn scroll_down_on_tab_bar_moves_columns_without_switching_tabs() {
         let mut app = make_app();
-        app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 200, 1));
-        app.tab_scroll_offset = 0;
-        // max_tab_scroll_offset may be 0 for few tabs, so just verify no panic
+        app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 20, 1));
         handle_scroll_down(&mut app, 10, 0, KeyModifiers::NONE);
-        // tab_scroll_offset clamped by max_tab_scroll_offset
-        assert!(app.tab_scroll_offset <= app.max_tab_scroll_offset());
+        assert_eq!(app.tab_strip_scroll.unwrap().columns, 3);
+        assert_eq!(app.active_tab, 0);
     }
 
     #[test]
@@ -610,23 +523,23 @@ mod tests {
         assert_eq!(app.editor().unwrap().horizontal_scroll, 5); // max = 85-80=5
     }
 
-    // --- Scroll left/right on tab bar cycles tabs ---
+    // --- Shift+horizontal scroll on tab bar cycles tabs ---
 
     #[test]
-    fn scroll_left_on_tab_bar_switches_to_prev_tab() {
+    fn shift_scroll_left_on_tab_bar_switches_to_prev_tab() {
         let mut app = make_app();
         app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 200, 1));
         app.active_tab = 2;
-        handle_scroll_left(&mut app, 10, 0, KeyModifiers::NONE);
+        handle_scroll_left(&mut app, 10, 0, KeyModifiers::SHIFT);
         assert_eq!(app.active_tab, 1);
     }
 
     #[test]
-    fn scroll_right_on_tab_bar_switches_to_next_tab() {
+    fn shift_scroll_right_on_tab_bar_switches_to_next_tab() {
         let mut app = make_app();
         app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 200, 1));
         app.active_tab = 0;
-        handle_scroll_right(&mut app, 10, 0, KeyModifiers::NONE);
+        handle_scroll_right(&mut app, 10, 0, KeyModifiers::SHIFT);
         assert_eq!(app.active_tab, 1);
     }
 

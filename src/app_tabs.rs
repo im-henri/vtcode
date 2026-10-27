@@ -1619,6 +1619,12 @@ impl App {
 
     /// Ensure active tab is visible by adjusting tab_scroll_offset.
     pub(crate) fn ensure_active_tab_visible(&mut self) {
+        if self.tab_strip_scroll.is_some() {
+            if crate::ui_chrome_tabs::strip_scroll_position(self, self.active_group).is_some() {
+                return;
+            }
+            self.tab_strip_scroll = None;
+        }
         if self.tabs.is_empty() {
             self.tab_scroll_offset = 0;
             self.tab_scroll_manual_anchor = None;

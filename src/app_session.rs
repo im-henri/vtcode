@@ -799,10 +799,15 @@ impl App {
     }
 
     pub(crate) fn settings_for_scope(&self, scope: crate::settings::SettingsScope) -> Settings {
-        // Default per-effect values are supplied by AnimationSettings. Keep
-        // them implicit here so legacy shared settings still provide fallbacks.
+        // Explicit legacy timing still provides the per-effect fallback.
+        // Otherwise retain Cursor Smear's separate built-in duration.
         let mut defaults = self.settings_defaults.clone();
-        defaults.animation_cursor_smear_duration_ms = None;
+        if self.settings_global.animation_duration_ms.is_some()
+            || (scope == crate::settings::SettingsScope::Workspace
+                && self.settings_workspace.animation_duration_ms.is_some())
+        {
+            defaults.animation_cursor_smear_duration_ms = None;
+        }
         defaults.animation_cursor_smear_intensity = None;
         defaults.animation_cursor_fire_duration_ms = None;
         defaults.animation_cursor_fire_intensity = None;
@@ -2727,7 +2732,7 @@ mod tests {
         assert_eq!(s.tab_size, Some(4));
         assert_eq!(s.use_tabs, Some(false));
         assert_eq!(s.word_wrap, Some(false));
-        assert_eq!(s.whitespace_mode, Some("trailing".to_string()));
+        assert_eq!(s.whitespace_mode, Some("boundary".to_string()));
         assert_eq!(s.comment_whitespace_mode.as_deref(), Some("all"));
         assert_eq!(s.show_explorer, Some(true));
         assert_eq!(s.show_minimap, Some(true));

@@ -547,6 +547,77 @@ fn every_search_button_has_a_tooltip_at_its_rendered_position() {
 }
 
 #[test]
+fn workspace_search_stop_button_keeps_partial_results_and_refresh_restarts_search() {
+    for right in [false, true] {
+        for partial_results in [false, true] {
+            let (workspace, mut app, mut terminal) = fixture();
+            app.sidebar_right = right;
+            let path = workspace.path().join("file.txt");
+            std::fs::write(&path, "foo foo\nbar foo\n").unwrap();
+            app.global_search_query = "foo".into();
+            if partial_results {
+                app.global_search_results = vec![GlobalSearchResult {
+                    file_path: path.clone(),
+                    line_num: 1,
+                    line_text: "foo foo".into(),
+                    col_start: 0,
+                    col_end: 3,
+                    context_before: None,
+                    context_after: None,
+                }].into();
+            }
+            let token = crate::background::CancellationToken::new();
+            app.search_cancel_token = Some(token.clone());
+            app.bg_global_search_running = true;
+            draw(&mut app, &mut terminal);
+            let area = app.explorer_area.unwrap();
+            let stop = label_position(&terminal, area, "■");
+            mouse(&mut app, MouseEventKind::Moved, stop);
+            draw(&mut app, &mut terminal);
+            assert!(has_text(&terminal, "Stop Search (Escape)"));
+
+            click_label(&mut app, &mut terminal, SearchScope::Workspace, "■");
+            assert!(token.is_cancelled());
+            assert!(!app.bg_global_search_running);
+            assert!(app.global_search_active);
+            assert_eq!(app.global_search_query, "foo");
+            assert_eq!(app.global_search_results.len(), usize::from(partial_results));
+            assert!(has_text(&terminal, if partial_results { "(stopped)" } else { "Search stopped" }));
+            assert!(!app.search_control_regions.iter().any(|button| button.control == SearchControl::Stop));
+
+            click_label(&mut app, &mut terminal, SearchScope::Workspace, "↻");
+            assert!(app.bg_global_search_running);
+            assert!(!app.global_search_stopped);
+            app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+            draw(&mut app, &mut terminal);
+            assert_eq!(app.global_search_results.len(), 3);
+            assert!(!has_text(&terminal, "stopped"));
+        }
+    }
+}
+
+#[test]
+fn escape_stops_workspace_search_before_releasing_search_focus() {
+    let (_workspace, mut app, mut terminal) = fixture();
+    app.global_search_query = "foo".into();
+    let token = crate::background::CancellationToken::new();
+    app.search_cancel_token = Some(token.clone());
+    app.bg_global_search_running = true;
+
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(token.is_cancelled());
+    assert!(!app.bg_global_search_running);
+    assert!(app.global_search_active);
+    assert_eq!(app.global_search_query, "foo");
+    draw(&mut app, &mut terminal);
+    assert!(has_text(&terminal, "Search stopped"));
+
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.global_search_active);
+    assert_eq!(app.global_search_query, "foo");
+}
+
+#[test]
 fn workspace_replace_all_updates_open_and_closed_files_and_refreshes_matches() {
     for replacement in ["bar", ""] {
         let (workspace, mut app, mut terminal) = fixture();

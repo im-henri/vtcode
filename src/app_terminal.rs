@@ -118,6 +118,7 @@ impl App {
         }
         self.terminal_selection_drag = None;
         self.terminal_mouse_capture = None;
+        self.terminal_clicks = Default::default();
         self.terminal_surfaces.clear();
         if self.terminals.len() == 1 {
             self.remove_terminal_editor_tabs(index);

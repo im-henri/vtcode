@@ -8,13 +8,19 @@ use std::{
     sync::{Arc, Condvar, Mutex, mpsc},
 };
 
+/// Stdin credit and the output window used by older protocol-20 clients.
 pub(crate) const WINDOW: usize = 64 * 1024;
+/// Enough output in flight to avoid a credit round trip every 64 KiB. Still
+/// bounded per process, including terminals whose tabs are hidden or stalled.
+pub(crate) const OUTPUT_WINDOW: usize = 1024 * 1024;
 const BLOCK: usize = 4096;
+const OUTPUT_BLOCK: usize = 32 * 1024;
 const MAX_PROCESSES: usize = 16;
 type Output = mpsc::SyncSender<Response>;
 
 struct Flow {
     credit: usize,
+    window: usize,
     closed: bool,
 }
 type Credits = Arc<(Mutex<Flow>, Condvar)>;
@@ -58,12 +64,14 @@ impl Child {
 }
 struct Running {
     child: Arc<Mutex<Child>>,
-    input: mpsc::SyncSender<Vec<u8>>,
+    input: Arc<(Mutex<InputQueue>, Condvar)>,
     flow: Credits,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
 }
 impl Drop for Running {
     fn drop(&mut self) {
+        self.input.0.lock().unwrap().closed = true;
+        self.input.1.notify_all();
         self.flow.0.lock().unwrap().closed = true;
         self.flow.1.notify_all();
         let mut child = self.child.lock().unwrap();
@@ -137,7 +145,12 @@ impl Manager {
         args: &[String],
         cwd: &Path,
         terminal: Option<(u16, u16)>,
+        output_window: usize,
     ) -> io::Result<()> {
+        let window = output_window.max(WINDOW);
+        if window > OUTPUT_WINDOW {
+            return Err(io::Error::other("Remote process output window exceeds limit"));
+        }
         if self.lifetime.0.lock().unwrap().stopped {
             return Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -230,12 +243,14 @@ impl Manager {
         }
         let flow = Arc::new((
             Mutex::new(Flow {
-                credit: WINDOW,
+                credit: window,
+                window,
                 closed: false,
             }),
             Condvar::new(),
         ));
-        let (input, received) = mpsc::sync_channel::<Vec<u8>>(16);
+        let input = Arc::new((Mutex::new(InputQueue::default()), Condvar::new()));
+        let received = input.clone();
         let running = Running {
             child: child.clone(),
             input,
@@ -248,7 +263,7 @@ impl Manager {
             .name("remote-tool-input".into())
             .spawn(move || {
                 let mut writer = writer;
-                for bytes in received {
+                while let Some(bytes) = InputQueue::receive(&received) {
                     if writer
                         .write_all(&bytes)
                         .and_then(|_| writer.flush())
@@ -277,7 +292,8 @@ impl Manager {
         std::thread::Builder::new()
             .name("remote-tool-output".into())
             .spawn(move || {
-                let result = stream_output(id, reader, &output_flow, &output);
+                let block = if window == WINDOW { BLOCK } else { OUTPUT_BLOCK };
+                let result = stream_output(id, reader, &output_flow, &output, block);
                 output_flow.0.lock().unwrap().closed = true;
                 output_flow.1.notify_all();
                 let _ = output.send(Response {
@@ -296,19 +312,24 @@ impl Manager {
         if bytes.len() > BLOCK {
             return Err(io::Error::other("Remote process input block exceeds limit"));
         }
-        self.running
+        let running = self
+            .running
             .get(&id)
-            .ok_or_else(|| io::Error::other("Remote process not found"))?
-            .input
-            .try_send(bytes)
-            .map_err(io::Error::other)
+            .ok_or_else(|| io::Error::other("Remote process not found"))?;
+        let mut input = running.input.0.lock().unwrap();
+        // Input credit counts bytes, not messages: a burst of small keystrokes
+        // must not exhaust a sixteen-message queue and terminate the process.
+        input.push(bytes, WINDOW)?;
+        drop(input);
+        running.input.1.notify_one();
+        Ok(())
     }
     pub(crate) fn credit(&self, id: u64, bytes: usize) -> io::Result<()> {
         let Some(running) = self.running.get(&id) else {
             return Ok(());
         };
         let mut flow = running.flow.0.lock().unwrap();
-        if bytes > WINDOW || flow.credit.saturating_add(bytes) > WINDOW {
+        if bytes > flow.window || flow.credit.saturating_add(bytes) > flow.window {
             return Err(io::Error::other("Invalid remote process credit"));
         }
         flow.credit += bytes;
@@ -343,8 +364,9 @@ fn stream_output(
     mut reader: impl Read,
     flow: &Credits,
     output: &Output,
+    block: usize,
 ) -> io::Result<()> {
-    let mut buffer = [0; BLOCK];
+    let mut buffer = vec![0; block];
     loop {
         let count = match reader.read(&mut buffer) {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -418,7 +440,7 @@ impl Stream {
     }
     pub(super) fn push(&self, data: Vec<u8>) -> io::Result<()> {
         let mut state = self.state.lock().unwrap();
-        if state.bytes + data.len() > WINDOW {
+        if state.bytes + data.len() > OUTPUT_WINDOW {
             return Err(io::Error::other("Remote process exceeded output credit"));
         }
         state.bytes += data.len();
@@ -558,39 +580,54 @@ impl RemoteProcess {
 pub(crate) struct QueuedWriter {
     queue: Arc<(Mutex<InputQueue>, Condvar)>,
 }
+#[derive(Default)]
 struct InputQueue {
     chunks: std::collections::VecDeque<Vec<u8>>,
     bytes: usize,
     closed: bool,
 }
+impl InputQueue {
+    fn push(&mut self, bytes: Vec<u8>, limit: usize) -> io::Result<()> {
+        if self.closed || self.bytes.saturating_add(bytes.len()) > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Remote terminal input queue is full",
+            ));
+        }
+        self.bytes += bytes.len();
+        // Coalesce only bytes already waiting. Never delay a key in the hope
+        // that more input will arrive, or rewrite escape/paste sequences.
+        if let Some(last) = self.chunks.back_mut()
+            && last.len().saturating_add(bytes.len()) <= BLOCK
+        {
+            last.extend_from_slice(&bytes);
+        } else if !bytes.is_empty() {
+            self.chunks.push_back(bytes);
+        }
+        Ok(())
+    }
+    fn receive(queue: &Arc<(Mutex<Self>, Condvar)>) -> Option<Vec<u8>> {
+        let mut state = queue.0.lock().unwrap();
+        while state.chunks.is_empty() && !state.closed {
+            state = queue.1.wait(state).unwrap();
+        }
+        if state.closed {
+            return None;
+        }
+        let bytes = state.chunks.pop_front().unwrap();
+        state.bytes -= bytes.len();
+        Some(bytes)
+    }
+}
 impl QueuedWriter {
     pub(crate) fn new(mut writer: Writer) -> io::Result<Self> {
-        let queue = Arc::new((
-            Mutex::new(InputQueue {
-                chunks: Default::default(),
-                bytes: 0,
-                closed: false,
-            }),
-            Condvar::new(),
-        ));
+        let queue = Arc::new((Mutex::new(InputQueue::default()), Condvar::new()));
         let worker = queue.clone();
         let stream = writer.stream.clone();
         std::thread::Builder::new()
             .name("remote-terminal-input".into())
             .spawn(move || {
-                loop {
-                    let bytes = {
-                        let mut state = worker.0.lock().unwrap();
-                        while state.chunks.is_empty() && !state.closed {
-                            state = worker.1.wait(state).unwrap();
-                        }
-                        if state.closed {
-                            return;
-                        }
-                        let bytes = state.chunks.pop_front().unwrap();
-                        state.bytes -= bytes.len();
-                        bytes
-                    };
+                while let Some(bytes) = InputQueue::receive(&worker) {
                     if let Err(error) = writer.write_all(&bytes) {
                         stream.end(Some(error.to_string()));
                         return;
@@ -603,14 +640,7 @@ impl QueuedWriter {
 impl Write for QueuedWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let mut queue = self.queue.0.lock().unwrap();
-        if queue.closed || queue.bytes.saturating_add(bytes.len()) > 4 * 1024 * 1024 {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "Remote terminal input queue is full",
-            ));
-        }
-        queue.bytes += bytes.len();
-        queue.chunks.push_back(bytes.to_vec());
+        queue.push(bytes.to_vec(), 4 * 1024 * 1024)?;
         drop(queue);
         self.queue.1.notify_one();
         Ok(bytes.len())
@@ -625,3 +655,7 @@ impl Drop for QueuedWriter {
         self.queue.1.notify_all();
     }
 }
+
+#[cfg(test)]
+#[path = "remote_process_tests.rs"]
+mod tests;

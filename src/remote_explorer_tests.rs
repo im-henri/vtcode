@@ -187,7 +187,7 @@ fn stalled_explorer_collapse_and_rapid_expansion_keep_siblings_and_input_consist
 }
 
 #[test]
-fn silent_network_loss_without_eof_keeps_cached_tree_and_recovers_after_reconnect() {
+fn disconnect_keeps_cached_tree_and_recovers_after_reconnect() {
     let mut f = Fixture::new();
     f.toggle("a");
     f.wait();
@@ -203,7 +203,7 @@ fn silent_network_loss_without_eof_keeps_cached_tree_and_recovers_after_reconnec
             .explorer_expanding
             .contains(&f.workspace.target_key("b").unwrap())
     );
-    f.workspace.client.expire_silent_peer_for_test();
+    f.workspace.client.disconnect();
     f.app.wait_for_background(Duration::from_secs(10), |app| {
         app.remote_connection.phase == crate::app_remote_connection::Phase::Stopped
     });

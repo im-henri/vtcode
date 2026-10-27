@@ -641,6 +641,7 @@ impl App {
                 self.global_search_replace_query.clear();
                 self.global_search_results.clear();
                 self.global_search_truncated = false;
+                self.global_search_stopped = false;
                 self.global_search_selected = 0;
                 self.global_search_scroll = 0;
                 self.global_search_field_cursors = [

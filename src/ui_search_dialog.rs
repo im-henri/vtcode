@@ -598,9 +598,11 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
     let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
     let result_count =
         if app.global_search_results.is_empty() && !app.global_search_query.is_empty() {
-            " No results".to_string()
+            if app.global_search_stopped { " Search stopped" } else { " No results" }.to_string()
         } else if !app.global_search_results.is_empty() {
-            let suffix = if app.global_search_truncated {
+            let suffix = if app.global_search_stopped {
+                " (stopped)"
+            } else if app.global_search_truncated {
                 " (truncated)"
             } else {
                 ""

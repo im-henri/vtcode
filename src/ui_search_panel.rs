@@ -61,7 +61,7 @@ pub(crate) fn search_toggle_areas(panel_area: Rect) -> [Rect; 3] {
     ]
 }
 
-/// Refresh, clear, and collapse-all actions in the Search header. Keeping the geometry
+/// Refresh/stop, clear, and collapse-all actions in the Search header. Keeping the geometry
 /// shared with mouse handling prevents the compact icon row from developing
 /// invisible or overlapping hit targets.
 pub(crate) fn search_header_action_areas(panel_area: Rect) -> [Rect; 3] {
@@ -107,8 +107,13 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         row(0),
     );
     let header_actions = search_header_action_areas(area);
+    let search_action = if app.bg_global_search_running {
+        (SearchControl::Stop, "■", false)
+    } else {
+        (SearchControl::Refresh, "↻", false)
+    };
     let actions = [
-        (SearchControl::Refresh, "↻", false),
+        search_action,
         (SearchControl::Clear, "×", app.global_search_query.is_empty() && app.global_search_results.is_empty()),
         (SearchControl::CollapseResults, app.global_search_all_files_toggle_label(), app.global_search_results.is_empty()),
     ];
@@ -192,6 +197,8 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         String::new()
     } else if app.bg_global_search_running && count == 0 {
         " Searching…".to_string()
+    } else if app.global_search_stopped && count == 0 {
+        " Search stopped".to_string()
     } else if count == 0 {
         " No results found".to_string()
     } else {
@@ -199,7 +206,9 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
             " {count} result{} in {files} file{}{}",
             if count == 1 { "" } else { "s" },
             if files == 1 { "" } else { "s" },
-            if app.global_search_truncated {
+            if app.global_search_stopped {
+                " (stopped)"
+            } else if app.global_search_truncated {
                 " (truncated)"
             } else {
                 ""

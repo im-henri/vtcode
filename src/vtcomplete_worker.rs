@@ -553,7 +553,7 @@ fn quiet_context(snapshot: &VtCompleteSnapshot) -> bool {
     };
     prediction::Cache::default()
         .analyze(snapshot, &prefix, &|| false)
-        .is_some_and(|analysis| analysis.context.domain != crate::completion_context::Domain::Code)
+        .is_some_and(|analysis| analysis.context.domain == crate::completion_context::Domain::String)
 }
 
 enum WordToken<'a> {
@@ -1037,7 +1037,7 @@ fn compute_contextual_invoked(
     }
     analysis.context.source_family = source.kind.family;
     analysis.context.source_scope = source.file;
-    if !explicit && analysis.context.domain != crate::completion_context::Domain::Code {
+    if !explicit && analysis.context.domain == crate::completion_context::Domain::String {
         return Some(CompletionResult {
             suggestions: Vec::new(),
             details: Vec::new(),

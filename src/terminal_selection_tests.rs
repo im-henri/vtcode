@@ -14,6 +14,71 @@ fn select(grid: &mut TermGrid, start: (usize, usize), end: (usize, usize)) {
 }
 
 #[test]
+fn word_selection_keeps_terminal_identifiers_paths_and_unicode() {
+    for (text, column, expected) in [
+        ("run(foo_bar)", 6, "foo_bar"),
+        ("path '/tmp/file.rs:42' next", 13, "/tmp/file.rs:42"),
+        ("open https://example.com/a?b=c next", 18, "https://example.com/a?b=c"),
+        ("café_界 next", 3, "café_界"),
+        ("a(b)", 1, "("),
+        ("a   b", 2, "   "),
+        ("x", 0, "x"),
+    ] {
+        let mut grid = TermGrid::new(80, 3);
+        feed(&mut grid, text);
+        grid.begin_word_selection(0, column);
+        grid.extend_selection(0, column);
+        grid.finish_selection();
+        assert!(grid.has_selection(), "{text:?}");
+        assert_eq!(grid.selected_text().as_deref(), Some(expected), "{text:?}");
+    }
+}
+
+#[test]
+fn word_and_line_selection_follow_soft_wraps_through_scrollback() {
+    let mut grid = TermGrid::new(6, 2);
+    feed(&mut grid, "xx foobar\r\nlast");
+    grid.begin_word_selection(0, 1);
+    grid.finish_selection();
+    assert_eq!(grid.selected_text().as_deref(), Some("foobar"));
+    grid.scroll_view = 1;
+    assert_eq!(grid.selection_columns(0), 3..6);
+    assert_eq!(grid.selection_columns(1), 0..3);
+    grid.begin_line_selection(1, 1);
+    grid.finish_selection();
+    assert_eq!(grid.selected_text().as_deref(), Some("xx foobar"));
+    grid.scroll_view = 0;
+    grid.extend_selection(1, 1);
+    assert_eq!(grid.selected_text().as_deref(), Some("xx foobar\nlast"));
+    grid.extend_selection(0, 1);
+    assert_eq!(grid.selected_text().as_deref(), Some("xx foobar"));
+    let mut empty = TermGrid::new(0, 0);
+    empty.begin_word_selection(0, 0);
+    assert!(!empty.has_selection());
+    empty.begin_line_selection(0, 0);
+    assert!(!empty.has_selection());
+}
+
+#[test]
+fn word_selection_anchors_follow_history_eviction_and_output_invalidation() {
+    let mut grid = TermGrid::new(12, 2);
+    for index in 0..5002 { feed(&mut grid, &format!("{index:05} aa\r\n")); }
+    grid.scroll_view = 4990;
+    grid.begin_word_selection(0, 1);
+    let before = grid.selected_text();
+    feed(&mut grid, "next\r\n");
+    assert_eq!(grid.selected_text(), before);
+    grid.extend_selection(0, 2);
+    assert_eq!(grid.selected_text(), before, "the original word anchor must move when history is trimmed");
+    grid.scroll_view = 0;
+    feed(&mut grid, "\x1b[1;1Hchanged");
+    assert_eq!(grid.selected_text(), before, "live output must not retarget history selection");
+    grid.begin_word_selection(0, 2);
+    feed(&mut grid, "\x1b[1;1Hrewrite");
+    assert!(!grid.has_selection());
+}
+
+#[test]
 fn forward_and_reverse_selections_copy_unicode_without_ansi_or_padding() {
     let mut grid = TermGrid::new(20, 4);
     feed(&mut grid, "  héllo \x1b[31mworld\x1b[0m\r\nnext");
