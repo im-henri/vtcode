@@ -7,6 +7,10 @@ impl App {
             return;
         }
         self.flush_live_settings();
+        if matches!(id, "files_exclude" | "search_exclude") {
+            self.open_exclusion_settings(id, None, false);
+            return;
+        }
         if id == "source_control_enabled" {
             let enabled = self.selected_scope_settings().source_control_enabled.unwrap_or(true);
             self.save_source_control_enabled(self.settings_scope, !enabled);
@@ -687,6 +691,7 @@ impl App {
             "max_global_search_results" => {
                 value.max_global_search_results = Some(raw.max(1) as usize)
             }
+            "search_debounce_ms" => value.search_debounce_ms = Some(raw),
             "large_file_threshold_mb" => {
                 value.large_file_threshold_mb = Some(raw.clamp(1, 16_384))
             }

@@ -49,7 +49,7 @@ fn streamed_syntax_colors_match_original_windows_and_malformed_length_tails() {
     let styles: Vec<_> = (0..18)
         .map(|index| {
             let mut style = PLAIN_STYLE;
-            style.foreground = syntect::highlighting::Color {
+            style.foreground = crate::textmate::Color {
                 r: index * 11,
                 g: 90,
                 b: 200,

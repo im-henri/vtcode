@@ -142,8 +142,6 @@ pub(crate) struct App {
     pub language_associations: rustc_hash::FxHashMap<String, String>,
     pub cursor_style: CursorStyle, // line, block, or underline
     pub last_blink: std::time::Instant,
-    pub last_terminal_cursor_pos: Option<(u16, u16)>,
-    pub terminal_cursor_shown: bool,
     pub status_message: String,
     pub notification_history: Vec<(String, NotifyLevel, u64)>, // message, level, seconds since app start
     // Cached highlighter (avoid recreating each frame)
@@ -214,30 +212,16 @@ pub(crate) struct App {
     pub diff_nav_prev_area: Option<ratatui::layout::Rect>,
     pub diff_nav_next_area: Option<ratatui::layout::Rect>,
     pub diff_layout_toggle_area: Option<ratatui::layout::Rect>,
-    // Search
-    pub search_active: bool,
-    pub search_pre_cursor: Option<(usize, usize, usize)>, // (line, col, scroll_offset) before search
-    pub search_query: String,
-    pub search_cursor: usize,
-    pub search_selection_anchor: Option<usize>,
-    // Character offsets from the starting line; the end can extend into later lines.
-    pub search_matches: Vec<(usize, usize, usize)>,
-    pub search_error: Option<String>,
-    pub search_truncated: bool,
-    pub search_current: usize,
-    /// The Find widget can remain visible while keyboard focus is in the editor.
-    pub search_input_focused: bool,
-    pub replace_mode: bool,
-    pub replace_query: String,
-    pub replace_cursor: usize,
-    pub replace_selection_anchor: Option<usize>,
-    pub search_focus_replace: bool, // true when replace input is focused
+    // File search belongs to each tab; this fallback serves empty workbenches.
+    pub(crate) empty_file_search: crate::file_search::State,
+    pub(crate) file_search_bars: Vec<crate::file_search::Bar>,
+    pub(crate) bg_file_replace_running: bool,
+    pub(crate) file_replace_generation: u64,
+    // Shared search preferences and workspace query history.
     pub search_case_sensitive: bool,
     pub search_regex: bool,
     pub search_whole_word: bool,
-    pub search_in_selection: bool,
     pub search_preserve_case: bool,
-    pub search_selection_range: Option<(usize, usize, usize, usize)>, // (start_line, start_col, end_line, end_col)
     pub(crate) search_history: crate::search_history::History,
     // Quick open (Ctrl+P)
     pub quick_open_active: bool,
@@ -305,7 +289,7 @@ pub(crate) struct App {
     /// and worker-backed for all files rather than preloading whole documents.
     pub(crate) visible_highlight_key: Option<VisibleHighlightKey>,
     pub(crate) visible_highlight_cancel_token: Option<crate::background::CancellationToken>,
-    /// Last viewport for which a fast provisional Syntect pass was submitted.
+    /// Last viewport for which a fast provisional TextMate pass was submitted.
     /// Keeping this separate prevents each authoritative 40 ms slice from
     /// enqueuing duplicate provisional work while it advances toward the view.
     pub(crate) provisional_highlight_key: Option<VisibleHighlightKey>,
@@ -345,6 +329,9 @@ pub(crate) struct App {
     pub global_search_active: bool,
     pub global_search_query: String,
     pub(crate) global_search_history: crate::search_history::History,
+    pub(crate) global_search_replace_history: crate::search_history::History,
+    pub(crate) search_include_history: crate::search_history::History,
+    pub(crate) search_exclude_history: crate::search_history::History,
     pub global_search_error: Option<String>,
     pub global_search_replace_query: String,
     pub global_search_replace_visible: bool,
@@ -354,6 +341,7 @@ pub(crate) struct App {
     pub global_search_selected: usize,
     pub global_search_scroll: usize,
     pub max_global_search_results: usize,
+    pub(crate) search_debounce_ms: u64,
     /// Files larger than this many MiB skip rich analysis but remain editable.
     pub large_file_threshold_mb: u64,
     /// Maximum runtime for automatic rich analysis before it is paused.
@@ -379,6 +367,7 @@ pub(crate) struct App {
     pub outline_selected: usize,
     pub outline_hovered: Option<usize>,
     pub closed_tab_paths: std::collections::VecDeque<(PathBuf, usize, usize)>,
+    pub(crate) closed_file_views: rustc_hash::FxHashMap<PathBuf, crate::editor_view_state::ViewState>,
     pub dragging_tab: Option<usize>,
     pub dragging_tab_source_group: Option<usize>,
     pub dragging_terminal_tab: Option<usize>,
@@ -535,8 +524,6 @@ pub(crate) struct App {
     pub hovered_h_scrollbar: bool,
     pub hovered_search_toggle: Option<usize>, // 0=Aa, 1=W, 2=.*, 3=⊞, 4=AB(preserve case)
     pub search_control_regions: Vec<crate::ui_search_controls::SearchControlRegion>,
-    pub search_bar_area: Option<ratatui::layout::Rect>,
-    pub(crate) search_bar_layout: crate::ui_search_dialog::SearchBarLayout,
     pub rendering_inactive_editor: bool,
     pub saving_flash: Option<std::time::Instant>,
     pub mouse_row: u16,
@@ -573,7 +560,7 @@ pub(crate) struct App {
         std::collections::VecDeque<crate::ui_editor::EditorChangeIndexEntry>,
     pub exit_confirm_buttons: Vec<(u16, u16, u16)>, // (x, y, width) for each button
     pub diff_mode: DiffMode,
-    /// Last chosen diff layout, retained when closing or switching comparisons.
+    /// Last chosen diff layout, restored from settings and retained when closing comparisons.
     pub(crate) preferred_diff_mode: DiffMode,
     pub(crate) diff_inline_scroll: crate::inline_diff::InlineDiffScroll,
     pub(crate) diff_selection: crate::diff_selection::DiffSelection,
@@ -614,7 +601,7 @@ pub(crate) struct App {
     pub syntax_theme: String,
     /// Highlight registry generation last applied by the workbench theme.
     pub(crate) applied_theme_generation: Option<u64>,
-    pub semantic_theme_colors: Option<rustc_hash::FxHashMap<String, (u8, u8, u8)>>,
+    pub semantic_theme_colors: Option<crate::semantic_theme::SemanticTheme>,
     pub focus_mode: bool,
     pub sidebar_right: bool,
     pub last_edit_position: Option<(usize, usize, usize)>, // (tab_idx, line, col)
@@ -694,6 +681,7 @@ pub(crate) struct App {
     pub(crate) source_control_untracked_stage_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_untracked_discard_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_actions_area: Option<ratatui::layout::Rect>,
+    pub(crate) source_control_file_actions: Vec<crate::ui_source_control::FileActionRow>,
     /// Git status ordered merge, staged, unstaged, untracked, then path within each group.
     pub source_control_files: Vec<GitFileChange>,
     pub(crate) source_control_selection: crate::app_source_control::SourceControlSelection,
@@ -864,6 +852,7 @@ pub(crate) struct App {
     pub(crate) formatters: std::collections::BTreeMap<String, crate::formatters::Config>,
     pub(crate) formatter_settings: crate::ui_formatter_settings::State,
     pub(crate) file_associations: crate::ui_file_associations::State,
+    pub(crate) exclusion_settings: crate::ui_exclusion_settings::State,
     pub(crate) scope_bubble_settings: crate::ui_scope_bubble_settings::State,
     /// Pending LSP rename request
     pub lsp_rename_pending: bool,
@@ -974,19 +963,9 @@ pub(crate) struct App {
     pub(crate) bg_git_branch_picker_running: bool,
     pub(crate) bg_filesystem_action_running: bool,
     pub(crate) file_deletion: Option<crate::file_deletion::Deletion>,
-    /// True while a background global search is in flight.
+    /// True while workspace search is waiting for typing to settle or running.
     pub bg_global_search_running: bool,
-    /// True while the active file's find matches are being scanned.
-    pub(crate) bg_file_search_running: bool,
-    pub(crate) file_search_generation: u64,
-    pub(crate) file_search_cancel_token: Option<crate::background::CancellationToken>,
-    /// Exact editor snapshot represented by `search_matches`.
-    pub(crate) file_search_matches_target: Option<crate::background::EditorAnalysisTarget>,
-    pub(crate) file_search_key: Option<crate::app_search_algo::FileSearchKey>,
-    /// A large/pathological edit needs one full scan after typing settles.
-    pub(crate) file_search_refresh_pending: bool,
-    pub(crate) bg_file_replace_running: bool,
-    pub(crate) file_replace_generation: u64,
+    pub(crate) global_search_pending_since: Option<std::time::Instant>,
     pub(crate) bg_global_replace_running: bool,
     pub(crate) global_replace_generation: u64,
     pub(crate) workspace_replace: crate::workspace_replace::State,
@@ -1182,8 +1161,6 @@ impl App {
             language_associations: rustc_hash::FxHashMap::default(),
             cursor_style: CursorStyle::Line,
             last_blink: std::time::Instant::now(),
-            last_terminal_cursor_pos: None,
-            terminal_cursor_shown: false,
             status_message: String::from("Ready"),
             notification_history: Vec::new(),
             highlighter,
@@ -1241,27 +1218,14 @@ impl App {
             diff_nav_prev_area: None,
             diff_nav_next_area: None,
             diff_layout_toggle_area: None,
-            search_active: false,
-            search_pre_cursor: None,
-            search_query: String::new(),
-            search_cursor: 0,
-            search_selection_anchor: None,
-            search_matches: Vec::new(),
-            search_error: None,
-            search_truncated: false,
-            search_current: 0,
-            search_input_focused: false,
-            replace_mode: false,
-            replace_query: String::new(),
-            replace_cursor: 0,
-            replace_selection_anchor: None,
-            search_focus_replace: false,
+            empty_file_search: Default::default(),
+            file_search_bars: Vec::new(),
+            bg_file_replace_running: false,
+            file_replace_generation: 0,
             search_case_sensitive: false,
             search_regex: false,
             search_whole_word: false,
-            search_in_selection: false,
             search_preserve_case: false,
-            search_selection_range: None,
             search_history: Default::default(),
             quick_open_active: false,
             quick_open_query: String::new(),
@@ -1355,6 +1319,9 @@ impl App {
             global_search_active: false,
             global_search_query: String::new(),
             global_search_history: Default::default(),
+            global_search_replace_history: Default::default(),
+            search_include_history: Default::default(),
+            search_exclude_history: Default::default(),
             global_search_error: None,
             global_search_replace_query: String::new(),
             global_search_replace_visible: true,
@@ -1364,6 +1331,7 @@ impl App {
             global_search_selected: 0,
             global_search_scroll: 0,
             max_global_search_results: 20_000,
+            search_debounce_ms: crate::settings::DEFAULT_SEARCH_DEBOUNCE_MS,
             large_file_threshold_mb: crate::editor::DEFAULT_LARGE_FILE_THRESHOLD_MB,
             large_file_analysis_timeout_ms: crate::editor::DEFAULT_LARGE_FILE_ANALYSIS_TIMEOUT_MS,
             search_include_pattern: String::new(),
@@ -1386,6 +1354,7 @@ impl App {
             outline_selected: 0,
             outline_hovered: None,
             closed_tab_paths: std::collections::VecDeque::new(),
+            closed_file_views: Default::default(),
             dragging_tab: None,
             dragging_tab_source_group: None,
             dragging_terminal_tab: None,
@@ -1536,8 +1505,6 @@ impl App {
             hovered_h_scrollbar: false,
             hovered_search_toggle: None,
             search_control_regions: Vec::new(),
-            search_bar_area: None,
-            search_bar_layout: Default::default(),
             rendering_inactive_editor: false,
             saving_flash: None,
             mouse_row: 0,
@@ -1667,6 +1634,7 @@ impl App {
             source_control_untracked_stage_area: None,
             source_control_untracked_discard_area: None,
             source_control_actions_area: None,
+            source_control_file_actions: Vec::new(),
             source_control_files: Vec::new(),
             source_control_selection: Default::default(),
             source_control_selected: 0,
@@ -1806,6 +1774,7 @@ impl App {
             formatters: Default::default(),
             formatter_settings: Default::default(),
             file_associations: Default::default(),
+            exclusion_settings: Default::default(),
             scope_bubble_settings: Default::default(),
             lsp_rename_pending: false,
             lsp_prepare_rename_pending: false,
@@ -1866,14 +1835,7 @@ impl App {
             bg_filesystem_action_running: false,
             file_deletion: None,
             bg_global_search_running: false,
-            bg_file_search_running: false,
-            file_search_generation: 0,
-            file_search_cancel_token: None,
-            file_search_matches_target: None,
-            file_search_key: None,
-            file_search_refresh_pending: false,
-            bg_file_replace_running: false,
-            file_replace_generation: 0,
+            global_search_pending_since: None,
             bg_global_replace_running: false,
             global_replace_generation: 0,
             workspace_replace: Default::default(),
@@ -1915,7 +1877,9 @@ impl App {
         app.animation_settings.set_duration(
             crate::animation_config::AnimationEffect::CursorSmear, 300,
         );
-        let defaults = app.current_settings();
+        let mut defaults = app.current_settings();
+        defaults.files_exclude = crate::settings::default_files_exclude();
+        defaults.search_exclude = crate::settings::default_search_exclude();
         app.settings_defaults = defaults.clone();
         app.settings_effective = defaults;
         app
@@ -2484,20 +2448,14 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::SearchMatches {
+                    owner,
                     generation,
                     target,
                     matches,
                     truncated,
                     error,
                 } => {
-                    if generation == self.file_search_generation {
-                        self.bg_file_search_running = false;
-                        self.file_search_cancel_token = None;
-                        if self.editor_content_target().as_ref() == Some(&target) {
-                            self.apply_file_search_matches(target, matches, truncated, error);
-                            has_visual_changes = true;
-                        }
-                    }
+                    has_visual_changes |= self.apply_tab_search_matches(owner, generation, target, matches, truncated, error);
                 }
                 crate::background::BackgroundResult::FileReplaceDone {
                     generation,
@@ -3094,6 +3052,7 @@ impl App {
                             tab.editor.cursor_surrounding_lines = default_cursor_surrounding_lines;
                             tab.editor
                                 .apply_pending_session_restore(large_file_threshold_bytes);
+                            tab.editor.restore_reopen_view();
                             if let Some((line, col)) = tab.editor.pending_cursor_position.take() {
                                 let col = if std::mem::take(&mut tab.editor.pending_cursor_utf16) {
                                     crate::lsp_positions::from_utf16(&tab.editor.rope, line, col as u32)
@@ -3597,7 +3556,7 @@ impl App {
                                 source_label(revisions.1),
                             ));
                             self.diff_target_path = Some(target.file_path.clone());
-                            self.diff_mode = if prepared.is_new_file {
+                            self.diff_mode = if prepared.is_new_file && !self.has_diff_layout_preference() {
                                 DiffMode::Inline
                             } else {
                                 self.preferred_diff_mode
@@ -4441,6 +4400,7 @@ impl App {
     /// Visible-tree changes do not change workspace file eligibility. Reuse the
     /// Quick Open index across expansion, collapse, sort and automatic reveal.
     pub(crate) fn refresh_explorer_tree_async(&mut self) {
+        self.explorer.set_files_exclude(&self.settings_effective.files_exclude);
         if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
             self.remote_explorer_error = Some("Connection lost. Showing cached files.".into());
             self.explorer.find.loading = false;
@@ -4462,11 +4422,12 @@ impl App {
             let sort = self.explorer.sort_mode;
             let find = self.explorer.find.request();
             let source_control = self.source_control_enabled;
+            let files_exclude = self.settings_effective.files_exclude.clone();
             let cancel = self.explorer.find.cancel.clone().unwrap_or_default();
             let sender = self.background.sender.clone();
             let workspace_generation = self.workspace_generation;
             self.background.read_for_file("remote-explorer", &self.explorer.root, true, move || {
-                let result = match remote.explorer_tree(&expanded,sort,find,source_control,&cancel) {
+                let result = match remote.explorer_tree(&expanded,sort,find,source_control,&files_exclude,&cancel) {
                     Ok((entries, matches)) => crate::background::BackgroundResult::ExplorerRefreshed {
                         generation, canonical_root: remote.view_root, entries, matches,
                     },
@@ -4989,6 +4950,7 @@ impl App {
             let observed = wake.generation();
             // A queued reply can start another worker. Check readiness after
             // applying replies, never followed by one more unobserved poll.
+            self.poll_pending_global_search(std::time::Instant::now());
             self.poll_background_results();
             if ready(self) {
                 return;
@@ -5008,6 +4970,7 @@ impl App {
                 // Reconnect retries use event-loop deadlines rather than a
                 // sleeping worker. Exercise the same wake policy in tests.
                 let wait = self.remote_connection.next_wait().map_or(remaining, |wait| remaining.min(wait));
+                let wait = self.global_search_debounce_wait(std::time::Instant::now()).map_or(wait, |search_wait| wait.min(search_wait));
                 wake.wait_for_change(
                     observed,
                     Some(wait),

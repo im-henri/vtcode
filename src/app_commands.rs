@@ -416,7 +416,7 @@ impl App {
             "macro_start" => {
                 self.macro_recording = true;
                 self.macro_buffer.clear();
-                self.notify("ðŸ”´ Macro recording started");
+                self.notify("🔴 Macro recording started");
             }
             "macro_stop" => {
                 if self.macro_recording {
@@ -638,6 +638,7 @@ impl App {
             "global_search" => {
                 self.push_global_search_history();
                 self.global_search_query.clear();
+                self.update_global_search();
                 self.global_search_replace_query.clear();
                 self.global_search_results.clear();
                 self.global_search_truncated = false;
@@ -848,7 +849,7 @@ impl App {
                             .map(|tab| tab.editor.file_name().to_string()),
                     ) {
                         self.create_split_group(next);
-                        self.notify(format!("Comparing: {name1} â†” {name2}"));
+                        self.notify(format!("Comparing: {name1} ↔ {name2}"));
                     } else {
                         self.notify("Need at least 2 tabs to compare");
                     }
@@ -1079,7 +1080,7 @@ impl App {
                         .enumerate()
                         .map(|(i, text)| {
                             let preview: String = text.chars().take(60).collect();
-                            let preview = preview.replace('\n', "â†µ");
+                            let preview = preview.replace('\n', "↵");
                             PaletteCommand {
                                 name: format!("{}: {preview}", i + 1),
                                 shortcut: String::new(),

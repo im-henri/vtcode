@@ -410,6 +410,7 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
     match command {
         Command::OpenWorkspace { path: p } => path("Open workspace", p),
         Command::List { path: p } => path("Read directory", p),
+        Command::FilesystemRoots => Some(("List file systems", String::new())),
         Command::Open { path: p } => path("Read file", p),
         Command::OpenLocation { path: p } => path("Open location", p),
         Command::Save {

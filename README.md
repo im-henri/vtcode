@@ -87,12 +87,43 @@ Keep `settings.json` and `.vtcode/` beside the executable when updating.
 | `Ctrl+Shift+G` | Source Control |
 | `Ctrl+Shift+I` | Agent Chat |
 
+Reopening a closed file during the same workspace session restores its cursor
+and scroll position, including when opening it from the explorer or file picker.
+
 File search and workspace search each remember their last 50 queries per
-workspace, including after restarting VTCode. Use **↑/↓** in the search field
-to recall them; **Alt+↑/↓** navigates workspace search results.
+workspace, including after restarting VTCode. Workspace search also keeps separate
+histories for replacement text and the include/exclude paths. Use **↑/↓** in the
+Find field or any workspace search field to recall history; **Alt+↑/↓** navigates
+workspace search results.
+Each file tab keeps its own Find/Replace fields, matches, and widget width.
+Split editors display their Find bars inside their respective panes.
 While a workspace search is running, click **■** in the Search header or press
 **Escape** with search focused to stop searching and keep the results found so far.
 Click **↻** to run the search again.
+
+Workspace search waits 300 ms after typing by default. Change **Search: Debounce
+(ms)** in **Settings → Features → Search**, or set
+`search.searchOnTypeDebouncePeriod` in JSON. A value of `0` searches immediately.
+Enter or **↻** runs a pending search immediately. Per-file Find remains instant.
+
+Configure **Files: Exclude** in **Settings → Files → Exclusions** and
+**Search: Exclude** in **Settings → Features → Search**. Both accept glob patterns
+in User or Workspace scope. `files.exclude` hides paths in Explorer;
+`search.exclude` applies to workspace text search and Quick Open and inherits
+every `files.exclude` pattern without listing those inherited patterns in its
+control. A `false` entry disables the same inherited or default pattern.
+
+The file defaults are `**/.git`, `**/.svn`, `**/.hg`, `**/.jj`, `**/.DS_Store`,
+and `**/Thumbs.db`. Search additionally excludes `**/node_modules`,
+`**/bower_components`, and `**/*.code-search`. Settings globs are relative to the
+workspace root; sibling conditions such as `{ "when": "$(basename).ts" }` are
+supported. To filter Quick Open's recent-file history, use a pattern matching
+the absolute path, such as `**/node_modules/**`.
+
+Build output and other hidden files remain searchable unless an explicit pattern
+excludes them. `.gitignore`, `.ignore`, parent ignore files, and global Git ignore
+rules never filter these searches. The search view's include and exclude fields
+further narrow the results. Local and remote SSH workspaces use the same rules.
 
 Some terminals send the same byte for `Ctrl+H` and `Ctrl+Backspace`. VTCode
 prioritizes deletion when they cannot be distinguished; use **Edit → Replace**
@@ -161,7 +192,7 @@ formatting as one undoable change; it writes the original file only on Save.
 - **Settings:** use **User** for defaults and **Workspace** for project overrides; edit through the UI or JSON.
 - **File types:** click the status bar language → **Configure File Associations…**, or open **Settings → Files → File Associations**. Map extensions (`*.h`) or filenames (`Jenkinsfile`) to a language globally or per workspace; edit or remove rules in the same dialog. Applies to highlighting, LSP, and formatter selection.
 - **Themes:** run **Preferences: Install Color Theme from File or Link** and paste a [VS Code Themes](https://vscodethemes.com/) link or a local `.vsix` path. In **Settings → Workbench → Appearance → Color Theme**, use **Delete…** beside an installed variant (or the Delete key) and confirm to remove it. Bundled themes are protected. Removals persist; reinstalling a pack restores its removed variants.
-- **Syntaxes:** run **Preferences: Install Syntax from File** with a local `.sublime-syntax` or TextMate `.json` file. Highlighting reloads automatically; URLs are not accepted.
+- **Syntaxes:** run **Preferences: Install Syntax from File** with a local TextMate `.tmLanguage.json` or `.tmLanguage` file. Highlighting reloads automatically; URLs are not accepted. All languages use the same native TextMate tokenizer and VS Code theme rules. Grammar sources live in the root [grammars](grammars/README.md) directory: `grammars/bundled` is compiled into the executable, and the Rust, Python, and Git folders hold the VS Code overrides. Portable releases ship these assets in `grammars/` beside the executable.
 - **Agents:** install an ACP-compatible agent separately, then run **Agent: Configure Agents** from the command palette.
 - **Extensions:** install through **Extensions: Install Extension from GitHub**. See the [Wasm extension guide](extension-api/README.md) to build your own.
 - **Performance & activity:** pin the live monitor while you work: CPU/memory trends, UI responsiveness, slow calls, worker queues, task timings, and workspace details. Resource sampling runs at most every 10 seconds while visible and the app is focused.

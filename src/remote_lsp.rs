@@ -50,13 +50,18 @@ impl workspace::Workspace {
             if path.1 || !path.0.is_empty() {
                 encoded.push('/');
             }
-            for byte in path.0 {
-                if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            let drive = self.windows_paths() && path.is_absolute()
+                && path.0.get(1) == Some(&b':') && path.0[0].is_ascii_alphabetic();
+            let drive_root = drive && path.0.len() == 2;
+            for (index, byte) in path.0.into_iter().enumerate() {
+                if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte)
+                    || (drive && index == 1 && byte == b':') {
                     encoded.push(byte as char);
                 } else {
                     encoded.push_str(&format!("%{byte:02X}"));
                 }
             }
+            if drive_root { encoded.push('/'); }
             url::Url::parse(&encoded).ok().map(Into::into)
         } else {
             let root_uri = url::Url::parse(&self.client.hello().root_uri).ok()?;
@@ -71,7 +76,10 @@ impl workspace::Workspace {
                     URL_SAFE_NO_PAD.encode(text.as_bytes())
                 ));
             }
-            let bytes = uri_path(&uri)?;
+            let mut bytes = uri_path(&uri)?;
+            // Directory URLs (including file:///C:/) carry a trailing slash;
+            // RemotePath stores components, with no trailing separator.
+            while bytes.len() > 1 && bytes.last() == Some(&b'/') { bytes.pop(); }
             let mut root = uri_path(&root_uri)?;
             while root.last() == Some(&b'/') {
                 root.pop();

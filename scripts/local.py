@@ -251,7 +251,7 @@ def release_environment(env):
 
 
 def copy_assets(package):
-    for asset in ("syntaxes", "themes"):
+    for asset in ("grammars", "themes"):
         for source in sorted((ROOT / asset).rglob("*")):
             relative = source.relative_to(ROOT)
             if any(part in (".cache", "__pycache__", ".DS_Store") for part in relative.parts):
@@ -266,12 +266,32 @@ def copy_assets(package):
         shutil.copyfile(ROOT / relative, destination)
 
 
+def bundled_grammar_paths(data):
+    try:
+        index = json.loads(data)
+        grammars = index["grammars"]
+        if index["version"] != 1 or not isinstance(grammars, dict) or not grammars:
+            raise ValueError("invalid catalog")
+        if any(not isinstance(name, str) or not name or "/" in name or "\\" in name
+               or name in (".", "..") for name in grammars):
+            raise ValueError("invalid grammar name")
+        return {f"grammars/bundled/{name}.json" for name in grammars}
+    except (KeyError, TypeError, ValueError) as error:
+        raise Failure("Missing or invalid bundled grammar catalog.") from error
+
+
 def check_payload(package, binary):
-    if len(list((package / "syntaxes").rglob("*.sublime-syntax"))) < 226:
+    if len(list((package / "grammars").rglob("*.tmLanguage.json"))) < 3:
         raise Failure("Missing shipped grammars.")
     if not list((package / "themes").glob("*.json")):
         raise Failure("Missing shipped themes.")
-    for relative in (binary, "syntaxes/.cache/default_newlines.packdump", "syntaxes/.cache/source.fingerprint"):
+    try:
+        bundled = bundled_grammar_paths((package / "grammars/bundled/index.json").read_bytes())
+    except OSError as error:
+        raise Failure("Missing bundled grammar catalog.") from error
+    if any(not (package / name).is_file() or (package / name).stat().st_size == 0 for name in bundled):
+        raise Failure("Missing bundled grammar source.")
+    for relative in (binary, "grammars/.cache/textmate-registry.json.gz", "grammars/.cache/source.fingerprint"):
         data = (package / relative).read_bytes()
         if not data:
             raise Failure(f"Empty payload: {relative}")
@@ -344,12 +364,17 @@ def verify_archive(archive, *, allow_preview=False):
         binary = "vtcode.exe" if target == TARGETS["win32"] else "vtcode"
         required = {binary, "settings.json", "validation.json", "LICENSE", "README.md",
                     "THIRD_PARTY_NOTICES.md", "vendor/crossterm/LICENSE",
-                    "syntaxes/.cache/default_newlines.packdump", "syntaxes/.cache/source.fingerprint"}
+                    "grammars/.cache/textmate-registry.json.gz", "grammars/.cache/source.fingerprint",
+                    "grammars/bundled/index.json"}
         if (manifest.get("binary") != binary or not required <= set(files)
                 or any(files[name]["size"] == 0 for name in required)
-                or sum(name.startswith("syntaxes/") and name.endswith(".sublime-syntax") for name in files) < 226
+                or sum(name.startswith("grammars/") and name.endswith(".tmLanguage.json") for name in files) < 3
                 or not any(name.startswith("themes/") and name.endswith(".json") for name in files)):
             raise Failure("Incomplete portable payload.")
+        with open_member(entries["grammars/bundled/index.json"][2]) as stream:
+            bundled = bundled_grammar_paths(stream.read())
+        if not bundled <= set(files) or any(files[name]["size"] == 0 for name in bundled):
+            raise Failure("Missing bundled grammar source.")
         if target == TARGETS["linux"] and not entries[binary][1] & 0o111:
             raise Failure("Linux binary is not executable.")
         if baseline:
@@ -441,7 +466,7 @@ def release(ctx, *, preview=False, reuse=False, output_dir=None, skip_tests=Fals
         shutil.copyfile(build / target / "release" / binary, package / binary)
         (package / binary).chmod(0o755)
         copy_assets(package)
-        run([build / target / "release" / "examples" / f"rebuild_syntax_cache{executable_suffix}", "syntaxes"],
+        run([build / target / "release" / "examples" / f"rebuild_syntax_cache{executable_suffix}", "grammars"],
             env=env, cwd=package)
         check_payload(package, binary)
         abi = linux_abi.verify((package / binary).read_bytes(), baseline) if baseline else None

@@ -298,9 +298,9 @@ pub(crate) struct ThemeFile {
     #[serde(default, rename = "tokenColors", skip_serializing_if = "Vec::is_empty")]
     pub token_colors: Vec<serde_json::Value>,
     #[serde(skip)]
-    pub syntect_theme: Option<syntect::highlighting::Theme>,
+    pub textmate_theme: Option<crate::textmate::Theme>,
     #[serde(skip)]
-    pub semantic_colors: Option<rustc_hash::FxHashMap<String, (u8, u8, u8)>>,
+    pub semantic_colors: Option<crate::semantic_theme::SemanticTheme>,
     #[serde(skip)]
     pub semantic_color_rules: serde_json::Map<String, serde_json::Value>,
     #[serde(skip)]
@@ -688,13 +688,13 @@ impl ThemeFile {
         // Keep explicit native input-border settings when migrating renderers
         // to workbench layers. Workbench overrides, including alpha zero, win.
         // Preserve the source string so opacity is applied on the final field.
-        let mut workbench_colors = if self.syntect_theme.is_some() {
+        let mut workbench_colors = if self.textmate_theme.is_some() {
             std::borrow::Cow::Owned(crate::vscode_color_registry::resolve(
                 &self.workbench_colors, self.is_light, self.high_contrast))
         } else {
             std::borrow::Cow::Borrowed(&self.workbench_colors)
         };
-        if self.syntect_theme.is_none()
+        if self.textmate_theme.is_none()
             && !self.workbench_colors.contains_key("input.border")
             && let Some(border) = &self.colors.border_input
         {
@@ -702,7 +702,7 @@ impl ThemeFile {
         }
         // Native palettes own these marker and sticky surfaces. Preserve their
         // source alpha while allowing the actual header roles to override them.
-        if self.syntect_theme.is_none() {
+        if self.textmate_theme.is_none() {
             for (header, legacy) in [
                 ("merge.currentHeaderBackground", &self.colors.bg_merge_current),
                 ("merge.incomingHeaderBackground", &self.colors.bg_merge_incoming),
@@ -716,24 +716,22 @@ impl ThemeFile {
         palette.ui = crate::theme_workbench::WorkbenchColors::resolve(
             workbench_colors.as_ref(), &palette, self.is_light, self.high_contrast,
         );
-        palette.ui.preserve_theme_colors = self.syntect_theme.is_some();
-        if let Some(theme) = &self.syntect_theme {
+        palette.ui.preserve_theme_colors = self.textmate_theme.is_some();
+        if let Some(theme) = &self.textmate_theme {
             // Resolve the comment token once per theme, not while painting
             // Output. No parser or syntax worker is needed for log timestamps.
-            let comment = syntect::parsing::Scope::new("comment").expect("valid comment scope");
-            let style = syntect::highlighting::Highlighter::new(theme).style_for_stack(&[comment]);
-            let color = style.foreground;
+            let color = theme.scope_foreground(&["comment"]);
             palette.ui.output_timestamp = crate::theme_workbench::ColorLayer::rgba(color.r, color.g, color.b, color.a);
         }
         // Native vtcode palettes own a legacy separator color. Imported VS Code
         // themes can omit this border, and explicit transparent overrides win.
-        if self.syntect_theme.is_none()
+        if self.textmate_theme.is_none()
             && !self.workbench_colors.contains_key("sideBar.border")
             && !self.workbench_colors.contains_key("contrastBorder")
         {
             palette.ui.border_sidebar = Some(palette.border_color);
         }
-        if self.syntect_theme.is_none()
+        if self.textmate_theme.is_none()
             && !self.workbench_colors.contains_key("activityBar.border")
             && !self.workbench_colors.contains_key("contrastBorder")
         {
@@ -868,9 +866,9 @@ mod tests {
         for theme in &themes {
             assert!(
                 theme
-                    .syntect_theme
+                    .textmate_theme
                     .as_ref()
-                    .is_some_and(|t| !t.scopes.is_empty())
+                    .is_some_and(|t| !t.token_rules().is_empty())
             );
             assert_eq!(
                 themes

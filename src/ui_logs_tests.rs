@@ -1,6 +1,9 @@
 use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
+#[path = "ui_output_autoscroll_tests.rs"]
+mod autoscroll_tests;
+
 fn app(log: Log) -> App {
     let mut app = App::test_new();
     app.source_control_enabled = false;
@@ -131,7 +134,7 @@ fn git_output_switches_by_mouse_and_keyboard_and_keeps_each_channels_view() {
     git.event("Git", "Git-only event recorded while hidden");
     assert!(draw(&mut app, 140, 35).contains("SSH-only event"));
     let ssh_reader = app.logs.editor().unwrap().navigation_id;
-    app.logs.reader().view.follow = false;
+    app.logs.reader().view.autoscroll = false;
 
     let source = control(&app, Control::Source);
     click(&mut app, source);
@@ -147,7 +150,7 @@ fn git_output_switches_by_mouse_and_keyboard_and_keeps_each_channels_view() {
     assert!(!app.logs.editor().unwrap().rope.to_string().contains("SSH-only event"));
     let git_reader = app.logs.editor().unwrap().navigation_id;
     assert_ne!(git_reader, ssh_reader);
-    app.logs.reader().view.follow = false;
+    app.logs.reader().view.autoscroll = false;
     app.logs.reader().editor.selection_anchor = Some((0, 0));
 
     let source = control(&app, Control::Source);
@@ -158,12 +161,12 @@ fn git_output_switches_by_mouse_and_keyboard_and_keeps_each_channels_view() {
     assert_eq!(app.logs.source, Source::RemoteSsh);
     assert!(draw(&mut app, 140, 35).contains("SSH-only event"));
     assert_eq!(app.logs.editor().unwrap().navigation_id, ssh_reader);
-    assert!(!app.logs.reader().view.follow);
+    assert!(!app.logs.reader().view.autoscroll);
 
     app.logs.select_source(Source::Git);
     draw(&mut app, 140, 35);
     assert_eq!(app.logs.editor().unwrap().navigation_id, git_reader);
-    assert!(!app.logs.reader().view.follow);
+    assert!(!app.logs.reader().view.autoscroll);
     assert_eq!(app.logs.editor().unwrap().selection_anchor, Some((0, 0)));
     action(&mut app, Control::Clear);
     assert_eq!(app.logs.editor().unwrap().rope.len_chars(), 0);
@@ -422,7 +425,7 @@ fn output_history_loads_in_bounded_batches_and_catches_events_before_subscriptio
 }
 
 #[test]
-fn selecting_and_scrolling_output_pauses_follow_without_editing_or_scrolling_the_file() {
+fn selecting_and_scrolling_output_pauses_autoscroll_without_editing_or_scrolling_the_file() {
     let log = Log::default();
     for _ in 0..80 {
         log.event("Test", "Repeated λ🦀👩‍💻 output");
@@ -438,7 +441,7 @@ fn selecting_and_scrolling_output_pauses_follow_without_editing_or_scrolling_the
         KeyModifiers::NONE,
     );
     let scroll = app.logs.editor().unwrap().scroll_offset;
-    assert!(!app.logs.reader.as_ref().unwrap().view.follow);
+    assert!(!app.logs.reader.as_ref().unwrap().view.autoscroll);
     draw(&mut app, 140, 30);
     pointer(
         &mut app,
@@ -469,11 +472,11 @@ fn selecting_and_scrolling_output_pauses_follow_without_editing_or_scrolling_the
     assert_eq!(app.logs.editor().unwrap().scroll_offset, scroll);
     assert_eq!(app.editor().unwrap().rope, "λ");
     assert_eq!(app.editor().unwrap().scroll_offset, 0);
-    let follow = control(&app, Control::Follow);
-    click(&mut app, follow);
+    let autoscroll = control(&app, Control::Autoscroll);
+    click(&mut app, autoscroll);
     log.event("Test", "latest event");
     assert!(draw(&mut app, 140, 30).contains("latest event"));
-    assert!(app.logs.reader.as_ref().unwrap().view.follow);
+    assert!(app.logs.reader.as_ref().unwrap().view.autoscroll);
     assert!(!app.logs.editor().unwrap().has_selection());
 }
 
@@ -995,7 +998,7 @@ fn retention_remaps_native_selection_and_scroll_without_rebuilding_retained_text
     assert_eq!(editor.selection_anchor, Some((49, 10)));
     assert_eq!(editor.selected_text(), selection);
     assert_eq!(editor.scroll_offset, 44);
-    assert!(!view.follow);
+    assert!(!view.autoscroll);
     assert!(view.entries.iter().all(|(id, _, _)| *id >= 2));
     editor.selection_anchor = Some((0, 10));
     log.event("Test", &"z".repeat(1024));

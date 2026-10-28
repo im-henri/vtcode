@@ -60,7 +60,8 @@ pub(crate) mod wire;
 #[path = "remote_workspace.rs"]
 pub(crate) mod workspace;
 
-pub(crate) const VERSION: u32 = 20;
+// Folder browsing can enumerate filesystem roots on the headless machine.
+pub(crate) const VERSION: u32 = 23;
 /// Per-message/queue memory budget, not a file size limit. Larger documents use
 /// remote_text's bounded pipeline instead of a document-sized JSON allocation.
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -255,6 +256,9 @@ impl RemotePath {
             let text = std::str::from_utf8(&self.0).map_err(io::Error::other)?;
             if self.1 {
                 let bytes = text.as_bytes();
+                if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                    return Ok(PathBuf::from(format!("\\\\?\\{text}\\")));
+                }
                 if bytes.len() < 3
                     || !bytes[0].is_ascii_alphabetic()
                     || bytes[1] != b':'
@@ -336,6 +340,7 @@ pub(crate) enum Command {
     List {
         path: RemotePath,
     },
+    FilesystemRoots,
     Open {
         path: RemotePath,
     },
@@ -403,6 +408,7 @@ pub(crate) enum Command {
         parent_open: bool,
         closed: Vec<RemotePath>,
         include_untracked: bool,
+        changed: Option<Vec<RemotePath>>,
     },
     GitAction {
         repo: RemotePath,
@@ -493,6 +499,8 @@ pub(crate) enum Command {
     Files {
         generation: u64,
         known_version: Option<u64>,
+        #[serde(default)]
+        excludes: crate::settings::ExcludePatterns,
     },
     Search(search::Query),
     SearchScope(search::Scope),
@@ -646,6 +654,7 @@ pub(crate) enum Reply {
         root_uri: String,
     },
     Entries(Vec<Entry>),
+    FilesystemRoots(Vec<(String, RemotePath)>),
     CanonicalPaths(Vec<Option<RemotePath>>),
     Directory {
         identity: RemotePath,

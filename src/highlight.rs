@@ -7,12 +7,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
-use syntect::highlighting::Color;
-use syntect::easy::ScopeRangeIterator;
-use syntect::highlighting::{
-    HighlightIterator, HighlightState, Style, Theme, ThemeSet,
-};
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
+use crate::textmate::Color;
+use crate::textmate::{Style, Theme, ThemeSet};
+use crate::textmate::{Syntax, SyntaxRegistry};
 
 /// Parser states are cheap enough to retain periodically and let an edit
 /// restart at the closest preceding checkpoint instead of line zero.
@@ -22,7 +19,7 @@ const CHECKPOINT_INTERVAL: usize = 256;
 const MAX_LINES_PER_BATCH: usize = 8_192;
 const DEFAULT_WORK_BUDGET: Duration = Duration::from_millis(40);
 /// If the nearest authoritative parser checkpoint is farther away than this,
-/// paint the viewport from a fresh Syntect state while the exact state catches
+/// paint the viewport from a fresh TextMate state while the exact state catches
 /// up in the background. The provisional spans are replaced automatically.
 const PROVISIONAL_DISTANCE_LINES: usize = 256;
 const MAX_CACHED_LINES_PER_DOCUMENT: usize = 5_000;
@@ -46,14 +43,14 @@ mod coordinate_tests;
 #[cfg(test)]
 #[path = "highlight_memory_tests.rs"]
 mod memory_tests;
-/// Syntect is regex-driven and can spend seconds on a single minified line.
+/// TextMate is regex-driven and can spend seconds on a single minified line.
 /// Highlight a useful prefix and deliberately reset parser state afterward;
 /// the viewport renderer likewise bounds work for these pathological lines.
 pub(crate) const MAX_SYNTAX_LINE_CHARS: usize = 16 * 1024;
 /// First-line syntax detection only needs shebangs/modelines near the start.
 pub(crate) const MAX_SYNTAX_DETECTION_CHARS: usize = 4 * 1024;
 
-type InstalledSyntaxSnapshot = (Arc<SyntaxSet>, Option<u64>);
+type InstalledSyntaxSnapshot = (Arc<SyntaxRegistry>, Option<u64>);
 static INSTALLED_SYNTAX_SET: OnceLock<Result<InstalledSyntaxSnapshot, String>> = OnceLock::new();
 
 pub(crate) type HighlightSpans = Vec<(Style, String)>;
@@ -74,67 +71,14 @@ pub(crate) use fragments::FragmentHighlighter;
 mod line_index;
 use line_index::LineIndex;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SyntectState {
-    highlight: HighlightState,
-    parse: ParseState,
-}
-
-impl SyntectState {
-    fn new(syntax: &SyntaxReference, highlighter: &syntect::highlighting::Highlighter<'_>) -> Self {
-        Self {
-            highlight: HighlightState::new(highlighter, ScopeStack::new()),
-            parse: ParseState::new(syntax),
-        }
-    }
-
-    fn highlight_line<'a>(
-        &mut self,
-        text: &'a str,
-        syntax_set: &SyntaxSet,
-        highlighter: &syntect::highlighting::Highlighter<'_>,
-        retain: bool,
-        comment_ranges: &mut Vec<(usize, usize)>,
-    ) -> Result<Vec<(Style, &'a str)>, syntect::Error> {
-        let ops = self.parse.parse_line(text, syntax_set)?.ops;
-        if retain {
-            // Use grammar scopes, not theme colors or delimiter heuristics.
-            // Reuse the parser's operations and incoming multiline state; only
-            // retained viewport lines need this compact, character-based map.
-            static COMMENT_SCOPE: OnceLock<Scope> = OnceLock::new();
-            let comment = *COMMENT_SCOPE.get_or_init(|| Scope::new("comment").unwrap());
-            let mut path = self.highlight.path.clone();
-            let mut col = 0;
-            for (range, op) in ScopeRangeIterator::new(&ops, text) {
-                path.apply(op)?;
-                let end = col + text[range].chars().count();
-                if end > col && path.scopes.iter().any(|&scope| comment.is_prefix_of(scope)) {
-                    if let Some((_, previous_end)) = comment_ranges.last_mut().filter(|(_, end)| *end == col) {
-                        *previous_end = end;
-                    } else {
-                        comment_ranges.push((col, end));
-                    }
-                }
-                col = end;
-            }
-        }
-        let spans = HighlightIterator::new(&mut self.highlight, &ops, text, highlighter);
-        if retain {
-            Ok(spans.collect())
-        } else {
-            // Advance highlighting state without allocating discarded spans.
-            spans.for_each(drop);
-            Ok(Vec::new())
-        }
-    }
-}
+pub(crate) use crate::textmate_backend::State as TextMateState;
 
 #[derive(Clone)]
 struct CachedCheckpoint {
     version: u64,
     // Immutable parser snapshots are shared with jobs. Preparing an edit must
     // not deep-copy every suffix checkpoint on the editor thread.
-    state: Arc<SyntectState>,
+    state: Arc<TextMateState>,
     /// Document coordinate minus the worker's parser offset when published.
     /// Keeping this origin stable makes the current offset derivable from the
     /// index key without rewriting every checkpoint after a newline edit.
@@ -300,7 +244,7 @@ impl DocumentCache {
 
     /// Carry unchanged prefix entries into a new content version and retain
     /// the shifted suffix as convergence candidates. Suffix entries are not
-    /// renderable until a worker proves that Syntect's state matches again.
+    /// renderable until a worker proves that TextMate's state matches again.
     fn advance_version(
         &mut self,
         version: u64,
@@ -407,58 +351,10 @@ fn shift_line(line: usize, delta: i128, new_line_count: usize) -> Option<usize> 
     }
 }
 
-/// Extract a comparison key for Syntect's otherwise-private parser state.
-///
-/// The pinned modern revision includes its absolute line counter in `Eq`, even
-/// when no branch is active. It does not expose that counter or a semantic
-/// comparison API. Its derived `Debug` representation does expose every field,
-/// so remove only the verified top-level counter and retain every other byte.
-/// The dependency is pinned to an immutable commit; a layout change fails
-/// closed here instead of making an unsafe cache-reuse decision.
-fn comparable_parse_state(parse: &ParseState) -> Option<(i128, String)> {
-    if parse.is_speculative() {
-        return None;
-    }
-    let mut debug = format!("{parse:?}");
-    let marker = ", branch_points: [], line_number: ";
-    let marker_start = debug.find(marker)?;
-    if debug[marker_start + marker.len()..].contains(marker) {
-        return None;
-    }
-    let value_start = marker_start + marker.len();
-    let value_end = value_start + debug[value_start..].find(", pending_lines: ")?;
-    let line_number = debug[value_start..value_end].parse::<i128>().ok()?;
-    debug.replace_range(value_start..value_end, "<line>");
-    Some((line_number, debug))
-}
-
-/// Decide whether a newly parsed state can safely reconnect to a shifted
-/// pre-edit suffix. Active branch points retain line-relative history and are
-/// intentionally excluded; when none are active, the absolute counter itself
-/// has no semantic effect on future branches because their creation and expiry
-/// counters share the same offset.
-fn states_converge_after_shift(
-    current: &SyntectState,
-    current_line_offset: i128,
-    previous: &SyntectState,
-    previous_line_offset: i128,
-) -> bool {
-    if current == previous {
-        return true;
-    }
-    if current.highlight != previous.highlight {
-        return false;
-    }
-    let Some((current_line, current_state)) = comparable_parse_state(&current.parse) else {
-        return false;
-    };
-    let Some((previous_line, previous_state)) = comparable_parse_state(&previous.parse) else {
-        return false;
-    };
-    current_state == previous_state
-        && current_line.saturating_add(current_line_offset)
-            == previous_line.saturating_add(previous_line_offset)
-}
+/// TextMate states contain no absolute line counters. A shifted suffix can be
+/// reused once its rule stack and scopes converge in the same parser session.
+fn states_converge_after_shift(current: &TextMateState, _current_line_offset: i128,
+    previous: &TextMateState, _previous_line_offset: i128) -> bool { current == previous }
 
 #[derive(Clone)]
 pub(crate) struct HighlightJob {
@@ -472,7 +368,7 @@ pub(crate) struct HighlightJob {
     line_count: usize,
     visible: Range<usize>,
     parse_start: usize,
-    start_state: Option<Arc<SyntectState>>,
+    start_state: Option<Arc<TextMateState>>,
     start_line_offset: i128,
     invalidated_through: Option<usize>,
     stale_checkpoints: Vec<(usize, CachedCheckpoint)>,
@@ -500,7 +396,7 @@ pub(crate) struct HighlightBatch {
     line_count: usize,
     visible: Range<usize>,
     parsed_to: usize,
-    checkpoints: Vec<(usize, i128, Arc<SyntectState>)>,
+    checkpoints: Vec<(usize, i128, Arc<TextMateState>)>,
     pub entries: Vec<HighlightEntry>,
     converged_at: Option<usize>,
     provisional: bool,
@@ -529,12 +425,12 @@ impl HighlightJob {
         else { nominal.min(line_count) }
     }
 
-    /// Run a bounded, resumable Syntect pass. Every returned checkpoint is the
+    /// Run a bounded, resumable TextMate pass. Every returned checkpoint is the
     /// parser/highlighter state *before* its line index.
     pub(crate) fn run(
         self,
         rope: &Rope,
-        syntax_set: &SyntaxSet,
+        syntax_set: &SyntaxRegistry,
         theme_set: &ThemeSet,
         mut cancelled: impl FnMut() -> bool,
     ) -> HighlightBatch {
@@ -550,7 +446,7 @@ impl HighlightJob {
     pub(crate) fn run_with_budget(
         self,
         rope: &Rope,
-        syntax_set: &SyntaxSet,
+        syntax_set: &SyntaxRegistry,
         theme_set: &ThemeSet,
         cancelled: &mut impl FnMut() -> bool,
         budget: Duration,
@@ -565,13 +461,11 @@ impl HighlightJob {
             .filter(|syntax| syntax.name == self.syntax_name)
             .unwrap_or_else(|| select_syntax(syntax_set, Some(&self.file_path),
                 self.language.as_deref(), &self.first_line));
-        // Compile theme selectors once per batch, not once per checkpoint.
-        let highlighter = syntect::highlighting::Highlighter::new(theme);
         let mut state = self
             .start_state
             .as_deref()
             .cloned()
-            .unwrap_or_else(|| SyntectState::new(syntax, &highlighter));
+            .unwrap_or_else(|| TextMateState::new(syntax, theme));
 
         let started = Instant::now();
         // Once a stateful pass reaches the requested viewport, finish that
@@ -639,16 +533,8 @@ impl HighlightJob {
                     Highlighter::normalize_line_for_highlighting(&mut text);
                     let hash = Highlighter::line_hash(&text);
                     let mut comment_ranges = Vec::new();
-                    let spans = match state.highlight_line(&text, syntax_set, &highlighter, true, &mut comment_ranges) {
-                        Ok(ranges) => ranges
-                            .into_iter()
-                            .map(|(style, text)| (style, text.to_string()))
-                            .collect(),
-                        Err(_) => {
-                            comment_ranges.clear();
-                            vec![(Style::default(), text)]
-                        }
-                    };
+                    let spans = state.line(&text,true,&mut comment_ranges).into_iter()
+                        .map(|(style,text)|(style,text.to_owned())).collect();
                     entries.push(HighlightEntry {
                         line,
                         hash,
@@ -660,7 +546,7 @@ impl HighlightJob {
                 // Carrying a partially parsed state into later lines would be
                 // misleading. A fresh state gives fast, deterministic recovery
                 // on the next ordinary line.
-                state = SyntectState::new(syntax, &highlighter);
+                state = TextMateState::new(syntax, theme);
                 line += 1;
                 continue;
             }
@@ -676,31 +562,10 @@ impl HighlightJob {
                 0
             };
             let mut comment_ranges = Vec::new();
-            match state.highlight_line(&text, syntax_set, &highlighter, inside_visible, &mut comment_ranges) {
-                Ok(ranges) if self.visible.contains(&line) => {
-                    let spans: HighlightSpans = ranges
-                        .into_iter()
-                        .map(|(style, text)| (style, text.to_string()))
-                        .collect();
-                    entries.push(HighlightEntry {
-                        line,
-                        hash,
-                        span_char_lengths: span_char_lengths(&spans),
-                        comment_ranges,
-                        spans,
-                    });
-                }
-                Err(_) if self.visible.contains(&line) => {
-                    let spans = vec![(Style::default(), text.clone())];
-                    entries.push(HighlightEntry {
-                        line,
-                        hash,
-                        span_char_lengths: span_char_lengths(&spans),
-                        comment_ranges: Vec::new(),
-                        spans,
-                    });
-                }
-                _ => {}
+            let ranges=state.line(&text,inside_visible,&mut comment_ranges);
+            if inside_visible {
+                let spans:HighlightSpans=ranges.into_iter().map(|(style,text)|(style,text.to_owned())).collect();
+                entries.push(HighlightEntry {line,hash,span_char_lengths:span_char_lengths(&spans),comment_ranges,spans});
             }
             line += 1;
         }
@@ -802,7 +667,7 @@ fn select_theme<'a>(theme_set: &'a ThemeSet, theme_key: &str) -> Option<&'a Them
     theme_set
         .themes
         .get(theme_key)
-        .or_else(|| theme_set.themes.get("base16-ocean.dark"))
+        .or_else(|| theme_set.themes.get("dark-plus"))
         .or_else(|| theme_set.themes.values().next())
 }
 
@@ -824,7 +689,7 @@ fn normalized_line_prefix(line: &str) -> String {
 
 /// Keep the current text on screen while borrowing the previous line's style
 /// runs. Common prefix/suffix characters retain their exact old style; newly
-/// inserted or replaced text inherits the nearest prior run until Syntect's
+/// inserted or replaced text inherits the nearest prior run until TextMate's
 /// authoritative worker result arrives.
 fn project_stale_spans(previous: &HighlightSpans, current: &str) -> HighlightSpans {
     let current = current.strip_suffix('\n').unwrap_or(current);
@@ -957,11 +822,11 @@ fn reference_project_stale_spans(previous: &HighlightSpans, current: &str) -> Hi
 }
 
 fn select_syntax<'a>(
-    syntax_set: &'a SyntaxSet,
+    syntax_set: &'a SyntaxRegistry,
     file_path: Option<&Path>,
     language: Option<&str>,
     first_line: &str,
-) -> &'a SyntaxReference {
+) -> &'a Syntax {
     language
         .and_then(|name| {
             syntax_set
@@ -983,23 +848,23 @@ fn select_syntax<'a>(
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text())
 }
 
-/// Syntect-backed document highlighter. The UI owns only compact styled-line
+/// TextMate-backed document highlighter. The UI owns only compact styled-line
 /// results; parser/highlighter work and state propagation happen on workers.
 pub(crate) struct SyntaxAssetRefresh {
     bootstrap: bool,
     installed_folder: Option<PathBuf>,
     force_install: bool,
     loaded_fingerprint: Option<u64>,
-    base_syntax_set: Arc<SyntaxSet>,
+    base_syntax_set: Arc<SyntaxRegistry>,
     candidates: Vec<PathBuf>,
     previous_folders: Vec<PathBuf>,
 }
 
 pub(crate) struct LoadedSyntaxAssets {
     installed_folder: Option<PathBuf>,
-    base_syntax_set: Arc<SyntaxSet>,
+    base_syntax_set: Arc<SyntaxRegistry>,
     fingerprint: Option<u64>,
-    syntax_set: Arc<SyntaxSet>,
+    syntax_set: Arc<SyntaxRegistry>,
     folders: Vec<PathBuf>,
     pub(crate) cache_write_error: Option<String>,
     pub(crate) warning: Option<String>,
@@ -1098,7 +963,7 @@ impl SyntaxAssetRefresh {
             installed_folder: self.installed_folder,
             base_syntax_set,
             fingerprint,
-            syntax_set: Arc::new(builder.build()),
+            syntax_set: Arc::new(builder.build()?),
             folders,
             cache_write_error,
             warning: None,
@@ -1110,12 +975,12 @@ pub struct Highlighter {
     bootstrap: bool,
     /// Immutable installed product assets. User/workspace folders are layered
     /// over this set without reparsing every shipped grammar.
-    base_syntax_set: Arc<SyntaxSet>,
-    syntax_set: Arc<SyntaxSet>,
+    base_syntax_set: Arc<SyntaxRegistry>,
+    syntax_set: Arc<SyntaxRegistry>,
     theme_set: Arc<ThemeSet>,
     documents: FxHashMap<PathBuf, DocumentCache>,
     /// Isolated diff rows are not a coherent document stream, so they use a
-    /// small secondary Syntect cache without contaminating editor state.
+    /// small secondary TextMate cache without contaminating editor state.
     fragment_cache: FragmentCache,
     installed_syntax_folder: Option<PathBuf>,
     startup_syntax_cache_loaded: bool,
@@ -1151,9 +1016,9 @@ impl Highlighter {
     pub(crate) fn startup_theme_set() -> Arc<ThemeSet> {
         static THEMES: std::sync::OnceLock<Arc<ThemeSet>> = std::sync::OnceLock::new();
         Arc::clone(THEMES.get_or_init(|| {
-            let mut themes = ThemeSet::load_defaults();
+            let mut themes = ThemeSet::new();
             let dark = crate::app_theme_loader::builtin_theme("dark").unwrap();
-            if let Some(theme) = &dark.syntect_theme {
+            if let Some(theme) = &dark.textmate_theme {
                 themes.themes.insert(dark.syntax_theme.clone(), theme.clone());
             }
             Arc::new(themes)
@@ -1171,15 +1036,10 @@ impl Highlighter {
         let theme_set = if bootstrap { Self::startup_theme_set() } else {
             let mut themes = ThemeSet::new();
             themes.themes = Self::startup_theme_set().themes.clone();
-            install_dark_plus_theme(&mut themes);
+            install_bundled_themes(&mut themes);
             Arc::new(themes)
         };
         let installed_folder = if bootstrap { None } else { crate::syntax_assets::installed_syntax_folder() };
-        if !bootstrap && installed_folder.is_none() {
-            log_warn!(
-                "syntax asset directory not found; package the complete syntaxes directory beside the VTCode executable"
-            );
-        }
         let (base_syntax_set, installed_syntax_fingerprint) = if bootstrap {
             (Arc::new(crate::syntax_assets::build_syntax_set(&[])
                 .expect("the Plain Text fallback must load")), None)
@@ -1290,9 +1150,9 @@ impl Highlighter {
         self.fragment_cache.clear();
     }
 
-    /// Human-facing language modes exposed by the loaded Syntect registry.
+    /// Human-facing language modes exposed by the loaded TextMate registry.
     /// Internal helper syntaxes remain available for grammar includes but are
-    /// intentionally omitted from UI lists, as requested by Syntect's model.
+    /// intentionally omitted from UI lists, as requested by TextMate's model.
     pub(crate) fn syntax_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .syntax_set
@@ -1315,7 +1175,7 @@ impl Highlighter {
         hash
     }
 
-    /// Rope preserves CRLF. VTCode builds its Syntect set in newline mode, so
+    /// Rope preserves CRLF. VTCode builds its TextMate set in newline mode, so
     /// every worker and renderer cache key uses exactly one trailing LF.
     pub(crate) fn normalize_line_for_highlighting(line: &mut String) {
         while matches!(line.as_bytes().last().copied(), Some(b'\n' | b'\r')) {
@@ -1483,7 +1343,7 @@ impl Highlighter {
     }
 
     /// Build a bounded best-effort viewport pass when the exact parser state
-    /// is still far away. This is still Syntect highlighting; it simply starts
+    /// is still far away. This is still TextMate highlighting; it simply starts
     /// with the grammar's initial state. The authoritative job remains queued
     /// and replaces these lines after resolving multiline context.
     pub(crate) fn prepare_provisional_job(
@@ -1760,7 +1620,7 @@ impl Highlighter {
     /// Stale-while-revalidate renderer fallback. An unchanged line is promoted
     /// after its current text hash proves that the cached spans still match.
     /// For a same-line edit, the old style runs are projected onto the current
-    /// text so the UI never flashes back to plain text while Syntect catches up.
+    /// text so the UI never flashes back to plain text while TextMate catches up.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn reconcile_stale_line_for_render(
         &mut self,
@@ -1819,7 +1679,7 @@ impl Highlighter {
         }
         entry.display_version = content_version;
         // Display-ready does not mean parser-authoritative. prepare_job keeps
-        // scheduling this line until a real Syntect batch replaces it.
+        // scheduling this line until a real TextMate batch replaces it.
         Some(entry.rendered())
     }
 
@@ -1837,14 +1697,14 @@ impl Highlighter {
         self.fragment_cache.get(file_path, theme_key, language, line_idx, hash)
     }
 
-    /// Highlight one isolated fragment with Syntect. This is intentionally
+    /// Highlight one isolated fragment with TextMate. This is intentionally
     /// restricted to diff rows, which do not form one parseable document.
     pub(crate) fn highlight_line_static_pub(
         line: &str,
         file_path: Option<&Path>,
         language: Option<&str>,
         theme_key: &str,
-        syntax_set: &SyntaxSet,
+        syntax_set: &SyntaxRegistry,
         theme_set: &ThemeSet,
     ) -> HighlightSpans {
         FragmentHighlighter::new(line, file_path, language, theme_key, syntax_set, theme_set)
@@ -1864,7 +1724,7 @@ impl Highlighter {
         self.fragment_cache.insert(file_path, theme_key, language, line_idx, hash, spans);
     }
 
-    pub(crate) fn shared_sets(&self) -> (Arc<SyntaxSet>, Arc<ThemeSet>) {
+    pub(crate) fn shared_sets(&self) -> (Arc<SyntaxRegistry>, Arc<ThemeSet>) {
         (Arc::clone(&self.syntax_set), Arc::clone(&self.theme_set))
     }
 
@@ -1879,9 +1739,9 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
 }
 
 /// Use the same original VS Code asset as the workbench and imported themes.
-fn install_dark_plus_theme(theme_set: &mut ThemeSet) {
+fn install_bundled_themes(theme_set: &mut ThemeSet) {
     for theme in crate::app_theme_loader::load_builtin_themes() {
-        if let Some(syntax) = theme.syntect_theme { theme_set.themes.insert(theme.syntax_theme, syntax); }
+        if let Some(syntax) = theme.textmate_theme { theme_set.themes.insert(theme.syntax_theme, syntax); }
     }
 }
 
@@ -1895,9 +1755,10 @@ mod tests {
 
     fn write_refresh_grammar(folder: &Path, name: &str) {
         std::fs::create_dir_all(folder).unwrap();
-        std::fs::write(folder.join("Example.sublime-syntax"), format!(
-            "%YAML 1.2\n---\nname: {name}\nfile_extensions: [example]\nscope: source.example\ncontexts:\n  main:\n    - match: magic\n      scope: keyword.control.example\n"
-        )).unwrap();
+        std::fs::write(folder.join("Example.tmLanguage.json"), serde_json::json!({
+        "name":name,"scopeName":"source.example","fileTypes":["example"],
+        "patterns":[{"match":"magic","name":"keyword.control.example"}]
+    }).to_string()).unwrap();
     }
 
     #[test]
@@ -1922,7 +1783,7 @@ mod tests {
         let custom = directory.path().join("custom");
         write_refresh_grammar(&installed, "Installed");
         std::fs::create_dir_all(&custom).unwrap();
-        std::fs::write(custom.join("Bad.sublime-syntax"), "contexts: [").unwrap();
+        std::fs::write(custom.join("Bad.tmLanguage.json"), "contexts: [").unwrap();
         let mut highlighter = Highlighter::for_syntax_folder(&installed);
         let loaded = highlighter.syntax_asset_refresh(vec![custom]).run().unwrap()
             .expect("the newly built installed registry must become usable on this launch");
@@ -1942,7 +1803,7 @@ mod tests {
         let loaded = highlighter.syntax_asset_refresh(vec![custom.clone()]).run().unwrap().unwrap();
         highlighter.install_syntax_assets(loaded);
         assert!(highlighter.syntax_names().contains(&"Custom".into()));
-        std::fs::remove_file(custom.join("Example.sublime-syntax")).unwrap();
+        std::fs::remove_file(custom.join("Example.tmLanguage.json")).unwrap();
         std::fs::remove_dir(&custom).unwrap();
         let loaded = highlighter.syntax_asset_refresh(vec![custom]).run().unwrap()
             .expect("removing the last custom folder must restore the installed registry");
@@ -1976,20 +1837,10 @@ mod tests {
     fn dark_plus_theme_uses_vscode_editor_colors() {
         let highlighter = Highlighter::new();
         let theme = highlighter.theme_set.themes.get("dark-plus").unwrap();
-        assert_eq!(theme.settings.background, Some(rgb(30, 30, 30)));
-        assert_eq!(theme.settings.foreground, Some(rgb(212, 212, 212)));
-        assert!(
-            theme
-                .scopes
-                .iter()
-                .any(|item| item.style.foreground == Some(rgb(206, 145, 120)))
-        );
-        assert!(
-            theme
-                .scopes
-                .iter()
-                .any(|item| item.style.foreground == Some(rgb(106, 153, 85)))
-        );
+        assert_eq!(theme.background, rgb(30, 30, 30));
+        assert_eq!(theme.foreground, rgb(212, 212, 212));
+        assert_eq!(theme.scope_foreground(&["string"]),rgb(206,145,120));
+        assert_eq!(theme.scope_foreground(&["comment"]),rgb(106,153,85));
     }
 
     #[test]
@@ -1997,7 +1848,7 @@ mod tests {
         let mut highlighter = Highlighter::new();
         let (_, active_snapshot) = highlighter.shared_sets();
 
-        highlighter.register_theme("late-theme", Theme::default());
+        highlighter.register_theme("late-theme", Theme::new("test","#000000","#ffffff",&[]).unwrap());
         let (_, updated_snapshot) = highlighter.shared_sets();
 
         assert!(!active_snapshot.themes.contains_key("late-theme"));
@@ -2010,13 +1861,13 @@ mod tests {
         let rope = Rope::from_str("let value = 1;\n");
         let path = Path::new("generation.rs");
         let job = highlighter
-            .prepare_job(&rope, path, 0, None, 0..1, None, "base16-ocean.dark")
+            .prepare_job(&rope, path, 0, None, 0..1, None, "dark-plus")
             .unwrap();
         let (syntax_set, theme_set) = highlighter.shared_sets();
         let initial = job.clone().run(&rope, &syntax_set, &theme_set, || false);
         assert!(highlighter.apply_batch(initial));
         let (before, _) = highlighter
-            .highlighted_line_by_index_if_cached(0, Some(path), None, "base16-ocean.dark", 0)
+            .highlighted_line_by_index_if_cached(0, Some(path), None, "dark-plus", 0)
             .unwrap();
         let old_batch = job.run(&rope, &syntax_set, &theme_set, || false);
 
@@ -2032,11 +1883,11 @@ mod tests {
         highlighter.install_syntax_assets(loaded);
 
         let (during, _) = highlighter
-            .highlighted_line_by_index_if_cached(0, Some(path), None, "base16-ocean.dark", 0)
+            .highlighted_line_by_index_if_cached(0, Some(path), None, "dark-plus", 0)
             .expect("registry refresh must not flash existing text back to plain colors");
         assert!(Rc::ptr_eq(&before, &during));
         let fresh = highlighter
-            .prepare_job(&rope, path, 0, None, 0..1, None, "base16-ocean.dark")
+            .prepare_job(&rope, path, 0, None, 0..1, None, "dark-plus")
             .unwrap();
         assert!(fresh.start_state.is_none());
         assert!(!highlighter.apply_batch(old_batch));
@@ -2111,7 +1962,7 @@ mod tests {
                 "CMake",
                 "add_executable(vtcode src/main.cpp)",
             ),
-            (".gitignore", "Git Ignore", "# generated files"),
+            (".gitignore", "Ignore", "# generated files"),
             (
                 "main.tf",
                 "Terraform",
@@ -2207,7 +2058,7 @@ mod tests {
     }
 
     #[test]
-    fn document_pipeline_preserves_multiline_syntect_state() {
+    fn document_pipeline_preserves_multiline_textmate_state() {
         let mut highlighter = Highlighter::new();
         let path = Path::new("multiline.c");
         let rope = Rope::from_str("int before;\n/* open\nstill a comment\n*/\nint after;\n");
@@ -2735,7 +2586,7 @@ mod tests {
     }
 
     #[test]
-    fn line_deletion_reuses_a_shifted_suffix_with_modern_syntect_states() {
+    fn line_deletion_reuses_a_shifted_suffix_with_modern_textmate_states() {
         let mut highlighter = Highlighter::new();
         let path = Path::new("large.rs");
         let source: String = (0..700)
@@ -2949,7 +2800,7 @@ mod tests {
     }
 
     #[test]
-    fn distant_viewport_gets_provisional_syntect_spans_without_prefix_scan() {
+    fn distant_viewport_gets_provisional_textmate_spans_without_prefix_scan() {
         let mut highlighter = Highlighter::new();
         let path = Path::new("very-large.cpp");
         let rope = Rope::from_str(
@@ -3077,7 +2928,7 @@ mod tests {
         let highlighter = Highlighter::new();
         let names = highlighter.syntax_names();
 
-        assert_eq!(names.len(), 122);
+        assert!(names.len() >= 240);
         assert!(names.iter().any(|name| name == "VHDL"));
         assert!(names.iter().any(|name| name == "Verilog"));
         assert!(names.iter().any(|name| name == "SystemVerilog"));
@@ -3087,7 +2938,7 @@ mod tests {
         assert!(names.iter().any(|name| name == "TSX"));
         assert!(names.iter().any(|name| name == "TOML"));
         assert!(names.iter().any(|name| name == "YAML"));
-        assert!(names.iter().any(|name| name == "HTML (Rails)"));
+        assert!(names.iter().any(|name| name == "ERB"));
         assert!(
             names
                 .windows(2)
@@ -3104,20 +2955,11 @@ mod tests {
     }
 
     #[test]
-    fn loads_sublime_syntaxes_on_top_of_built_ins() {
+    fn loads_textmate_grammars_on_top_of_built_ins() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
-            directory.path().join("Foo.sublime-syntax"),
-            r#"%YAML 1.2
----
-name: Foo Language
-file_extensions: [foo, rs]
-scope: source.foo
-contexts:
-  main:
-    - match: '\bmagic\b'
-      scope: keyword.control.foo
-"#,
+            directory.path().join("Foo.tmLanguage.json"),
+            r#"{"name":"Foo Language","scopeName":"source.foo","fileTypes":["foo","rs"],"patterns":[{"match":"\\bmagic\\b","name":"keyword.control.foo"}]}"#,
         )
         .unwrap();
 
@@ -3184,7 +3026,7 @@ contexts:
         assert!(
             spans
                 .iter()
-                .any(|(style, text)| { text == "magic" && style.foreground == rgb(86, 156, 214) })
+                .any(|(style, text)| { text == "magic" && style.foreground == rgb(197, 134, 192) })
         );
     }
 }

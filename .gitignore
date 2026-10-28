@@ -3,7 +3,7 @@
 /dist/
 /extension-api/target/
 /extension-api/Cargo.lock
-/syntaxes/.cache/
+/grammars/.cache/
 
 # Editor settings, sessions, recovery data and local tooling
 .vtcode/

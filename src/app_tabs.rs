@@ -286,10 +286,16 @@ impl App {
 
         // Opening an existing document in another desk creates a view of the
         // live buffer, including unsaved edits; it never reloads the disk file.
+        let saved_view = self.closed_file_views.get(&open_path).copied().or_else(|| {
+            self.closed_file_views.iter().find(|(path, _)| Self::same_open_path(path, &open_path))
+                .map(|(_, position)| *position)
+        });
         if let Some(source) = self.groups.iter().flat_map(|g| &g.tabs).find(|tab|
             tab.kind == TabKind::File && !tab.editor.bg_loading
                 && tab.editor.file_path.as_ref().is_some_and(|path| Self::same_open_path(path,&open_path))) {
             let mut tab = self.clone_desk_tab(source);
+            tab.editor.pending_reopen_view = saved_view;
+            tab.editor.restore_reopen_view();
             tab.preview = preview && !tab.has_unsaved_changes();
             self.tabs.push(tab);
             self.active_tab = self.tabs.len()-1;
@@ -314,6 +320,7 @@ impl App {
         // small file can live on a slow filesystem, and metadata/header reads
         // are enough to freeze a terminal frame.
         let mut editor = Editor::new_loading(&open_path, 0);
+        editor.pending_reopen_view = saved_view;
         editor.language_associations = self.language_associations.clone();
         editor.scope_bubble_rules = self.animation_settings.scope_languages.clone();
         editor.word_wrap_column = self.word_wrap_column;
@@ -352,7 +359,7 @@ impl App {
     }
 
     /// Highlight every visible editor viewport on workers. Scrolling and edits
-    /// replace each pane's request key. Stateful Syntect jobs yield checkpoints and
+    /// replace each pane's request key. Stateful TextMate jobs yield checkpoints and
     /// resume in bounded slices, including when large-file mode is active.
     pub(crate) fn refresh_visible_highlights_async(&mut self) {
         if let Some(path) = self.tabs.get(self.active_tab)
@@ -859,10 +866,6 @@ impl App {
     /// Open settings as a tab, reusing an existing Settings tab in any pane.
     pub(crate) fn open_settings_tab(&mut self) {
         self.flush_live_settings();
-        // Opening Settings should dismiss transient search UIs so they don't pop back when focus changes.
-        self.search_active = false;
-        self.search_input_focused = false;
-        self.clear_file_search_results();
         self.global_search_active = false;
         self.settings_scope = crate::settings::SettingsScope::Global;
         self.settings_focus_control = false;
@@ -896,6 +899,7 @@ impl App {
                 preview: false,
                 kind: TabKind::Settings,
                 extension_view: None,
+                file_search: Default::default(),
                 terminal_idx: None,
             });
             self.active_tab = self.tabs.len() - 1;
@@ -936,6 +940,7 @@ impl App {
             preview: false,
             kind: TabKind::KeyboardShortcuts,
             extension_view: None,
+            file_search: Default::default(),
             terminal_idx: None,
         });
         self.active_tab = self.tabs.len() - 1;
@@ -964,7 +969,7 @@ impl App {
                 .map_or("Unknown Extension", |ext| ext.name.as_str());
             let mut editor = self.new_editor();
             editor.file_path = Some(std::path::PathBuf::from(format!("Extension: {name} [ext-info:{extension_id}]")));
-            let tab = Tab { editor, pinned: false, preview, kind: TabKind::ExtensionInfo, extension_view: None, terminal_idx: None };
+            let tab = Tab { editor, pinned: false, preview, kind: TabKind::ExtensionInfo, extension_view: None, file_search: Default::default(), terminal_idx: None };
             if let Some(index) = self.tabs.iter().position(|tab| tab.kind == TabKind::ExtensionInfo && tab.preview) {
                 self.tabs[index] = tab;
                 self.active_tab = index;
@@ -1138,6 +1143,7 @@ impl App {
             preview: false,
             kind: TabKind::MarkdownPreview,
             extension_view: None,
+            file_search: Default::default(),
             terminal_idx: None,
         });
         let preview_idx = self.tabs.len() - 1;
@@ -1258,14 +1264,10 @@ impl App {
     }
 
     pub(crate) fn reopen_closed_tab(&mut self) {
-        if let Some((path, line, col)) = self.closed_tab_paths.pop_back() {
+        if let Some((path, _, _)) = self.closed_tab_paths.pop_back() {
             // The loader reports an unavailable path asynchronously. Avoid a
             // foreground filesystem round-trip, especially for remote roots.
             self.open_file(&path);
-            if let Some(ed) = self.editor_mut() {
-                ed.set_cursor(line, col);
-                ed.center_cursor();
-            }
         } else {
             self.notify("No recently closed tabs");
         }
@@ -1291,7 +1293,7 @@ impl App {
         self.clear_file_search_results();
         self.clear_global_search();
         self.search_history = Default::default();
-        self.global_search_history = Default::default();
+        for field in 0..4 { *self.global_search_field_history_mut(field) = Default::default(); }
         self.search_query.clear();
         self.search_cursor = 0;
         self.search_selection_anchor = None;
@@ -1315,6 +1317,7 @@ impl App {
         self.outline_selected = 0;
         self.navigation = Default::default();
         self.closed_tab_paths.clear();
+        self.closed_file_views.clear();
         self.tab_switcher_active = false;
         self.tab_switcher_selected = 0;
         self.tab_mru_order.clear();
@@ -1737,6 +1740,10 @@ mod performance_tests;
 mod lifecycle_tests;
 
 #[cfg(test)]
+#[path = "app_reopen_tests.rs"]
+mod reopen_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::app::{App, Tab, TabKind};
     use crate::editor::Editor;
@@ -1871,7 +1878,7 @@ mod tests {
             theme.syntax_theme = key.into();
             theme.name = name.into();
             theme.workbench_colors.insert("editor.foreground".into(), serde_json::json!(foreground));
-            theme.syntect_theme.as_mut().unwrap().scopes.clear();
+            theme.token_colors.clear();
             app.loaded_themes.push(theme);
         }
         let mut settings = Tab::new_file(Editor::new());
@@ -2194,6 +2201,7 @@ mod tests {
             preview: false,
             kind: TabKind::File,
             extension_view: None,
+            file_search: Default::default(),
             terminal_idx: None,
         }
     }
@@ -2264,6 +2272,7 @@ mod tests {
             preview: false,
             kind: TabKind::MarkdownPreview,
             extension_view: None,
+            file_search: Default::default(),
             terminal_idx: None,
         };
 
@@ -2767,19 +2776,23 @@ mod tests {
     }
 
     #[test]
-    fn closing_one_file_keeps_find_widget_for_remaining_file() {
+    fn closing_one_file_keeps_the_remaining_files_own_find_widget() {
         let mut app = App::test_new();
         app.tabs = vec![
             make_tab("first.rs", false, false),
             make_tab("second.rs", false, false),
         ];
+        app.tabs[1].file_search.search_active = true;
+        app.tabs[1].file_search.search_query = "second query".into();
         app.search_active = true;
+        app.search_query = "first query".into();
         app.search_input_focused = false;
 
         app.force_close_tab(0);
 
         assert_eq!(app.tabs.len(), 1);
         assert!(app.search_active);
+        assert_eq!(app.search_query, "second query");
     }
 
     #[test]

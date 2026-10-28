@@ -630,6 +630,33 @@ fn setting_overrides_conditional_siblings_and_changed_siblings_keep_their_behavi
     }
 }
 
+#[test]
+fn settings_sibling_clauses_require_exact_sibling_names_and_replace_one_basename() {
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("a.js");
+    std::fs::write(&path, "").unwrap();
+    std::fs::create_dir(workspace.path().join("nested")).unwrap();
+    std::fs::write(workspace.path().join("nested/a.ts"), "").unwrap();
+    std::fs::write(workspace.path().join("a-a.ts"), "").unwrap();
+    let matches = |when: &str| {
+        let rules = ExcludeRules::new(&[("**/*.js".into(), serde_json::json!({"when":when}))].into(), &BTreeMap::new());
+        assert!(rules.requires_siblings());
+        rules.excludes(&Candidate::new(&path), workspace.path())
+    };
+    for when in ["", ".", "nested/a.ts", "$(basename)-$(basename).ts"] { assert!(!matches(when), "{when}"); }
+    std::fs::write(workspace.path().join("a-$(basename).ts"), "").unwrap();
+    assert!(matches("$(basename)-$(basename).ts"));
+}
+
+#[test]
+fn settings_glob_case_follows_the_native_platform_for_ascii_and_unicode_paths() {
+    let root = Path::new("workspace");
+    let rules = ExcludeRules::new(&[("src/*.RS".into(), serde_json::json!(true))].into(), &BTreeMap::new());
+    for name in ["src/plain.rs", "src/café.rs"] {
+        assert_eq!(rules.excludes(&Candidate::new(&root.join(name)), root), cfg!(any(windows, target_os="macos")));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn non_utf8_paths_preserve_lossy_matching_for_global_and_rooted_rules() {

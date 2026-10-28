@@ -86,6 +86,7 @@ fn chunk_input_and_polling_hot_paths_remain_silent_and_arguments_are_private() {
         Command::Files {
             generation: 1,
             known_version: Some(1),
+            excludes: Default::default(),
         },
     ] {
         assert!(trace.request(1, &command, "/project").is_none());

@@ -303,7 +303,7 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
 /// Paint search results using the original file's coordinates. Selections and
 /// carets are projected separately from the exact diff text windows.
 pub(crate) fn draw_search_matches(f: &mut Frame, app: &App) {
-    if !app.search_active || app.rendering_inactive_editor {
+    if !app.search_active {
         return;
     }
     let (Some(editor), Some(area)) = (app.editor(), app.code_area) else {

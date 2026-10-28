@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 /// editor, input and terminal surfaces. This cache avoids parsing or allocating
 /// while drawing, and prevents blending every control on the sidebar.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ColorLayer(Option<syntect::highlighting::Color>);
+pub(crate) struct ColorLayer(Option<crate::textmate::Color>);
 
 impl ColorLayer {
     pub(crate) fn resolve(colors: &Map<String, Value>, id: &str, fallback: Self) -> Self {
@@ -17,13 +17,13 @@ impl ColorLayer {
         colors
             .get(id)
             .and_then(Value::as_str)
-            .and_then(crate::vscode_theme::parse_syntect_color)
+            .and_then(crate::vscode_theme::parse_syntax_color)
             .map(|color| Self(Some(color)))
             .unwrap_or(fallback)
     }
 
     pub(crate) fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self(Some(syntect::highlighting::Color { r, g, b, a }))
+        Self(Some(crate::textmate::Color { r, g, b, a }))
     }
 
     pub(crate) fn opaque(color: Color) -> Self {
@@ -459,7 +459,7 @@ impl WorkbenchColors {
         let optional = |id: &str, background: Color| {
             // A transparent border must not turn into an editor-colored underline.
             colors.get(id).and_then(Value::as_str)
-                .and_then(crate::vscode_theme::parse_syntect_color)
+                .and_then(crate::vscode_theme::parse_syntax_color)
                 .filter(|color| color.a != 0)
                 .map(|_| get(id, background, background))
         };

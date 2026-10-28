@@ -98,6 +98,8 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
             app.push_global_search_history();
             if ctrl && alt {
                 app.replace_all_in_files();
+            } else if app.global_search_pending_since.is_some() {
+                app.update_global_search();
             } else if app.open_global_search_result() {
                 app.global_search_active = false;
             }
@@ -114,10 +116,10 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
             };
             if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 0; }
         }
-        KeyCode::Up if app.search_focus_field == 0 && modifiers.is_empty() => {
+        KeyCode::Up if modifiers.is_empty() => {
             app.global_search_history_prev();
         }
-        KeyCode::Down if app.search_focus_field == 0 && modifiers.is_empty() => {
+        KeyCode::Down if modifiers.is_empty() => {
             app.global_search_history_next();
         }
         KeyCode::Up => {
@@ -146,11 +148,9 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
                 modifiers,
                 None,
             );
-            if result.changed && field != 1 {
-                if field == 0 {
-                    app.global_search_history.edited();
-                }
-                app.update_global_search();
+            if result.changed {
+                app.global_search_field_history_mut(field).edited();
+                if field != 1 { app.schedule_global_search(); }
             }
         }
     }
@@ -576,6 +576,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 app.push_global_search_history();
                 app.global_search_active = true;
                 app.global_search_query.clear();
+                app.update_global_search();
                 app.global_search_replace_query.clear();
                 app.global_search_results.clear();
                 app.global_search_truncated = false;
@@ -602,6 +603,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 app.active_pane = ActivePane::Explorer;
                 app.search_input_focused = false;
                 app.global_search_query.clear();
+                app.update_global_search();
                 app.global_search_replace_query.clear();
                 app.global_search_results.clear();
                 app.global_search_truncated = false;

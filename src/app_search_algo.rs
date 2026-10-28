@@ -601,7 +601,8 @@ impl App {
         if let Some(error) = error {
             self.status_message = format!("Invalid regex: {error}");
         }
-        if self.search_active && self.search_input_focused && !self.search_focus_replace {
+        if self.search_active && self.search_input_focused && !self.search_focus_replace
+            && !self.rendering_inactive_editor {
             self.jump_to_current_match();
         }
     }
@@ -745,6 +746,25 @@ impl App {
         false
     }
 
+    /// Revalidate a visible view after tab moves, external reloads, or a shared
+    /// search preference change. Pending edit scans still keep their debounce.
+    pub(crate) fn refresh_file_search_view(&mut self, group: usize) {
+        if !self.file_search_visible() || self.search_query.is_empty()
+            || (self.file_search_refresh_pending && !self.rendering_inactive_editor) {
+            return;
+        }
+        let saved_group = self.active_group;
+        self.active_group = group;
+        let _ = self.editor_mut();
+        let target = self.editor_content_target();
+        if self.file_search_refresh_pending || self.file_search_key.as_ref().is_some_and(|key|
+            Some(&key.target) != target.as_ref() || key.case_sensitive != self.search_case_sensitive
+                || key.use_regex != self.search_regex || key.whole_word != self.search_whole_word) {
+            self.update_search();
+        }
+        self.active_group = saved_group;
+    }
+
     pub(crate) fn update_search(&mut self) {
         let _ = self.editor_mut();
         if self.status_message.starts_with("Invalid regex:") { self.status_message.clear(); }
@@ -825,6 +845,7 @@ impl App {
 
         #[cfg(not(test))]
         {
+            let owner = self.file_search_owner().unwrap();
             self.bg_file_search_running = true;
             let sender = self.background.sender.clone();
             let activity = self.background.activity.start("Searching", target.file_path.as_deref());
@@ -843,6 +864,7 @@ impl App {
                     return;
                 }
                 let _ = sender.send(crate::background::BackgroundResult::SearchMatches {
+                    owner,
                     generation,
                     target,
                     matches,

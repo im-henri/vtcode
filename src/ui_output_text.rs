@@ -287,6 +287,11 @@ impl Reader {
     fn scroll_by(&mut self, delta: isize) {
         self.scroll_to(self.offset().saturating_add_signed(delta));
     }
+    fn scrolls_past_end(&self, rows: usize) -> bool {
+        rows > self.total_rows()
+            .saturating_sub(self.text.height as usize)
+            .saturating_sub(self.offset())
+    }
     fn row_at(&self, row: usize) -> Option<(usize, layout::Segment)> {
         if self.wrap {
             self.layout.segment_at(&self.editor, row)
@@ -365,7 +370,7 @@ impl Reader {
             self.scroll_to(row.saturating_sub(self.text.height as usize / 2));
         }
         self.reveal();
-        self.view.follow = false;
+        self.view.autoscroll = false;
     }
     pub fn toggle_wrap(&mut self) {
         let anchor = self
@@ -407,10 +412,11 @@ impl Reader {
             self.horizontal = x.saturating_sub(self.text.width.saturating_sub(1) as usize);
         }
     }
-    pub fn follow(&mut self) {
-        self.view.follow = true;
+    pub fn resume_autoscroll(&mut self) {
+        self.view.autoscroll = true;
         self.horizontal = 0;
         end(&mut self.editor);
+        self.scroll_to(self.total_rows().saturating_sub(self.text.height as usize));
     }
     pub fn clear(&mut self, log: Option<&Log>) {
         self.editor.rope = ropey::Rope::new();
@@ -496,7 +502,7 @@ impl Reader {
         self.editor.viewport_height = self.text.height as usize;
         self.editor.viewport_width = self.text.width as usize;
         let maximum = self.total_rows().saturating_sub(self.text.height as usize);
-        if self.view.follow {
+        if self.view.autoscroll {
             end(&mut self.editor);
             self.scroll_to(maximum);
         } else if let Some((line, column)) = anchor {
@@ -866,6 +872,17 @@ impl Reader {
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let resume_autoscroll = !shift
+            && match key.code {
+                KeyCode::Down if ctrl => self.scrolls_past_end(1),
+                KeyCode::Down if self.wrap => {
+                    self.layout.row_for_position(&self.editor, self.editor.cursor_line, self.editor.cursor_col)
+                        + 1 >= self.total_rows()
+                }
+                KeyCode::Down => self.editor.cursor_line + 1 >= self.editor.rope.len_lines(),
+                KeyCode::PageDown => self.scrolls_past_end(self.text.height as usize),
+                _ => false,
+            };
         if matches!(
             key.code,
             KeyCode::Up
@@ -882,7 +899,7 @@ impl Reader {
             } else {
                 self.editor.clear_selection();
             }
-            self.view.follow = false;
+            self.view.autoscroll = false;
         }
         match key.code {
             KeyCode::Left if ctrl => self.editor.move_word_left(),
@@ -911,7 +928,7 @@ impl Reader {
             KeyCode::PageDown => self.editor.page_down(),
             KeyCode::Char('a' | 'A') if ctrl => {
                 self.editor.select_all();
-                self.view.follow = false;
+                self.view.autoscroll = false;
             }
             KeyCode::Esc => self.editor.clear_selection(),
             KeyCode::F(3) => {
@@ -922,6 +939,9 @@ impl Reader {
         }
         if !(ctrl && matches!(key.code, KeyCode::Up | KeyCode::Down)) {
             self.reveal();
+        }
+        if resume_autoscroll {
+            self.resume_autoscroll();
         }
     }
     fn column_x(&self, line: usize, column: usize) -> usize {
@@ -1007,10 +1027,13 @@ impl Reader {
                 let offset = bar.at(bar.coordinate(mouse), grab);
                 if bar.horizontal {
                     self.horizontal = offset;
+                    self.view.autoscroll = false;
+                } else if mouse.row >= bar.area.bottom() {
+                    self.resume_autoscroll();
                 } else {
                     self.scroll_to(offset);
+                    self.view.autoscroll = false;
                 }
-                self.view.follow = false;
                 if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
                     self.bar_drag = None;
                 }
@@ -1089,7 +1112,7 @@ impl Reader {
                         6
                     },
                 );
-                self.view.follow = false;
+                self.view.autoscroll = false;
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) =>
@@ -1104,18 +1127,22 @@ impl Reader {
                         6
                     },
                 );
-                self.view.follow = false;
+                self.view.autoscroll = false;
             }
             MouseEventKind::ScrollUp => {
                 self.scroll_by(-(speed.min(isize::MAX as usize) as isize));
-                self.view.follow = false;
+                self.view.autoscroll = false;
             }
             MouseEventKind::ScrollDown => {
-                self.scroll_by(speed.min(isize::MAX as usize) as isize);
-                self.view.follow = false;
+                if self.scrolls_past_end(speed) {
+                    self.resume_autoscroll();
+                } else {
+                    self.scroll_by(speed.min(isize::MAX as usize) as isize);
+                    self.view.autoscroll = false;
+                }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                self.view.follow = false;
+                self.view.autoscroll = false;
                 self.find.focused = false;
                 for bar in [self.vertical_bar, self.horizontal_bar]
                     .into_iter()

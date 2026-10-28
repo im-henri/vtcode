@@ -28,6 +28,7 @@ pub(crate) struct Query {
     pub include: String,
     pub exclude: String,
     pub limit: usize,
+    // Effective maps are resolved on the client; path matching runs on the node.
     pub files_exclude: BTreeMap<String, serde_json::Value>,
     pub search_exclude: BTreeMap<String, serde_json::Value>,
     pub use_ignores: bool,
@@ -51,6 +52,12 @@ pub(crate) struct Hit {
 pub(crate) struct Scope {
     pub include: String,
     pub exclude: String,
+    #[serde(default)]
+    pub files_exclude: crate::settings::ExcludePatterns,
+    #[serde(default)]
+    pub search_exclude: crate::settings::ExcludePatterns,
+    #[serde(default)]
+    pub history: bool,
     pub open_files: Vec<RemotePath>,
 }
 
@@ -61,12 +68,15 @@ pub(crate) fn scope(root: &Path, query: Scope, cancel: &CancellationToken) -> io
     if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
     let include = crate::search_paths::SearchPaths::cached(root, &query.include);
     let exclude = crate::search_paths::SearchPaths::cached(root, &query.exclude);
+    let settings = crate::search_paths::ExcludeRules::new(&query.files_exclude, &query.search_exclude);
     let mut indices = Vec::new();
     for (index, path) in query.open_files.iter().enumerate() {
         if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
         let native = path.resolve(root)?;
         let candidate = crate::search_paths::Candidate::new(&native);
-        if include.includes_open(&candidate) && !exclude.excludes(&candidate, root) {
+        let excluded = if query.history { settings.excludes(&candidate, Path::new("")) }
+            else { settings.excludes_tree(&native, root) };
+        if include.includes_open(&candidate) && !exclude.excludes(&candidate, root) && !excluded {
             indices.push(index);
         }
     }
@@ -74,16 +84,28 @@ pub(crate) fn scope(root: &Path, query: Scope, cancel: &CancellationToken) -> io
 }
 
 impl workspace::Workspace {
+    #[cfg(test)]
     pub(crate) fn search_scope(&self, paths: &[PathBuf], include: &str, exclude: &str,
         cancel: &CancellationToken) -> io::Result<Vec<usize>> {
+        self.search_scope_with_settings(paths, include, exclude, &Default::default(), &Default::default(), cancel)
+    }
+
+    pub(crate) fn search_scope_with_settings(&self, paths: &[PathBuf], include: &str, exclude: &str,
+        files_exclude: &crate::settings::ExcludePatterns, search_exclude: &crate::settings::ExcludePatterns,
+        cancel: &CancellationToken) -> io::Result<Vec<usize>> {
         if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
-        if paths.is_empty() || (include.trim().is_empty() && exclude.trim().is_empty()) {
+        if paths.is_empty() || (include.trim().is_empty() && exclude.trim().is_empty()
+            && files_exclude.is_empty() && search_exclude.is_empty()) {
             return Ok((0..paths.len()).collect());
         }
         let query = Scope { include: include.into(), exclude: exclude.into(),
+            files_exclude: files_exclude.clone(), search_exclude: search_exclude.clone(),
+            history: false,
             open_files: paths.iter().map(|path| self.remote_path(path)).collect::<io::Result<_>>()? };
+        // A sibling can be created or deleted without changing the open paths.
+        let cacheable = !files_exclude.values().chain(search_exclude.values()).any(serde_json::Value::is_object);
         if let Some((previous, indices)) = &self.search_scope_cache.lock().unwrap().0
-            && previous == &query {
+            && cacheable && previous == &query {
             return Ok(indices.clone());
         }
         let Reply::SearchScope { indices } = self.client.call_cancellable(Command::SearchScope(query.clone()), cancel)? else {
@@ -95,8 +117,31 @@ impl workspace::Workspace {
         }
         // Query text and content versions do not affect a pure path filter.
         // Keep one bounded entry; never hold its mutex across network I/O.
-        self.search_scope_cache.lock().unwrap().0 = Some((query, indices.clone()));
+        self.search_scope_cache.lock().unwrap().0 = cacheable.then(|| (query, indices.clone()));
         Ok(indices)
+    }
+
+    pub(crate) fn search_history_scope(&self, paths: &[PathBuf], excludes: &crate::settings::ExcludePatterns,
+        cancel: &CancellationToken) -> io::Result<Vec<usize>> {
+        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+        // Recent history can also contain entries from another workspace.
+        // Only this node's identities can be evaluated against its native paths.
+        let native = paths.iter().enumerate().filter_map(|(i,path)| self.remote_path(path).ok().map(|path| (i,path)))
+            .collect::<Vec<_>>();
+        if native.is_empty() { return Ok((0..paths.len()).collect()); }
+        let query = Scope { include: String::new(), exclude: String::new(), files_exclude: excludes.clone(),
+            search_exclude: Default::default(), history: true,
+            open_files: native.iter().map(|(_,path)| path.clone()).collect() };
+        let Reply::SearchScope { indices } = self.client.call_cancellable(Command::SearchScope(query), cancel)? else {
+            return Err(io::Error::other("Invalid remote history scope reply"));
+        };
+        if indices.iter().any(|&i| i >= native.len()) || indices.windows(2).any(|p| p[0] >= p[1]) {
+            return Err(io::Error::other("Invalid remote history scope indices"));
+        }
+        let mut included = vec![true; paths.len()];
+        for (index, _) in &native { included[*index] = false; }
+        for index in indices { included[native[index].0] = true; }
+        Ok(included.into_iter().enumerate().filter_map(|(i,yes)| yes.then_some(i)).collect())
     }
 }
 
@@ -302,9 +347,6 @@ fn execute_with_workers(
         Ok(!open_files.contains(&path) && (!deduplicate || visited.lock().unwrap().insert(path)))
     };
     let options = crate::search_walk::Options {
-        use_ignores: query.use_ignores,
-        parent_ignores: query.parent_ignores,
-        global_ignores: query.global_ignores,
         follow_links: query.follow_links,
     };
     let limit = query.limit.min(100_000);

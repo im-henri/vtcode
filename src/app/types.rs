@@ -1549,6 +1549,7 @@ pub struct Tab {
     pub preview: bool,
     pub kind: TabKind,
     pub extension_view: Option<ExtensionViewTabRef>,
+    pub(crate) file_search: crate::file_search::State,
     pub terminal_idx: Option<usize>,
 }
 
@@ -1582,6 +1583,7 @@ impl Tab {
             preview: false,
             kind: TabKind::File,
             extension_view: None,
+            file_search: Default::default(),
             terminal_idx: None,
         }
     }

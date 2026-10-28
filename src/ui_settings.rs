@@ -23,6 +23,7 @@ fn truncate_or_pad(s: &str, max_width: usize) -> String {
 }
 
 fn vscode_setting_label(label: &str, setting_id: &str) -> String {
+    if matches!(setting_id, "files_exclude" | "search_exclude" | "search_debounce_ms") { return label.to_owned(); }
     if App::setting_field_kind(setting_id) == "heading" {
         return label.trim_matches(['─', ' ']).to_string();
     }
@@ -1005,6 +1006,11 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             continue;
         }
 
+        if kind == "exclusions" {
+            crate::ui_exclusion_settings::draw_setting(f, app, value, content_area,
+                item_start_y + item.control as i64, is_focused, row_bg);
+            continue;
+        }
         let needs_control_row = kind != "checkbox" || desc_lines.len() == 1;
         if needs_control_row {
             draw_y = item_start_y + item.control as i64;

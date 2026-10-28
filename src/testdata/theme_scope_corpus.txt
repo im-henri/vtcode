@@ -1,0 +1,62 @@
+// Line comment: if const class return
+/* Block comment with /* nested */ text */
+# Comment or directive: include define
+#!/usr/bin/env python
+use serde::{Deserialize, Serialize};
+pub mod action { pub const UNDO: u32 = 1; }
+fn example<'a>(name: &'a str) -> Result<u32, Error> { return Ok(42); }
+#[derive(Debug, Clone)]
+let raw = r#"quoted raw string"#;
+let value = object.method(1.5e-2, "a string", true, null);
+if value >= 1 && flag != false { return value; } else { throw error; }
+for (int index = 0; index < 10; index++) { continue; }
+public static class Example<T> extends Parent implements Interface {
+    private final String name = "hello\nworld";
+    public async function example(value: number): Promise<Result> { await work(); }
+}
+import java.util.List;
+package main
+func example(value string) (int, error) { defer cleanup(); return 42, nil }
+def example(value: str) -> int:
+    """Documentation string."""
+    if value is not None:
+        return len(value)
+@decorator
+class Example(Base): pass
+module Example
+  def method(value); puts "hello #{value}"; end
+end
+function example(value) local result = true; return value end
+SELECT name, COUNT(*) FROM records WHERE value >= 10 ORDER BY name;
+<?php function example($value) { echo "hello $value"; return true; } ?>
+<!DOCTYPE html><html><body class="example"><script>const value = true;</script></body></html>
+<style>body .example:hover { color: #abcdef; margin: 1.5em; --value: "text"; }</style>
+{"name": "text", "number": 42, "enabled": true, "empty": null, "items": [1, 2]}
+name: text
+enabled: true
+number: 42
+[section]
+name = "text"
+target: dependency
+	$(CC) -o $@ $<
+if [ "$value" = "text" ]; then echo "hello $USER"; fi
+$value = Get-Content -Path 'file.txt'; Write-Output $value
+namespace Example { enum Choice { First, Second }; }
+type Alias = Dictionary<string, List<int>>;
+data Example a = Constructor a deriving Show
+example value = if value then Just 42 else Nothing
+(defn example [value] (when value (println "hello")))
+% Comment
+\documentclass{article}
+\begin{document}Text $x^2 + y_1$ \textbf{bold}\end{document}
+## Markdown heading
+**bold** _italic_ [label](https://example.com) `inline code`
+```rust
+const VALUE: u32 = 42;
+```
+diff --git a/file.txt b/file.txt
+--- a/file.txt
++++ b/file.txt
+@@ -1 +1 @@
+-removed text
++added text

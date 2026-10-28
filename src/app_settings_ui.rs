@@ -68,8 +68,8 @@ impl App {
             | "inlay_hints" | "code_lens" | "semantic_highlighting" | "sticky_scroll" | "sticky_scroll_max"
             | "scroll_past_end" | "focus_mode" | "word_count" | "screencast_mode" | "rulers"
             | "heading_search" | "search_case_sensitive" | "search_whole_word" | "search_regex"
-            | "search_preserve_case" | "max_global_search_results" | "scroll_speed" => 3,
-            "heading_save" | "trim_trailing" | "final_newline" | "language_associations"
+            | "search_preserve_case" | "search_exclude" | "search_debounce_ms" | "max_global_search_results" | "scroll_speed" => 3,
+            "files_exclude" | "heading_save" | "trim_trailing" | "final_newline" | "language_associations"
             | "large_file_threshold_mb" | "large_file_analysis_timeout_ms"
             | "heading_cursor"
             | "auto_save_mode" | "auto_save_delay" => 4,
@@ -103,6 +103,7 @@ impl App {
             return "text";
         }
         match setting_id {
+            "files_exclude" | "search_exclude" => "exclusions",
             "acp_agents" | "lsp_servers" | "formatters" | "language_associations" => "action",
             "animation_copy" => "checkbox",
             "animation_copy_duration_ms" => "number",
@@ -110,7 +111,7 @@ impl App {
             "animation_duration_ms" | "animation_fps" | "animation_intensity" => "number",
             "tab_size" | "minimap_width" | "panel_height"
             | "auto_save_delay" | "lsp_diagnostic_delay_ms" | "scroll_speed" | "word_wrap_column"
-            | "sticky_scroll_max" | "max_global_search_results"
+            | "sticky_scroll_max" | "max_global_search_results" | "search_debounce_ms"
             | "cursor_surrounding_lines" | "large_file_threshold_mb"
             | "large_file_analysis_timeout_ms" => "number",
             "theme" | "sidebar_pos" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" => "dropdown",
@@ -207,6 +208,9 @@ impl App {
             "search_whole_word" => "searchWholeWord",
             "search_regex" => "searchRegex",
             "search_preserve_case" => "searchPreserveCase",
+            "search_debounce_ms" => "search.searchOnTypeDebouncePeriod",
+            "files_exclude" => "files.exclude",
+            "search_exclude" => "search.exclude",
             "max_global_search_results" => "maxGlobalSearchResults",
             "large_file_threshold_mb" => "largeFileThresholdMb",
             "large_file_analysis_timeout_ms" => "largeFileAnalysisTimeoutMs",
@@ -292,6 +296,7 @@ impl App {
         value: &serde_json::Value,
         fallback: &str,
     ) -> String {
+        if matches!(setting_id, "files_exclude" | "search_exclude") { return value.to_string(); }
         if setting_id == "animation_scope_bubble_languages" {
             return format!(" Configure… ({}) ", value.as_object().map_or(0, serde_json::Map::len));
         }
@@ -426,6 +431,8 @@ impl App {
             return "";
         }
         match setting_id {
+            "files_exclude" => "Configure glob patterns for files and folders to hide in Explorer. Search inherits these patterns. Settings patterns are relative to the workspace root.",
+            "search_exclude" => "Configure glob patterns to exclude from workspace text search and Quick Open. Inherits all patterns from Files: Exclude. Disable a pattern here to override an inherited exclusion.",
             "acp_agents" => "Add, edit, or remove local ACP agents. Configure names, executables, arguments, environment variables, and request timeouts with a form.",
             "lsp_servers" => "Set up language servers (LSP) for completion, diagnostics, navigation, and formatting. Add an executable, language ID, file patterns, arguments, and initialization options. Install the server separately. Saved servers override extension defaults for the same language.",
             "lsp_enabled" => "Enable language servers (LSP) from settings and extensions. Changes apply to open files immediately.",
@@ -495,6 +502,7 @@ impl App {
             "search_whole_word" => "Match complete words by default in editor and workspace searches.",
             "search_regex" => "Interpret search text as a regular expression by default.",
             "search_preserve_case" => "Preserve the capitalization pattern of each match when replacing text.",
+            "search_debounce_ms" => "Delay in milliseconds after typing in workspace search or its include/exclude fields before searching. Set to 0 to search immediately. Find within a file stays instant.",
             "rulers" => "Choose visible column rulers (for example 80 and 120).",
             "trim_trailing" => "Remove trailing whitespace when saving files.",
             "format_on_save" => "Run the selected formatter before saving. Choose a formatter the first time you format each language.",
@@ -819,6 +827,9 @@ impl App {
             ("Match Whole Word".into(), on_off(self.search_whole_word), "search_whole_word".into()),
             ("Use Regular Expression".into(), on_off(self.search_regex), "search_regex".into()),
             ("Preserve Case on Replace".into(), on_off(self.search_preserve_case), "search_preserve_case".into()),
+            ("Search: Debounce (ms)".into(), self.search_debounce_ms.to_string(), "search_debounce_ms".into()),
+            ("Search: Exclude".into(), String::new(), "search_exclude".into()),
+            ("Files: Exclude".into(), String::new(), "files_exclude".into()),
             ("Search View Max Results".into(), self.max_global_search_results.to_string(), "max_global_search_results".into()),
             // === Save ===
             ("── Save ──".into(), String::new(), "heading_save".into()),

@@ -2,6 +2,9 @@ use crate::app::{App, Tab, WhitespaceMode};
 use crate::settings::{Settings, SettingsScope};
 use crate::ui_search_controls::{SearchControl, SearchScope};
 
+#[path = "app_diff_layout_persistence_tests.rs"]
+mod diff_layout;
+
 fn fixture() -> (tempfile::TempDir, App) {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::new(dir.path().to_path_buf());

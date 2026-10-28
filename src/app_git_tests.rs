@@ -1329,7 +1329,7 @@ fn source_control_diff_tabs_survive_multiple_files_and_split_rendering() {
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
         app.should_render_diff_for_active_editor()
     });
-    assert!(app.diff_mode == DiffMode::Inline);
+    assert!(app.diff_mode == DiffMode::SideBySide);
     assert!(app.preferred_diff_mode == DiffMode::SideBySide);
     drop(app);
     let _ = std::fs::remove_dir_all(repo_dir);

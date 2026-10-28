@@ -65,26 +65,7 @@ impl SourceControlSelection {
         let focused = files.get(selected).map(key);
         // The index did not change. In particular a staged rename must keep
         // its original path even when only its destination was edited.
-        files.retain(|file| file.staged || !paths.contains(&file.path));
-        if !changed.is_empty() {
-            // Both lists are already ordered. Move records in a linear merge;
-            // do not clone every cached path or sort the repository again.
-            let compare = |a: &GitFileChange, b: &GitFileChange|
-                Group::of(a).cmp(&Group::of(b)).then(a.path.cmp(&b.path));
-            if files.last().is_none_or(|last| !compare(last, &changed[0]).is_gt()) {
-                files.extend(changed);
-            } else {
-                let mut previous = std::mem::take(files).into_iter().peekable();
-                let mut changed = changed.into_iter().peekable();
-                files.reserve(previous.len() + changed.len());
-                while let (Some(old), Some(new)) = (previous.peek(), changed.peek()) {
-                    if compare(old, new).is_le() { files.push(previous.next().unwrap()); }
-                    else { files.push(changed.next().unwrap()); }
-                }
-                files.extend(previous);
-                files.extend(changed);
-            }
-        }
+        crate::app_git::refresh::merge_worktree(files, changed, paths);
         self.reconcile_focused(focused, selected, files, visibility)
     }
 

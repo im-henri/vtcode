@@ -63,7 +63,7 @@ pub(crate) fn resolve(
         if color == "default" {
             // Reset the authored color to its registered light/dark/HC fallback.
             result.remove(id);
-        } else if crate::vscode_theme::parse_syntect_color(color).is_some() {
+        } else if crate::vscode_theme::parse_syntax_color(color).is_some() {
             result.insert(id.to_string(), value.clone());
         }
     };

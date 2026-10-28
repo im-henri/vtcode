@@ -114,27 +114,10 @@ pub(crate) fn decode_semantic_tokens_cancellable(
     (!is_cancelled()).then_some(result)
 }
 
-/// Match VS Code semantic selectors by language, token type, and modifier set.
-pub(crate) fn themed_semantic_token_color(token: &DecodedSemanticToken, legend: &SemanticTokensLegend, language: &str, colors: Option<&rustc_hash::FxHashMap<String, (u8,u8,u8)>>) -> Option<(u8,u8,u8)> {
-    let colors = colors?;
-    let name = legend.token_types.get(token.token_type as usize)?.as_str();
-    colors.iter().filter_map(|(selector, color)| {
-        let (pattern, lang) = selector.split_once(':').map_or((selector.as_str(), None), |(p,l)| (p,Some(l)));
-        if lang.is_some_and(|l| !l.eq_ignore_ascii_case(language)) { return None; }
-        let mut parts = pattern.split('.');
-        let kind = parts.next()?;
-        if kind != "*" && kind != name { return None; }
-        let mut score = if kind == "*" { 0 } else { 100 };
-        if lang.is_some() { score += 1000; }
-        for modifier in parts {
-            let index = legend.token_modifiers.iter().position(|m| m.as_str() == modifier)?;
-            if index >= 32 || token._token_modifiers & (1u32 << index) == 0 { return None; }
-            score += 1;
-        }
-        Some(((score,selector), *color))
-    }).max_by(|a,b| a.0.cmp(&b.0)).map(|(_,color)| color)
+/// Resolve the active theme's complete semantic style, including scope fallbacks.
+pub(crate) fn themed_semantic_token_style(token: &DecodedSemanticToken, legend: &SemanticTokensLegend, language: &str, theme: Option<&crate::semantic_theme::SemanticTheme>) -> Option<ratatui::style::Style> {
+    theme?.style(token, legend, language)
 }
-
 /// JSON-RPC request
 #[derive(Serialize)]
 struct JsonRpcRequest {

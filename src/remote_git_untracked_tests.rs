@@ -30,6 +30,7 @@ fn headless_status_omits_untracked_discovery_but_keeps_staged_and_modified_files
     for include_untracked in [false, true, false] {
         let Reply::GitStatus { scans, .. } = service
             .execute(Command::GitStatus {
+                changed: None,
                 known: None,
                 parent_open: false,
                 closed: Vec::new(),

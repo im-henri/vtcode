@@ -26,7 +26,7 @@ fn fixture(pattern: &str, repetitions: usize) -> App {
         token_types: vec![lsp_types::SemanticTokenType::VARIABLE, lsp_types::SemanticTokenType::FUNCTION],
         token_modifiers: vec![],
     });
-    app.semantic_theme_colors = Some(FxHashMap::from_iter([
+    app.semantic_theme_colors = Some(crate::semantic_theme::SemanticTheme::from_iter([
         ("variable".into(), (40, 210, 90)), ("function".into(), (210, 40, 90)),
     ]));
     for row in 0..2 {

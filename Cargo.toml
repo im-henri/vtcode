@@ -8,11 +8,10 @@ license = "MIT"
 [dependencies]
 ratatui = "0.30"
 crossterm = "0.29"
-# Syntect 5.3.0 is the newest crates.io release, but it predates Sublime
-# Build 4075 grammar features used by the current official packages. Pin the
-# upstream implementation so release builds are reproducible while retaining
-# support for version-2 inheritance and branch/fail parsing.
-syntect = { git = "https://github.com/trishume/syntect", rev = "4aa78031e93ebd3e0be7278120d0bd9d2508b1a3", default-features = false, features = ["default-themes", "regex-fancy", "plist-load", "yaml-load"] }
+# Native TextMate tokenizer; bundled grammar sources live in grammars/.
+irosashi = "=0.3.0"
+# Validate installed patterns with the tokenizer's own Oniguruma engine.
+ferroni = "=1.10.0"
 ropey = { version = "1", default-features = false, features = ["simd", "cr_lines"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 walkdir = "2"
@@ -34,10 +33,10 @@ base64 = "0.22"
 flate2 = "1"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 semver = "1"
 agent-client-protocol-schema = { version = "1.9.1", default-features = false }
-yaml-rust2 = { version = "0.10.4", default-features = false }
+plist = "1.8"
 similar = "2"
 fuzzy-matcher = "0.3"
 portable-pty = "0.8"
@@ -57,9 +56,12 @@ url = "2"
 # See vendor/crossterm/VTCODE-PATCH.md.
 [patch.crates-io]
 crossterm = { path = "vendor/crossterm" }
-# Avoid Linux IN_OPEN wakeups for filesystem watchers that consume changes only.
+# Avoid Linux read-open wakeups and batch repeated filesystem change events.
 # See vendor/notify/VTCODE-PATCH.md.
 notify = { path = "vendor/notify" }
+# TextMate fidelity fixes and embedding from the root grammars/bundled catalog.
+# See vendor/irosashi/VTCODE-PATCH.md.
+irosashi = { path = "vendor/irosashi" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_Com", "Win32_System_Registry", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
@@ -69,15 +71,6 @@ windows-core = "0.58"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 signal-hook = { version = "0.3.18", default-features = false }
-
-# Syntect's pure-Rust regex engine is otherwise exceptionally slow in a dev
-# build. Keep the application debuggable while compiling its parsing hot path
-# with optimization, matching the behavior expected from an interactive IDE.
-[profile.dev.package.syntect]
-opt-level = 3
-
-[profile.dev.package.fancy-regex]
-opt-level = 3
 
 [profile.dev.package.regex]
 opt-level = 3
@@ -100,12 +93,6 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.unicode-segmentation]
-opt-level = 3
-
-[profile.test.package.syntect]
-opt-level = 3
-
-[profile.test.package.fancy-regex]
 opt-level = 3
 
 [profile.test.package.regex]
@@ -208,3 +195,15 @@ inherits = "release"
 opt-level = 3
 codegen-units = 16
 incremental = true
+
+[profile.dev.package.irosashi]
+opt-level = 3
+
+[profile.dev.package.ferroni]
+opt-level = 3
+
+[profile.test.package.irosashi]
+opt-level = 3
+
+[profile.test.package.ferroni]
+opt-level = 3

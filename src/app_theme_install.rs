@@ -118,7 +118,7 @@ impl App {
                 let themes = self.filter_removed_themes(themes);
                 let count = themes.len();
                 for theme in &themes {
-                    if let Some(syntax) = &theme.syntect_theme {
+                    if let Some(syntax) = &theme.textmate_theme {
                         self.highlighter
                             .register_theme(&theme.syntax_theme, syntax.clone());
                     }

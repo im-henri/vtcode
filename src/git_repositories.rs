@@ -36,6 +36,14 @@ pub(crate) struct Repositories {
 }
 
 impl Repositories {
+    pub(crate) fn open_count(&self) -> usize {
+        self.entries.iter().filter(|repo| !self.closed.contains(&repo.root)).count()
+    }
+
+    fn expand_single(&mut self) {
+        if self.open_count() == 1 { self.expanded = true; }
+    }
+
     /// Known, closed projects only: no filesystem discovery while drawing or
     /// opening a menu. Keep a closed parent reachable after restoring a session.
     pub(crate) fn closed_roots(&self) -> impl Iterator<Item = &PathBuf> {
@@ -78,9 +86,9 @@ pub(crate) struct View {
 }
 
 #[derive(Clone)]
-pub(crate) struct Scan {
+pub(crate) struct Scan<P = String> {
     pub root: PathBuf,
-    pub files: Vec<GitFileChange>,
+    pub files: Vec<GitFileChange<P>>,
     pub branch: String,
     /// Ordinary watcher events update only unstaged records within these
     /// prefixes. None is a complete repository snapshot (including the index).
@@ -408,7 +416,7 @@ impl App {
             return;
         }
         if self.repositories.active.as_deref() == Some(root) {
-            self.repositories.expanded = !self.repositories.expanded;
+            self.repositories.expanded = self.repositories.open_count() == 1 || !self.repositories.expanded;
             self.source_control_input_mode = false;
             return;
         }
@@ -542,6 +550,7 @@ impl App {
                     .spawn("closed-repository-drop", move || drop((files, selection)));
             }
         }
+        self.repositories.expand_single();
         self.refresh_source_control_async();
     }
 
@@ -797,6 +806,7 @@ impl App {
                 self.close_commit_details_tab();
             }
         }
+        self.repositories.expand_single();
         true
     }
 

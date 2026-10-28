@@ -46,7 +46,7 @@ impl Rgba {
     }
 
     fn from_hex(value: &str) -> Option<Self> {
-        let c = crate::vscode_theme::parse_syntect_color(value)?;
+        let c = crate::vscode_theme::parse_syntax_color(value)?;
         Some(Self::new(
             c.r.into(),
             c.g.into(),

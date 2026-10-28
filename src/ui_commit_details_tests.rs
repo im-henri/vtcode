@@ -355,7 +355,7 @@ fn commit_review_bounds_cached_revisions_and_preserves_visible_files() {
 }
 
 #[test]
-fn commit_review_adapts_to_small_screens_but_honours_explicit_layout_choices() {
+fn commit_review_adapts_to_small_screens_and_keeps_layout_choices_when_panes_reset() {
     let mut app = review_fixture(2);
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
@@ -364,6 +364,13 @@ fn commit_review_adapts_to_small_screens_but_honours_explicit_layout_choices() {
     terminal.draw(|f| draw(f, &mut app)).unwrap();
     assert!(app.diff_mode == crate::app::DiffMode::SideBySide);
     assert!(app.diff_left_code_area.is_some());
+    activate(&mut app, 8);
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    assert!(app.diff_mode == crate::app::DiffMode::SideBySide);
+    // Resetting the review panes must not reset the user's saved diff layout.
+    activate(&mut app, 9);
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    assert!(app.diff_mode == crate::app::DiffMode::Inline);
     activate(&mut app, 8);
     terminal.draw(|f| draw(f, &mut app)).unwrap();
     assert!(app.diff_mode == crate::app::DiffMode::Inline);

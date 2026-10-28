@@ -230,7 +230,7 @@ pub(crate) fn handle_mouse_dialogs(
         }
 
         // Hover uses the same rectangles as the rendered controls and clicks.
-        if app.search_active {
+        if app.file_search_bar_at(col, row).is_some() {
             use crate::ui_search_controls::{SearchControl, SearchScope, control_at};
             app.hovered_search_toggle = control_at(app, SearchScope::File, col, row).map(|button| {
                 match button.control {
@@ -243,9 +243,7 @@ pub(crate) fn handle_mouse_dialogs(
                     _ => 5,
                 }
             });
-            if app.search_bar_area.is_some_and(|area| area.contains((col, row).into())) {
-                return true;
-            }
+            return true;
         }
 
         // Global search close button hover

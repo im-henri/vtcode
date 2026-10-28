@@ -71,7 +71,7 @@ fn remote_disk_inventory_reuses_coverage_and_keeps_unwatched_and_alias_fallbacks
     app.remote_workspace = Some(remote.clone());
     app.workspace_watcher_active = true;
     let mut cache = PeriodicDiskPaths::default();
-    let expected = [&generated, &outside, &alias]
+    let expected = [&outside, &alias]
         .into_iter()
         .map(|path| remote.view_key(path))
         .collect::<Vec<_>>();
@@ -90,7 +90,7 @@ fn remote_disk_inventory_reuses_coverage_and_keeps_unwatched_and_alias_fallbacks
         conflicted: false,
         identity: Some(alias),
     }));
-    assert_eq!(cache.get(&app), &expected[..2]);
+    assert_eq!(cache.get(&app), &expected[..1]);
     app.workspace_watcher_active = false;
     assert_eq!(cache.get(&app).len(), 4);
     app.tabs[0].kind = crate::app::TabKind::GitRevision;
@@ -136,7 +136,7 @@ fn workbench_disk_inventory_tracks_watcher_coverage_and_split_panes() {
     app.groups = vec![group];
     let mut cache = PeriodicDiskPaths::default();
 
-    assert_disk_paths(&mut cache, &app, &[build.clone(), outside.clone()]);
+    assert_disk_paths(&mut cache, &app, &[outside.clone()]);
     app.workspace_watcher_active = false;
     assert_disk_paths(
         &mut cache,

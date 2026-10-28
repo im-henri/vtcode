@@ -1,6 +1,7 @@
 use crate::app::{App, GlobalSearchResult};
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use crate::search_regex::SearchRegex;
 
 type OpenSearchBuffers = rustc_hash::FxHashMap<PathBuf, ropey::Rope>;
@@ -16,6 +17,10 @@ mod remote_tests;
 #[cfg(test)]
 #[path = "workspace_search_performance_tests.rs"]
 mod performance_tests;
+
+#[cfg(test)]
+#[path = "app_global_search_debounce_tests.rs"]
+mod debounce_tests;
 
 fn search_failed(sender: &crate::background::BackgroundResultSender, generation: u64, error: String) {
     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchFailed {
@@ -84,7 +89,8 @@ impl App {
         }) });
         cancel
     }
-    pub(crate) fn update_global_search(&mut self) {
+    fn reset_global_search_request(&mut self) {
+        self.global_search_pending_since = None;
         if self.status_message.starts_with("Invalid regex:") { self.status_message.clear(); }
         if let Some(token) = self.search_cancel_token.take() { token.cancel(); }
         self.search_generation = self.search_generation.wrapping_add(1);
@@ -95,6 +101,45 @@ impl App {
         self.global_search_selected = 0;
         self.global_search_scroll = 0;
         self.bg_global_search_running = false;
+    }
+
+    /// Coalesce automatic workspace searches without holding a worker or taking
+    /// document snapshots until typing settles. Stale replies are rejected now.
+    pub(crate) fn schedule_global_search(&mut self) {
+        self.schedule_global_search_at(Instant::now());
+    }
+
+    fn schedule_global_search_at(&mut self, now: Instant) {
+        self.reset_global_search_request();
+        if self.global_search_query.is_empty() { return; }
+        if self.search_debounce_ms == 0 {
+            self.start_global_search();
+        } else {
+            self.global_search_pending_since = Some(now);
+            self.bg_global_search_running = true;
+        }
+    }
+
+    pub(crate) fn global_search_debounce_wait(&self, now: Instant) -> Option<Duration> {
+        self.global_search_pending_since.map(|start| Duration::from_millis(self.search_debounce_ms)
+            .saturating_sub(now.saturating_duration_since(start)))
+    }
+
+    pub(crate) fn poll_pending_global_search(&mut self, now: Instant) -> bool {
+        if self.global_search_debounce_wait(now) != Some(Duration::ZERO) { return false; }
+        self.global_search_pending_since = None;
+        self.start_global_search();
+        true
+    }
+
+    /// Explicit refreshes bypass the typing delay.
+    pub(crate) fn update_global_search(&mut self) {
+        self.reset_global_search_request();
+        self.start_global_search();
+    }
+
+    fn start_global_search(&mut self) {
+        self.bg_global_search_running = false;
         if self.global_search_query.is_empty() { return; }
         let query = self.global_search_query.clone();
         let case_sensitive = self.search_case_sensitive;
@@ -104,9 +149,6 @@ impl App {
         let include = self.search_include_pattern.clone();
         let exclude = self.search_exclude_pattern.clone();
         let settings = self.settings_for_scope(crate::settings::SettingsScope::Workspace);
-        let use_ignores = settings.search_use_ignore_files.unwrap_or(true);
-        let use_parent_ignores = settings.search_use_parent_ignore_files.unwrap_or(false);
-        let use_global_ignores = settings.search_use_global_ignore_files.unwrap_or(false);
         let follow_links = settings.search_follow_symlinks.unwrap_or(true);
         let max_results = self.max_global_search_results;
         let open_buffers: OpenSearchBuffers = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
@@ -125,8 +167,8 @@ impl App {
                 stream: true,
                 text: query.clone(), case_sensitive, whole_word, regex: is_regex,
                 include: include.clone(), exclude: exclude.clone(), limit: max_results,
-                files_exclude: settings.files_exclude, search_exclude: settings.search_exclude,
-                use_ignores, parent_ignores: use_parent_ignores, global_ignores: use_global_ignores, follow_links,
+                files_exclude: settings.files_exclude.clone(), search_exclude: settings.search_exclude.clone(),
+                use_ignores: false, parent_ignores: false, global_ignores: false, follow_links,
                 open_files: open_buffers.keys().filter_map(|path| remote.remote_path(path).ok()).collect(),
             };
             self.search_cancel_token = Some(self.submit_global_search(move |cancel| {
@@ -136,7 +178,8 @@ impl App {
                 // Only path metadata is sent, once per filter/open-file set.
                 let mut paths = open_buffers.keys().cloned().collect::<Vec<_>>();
                 paths.sort_unstable();
-                let selected = match remote.search_scope(&paths, &include, &exclude, &cancel) {
+                let selected = match remote.search_scope_with_settings(&paths, &include, &exclude,
+                    &request.files_exclude, &request.search_exclude, &cancel) {
                     Ok(indices) => indices,
                     Err(error) => {
                         if !cancel.is_cancelled() { search_failed(&sender, generation, error.to_string()); }
@@ -195,11 +238,11 @@ impl App {
             };
             let includes = crate::search_paths::SearchPaths::cached(&root, &include);
             let excludes = crate::search_paths::SearchPaths::cached(&root, &exclude);
-            let setting_excludes = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(&settings.files_exclude, &settings.search_exclude));
+            let setting_excludes = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(
+                &settings.files_exclude, &settings.search_exclude));
             if cancel.is_cancelled() { return; }
-            let disk_paths = crate::search_walk::paths(&root, includes.clone(), excludes.clone(), setting_excludes,
-                crate::search_walk::Options { use_ignores, parent_ignores: use_parent_ignores,
-                    global_ignores: use_global_ignores, follow_links }, &cancel);
+            let disk_paths = crate::search_walk::paths(&root, includes.clone(), excludes.clone(), setting_excludes.clone(),
+                crate::search_walk::Options { follow_links }, &cancel);
             let mut results = Vec::new();
             let mut truncated = false;
             let mut sent = 0;
@@ -215,7 +258,8 @@ impl App {
                 let is_open = open_buffers.contains_key(&path);
                 if is_open {
                     let candidate = crate::search_paths::Candidate::new(&path);
-                    if !includes.includes_open(&candidate) || excludes.excludes(&candidate, &root) { continue; }
+                    if !includes.includes_open(&candidate) || excludes.excludes(&candidate, &root)
+                        || setting_excludes.excludes_tree(&path, &root) { continue; }
                 }
                 let spec = GlobalSearchSpec {
                     query: &query, regex: Some(&regex), include: "", exclude: "",
@@ -239,6 +283,7 @@ impl App {
     }
     pub(crate) fn stop_global_search(&mut self) {
         if !self.bg_global_search_running { return; }
+        self.global_search_pending_since = None;
         if let Some(token) = self.search_cancel_token.take() { token.cancel(); }
         // Reject queued results and failures as well as cancelling new work.
         // Keep the query, results, selection, and scroll position intact.
@@ -830,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn vscode_workspace_traversal_honors_ignores_hidden_files_and_open_buffers() {
+    fn workspace_search_uses_explicit_defaults_without_ignore_files_and_prefers_open_buffers() {
         let workspace = tempfile::tempdir().unwrap();
         for file in ["visible.txt", ".hidden/a.txt", "target/a.txt", "build/a.txt", "dist/a.txt", "ignored.txt", "ignoredDir/a.txt", "node_modules/a.txt", ".git/a.txt"] {
             let path = workspace.path().join(file);
@@ -845,13 +890,12 @@ mod tests {
         app.global_search_query = "needle".into();
         app.update_global_search();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);
-        assert_eq!(app.global_search_results.len(), 6);
+        assert_eq!(app.global_search_results.len(), 7);
         assert!(app.global_search_results.iter().any(|result| &*result.line_text == "unsaved needle"));
-        app.settings_workspace.search_use_ignore_files = Some(false);
-        app.settings_workspace.search_exclude.insert("**/node_modules".into(), serde_json::Value::Bool(false));
+        app.search_exclude_pattern = "./ignoredDir, ./node_modules, ./.git".into();
         app.update_global_search();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);
-        assert_eq!(app.global_search_results.len(), 8);
+        assert_eq!(app.global_search_results.len(), 6);
         app.search_include_pattern = "./target".into();
         app.update_global_search();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);
@@ -860,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn vscode_workspace_search_paths_can_leave_the_workspace_and_apply_sibling_excludes() {
+    fn workspace_search_paths_can_leave_the_workspace_and_apply_explicit_excludes() {
         // The Windows sandbox's TEMP path contains braces, which are glob
         // operators in VS Code's absolute search paths as well.
         let parent = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
@@ -872,7 +916,7 @@ mod tests {
         let mut app = App::new(root);
         app.global_search_query = "needle".into();
         app.search_include_pattern = "../outside, *.js".into();
-        app.settings_workspace.search_exclude.insert("**/*.js".into(), serde_json::json!({"when":"$(basename).ts"}));
+        app.search_exclude_pattern = "**/paired.js".into();
         app.update_global_search();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);
         assert_eq!(app.global_search_results.len(), 1);

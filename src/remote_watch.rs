@@ -205,7 +205,7 @@ impl Watch {
                 crate::worker_priority::lower_current_thread();
                 let callback_root = root.clone();
                 let callback_burst = burst.clone();
-                let watcher = notify::RecommendedWatcher::new(
+                let watcher = native_watcher(
                     move |event| {
                         let mut burst = callback_burst.lock().unwrap();
                         burst.push(&callback_root, event);
@@ -213,7 +213,6 @@ impl Watch {
                             let _ = callback_wake.try_send(());
                         }
                     },
-                    native_watch_config(),
                 );
                 let mut watcher = match watcher.and_then(|mut watcher| {
                     watcher.watch(&root, RecursiveMode::Recursive)?;
@@ -301,6 +300,19 @@ impl Watch {
             wake,
             observation,
         })
+    }
+}
+
+fn native_watcher(event_handler: impl notify::EventHandler) -> notify::Result<notify::RecommendedWatcher> {
+    #[cfg(target_os = "linux")]
+    {
+        notify::INotifyWatcher::new_with_event_batching(event_handler, native_watch_config(),
+            std::time::Duration::from_millis(10))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use notify::Watcher;
+        notify::RecommendedWatcher::new(event_handler, native_watch_config())
     }
 }
 
@@ -404,7 +416,7 @@ mod tests {
         let file = nested.join("entry.txt");
         std::fs::write(&file, "before").unwrap();
         let (events, received) = mpsc::channel();
-        let mut watcher = notify::RecommendedWatcher::new(events, native_watch_config()).unwrap();
+        let mut watcher = native_watcher(events).unwrap();
         watcher.watch(root.path(), RecursiveMode::Recursive).unwrap();
         for _ in 0..1000 { assert_eq!(std::fs::read(&file).unwrap(), b"before"); }
         assert!(matches!(received.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)),
@@ -441,6 +453,84 @@ mod tests {
         std::fs::read(&file).unwrap();
         let event = received.recv_timeout(std::time::Duration::from_secs(3)).unwrap().unwrap();
         assert!(matches!(event.kind, EventKind::Access(AccessKind::Open(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_headless_batches_hot_files_without_dropping_paths_renames_or_replacements() {
+        use notify::{RecursiveMode, Watcher};
+        use std::time::{Duration, Instant};
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path();
+        let files: Vec<_> = ["build/source.rs", "target/generated.rs", "node_modules/cache", "dist/source.js",
+            "__pycache__/source.py", ".venv/source.py", "venv/source.py", ".tox/source.py",
+            ".mypy_cache/source.py", ".pytest_cache/source.py"].into_iter().map(|path| root.join(path)).collect();
+        for path in &files {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "before").unwrap();
+        }
+        let (events, received) = mpsc::channel();
+        let mut watcher = native_watcher(events).unwrap();
+        watcher.watch(root, RecursiveMode::Recursive).unwrap();
+        for path in &files { std::fs::write(path, "after").unwrap(); }
+        let hot = &files[2];
+        for _ in 0..1000 { std::fs::write(hot, "hot file").unwrap(); }
+        let mut missing: std::collections::HashSet<_> = files.iter().cloned().collect();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !missing.is_empty() {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            for path in event.paths { missing.remove(&path); }
+        }
+        let drain = || loop {
+            match received.recv_timeout(Duration::from_millis(50)) {
+                Ok(event) => { event.unwrap(); }
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(error) => panic!("{error}"),
+            }
+        };
+        drain();
+
+        // Coalescing must reset at structural barriers, including replacement
+        // of a path that already emitted a modification in the same batch.
+        let renamed = root.join("build/renamed");
+        std::fs::write(hot, "before rename").unwrap();
+        std::fs::rename(hot, &renamed).unwrap();
+        std::fs::write(hot, "replacement").unwrap();
+        let mut modifications = 0;
+        let mut saw_rename = false;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while modifications < 2 || !saw_rename {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            if matches!(event.kind, EventKind::Modify(ModifyKind::Data(_))) && event.paths.contains(hot) {
+                modifications += 1;
+            }
+            saw_rename |= matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) && event.paths.contains(&renamed);
+        }
+        drain();
+        std::fs::remove_file(&renamed).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            if matches!(event.kind, EventKind::Remove(_)) && event.paths.contains(&renamed) { break; }
+        }
+        drain();
+
+        // Newly created subdirectories retain recursive coverage as well.
+        let nested = root.join("build/new-subdirectory");
+        std::fs::create_dir(&nested).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            if event.paths.contains(&nested) { break; }
+        }
+        drain();
+        let child = nested.join("new.rs");
+        std::fs::write(&child, "new source").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
+            if event.paths.contains(&child) { break; }
+        }
     }
 
     #[test]

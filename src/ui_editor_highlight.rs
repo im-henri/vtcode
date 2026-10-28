@@ -310,19 +310,19 @@ pub(crate) fn matches_for_line(
 /// A borrowed view over either worker spans or the current plain line. Plain
 /// redraws do not need a Vec and a second owned copy of the line's text.
 pub(crate) struct HighlightedLine<'a> {
-    cached: Option<&'a [(syntect::highlighting::Style, String)]>,
+    cached: Option<&'a [(crate::textmate::Style, String)]>,
     plain: &'a str,
-    plain_style: syntect::highlighting::Style,
+    plain_style: crate::textmate::Style,
     char_len: usize,
     owned_text: Option<std::rc::Rc<String>>,
 }
 
 impl<'a> HighlightedLine<'a> {
     pub(crate) fn new(
-        cached: Option<(&'a [(syntect::highlighting::Style, String)], usize)>,
+        cached: Option<(&'a [(crate::textmate::Style, String)], usize)>,
         clean_line: &'a str,
         clean_char_len: usize,
-        plain_style: syntect::highlighting::Style,
+        plain_style: crate::textmate::Style,
     ) -> Self {
         let valid = cached.filter(|&(_, length)| length == clean_char_len);
         Self {
@@ -349,14 +349,14 @@ impl<'a> HighlightedLine<'a> {
 
     pub(crate) fn iter(
         &self,
-    ) -> impl Iterator<Item = (syntect::highlighting::Style, &'a str)> + '_ {
+    ) -> impl Iterator<Item = (crate::textmate::Style, &'a str)> + '_ {
         self.iter_from_span(0)
     }
 
     pub(crate) fn iter_from_span(
         &self,
         start: usize,
-    ) -> impl Iterator<Item = (syntect::highlighting::Style, &'a str)> + '_ {
+    ) -> impl Iterator<Item = (crate::textmate::Style, &'a str)> + '_ {
         self.cached
             .map(|spans| &spans[start.min(spans.len())..])
             .into_iter()
@@ -1524,7 +1524,7 @@ impl RenderLineCache {
             + source.map_or(0, |(spans, _)| {
                 spans.iter().map(|(_, text)| text.capacity()).sum::<usize>()
                     + spans.capacity()
-                        * std::mem::size_of::<(syntect::highlighting::Style, String)>()
+                        * std::mem::size_of::<(crate::textmate::Style, String)>()
             });
         let entry = std::rc::Rc::new(RenderLineGlyphs {
             source: source.map(|(spans, _)| std::rc::Rc::clone(spans)),
@@ -1571,20 +1571,20 @@ impl RenderLineCache {
     }
 }
 
-pub(crate) const PLAIN_STYLE: syntect::highlighting::Style = syntect::highlighting::Style {
-    foreground: syntect::highlighting::Color {
+pub(crate) const PLAIN_STYLE: crate::textmate::Style = crate::textmate::Style {
+    foreground: crate::textmate::Color {
         r: 212,
         g: 212,
         b: 212,
         a: 255,
     },
-    background: syntect::highlighting::Color {
+    background: crate::textmate::Color {
         r: 0,
         g: 0,
         b: 0,
         a: 0,
     },
-    font_style: syntect::highlighting::FontStyle::empty(),
+    font_style: crate::textmate::FontStyle::empty(),
 };
 
 /// Find non-overlapping occurrences while converting each UTF-8 prefix only

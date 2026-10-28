@@ -149,7 +149,7 @@ fn missed_changes_expire_quickly_without_watch_coverage_and_eventually_with_it()
         std::fs::write(root.join(".gitignore"), "!*.tmp\n").unwrap();
         cache.0.lock().unwrap().snapshot.as_mut().unwrap().created -= UNWATCHED_TTL;
         cache.mark_ignored(&root, &root, &mut entries, None);
-        if watched && directory == "src" {
+        if watched {
             assert_eq!(cache.metrics().repository_loads, 1);
             cache.expire();
             cache.mark_ignored(&root, &root, &mut entries, None);

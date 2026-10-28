@@ -340,7 +340,7 @@ pub struct FilesystemActionOutcome {
 }
 
 /// A single isolated diff-row highlight: (line_index, hash, styled_spans).
-pub type FragmentHighlightEntry = (usize, u64, Vec<(syntect::highlighting::Style, String)>);
+pub type FragmentHighlightEntry = (usize, u64, Vec<(crate::textmate::Style, String)>);
 
 /// Messages sent from background workers to the main UI thread.
 pub enum BackgroundResult {
@@ -463,6 +463,7 @@ pub enum BackgroundResult {
     /// can arrive on every keystroke, so scanning never runs on the UI thread.
     #[cfg_attr(test, allow(dead_code))]
     SearchMatches {
+        owner: u64,
         generation: u64,
         target: EditorAnalysisTarget,
         matches: Vec<(usize, usize, usize)>,
@@ -511,7 +512,7 @@ pub enum BackgroundResult {
     ChatAttachmentsPrepared { agent: u64, serial: u64, result: Result<Vec<PathBuf>, String> },
     ChatPastePrepared { agent: u64, serial: u64, result: crate::app_chat_files::hosted::paste::Batch },
     ChatPromptPrepared { agent: u64, session: vtcode::acp::protocol::SessionId, serial: u64, result: Result<crate::app_chat_files::hosted::PreparedPrompt, String>, draft: Option<crate::app_chat_files::hosted::paste::ResolvedDraft> },
-    /// Debounced file-watcher burst. Generated/cache paths are filtered out.
+    /// Debounced file-watcher burst with content and structural changes.
     FilesChanged {
         root: PathBuf,
         changes: Vec<WorkspacePathChange>,
@@ -527,7 +528,7 @@ pub enum BackgroundResult {
     FileWatcherState { root: PathBuf, active: bool },
     /// Metadata-only disk check requested by focus/periodic maintenance.
     FileDiskState(WorkspacePathChange),
-    /// Stateful, incremental Syntect document slice from a background worker.
+    /// Stateful, incremental TextMate document slice from a background worker.
     HighlightBatch(crate::highlight::HighlightBatch),
     /// Diff rows are isolated fragments rather than a coherent document.
     HighlightFragments {
@@ -1535,8 +1536,8 @@ pub(crate) fn inspect_workspace_path(path: PathBuf) -> WorkspacePathChange {
     }
 }
 
-/// Return whether a watcher path is inside generated/cache metadata that should
-/// never drive editor reloads, Explorer refreshes, Git refreshes, or LSP events.
+/// Git's private storage is handled by Git metadata invalidation. Project paths
+/// remain eligible regardless of directory names or search exclusion settings.
 fn is_ignored_workspace_event(root: &std::path::Path, path: &std::path::Path) -> bool {
     if crate::formatters::is_temporary_path(path) || crate::editor::is_save_temporary_path(path) {
         return true;
@@ -1544,23 +1545,7 @@ fn is_ignored_workspace_event(root: &std::path::Path, path: &std::path::Path) ->
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
-    relative.components().any(|component| {
-        let name = component.as_os_str().to_string_lossy();
-        matches!(
-            name.as_ref(),
-            ".git"
-                | "target"
-                | "node_modules"
-                | "__pycache__"
-                | ".venv"
-                | "venv"
-                | ".tox"
-                | "dist"
-                | "build"
-                | ".mypy_cache"
-                | ".pytest_cache"
-        )
-    })
+    relative.components().any(|component| component.as_os_str() == ".git")
 }
 
 fn is_git_metadata_event(root: &std::path::Path, path: &std::path::Path) -> bool {
@@ -1679,20 +1664,20 @@ mod tests {
     }
 
     #[test]
-    fn watcher_renames_and_generated_directory_boundaries_change_names() {
+    fn watcher_renames_and_nested_project_directory_changes_preserve_all_paths() {
         use notify::event::{CreateKind, ModifyKind, RenameMode};
         use notify::EventKind;
         let root = std::path::Path::new("workspace");
         let mut burst = WorkspaceEventBurst::default();
         burst.push(root, Ok(notify::Event::new(EventKind::Create(CreateKind::File))
             .add_path(root.join("target/deep/generated.rs"))));
-        assert!(burst.is_empty());
+        assert!(!burst.is_empty());
         burst.push(root, Ok(notify::Event::new(EventKind::Create(CreateKind::Folder)).add_path(root.join("target"))));
         burst.push(root, Ok(notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
             .add_path(root.join("old.rs")).add_path(root.join("new.rs"))));
         assert!(burst.structure_changed);
         assert_eq!(coalesce_workspace_event_paths(root, burst.paths),
-            [root.join("new.rs"), root.join("old.rs"), root.join("target")]);
+            [root.join("new.rs"), root.join("old.rs"), root.join("target"), root.join("target/deep/generated.rs")]);
     }
 
     #[test]
@@ -2147,7 +2132,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_events_skip_generated_and_metadata_directories() {
+    fn workspace_events_keep_all_project_directory_names() {
         let root = PathBuf::from("workspace");
         for path in [
             root.join("target").join("debug").join("vtcode.exe"),
@@ -2155,15 +2140,22 @@ mod tests {
                 .join("x")
                 .join("node_modules")
                 .join("package.js"),
-            root.join(".git").join("index.lock"),
             root.join("src").join("__pycache__").join("module.pyc"),
+            root.join("build").join("source.rs"),
+            root.join("dist").join("source.js"),
+            root.join(".venv").join("source.py"),
+            root.join("venv").join("source.py"),
+            root.join(".tox").join("source.py"),
+            root.join(".mypy_cache").join("source.py"),
+            root.join(".pytest_cache").join("source.py"),
         ] {
-            assert!(
-                is_ignored_workspace_event(&root, &path),
-                "{}",
-                path.display()
-            );
+            assert!(!is_ignored_workspace_event(&root, &path), "{}", path.display());
+            let mut burst = WorkspaceEventBurst::default();
+            burst.push(&root, Ok(notify::Event::new(notify::EventKind::Modify(
+                notify::event::ModifyKind::Data(notify::event::DataChange::Any))).add_path(path.clone())));
+            assert_eq!(coalesce_workspace_event_paths(&root, burst.paths), [path]);
         }
+        assert!(is_ignored_workspace_event(&root, &root.join(".git/index.lock")));
         assert!(!is_ignored_workspace_event(
             &root,
             &root.join("src").join("main.rs")
@@ -2228,10 +2220,10 @@ mod tests {
     }
 
     #[test]
-    fn native_watcher_coverage_excludes_generated_and_external_paths() {
+    fn native_watcher_coverage_keeps_project_directories_and_excludes_external_paths() {
         let root = PathBuf::from("workspace");
         assert!(workspace_path_is_watched(&root, &root.join("src").join("main.rs")));
-        assert!(!workspace_path_is_watched(
+        assert!(workspace_path_is_watched(
             &root,
             &root.join("target").join("debug").join("vtcode.exe")
         ));
@@ -2255,6 +2247,6 @@ mod tests {
                 main.clone(),
             ],
         );
-        assert_eq!(paths, vec![lib, main]);
+        assert_eq!(paths, vec![lib, main, root.join("target/debug/artifact")]);
     }
 }

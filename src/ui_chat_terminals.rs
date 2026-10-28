@@ -566,10 +566,9 @@ fn command_line(app: &App, text: &str) -> Line<'static> {
     let syntax = syntaxes
         .find_syntax_by_extension("sh")
         .unwrap_or_else(|| syntaxes.find_syntax_plain_text());
-    let mut highlighter = syntect::easy::HighlightLines::new(syntax, theme);
+    let mut highlighter = crate::textmate_backend::HighlightLines::new(syntax, theme);
     let spans = highlighter
-        .highlight_line(text, &syntaxes)
-        .unwrap_or_default()
+        .highlight_line(text)
         .into_iter()
         .map(|(style, token)| {
             let fg = style.foreground;
@@ -579,7 +578,7 @@ fn command_line(app: &App, text: &str) -> Line<'static> {
                     Color::Rgb(fg.r, fg.g, fg.b),
                     app.colors.ui.bg_terminal,
                     4.5,
-                )),
+                )).add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style)),
             )
         })
         .collect::<Vec<_>>();

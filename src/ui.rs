@@ -402,6 +402,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.terminal_surfaces.clear();
     app.search_control_regions.clear();
     app.search_bar_area = None;
+    crate::file_search::begin_frame(app);
     app.zen_exit_area = None;
     app.chat.area = None;
     app.chat.layout.placements.clear();
@@ -427,10 +428,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // until the browser closes.
     if app.change_dir_active {
         ui_pickers::draw_change_dir(f, app);
-        crate::ui_loading::finish_frame(app, std::time::Instant::now());
         crate::ui_remote_connection::draw(f, app);
         crate::ui_side_notice::draw(f, app);
         app.logs.finish_frame(app.background.wake_handle());
+        crate::ui_modal::draw_active(f, app);
+        crate::ui_loading::finish_frame(app, std::time::Instant::now());
         return;
     }
     app.folder_browser_area = None;
@@ -696,9 +698,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_inline_blame::draw(f, app);
 
     // Search bar overlay (rendered last, on top)
-    if app.search_active {
-        ui_search_dialog::draw_search_bar(f, app);
-    }
+    ui_search_dialog::draw_file_search_bars(f, app);
 
     // Context menu
     if app.context_menu_active {

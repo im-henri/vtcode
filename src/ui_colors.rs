@@ -1,8 +1,18 @@
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use rustc_hash::FxHashMap as CssColorMap;
 use std::sync::LazyLock;
 
 use crate::ui::hsl_to_rgb;
+
+pub(crate) fn syntax_font_modifiers(font: crate::textmate::FontStyle) -> Modifier {
+    use crate::textmate::FontStyle;
+    let mut modifiers=Modifier::empty();
+    for (flag,modifier) in [(FontStyle::BOLD,Modifier::BOLD),(FontStyle::ITALIC,Modifier::ITALIC),
+        (FontStyle::UNDERLINE,Modifier::UNDERLINED),(FontStyle::STRIKETHROUGH,Modifier::CROSSED_OUT)] {
+        if font.contains(flag) {modifiers|=modifier;}
+    }
+    modifiers
+}
 
 /// Keep document change markers consistent in the gutter and overviews.
 pub(crate) fn change_marker_color(
@@ -58,7 +68,7 @@ pub(crate) fn lighten(color: Color, amount: u8) -> Color {
 
 /// TextMate token colors can also carry alpha. Ignoring it makes translucent
 /// comments and embedded-language colors unexpectedly bright or saturated.
-pub(crate) fn syntect_color(color: syntect::highlighting::Color, surface: Color) -> Color {
+pub(crate) fn syntax_color(color: crate::textmate::Color, surface: Color) -> Color {
     crate::theme_workbench::ColorLayer::rgba(color.r, color.g, color.b, color.a)
         .over(surface)
         .unwrap_or(Color::Rgb(color.r, color.g, color.b))

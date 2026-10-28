@@ -8,7 +8,7 @@ use lsp_types::{SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
 fn fixture() -> (
     LspManager,
     Vec<TestLspServer>,
-    FxHashMap<String, (u8, u8, u8)>,
+    crate::semantic_theme::SemanticTheme,
 ) {
     let mut manager = LspManager::new(std::path::PathBuf::from("."));
     let mut servers = Vec::new();
@@ -21,7 +21,7 @@ fn fixture() -> (
         token_types: vec![SemanticTokenType::VARIABLE, SemanticTokenType::FUNCTION],
         token_modifiers: vec![SemanticTokenModifier::READONLY],
     });
-    let theme = FxHashMap::from_iter([
+    let theme = crate::semantic_theme::SemanticTheme::from_iter([
         ("variable".into(), (1, 2, 3)),
         ("variable.readonly:rust".into(), (4, 5, 6)),
         ("variable:python".into(), (7, 8, 9)),

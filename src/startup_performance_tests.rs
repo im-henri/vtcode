@@ -200,9 +200,10 @@ fn block_reads(workers: &mut BackgroundWorkers) -> (Release, mpsc::Receiver<()>)
 
 fn write_grammar(folder: &Path, name: &str) {
     std::fs::create_dir_all(folder).unwrap();
-    std::fs::write(folder.join("Startup.sublime-syntax"), format!(
-        "%YAML 1.2\n---\nname: {name}\nfile_extensions: [startup]\nscope: source.startup\ncontexts:\n  main:\n    - match: magic\n      scope: keyword.control.startup\n"
-    )).unwrap();
+    std::fs::write(folder.join("Example.tmLanguage.json"), serde_json::json!({
+        "name":name,"scopeName":"source.startup","fileTypes":["startup"],
+        "patterns":[{"match":"magic","name":"keyword.control.startup"}]
+    }).to_string()).unwrap();
 }
 
 #[test]
@@ -219,7 +220,7 @@ fn opening_editing_and_cpu_jobs_do_not_wait_for_startup_assets() {
     app.initialize_extensions();
     app.open_file(&path);
     app.wait_for_background(WAIT, |app| app.editor().is_some_and(|e| !e.bg_loading));
-    assert_eq!(app.highlighter.syntax_names(), ["Plain Text"]);
+    assert!(app.highlighter.syntax_names().contains(&"Rust".into()));
     assert!(app.bg_syntax_asset_refresh_running && app.bg_extension_scan_running);
     let (cpu, done) = mpsc::channel();
     app.background.pool_sender().send(Box::new(move || cpu.send(()).unwrap())).unwrap();
@@ -248,7 +249,7 @@ fn cached_syntaxes_are_published_before_validation_and_newer_sources_win() {
     write_grammar(root.path(), "Cached");
     crate::syntax_assets::rebuild_syntax_cache(root.path()).unwrap();
     let mut highlighter = crate::highlight::Highlighter::for_startup_syntax_folder(root.path());
-    assert_eq!(highlighter.syntax_names(), ["Plain Text"]);
+    assert!(!highlighter.syntax_names().contains(&"Cached".into()));
     let mut published = false;
     let refreshed = highlighter.syntax_asset_refresh(Vec::new()).run_with_cached(|loaded| {
         published = true;

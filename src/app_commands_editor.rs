@@ -961,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_syntect_language_command_sets_editor_override() {
+    fn dynamic_textmate_language_command_sets_editor_override() {
         let mut app = app_with_content("key: value\n");
         let command = crate::app_menu::language_command_id("YAML");
 
@@ -972,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn change_language_opens_all_syntect_modes() {
+    fn change_language_opens_all_textmate_modes() {
         let mut app = app_with_content("text\n");
         let expected = app.highlighter.syntax_names();
 

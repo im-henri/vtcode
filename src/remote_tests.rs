@@ -14,6 +14,79 @@ use std::{
 mod terminal_transport;
 
 #[test]
+fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
+    for (native, uri, first) in [
+        ("/project space λ", "file:///project%20space%20%CE%BB/", "/"),
+        (r"C:\project space λ", "file:///C:/project%20space%20%CE%BB/", r"C:\"),
+        ("/root-�", "file:///root-%FF/", "/"),
+        (r"\\server\share\repo", "file://server/share/repo/", "file://server/share/repo"),
+    ] {
+        let hello = Hello {
+            version: VERSION,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            root: native.into(),
+            root_uri: uri.into(),
+            session: 42,
+        };
+        let client = client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), hello).unwrap();
+        let workspace = workspace::Workspace::new(client);
+        for (bytes, expected) in [
+            ("space λ".as_bytes(), "space λ"),
+            (br"literal\name".as_slice(), r"literal\name"),
+            (b"100%real".as_slice(), "100%real"),
+            (b"~host".as_slice(), "~host"),
+            (b"line\nname".as_slice(), r"line\nname"),
+            (b"raw-\xff".as_slice(), "raw-�"),
+        ] {
+            let path = RemotePath::new(bytes.to_vec()).unwrap();
+            let key = workspace.view_key(&path);
+            let parts = workspace.breadcrumbs(&key).unwrap();
+            assert_eq!(parts.first().unwrap().0, first);
+            assert_eq!(parts.last().unwrap(), &(expected.to_string(), key));
+            assert!(parts.iter().all(|(name, _)| !name.chars().any(char::is_control)));
+            for (_, target) in parts {
+                assert!(workspace.remote_path(&target).is_ok());
+                let uri = url::Url::from_file_path(&target).unwrap();
+                let uri = workspace.lsp_uri(uri.as_str(), true).unwrap();
+                assert_eq!(workspace.file_uri_key(&uri).as_ref(), Some(&target));
+            }
+        }
+    }
+}
+
+#[test]
+fn remote_filesystem_roots_keep_native_root_identity_and_stop_at_real_roots() {
+    let root = tempfile::tempdir().unwrap();
+    let mut service = service::Service::new(root.path()).unwrap();
+    let client = client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), service.hello(42)).unwrap();
+    let workspace = workspace::Workspace::new(client);
+    let Reply::FilesystemRoots(roots) = service.execute(Command::FilesystemRoots).unwrap() else {
+        panic!("Expected filesystem roots");
+    };
+    assert!(!roots.is_empty());
+    for (name, path) in roots {
+        assert!(!name.is_empty());
+        let native = path.resolve(root.path()).unwrap();
+        assert!(native.is_absolute());
+        let key = workspace.view_key(&path);
+        assert_eq!(workspace.remote_path(&key).unwrap(), path);
+        let uri = url::Url::from_file_path(&native).unwrap();
+        assert_eq!(workspace.file_uri_key(uri.as_str()), Some(key.clone()));
+        let wire_uri = url::Url::from_file_path(&key).unwrap();
+        let wire_uri = workspace.lsp_uri(wire_uri.as_str(), true).unwrap();
+        assert_eq!(wire_uri.trim_end_matches('/'), uri.as_str().trim_end_matches('/'));
+        #[cfg(windows)]
+        {
+            assert!(native.parent().is_none());
+            assert!(workspace.parent_key(&key).unwrap().is_none());
+            assert_eq!(workspace.breadcrumbs(&key).unwrap().len(), 1);
+            let child = path.child(b"child").unwrap();
+            assert_eq!(workspace.parent_key(&workspace.view_key(&child)).unwrap(), Some(key));
+        }
+    }
+}
+
+#[test]
 fn displayed_remote_paths_roundtrip_all_roots_and_filename_bytes() {
     for (native, uri) in [
         ("/repo space λ", "file:///repo%20space%20%CE%BB/"),
@@ -1067,6 +1140,7 @@ fn remote_file_index_reuses_versions_and_quick_open_ranks_locally() {
         .call(Command::Files {
             generation: 1,
             known_version: None,
+            excludes: Default::default(),
         })
         .unwrap()
     else {
@@ -1077,7 +1151,8 @@ fn remote_file_index_reuses_versions_and_quick_open_ranks_locally() {
         client
             .call(Command::Files {
                 generation: 2,
-                known_version: Some(version)
+                known_version: Some(version),
+                excludes: Default::default(),
             })
             .unwrap(),
         Reply::Files { files: None, .. }
@@ -1132,6 +1207,7 @@ fn remote_explorer_batches_expanded_folders_and_preserves_native_sort_filter_and
             crate::explorer::ExplorerSortMode::Name,
             None,
             true,
+            &crate::settings::default_files_exclude(),
             &cancel,
         )
         .unwrap();
@@ -1162,6 +1238,7 @@ fn remote_explorer_batches_expanded_folders_and_preserves_native_sort_filter_and
             crate::explorer::ExplorerSortMode::Type,
             Some(find),
             false,
+            &crate::settings::default_files_exclude(),
             &cancel,
         )
         .unwrap();
@@ -1180,6 +1257,7 @@ fn remote_explorer_batches_expanded_folders_and_preserves_native_sort_filter_and
             crate::explorer::ExplorerSortMode::Name,
             None,
             false,
+            &crate::settings::default_files_exclude(),
             &cancel,
         )
         .unwrap();
@@ -1256,6 +1334,7 @@ fn remote_git_repositories_stage_and_unstage_use_native_shared_tasks() {
     let client = connection(dir.path(), Arc::default(), Arc::default());
     let Reply::GitStatus { discovery, scans } = client
         .call(Command::GitStatus {
+            changed: None,
             include_untracked: true,
             known: None,
             parent_open: false,
@@ -1998,6 +2077,7 @@ fn workspace_context_keeps_old_reads_and_saves_in_their_original_folder() {
         .call(Command::Files {
             generation: 1,
             known_version: None,
+            excludes: Default::default(),
         })
         .unwrap()
     else {

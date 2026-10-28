@@ -179,7 +179,9 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
 
     app.tabs = std::mem::take(&mut app.groups[group_idx].tabs);
     app.active_tab = split_idx;
+    app.viewport = Some(layout[2]);
     app.rendering_inactive_editor = true;
+    app.refresh_file_search_view(group_idx);
     let saved_diff_view = app.begin_inactive_diff_view();
     let current_tab_kind = app.tabs.get(app.active_tab).map(|t| t.kind);
     if show_breadcrumb {

@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Modifier, Style, Stylize},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
@@ -17,7 +17,9 @@ use crate::ui_pickers::truncate_to_width;
 
 const SC_ACTIONS_LABEL: &str = " Actions ▾ ";
 const SC_SECTION_ACTION_WIDTH: u16 = 3;
-pub(crate) const SC_FILE_ACTION_HIT_WIDTH: u16 = 5;
+#[path = "ui_source_control_file_actions.rs"]
+mod file_actions;
+pub(crate) use file_actions::{FileActionRow, handle_click as handle_file_action_click};
 const SC_CHANGES_FIXED_ROWS: u16 = 6;
 const SC_INITIALIZE_BUTTON_LABEL: &str = "Initialize Repository";
 
@@ -270,6 +272,7 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.source_control_untracked_stage_area = None;
     app.source_control_untracked_discard_area = None;
     app.source_control_actions_area = None;
+    app.source_control_file_actions.clear();
     app.repositories.headers.clear();
     app.repositories.closes.clear();
     app.repositories.parent_button = None;
@@ -329,7 +332,7 @@ fn draw_repository_headers(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         app.repositories.parent_button = Some(button);
         y += 1;
     }
-    let count = app.repositories.entries.iter().filter(|repo| !app.repositories.closed.contains(&repo.root)).count();
+    let count = app.repositories.open_count();
     let capacity = area.height.saturating_sub(y - area.y).saturating_sub(8).max(1).min(6) as usize;
     app.repositories.header_scroll = app.repositories.header_scroll.min(count.saturating_sub(capacity));
     for repo in app.repositories.entries.iter().filter(|repo| !app.repositories.closed.contains(&repo.root))
@@ -344,14 +347,32 @@ fn draw_repository_headers(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         let total = repo.change_count(app.sc_visibility);
         let suffix = format!(" ({total})");
         let name = repo.root.file_name().unwrap_or(repo.root.as_os_str()).to_string_lossy();
-        let available = area.width.saturating_sub(close_width).saturating_sub(2) as usize;
-        let name = truncate_to_width(&name, available.saturating_sub(suffix.width()));
-        let text = format!("{} {name}{suffix}", if expanded { "▾" } else { "▸" });
-        let hovered = header.contains((app.mouse_col, app.mouse_row).into());
-        f.render_widget(Paragraph::new(text).style(app.colors.ui.toolbar_layer_style(
-            app.colors.ui.sidebar_foreground, bg, hovered, expanded, expanded)).bold(), header);
+        let available = area.width.saturating_sub(close_width) as usize;
+        let prefix_width = if count > 1 { 3 } else { 1 };
+        let active_label = " Active ";
+        let badge = if active && count > 1 && available >= prefix_width + suffix.width() + active_label.width() + 8 { active_label } else { "" };
+        let name = truncate_to_width(&name, available.saturating_sub(prefix_width + suffix.width() + badge.width()));
+        let hovered = count > 1 && header.contains((app.mouse_col, app.mouse_row).into());
+        // Selection remains visible even when its details are collapsed or the
+        // editor has focus. A disclosure arrow only describes expansion.
+        let mut style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground, bg, active && count > 1, true, hovered);
+        if active { style = style.add_modifier(Modifier::BOLD); }
+        let row_bg = style.bg.unwrap_or(bg);
+        let mut spans = Vec::new();
+        if count > 1 {
+            spans.push(Span::styled(if active { "▌" } else { " " }, Style::default()
+                .fg(app.colors.ui.list_icon_color(app.colors.fg_accent_blue, row_bg, active, true))));
+            spans.push(Span::raw(if expanded { "▾ " } else { "▸ " }));
+        } else { spans.push(Span::raw(" ")); }
+        spans.push(Span::raw(format!("{name}{suffix}")));
+        if !badge.is_empty() {
+            let padding = available.saturating_sub(prefix_width + name.width() + suffix.width() + badge.width());
+            spans.push(Span::raw(crate::helpers::spaces(padding)));
+            spans.push(Span::styled(badge, app.colors.ui.badge_style(row_bg).add_modifier(Modifier::BOLD)));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)).style(style), header);
         f.render_widget(Paragraph::new(" × ").style(app.colors.ui.toolbar_layer_style(
-            app.colors.ui.sidebar_foreground, bg, close.contains((app.mouse_col, app.mouse_row).into()), false, false)), close);
+            app.colors.ui.sidebar_foreground, row_bg, close.contains((app.mouse_col, app.mouse_row).into()), false, false)), close);
         app.repositories.headers.push((header, repo.root.clone()));
         app.repositories.closes.push((close, repo.root.clone()));
         y += 1;
@@ -625,6 +646,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
     app.source_control_discard_all_area = None;
     app.source_control_untracked_stage_area = None;
     app.source_control_untracked_discard_area = None;
+    app.source_control_file_actions.clear();
     if area.height < 2 { return; }
 
     // ── Commit message input box (3 rows with border) ──────────────────────
@@ -701,6 +723,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let max_scroll = layout.max_scroll(visible);
     app.source_control_scroll = app.source_control_scroll.min(max_scroll);
     let scroll = app.source_control_scroll;
+    let repository = std::sync::Arc::new(app.source_control_root().to_owned());
     let files = &app.source_control_files;
     let show_scrollbar = total_rows > visible && list_area.width > 0;
     let content_area = Rect::new(
@@ -758,28 +781,13 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let moved_path = file.original_path.as_ref().map(|old| format!("{old} → {}", file.path));
         let parent = moved_path.as_deref().unwrap_or(parent);
         let (icon, icon_color) = file_icon_colored(file_name);
-        // action hint: − = unstage, + = stage
-        let action = if file.staged { "−" } else { "+" };
-        let action_color = app.colors.ui.git_status_color(if file.staged { 'D' } else { 'A' }, row_bg);
-        let action_hovered = is_hovered
-            && app.mouse_col.saturating_sub(content_area.x) < SC_FILE_ACTION_HIT_WIDTH;
-        let action_style = if action_hovered {
-            app.colors.ui.toolbar_layer_style(app.colors.ui.git_decoration(if file.staged { 'D' } else { 'A' }),
-                row_bg, true, false, false)
-        } else { row_style.fg(action_color) };
-
-        // Build file row: [indent][icon][name]...[parent][status]. Filename is
+        // Build file row: [indent][icon][name]...[parent][actions][status]. Filename is
         // deliberately allocated before parent so narrow sidebars stay useful.
         fmt_buf.clear();
-        let _ = write!(fmt_buf, "  {action} ");
-        let action_span = std::mem::take(&mut fmt_buf);
-        fmt_buf = String::with_capacity(64);
-        fmt_buf.clear();
-        let _ = write!(fmt_buf, "{icon} ");
+        let _ = write!(fmt_buf, "  {icon} ");
         let icon_span = std::mem::take(&mut fmt_buf);
         fmt_buf = String::with_capacity(64);
-        let fixed_prefix_width = UnicodeWidthStr::width(action_span.as_str())
-            + UnicodeWidthStr::width(icon_span.as_str());
+        let fixed_prefix_width = UnicodeWidthStr::width(icon_span.as_str());
         // Keep a separator before the status badge. Count it as fixed width so
         // it never steals the filename's allocation or joins the parent path.
         fmt_buf.clear();
@@ -787,15 +795,23 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let status_badge = std::mem::take(&mut fmt_buf);
         fmt_buf = String::with_capacity(64);
         let status_width = UnicodeWidthStr::width(status_badge.as_str());
+        let action_width = FileActionRow::width(file.staged, content_area.width
+            .saturating_sub((fixed_prefix_width + status_width + 4) as u16));
+        if action_width > 0 {
+            app.source_control_file_actions.push(FileActionRow {
+                index: i, change: file.clone(), repository: repository.clone(),
+                area: Rect::new(content_area.right().saturating_sub(status_width as u16 + action_width),
+                    list_start_y + len_as_u16(lines.len()), action_width, 1), background: row_bg,
+            });
+        }
         let (display_name, display_parent, gap_len) = sc_file_row_text(
             file_name,
             parent,
             content_area.width as usize,
             fixed_prefix_width,
-            status_width,
+            status_width + action_width as usize,
         );
         lines.push(Line::from(vec![
-            Span::styled(action_span, action_style),
             Span::styled(icon_span, row_style.fg(icon_color)),
             Span::styled(
                 display_name,
@@ -808,6 +824,9 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(
                 display_parent,
                 row_style.fg(description),
+            ),
+            Span::styled(
+                crate::helpers::spaces(action_width as usize), row_style,
             ),
             Span::styled(
                 status_badge,
@@ -831,6 +850,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(lines).style(Style::default().bg(bg)),
         content_area,
     );
+    file_actions::draw(f, app);
     if content_area.width >= SC_SECTION_ACTION_WIDTH {
         for (group, relative_y) in section_actions {
             if group == Group::Merge { continue; }
@@ -897,6 +917,23 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
     if !app.show_explorer || app.sidebar_view != crate::app::SidebarView::SourceControl
         || app.sc_context_active || app.context_menu_active || app.menu_active || app.palette.active
         || crate::ui_modal::active(app).is_some() { return; }
+    let point = (app.mouse_col, app.mouse_row).into();
+    if let Some((area, root)) = app.repositories.closes.iter().find(|(area, _)| area.contains(point)) {
+        crate::ui_widgets::Tooltip::hover(vec![Line::raw("Close Repository"), Line::raw(app.display_path(root))], &app.colors)
+            .prefer_below().render(f, area.x, area.y);
+        return;
+    }
+    if let Some((area, root)) = app.repositories.headers.iter().find(|(area, _)| area.contains(point)) {
+        let active = app.repositories.active.as_ref() == Some(root);
+        let mut lines = vec![Line::raw(if active { "Active repository" } else { "Switch to repository" }),
+            Line::raw(app.display_path(root))];
+        if active && app.repositories.open_count() > 1 {
+            lines.push(Line::raw(if app.repositories.expanded { "Click to collapse" } else { "Click to expand" }));
+        }
+        crate::ui_widgets::Tooltip::hover(lines, &app.colors).prefer_below().render(f, area.x, area.y);
+        return;
+    }
+    file_actions::draw_tooltip(f, app);
     for (area, label) in [
         (app.source_control_toggle_area, if app.source_control_enabled { "Disable Source Control for this workspace" } else { "Enable Source Control for this workspace" }),
         (app.source_control_stage_all_area, "Stage All Unstaged Changes"),

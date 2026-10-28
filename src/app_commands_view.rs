@@ -415,7 +415,7 @@ impl App {
                     crate::app::DiffMode::Inline => crate::app::DiffMode::SideBySide,
                     crate::app::DiffMode::Off => return true,
                 };
-                self.preferred_diff_mode = self.diff_mode;
+                self.save_diff_layout_preference();
                 if self.is_commit_details_tab() {
                     self.commit_details.review.forced_mode = Some(self.diff_mode);
                 }
@@ -448,9 +448,6 @@ impl App {
                     DiffMode::SideBySide => DiffMode::Inline,
                     DiffMode::Inline => DiffMode::Off,
                 };
-                if self.diff_mode != DiffMode::Off {
-                    self.preferred_diff_mode = self.diff_mode;
-                }
                 match self.diff_mode {
                     DiffMode::Off => {
                         self.clear_diff_state();
@@ -466,6 +463,7 @@ impl App {
                         self.notify("Diff: inline");
                     }
                 }
+                self.save_diff_layout_preference();
             }
             "next_diff_hunk" => {
                 if let Some(editor) = self.editor() {

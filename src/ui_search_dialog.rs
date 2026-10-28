@@ -21,9 +21,10 @@ const VTCOMPLETE_POPUP_WIDTH: u16 = 30;
 const GLOBAL_SEARCH_MAX_RESULTS: u16 = 15;
 
 const MIN_SEARCH_BAR_WIDTH: u16 = 40;
-// Keep the menu and editor tab rows accessible above the Find widget.
+// Standalone widget renderers lack a pane; leave their top chrome accessible.
 const SEARCH_BAR_TOP_OFFSET: u16 = 2;
 
+#[derive(Clone)]
 pub(crate) struct SearchBarLayout {
     pub width: u16,
     pub resizing: bool,
@@ -42,7 +43,7 @@ impl SearchBarLayout {
         let max_width = viewport.width.saturating_sub(2);
         let width = self.width.clamp(MIN_SEARCH_BAR_WIDTH.min(max_width), max_width);
         Rect::new(viewport.x + viewport.width.saturating_sub(width + 1),
-            viewport.y + SEARCH_BAR_TOP_OFFSET, width, height)
+            viewport.y, width, height)
     }
 
     fn resize(&mut self, col: u16) {
@@ -53,14 +54,48 @@ impl SearchBarLayout {
 }
 
 pub(crate) fn search_bar_resize_hit(app: &App, col: u16, row: u16) -> bool {
-    app.search_active && app.search_bar_area.is_some_and(|area| {
+    app.file_search_bar_at(col, row).is_some_and(|bar| {
+        let area = bar.area;
         !area.is_empty() && col == area.x && row >= area.y && row < area.bottom()
     })
+}
+
+/// Each visible editor owns a Find widget. Paint after pane gradients and
+/// before workbench menus, retaining each tab's input and button ownership.
+pub(crate) fn draw_file_search_bars(f: &mut Frame, app: &mut App) {
+    if app.file_search_visible() && app.viewport.is_some() {
+        draw_search_bar(f, app);
+    }
+    let active_group = app.active_group;
+    for group in 0..app.groups.len() {
+        if group == active_group || !app.group_in_current_desk(group) { continue; }
+        let index = app.groups[group].active_tab;
+        if !app.groups[group].tabs.get(index).is_some_and(|tab|
+            tab.file_search.search_active && tab.file_search.viewport.is_some()) { continue; }
+        let saved_tabs = std::mem::take(&mut app.tabs);
+        let saved_index = app.active_tab;
+        let saved_inactive = app.rendering_inactive_editor;
+        app.tabs = std::mem::take(&mut app.groups[group].tabs);
+        app.active_tab = index;
+        app.rendering_inactive_editor = true;
+        app.search_bar_layout.resizing = false;
+        if app.file_search_visible() { draw_search_bar(f, app); }
+        app.groups[group].tabs = std::mem::take(&mut app.tabs);
+        app.tabs = saved_tabs;
+        app.active_tab = saved_index;
+        app.rendering_inactive_editor = saved_inactive;
+    }
 }
 
 /// Keep a resize gesture captured when it crosses inputs, panes, or the widget.
 pub(crate) fn handle_search_bar_resize(app: &mut App, mouse: crossterm::event::MouseEvent) -> bool {
     use crossterm::event::{MouseButton, MouseEventKind};
+    // Pointer events can arrive after an asynchronous dialog opens but before
+    // its first frame. Never let an old resize capture bypass that dialog.
+    if !app.file_search_visible() || crate::ui_modal::active(app).is_some() {
+        app.search_bar_layout.resizing = false;
+        return false;
+    }
     if !app.search_bar_layout.resizing { return false; }
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.search_bar_layout.resizing = false;
@@ -284,13 +319,20 @@ fn completion_row_style(app: &App, surface: ratatui::style::Color, is_selected: 
 pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
     use crate::ui_search_controls::{SearchControl, SearchScope, draw_button, draw_tooltip};
 
-    app.search_control_regions.retain(|button| button.scope != SearchScope::File);
-    let area = f.area();
+    let owner = app.file_search_owner();
+    app.search_control_regions.retain(|button| button.scope != SearchScope::File || button.owner != owner);
+    app.file_search_bars.retain(|bar| bar.owner != owner);
+    let area = app.viewport.unwrap_or_else(|| {
+        let frame = f.area();
+        Rect::new(frame.x, frame.y + SEARCH_BAR_TOP_OFFSET.min(frame.height),
+            frame.width, frame.height.saturating_sub(SEARCH_BAR_TOP_OFFSET))
+    }).intersection(f.area());
     let bar_height = ((if app.replace_mode { 4 } else { 3 }) + u16::from(app.search_error.is_some()))
-        .min(area.height.saturating_sub(SEARCH_BAR_TOP_OFFSET));
+        .min(area.height);
     let bar_area = app.search_bar_layout.area(area, bar_height);
     app.search_bar_area = Some(bar_area);
-    if bar_area.width < 12 || bar_height < 3 { return; }
+    if bar_area.width < 12 || bar_height < 3 { app.search_bar_area = None; return; }
+    app.file_search_bars.push(crate::file_search::Bar { owner, area: bar_area });
     // The find widget overlays the editor, including custom gradients. Keep
     // its alpha until that surface is available, before clearing editor text.
     let search_bg = crate::ui_widgets::widget_background(f, &app.colors, bar_area);
@@ -323,7 +365,7 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
     };
     let query_width = inner.width.saturating_sub(18);
     let query_area = Rect::new(inner.x + 2, inner.y, query_width, 1);
-    let focused = app.search_input_focused && !app.search_focus_replace;
+    let focused = !app.rendering_inactive_editor && app.search_input_focused && !app.search_focus_replace;
     let input_bg = app.colors.ui.input_style(search_bg).bg.unwrap_or(search_bg);
     let field = InputField::new(&app.search_query)
         .theme_control(&app.colors, app.colors.ui.input_colors, search_bg)
@@ -356,7 +398,7 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
 
     if app.replace_mode && inner.height >= 2 {
         let replace_area = Rect::new(inner.x + 2, inner.y + 1, inner.width.saturating_sub(12), 1);
-        let focused = app.search_input_focused && app.search_focus_replace;
+        let focused = !app.rendering_inactive_editor && app.search_input_focused && app.search_focus_replace;
         let field = InputField::new(&app.replace_query)
             .theme_control(&app.colors, app.colors.ui.input_colors, search_bg)
             .placeholder_text("Replace")
@@ -387,7 +429,8 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
                 Rect::new(inner.x, row, inner.width, 1));
         }
     }
-    let resize_hovered = search_bar_resize_hit(app, app.mouse_col, app.mouse_row);
+    let resize_hovered = app.mouse_col == bar_area.x
+        && bar_area.contains((app.mouse_col, app.mouse_row).into());
     if resize_hovered || app.search_bar_layout.resizing {
         let style = Style::default().bg(search_bg)
             .fg(app.colors.ui.focus_border.over(search_bg)

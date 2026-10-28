@@ -988,6 +988,7 @@ fn watched_file_index_survives_idle_and_invalidates_on_changes_or_watcher_failur
             .execute(Command::Files {
                 generation: 1,
                 known_version,
+                excludes: Default::default(),
             })
             .unwrap()
     };
@@ -1066,6 +1067,7 @@ fn filename_index_rechecks_shared_filesystems_that_silently_omit_watch_events() 
         .execute(Command::Files {
             generation: 1,
             known_version: None,
+            excludes: Default::default(),
         })
         .unwrap()
     else {
@@ -1074,7 +1076,7 @@ fn filename_index_rechecks_shared_filesystems_that_silently_omit_watch_events() 
     std::fs::write(root.path().join("unreported.rs"), "new").unwrap();
     service.index.as_mut().unwrap().built -= Duration::from_secs(31);
     assert!(
-        matches!(service.execute(Command::Files { generation: 1, known_version: Some(version) }).unwrap(), Reply::Files { files: Some(files), .. } if files == [path("unreported.rs")])
+        matches!(service.execute(Command::Files { generation: 1, known_version: Some(version), excludes: Default::default() }).unwrap(), Reply::Files { files: Some(files), .. } if files == [path("unreported.rs")])
     );
 }
 
@@ -1131,10 +1133,10 @@ fn saved_file_watcher_coverage_uses_canonical_identity_and_excludes_unwatched_pa
         !workspace.save_is_watched(&key, Some(&checkpoint)),
         "An alias must not claim coverage of its unobserved target"
     );
-    for value in [
-        path("target/generated.rs"),
-        RemotePath::absolute(b"/outside/file.rs").unwrap(),
-    ] {
+    let generated = path("target/generated.rs");
+    checkpoint.identity = Some(generated.clone());
+    assert!(workspace.save_is_watched(&workspace.view_key(&generated), Some(&checkpoint)));
+    for value in [RemotePath::absolute(b"/outside/file.rs").unwrap()] {
         checkpoint.identity = Some(value.clone());
         assert!(!workspace.save_is_watched(&workspace.view_key(&value), Some(&checkpoint)));
     }
@@ -1584,4 +1586,133 @@ fn delayed_metadata_retains_request_time_for_save_and_checkpoint_barriers() {
         changes[0].observed_at < barrier,
         "A delayed old observation must not look newer than a save/checkpoint"
     );
+}
+
+#[test]
+fn headless_git_status_sends_only_literal_worktree_deltas_and_full_rule_updates() {
+    let root = tempfile::tempdir().unwrap();
+    git2::Repository::init(root.path()).unwrap();
+    for name in ["literal[1].txt", "literal1.txt"] { std::fs::write(root.path().join(name), "original\n").unwrap(); }
+    let mut service = Service::new(root.path()).unwrap();
+    let Reply::GitStatus { discovery: known, scans } = service.execute(Command::GitStatus {
+        known: None, parent_open: false, closed: Vec::new(), include_untracked: true,
+        changed: Some(vec![path("literal[1].txt")]),
+    }).unwrap() else { panic!(); };
+    assert_eq!(scans[0].files.len(), 2, "Discovery must return a complete initial snapshot");
+    assert!(scans[0].worktree_paths.is_none());
+    let mut query = |changed: Vec<RemotePath>| match service.execute(Command::GitStatus {
+        known: Some(known.clone()), parent_open: false, closed: Vec::new(), include_untracked: true,
+        changed: Some(changed),
+    }).unwrap() { Reply::GitStatus { scans, .. } => scans, _ => panic!() };
+    let scans = query(vec![path("literal[1].txt")]);
+    assert_eq!(scans[0].files.len(), 1);
+    assert_eq!(scans[0].files[0].path, path("literal[1].txt"));
+    assert_eq!(scans[0].worktree_paths.as_ref().unwrap().paths, [path("literal[1].txt")]);
+    assert!(query(Vec::new()).is_empty());
+    let scans = query(vec![path(".git/index")]);
+    assert!(scans[0].worktree_paths.is_none());
+    assert_eq!(scans[0].files.len(), 2);
+    std::fs::write(root.path().join(".gitignore"), "literal1.txt\n").unwrap();
+    let scans = query(vec![path(".gitignore")]);
+    assert!(scans[0].worktree_paths.is_none());
+    assert!(!scans[0].files.iter().any(|file| file.path == path("literal1.txt")));
+}
+
+#[test]
+fn remote_status_deltas_do_not_extend_full_snapshot_expiry() {
+    let root = tempfile::tempdir().unwrap();
+    git2::Repository::init(root.path()).unwrap();
+    std::fs::write(root.path().join("reported.txt"), "first\n").unwrap();
+    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let cancel = crate::background::CancellationToken::new();
+    let (initial, _) = workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let known = discovery(&workspace, &initial);
+    let checked = workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked;
+    std::fs::write(root.path().join("unreported.txt"), "missed event\n").unwrap();
+    for _ in 0..3 {
+        let (_, scans) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(),
+            Some(vec![path("reported.txt")]), &cancel).unwrap();
+        assert_eq!(scans[0].files.len(), 1, "Unrelated paths must not be rescanned by an ordinary delta");
+        assert_eq!(workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked, checked);
+    }
+    let mut cached = workspace.git_snapshots.lock().unwrap().take(&path("")).unwrap();
+    cached.checked -= Duration::from_secs(31);
+    workspace.git_snapshots.lock().unwrap().insert(path(""), 1024, cached);
+    let (_, scans) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(),
+        Some(vec![path("reported.txt")]), &cancel).unwrap();
+    assert_eq!(scans[0].files.len(), 2, "Expiry must discover a missed change outside the delta");
+    workspace.git_snapshots.lock().unwrap().remove(&path(""));
+    std::fs::write(root.path().join("uncached.txt"), "after eviction\n").unwrap();
+    let (_, scans) = workspace.git_snapshot(true, Some(known), false, Vec::new(),
+        Some(vec![path("reported.txt")]), &cancel).unwrap();
+    assert_eq!(scans[0].files.len(), 3, "An evicted baseline requires a full snapshot");
+}
+
+#[test]
+fn remote_navigation_reuses_status_but_expiry_explicit_refresh_and_unwatched_paths_revalidate() {
+    let root = tempfile::tempdir().unwrap();
+    git2::Repository::init(root.path()).unwrap();
+    std::fs::write(root.path().join("first.txt"), "first\n").unwrap();
+    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let mut app = crate::app::App::new_deferred(workspace.view_root.clone());
+    app.remote_workspace = Some(workspace.clone());
+    app.workspace_watcher_active = true;
+    app.refresh_source_control_async();
+    let settle = |app: &mut crate::app::App| app.wait_for_background(Duration::from_secs(15), |app|
+        !app.bg_git_log_running && !app.bg_git_branch_running && !app.bg_git_branch_pending
+            && !app.bg_git_status_running && !app.bg_git_status_pending);
+    settle(&mut app);
+    let before = workspace.client.next_request_id_for_test();
+    app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
+    app.refresh_source_control_for_navigation();
+    settle(&mut app);
+    assert_eq!(workspace.client.next_request_id_for_test(), before, "Navigation must not generate Git traffic for fresh snapshots");
+    let mut cached = workspace.git_snapshots.lock().unwrap().take(&path("")).unwrap();
+    cached.checked -= Duration::from_secs(31);
+    workspace.git_snapshots.lock().unwrap().insert(path(""), 1024, cached);
+    std::fs::write(root.path().join("missed.txt"), "missed filesystem event\n").unwrap();
+    app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
+    app.refresh_source_control_for_navigation();
+    settle(&mut app);
+    assert!(workspace.client.next_request_id_for_test() > before);
+    assert!(app.source_control_files.iter().any(|file| file.path == "missed.txt"));
+    let before = workspace.client.next_request_id_for_test();
+    app.refresh_source_control_async();
+    settle(&mut app);
+    assert!(workspace.client.next_request_id_for_test() > before, "Explicit refresh must bypass cached status");
+    let before = workspace.client.next_request_id_for_test();
+    app.workspace_watcher_active = false;
+    app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
+    app.refresh_source_control_for_navigation();
+    settle(&mut app);
+    assert!(workspace.client.next_request_id_for_test() > before, "Unavailable watches retain full refreshes");
+    let before = workspace.client.next_request_id_for_test();
+    app.workspace_watcher_active = true;
+    app.source_control_repository_state = crate::app::SourceControlRepositoryState::Missing;
+    app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
+    app.refresh_source_control_for_navigation();
+    settle(&mut app);
+    assert!(workspace.client.next_request_id_for_test() > before, "Missing repositories must not be negatively cached by navigation");
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_git_status_keeps_non_unicode_paths_lossless_when_a_delta_falls_back() {
+    use std::os::unix::ffi::OsStringExt;
+    let root = tempfile::tempdir().unwrap();
+    git2::Repository::init(root.path()).unwrap();
+    for bytes in [b"name-\xfe.txt", b"name-\xff.txt"] {
+        std::fs::write(root.path().join(std::ffi::OsString::from_vec(bytes.to_vec())), "source\n").unwrap();
+    }
+    let mut service = Service::new(root.path()).unwrap();
+    let Reply::GitStatus { discovery: known, .. } = service.execute(Command::GitStatus {
+        known: None, parent_open: false, closed: Vec::new(), include_untracked: true, changed: None,
+    }).unwrap() else { panic!(); };
+    let Reply::GitStatus { scans, .. } = service.execute(Command::GitStatus {
+        known: Some(known), parent_open: false, closed: Vec::new(), include_untracked: true,
+        changed: Some(vec![RemotePath::new(b"name-\xfe.txt".to_vec()).unwrap()]),
+    }).unwrap() else { panic!(); };
+    assert!(scans[0].worktree_paths.is_none());
+    assert_eq!(scans[0].files.len(), 2);
+    assert_ne!(scans[0].files[0].path, scans[0].files[1].path);
 }

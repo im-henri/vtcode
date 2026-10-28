@@ -36,7 +36,7 @@ impl App {
             ],
             2 => &["Appearance", "Layout", "Editor Management"],
             3 => &["Code Decorations", "Navigation", "Search", "Focus"],
-            4 => &["Saving", "File Associations", "Large Files"],
+            4 => &["Saving", "File Associations", "Exclusions", "Large Files"],
             7 => &[
                 "Cursor",
                 "Editing",
@@ -76,6 +76,7 @@ impl App {
             }),
             4 => Some(match id {
                 "language_associations" => "File Associations",
+                "files_exclude" => "Exclusions",
                 "large_file_threshold_mb" | "large_file_analysis_timeout_ms" => "Large Files",
                 _ => "Saving",
             }),

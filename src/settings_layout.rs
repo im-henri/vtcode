@@ -3,6 +3,11 @@ use crate::app::App;
 use ratatui::layout::Rect;
 use std::{cell::RefCell, rc::Rc};
 
+pub(crate) fn exclusion_count(id: &str, value: &str) -> usize {
+    if !matches!(id, "files_exclude" | "search_exclude") { return 0; }
+    serde_json::from_str::<crate::settings::ExcludePatterns>(value).map_or(0, |map| map.len())
+}
+
 pub(crate) fn control_offset(kind: &str, lines: usize, width: usize) -> usize {
     if kind == "checkbox" && lines > 1 {
         1
@@ -28,6 +33,7 @@ pub(crate) struct Row {
     pub control: usize,
     pub lines: Vec<String>,
     id: String,
+    entries: usize,
 }
 
 pub(crate) struct Layout {
@@ -76,8 +82,8 @@ impl Cache {
         width: usize,
     ) -> Rc<Layout> {
         let mut cached = self.0.borrow_mut();
-        // Values do not affect geometry. Compare labels and ids exactly, so
-        // keybinding changes/search/category changes cannot reuse stale rows.
+        // Scalar values do not affect geometry; exclusion lists also key on
+        // their length. Compare labels and ids exactly to avoid stale rows.
         if let Some(layout) = cached.iter().find(|layout| {
             layout.width == width
                 && layout.rows.len() == filtered.len()
@@ -85,7 +91,7 @@ impl Cache {
                     row.index == index
                         && items
                             .get(index)
-                            .is_some_and(|(label, _, id)| row.lines[0] == *label && row.id == *id)
+                            .is_some_and(|(label, value, id)| row.lines[0] == *label && row.id == *id && row.entries == exclusion_count(id, value))
                 })
         }) {
             return Rc::clone(layout);
@@ -95,10 +101,11 @@ impl Cache {
         let rows = filtered
             .iter()
             .filter_map(|&index| {
-                let (label, _, id) = items.get(index)?;
+                let (label, value, id) = items.get(index)?;
                 let kind = App::setting_field_kind(id);
                 let lines = App::setting_description_lines(label, id, width);
-                let height = visual_height(kind, lines.len(), width);
+                let entries = exclusion_count(id, value);
+                let height = visual_height(kind, lines.len(), width) + entries;
                 let row = Row {
                     index,
                     start: total,
@@ -106,6 +113,7 @@ impl Cache {
                     control: control_offset(kind, lines.len(), width),
                     lines,
                     id: id.clone(),
+                    entries,
                 };
                 total += height;
                 Some(row)

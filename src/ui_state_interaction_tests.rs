@@ -6,6 +6,9 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 
+#[path = "ui_overlay_combination_tests.rs"]
+mod overlays;
+
 fn fixture() -> App {
     let mut app = App::test_new();
     app.source_control_enabled = false;

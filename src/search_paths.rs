@@ -120,11 +120,14 @@ struct FastGlobs {
 struct GlobBuilder {
     original: Vec<regress::Regex>,
     ascii_sources: Vec<Option<String>>,
+    ignore_case: bool,
 }
 
 impl GlobBuilder {
     fn add(&mut self, source: String, ascii: bool) -> bool {
-        let Ok(regex) = regress::Regex::new(&source) else {
+        let Ok(regex) = regress::Regex::with_flags(&source, regress::Flags {
+            icase: self.ignore_case, ..Default::default()
+        }) else {
             return false;
         };
         self.original.push(regex);
@@ -139,6 +142,7 @@ impl GlobBuilder {
                 self.ascii_sources.iter().filter_map(Option::as_deref),
             )
             .unicode(false)
+            .case_insensitive(self.ignore_case)
             .size_limit(1024 * 1024)
             .dfa_size_limit(1024 * 1024)
             .build()
@@ -686,36 +690,28 @@ impl SearchPaths {
     }
 }
 
-/// Setting expressions are globs, unlike the expanded include/exclude fields.
+/// Explicit request expressions are globs, with no built-in exclusions.
 /// Search exclusions override file exclusions, including explicit false values.
+#[derive(Default)]
 pub(crate) struct ExcludeRules(Vec<(SearchGlobs, Option<String>)>);
 
 impl ExcludeRules {
+    pub(crate) fn requires_siblings(&self) -> bool {
+        self.0.iter().any(|(_, when)| when.is_some())
+    }
     pub(crate) fn new(
         files: &std::collections::BTreeMap<String, serde_json::Value>,
         search: &std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Self {
         let mut merged = std::collections::BTreeMap::new();
-        for pattern in [
-            "**/.git",
-            "**/.svn",
-            "**/.hg",
-            "**/CVS",
-            "**/.DS_Store",
-            "**/Thumbs.db",
-            "**/node_modules",
-            "**/bower_components",
-            "**/*.code-search",
-        ] {
-            merged.insert(pattern.to_owned(), serde_json::Value::Bool(true));
-        }
         merged.extend(
             files
                 .iter()
                 .chain(search)
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
-        let mut unconditional = GlobBuilder::default();
+        let builder = || GlobBuilder { ignore_case: cfg!(any(windows, target_os = "macos")), ..Default::default() };
+        let mut unconditional = builder();
         let mut rules = merged
             .into_iter()
             .filter_map(|(pattern, value)| {
@@ -730,7 +726,7 @@ impl ExcludeRules {
                     add_glob(&mut unconditional, &pattern.replace('\\', "/"));
                     None
                 } else {
-                    let mut patterns = GlobBuilder::default();
+                    let mut patterns = builder();
                     add_glob(&mut patterns, &pattern.replace('\\', "/"));
                     Some((patterns.finish(), when))
                 }
@@ -743,6 +739,24 @@ impl ExcludeRules {
     }
 
     pub(crate) fn excludes(&self, candidate: &Candidate<'_>, root: &Path) -> bool {
+        self.excludes_with(candidate, root, |sibling| sibling.exists())
+    }
+
+    /// A pruned directory also excludes open models and explicitly included
+    /// roots beneath it. Walking ancestors keeps settings globs root-relative.
+    pub(crate) fn excludes_tree(&self, path: &Path, root: &Path) -> bool {
+        if self.0.is_empty() { return false; }
+        for ancestor in path.ancestors() {
+            if crate::native_paths::same(ancestor, root) { break; }
+            if self.excludes(&Candidate::new(ancestor), root) { return true; }
+        }
+        false
+    }
+
+    /// Recent-file history is matched against the full absolute path, as in
+    /// VS Code. Explorer supplies cached sibling names instead of filesystem IO.
+    pub(crate) fn excludes_with(&self, candidate: &Candidate<'_>, root: &Path,
+        sibling_exists: impl Fn(&Path) -> bool) -> bool {
         if self.0.is_empty() {
             return false;
         }
@@ -755,8 +769,12 @@ impl ExcludeRules {
                         path.file_stem()
                             .and_then(|stem| stem.to_str())
                             .is_some_and(|stem| {
-                                path.with_file_name(when.replace("$(basename)", stem))
-                                    .exists()
+                                let sibling = when.replacen("$(basename)", stem, 1);
+                                let name = Path::new(&sibling);
+                                // VS Code checks a sibling's name, never an
+                                // empty name or a path into another directory.
+                                name.file_name().is_some_and(|file| file == name.as_os_str())
+                                    && sibling_exists(&path.with_file_name(sibling))
                             })
                     })
             })

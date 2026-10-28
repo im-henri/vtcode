@@ -84,6 +84,55 @@ fn begin_blocked(fixture: &mut Fixture, path: &Path) {
 }
 
 #[test]
+fn remote_folder_browser_goes_up_to_the_nodes_filesystems_and_back() {
+    use crate::folder_browser::{Action, Focus};
+    let mut fixture = setup();
+    let workspace = fixture.app.remote_workspace.as_ref().unwrap().clone();
+    fixture.app.open_folder_browser();
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    let mut depth = 0;
+    while !fixture.app.folder_browser_is_computer() {
+        assert!(depth < 64);
+        fixture.app.folder_browser_up();
+        fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+        assert!(fixture.app.folder_browser.error.is_none(), "{:?}", fixture.app.folder_browser.error);
+        depth += 1;
+    }
+    let roots = workspace.filesystem_roots().unwrap();
+    assert!(!roots.is_empty());
+    for (label, key) in &roots {
+        assert!(crate::remote::workspace::is_view_key(key));
+        assert!(fixture.app.folder_browser_entries.contains(key));
+        assert_eq!(fixture.app.folder_browser_entry_name(key), label.as_str());
+        assert!(fixture.app.folder_browser.locations.iter().all(|(_, path)|
+            path.as_os_str().is_empty() || crate::remote::workspace::is_view_key(path)));
+    }
+    let native_root = fixture.root.path().ancestors().last().unwrap();
+    let root = workspace.view_key(&remote::git::from_native(native_root, fixture.root.path()).unwrap());
+    let row = fixture.app.folder_browser_entries.iter().position(|path| path == &root).unwrap();
+    fixture.app.select_browser_row(row);
+    fixture.app.folder_browser_enter();
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    assert_eq!(fixture.app.folder_browser_path, root);
+    assert!(fixture.app.folder_browser.error.is_none(), "{:?}", fixture.app.folder_browser.error);
+    fixture.app.folder_browser_action(Action::Back);
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    assert!(fixture.app.folder_browser_is_computer());
+    fixture.app.folder_browser_action(Action::Forward);
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    assert_eq!(fixture.app.folder_browser_path, root);
+    fixture.app.navigate_folder_browser(PathBuf::new());
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture.app.folder_browser_action(Action::Address);
+    fixture.app.change_dir_query = workspace.display_path(&workspace.view_root).unwrap();
+    fixture.app.folder_browser_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Enter, crossterm::event::KeyModifiers::NONE));
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    assert_eq!(fixture.app.folder_browser_path, workspace.view_root);
+    assert_eq!(fixture.app.folder_browser.focus, Focus::List);
+}
+
+#[test]
 fn remote_header_source_command_uses_async_files_and_preserves_missing_targets() {
     let mut fixture = setup();
     let source = file(&fixture, "code/main.cpp", "int main() {}\n");

@@ -40,6 +40,7 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
+        app.chord_pending = false;
         app.terminal_clicks.press();
         app.context_menu_button_drag = None;
     }
@@ -176,6 +177,12 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
     if app.handle_extension_pointer_capture(mouse) { return; }
 
+    // A save error or recovery prompt can appear over the folder browser.
+    // Its visible controls must own input before the full-workbench browser.
+    if crate::ui_modal::handle_mouse(app, mouse) {
+        return;
+    }
+
     if app.change_dir_active {
         if mouse.kind == MouseEventKind::Moved && (col, row) != (prev_mouse_col, prev_mouse_row) {
             app.hover_folder_browser_button(col, row);
@@ -184,10 +191,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         return;
     }
 
-    // Modal controls own the pointer before any obscured workbench fields.
-    if crate::ui_modal::handle_mouse(app, mouse) {
-        return;
-    }
     if crate::ui_quick_picker::handle_mouse(app, mouse) {
         return;
     }
@@ -1254,6 +1257,17 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     }
                                 }
                             }
+                            if kind == "exclusions" {
+                                let offset = relative_row.saturating_sub(item.control);
+                                if relative_row >= item.control {
+                                    let patterns = serde_json::from_str::<crate::settings::ExcludePatterns>(&items[orig_idx].1).unwrap_or_default();
+                                    if offset <= patterns.len() {
+                                        let pattern = patterns.keys().nth(offset).cloned();
+                                        app.open_exclusion_settings(id, pattern, offset == patterns.len());
+                                    }
+                                }
+                                return;
+                            }
                             let control_width = match kind {
                                 "number" => 20,
                                 "language-list" => 60,
@@ -1623,6 +1637,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             app.request_source_control_discard(app.source_control_group_changes(group), false);
                             return;
                         }
+                        if crate::ui_source_control::handle_file_action_click(app, col, row, mouse.modifiers) { return; }
                         if let Some(exp_area) = app.source_control_detail_area() {
                             let rel_y = row.saturating_sub(exp_area.y);
                             let total_h = exp_area.height;
@@ -1677,24 +1692,13 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     // Read-only pass: determine what was clicked
                                     enum ClickAction {
                                         ToggleGroup(crate::source_control_rows::Group),
-                                        SelectAndStage(usize),
-                                        SelectAndUnstage(usize),
                                         SelectAndDiff(usize),
                                     }
                                     let action = layout.rows(app.source_control_scroll).nth(list_row).map(|row| {
                                         match row {
                                             crate::source_control_rows::Row::Section(group) => ClickAction::ToggleGroup(group),
                                             crate::source_control_rows::Row::File(i) => {
-                                                let rel_x = col.saturating_sub(exp_area.x);
-                                                if rel_x < crate::ui_source_control::SC_FILE_ACTION_HIT_WIDTH {
-                                                    if app.source_control_files[i].staged {
-                                                        ClickAction::SelectAndUnstage(i)
-                                                    } else {
-                                                        ClickAction::SelectAndStage(i)
-                                                    }
-                                                } else {
-                                                    ClickAction::SelectAndDiff(i)
-                                                }
+                                                ClickAction::SelectAndDiff(i)
                                             }
                                         }
                                     });
@@ -1705,16 +1709,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
                                     match action {
                                         Some(ClickAction::ToggleGroup(group)) => app.set_source_control_group_collapsed(group, !app.source_control_group_collapsed(group)),
-                                        Some(ClickAction::SelectAndStage(i) | ClickAction::SelectAndUnstage(i) | ClickAction::SelectAndDiff(i))
+                                        Some(ClickAction::SelectAndDiff(i))
                                             if ctrl || shift => { app.select_source_control_file(i, ctrl, shift); }
-                                        Some(ClickAction::SelectAndStage(i)) => {
-                                            app.preserve_source_control_selection(i);
-                                            app.git_stage_changes(app.selected_source_control_changes());
-                                        }
-                                        Some(ClickAction::SelectAndUnstage(i)) => {
-                                            app.preserve_source_control_selection(i);
-                                            app.git_unstage_changes(app.selected_source_control_changes());
-                                        }
                                         Some(ClickAction::SelectAndDiff(i)) => {
                                             app.select_source_control_file(i, false, false);
                                             app.open_source_control_diff(i);

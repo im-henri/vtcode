@@ -163,7 +163,7 @@ fn unwrapped_runs_stop_at_semantic_tokens_diagnostics_and_document_highlights() 
     app.lsp_manager.semantic_token_legend = Some(lsp_types::SemanticTokensLegend {
         token_types: vec![lsp_types::SemanticTokenType::VARIABLE], token_modifiers: vec![],
     });
-    app.semantic_theme_colors = Some(FxHashMap::from_iter([("variable".into(), (15, 140, 230))]));
+    app.semantic_theme_colors = Some(crate::semantic_theme::SemanticTheme::from_iter([("variable".into(), (15, 140, 230))]));
     let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
     for line in 0..8 {
         for (start, length) in [(0, 2), (3, 7), (11, 0), (12, 1), (13, 14), (40, 5)] {
@@ -175,7 +175,7 @@ fn unwrapped_runs_stop_at_semantic_tokens_diagnostics_and_document_highlights() 
     compare(&mut app, &mut terminal, "semantic token boundaries");
     let code = app.code_area.unwrap();
     assert_eq!(terminal.backend().buffer()[(code.x + 6, code.y)].fg, Color::Rgb(15, 140, 230));
-    app.semantic_theme_colors.as_mut().unwrap().insert("variable".into(), (180, 150, 75));
+    app.semantic_theme_colors = Some(crate::semantic_theme::SemanticTheme::from_iter([("variable".into(), (180, 150, 75))]));
     compare(&mut app, &mut terminal, "semantic theme change");
     assert_eq!(terminal.backend().buffer()[(code.x + 6, code.y)].fg, Color::Rgb(180, 150, 75));
     app.lsp_document_highlights = vec![(0, 3, 0, 12), (1, 8, 1, 20)];

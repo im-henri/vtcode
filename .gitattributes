@@ -8,7 +8,7 @@ Dockerfile text eol=lf
 *.md text eol=lf
 
 # Preserve third-party grammars and notices byte for byte on every platform.
-syntaxes/** -text whitespace=cr-at-eol,-blank-at-eof
+grammars/** -text whitespace=cr-at-eol,-blank-at-eof
 themes/** -text whitespace=cr-at-eol,-blank-at-eof
 tests/fixtures/waveform-viewer/third-party/** -text whitespace=cr-at-eol,-blank-at-eof
 

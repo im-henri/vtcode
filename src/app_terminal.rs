@@ -296,6 +296,7 @@ impl App {
             preview: false,
             kind: TabKind::Terminal,
             extension_view: None,
+            file_search: Default::default(),
             terminal_idx: Some(index),
         };
         self.tabs.push(tab);

@@ -293,11 +293,11 @@ fn semantic_transparency_recomposites_when_editor_background_changes() {
         serde_json::from_value(serde_json::json!({"editor.background":"#e0e0e0"})).unwrap();
     let changed = crate::vscode_theme::customized_theme(&original, &overrides);
     assert_eq!(
-        original.semantic_colors.as_ref().unwrap()["type"],
+        original.semantic_colors.as_ref().unwrap().color("type").unwrap(),
         (136, 136, 136)
     );
     assert_eq!(
-        changed.semantic_colors.as_ref().unwrap()["type"],
+        changed.semantic_colors.as_ref().unwrap().color("type").unwrap(),
         (240, 240, 240)
     );
     let reset = crate::vscode_theme::customized_theme(&original, &Default::default());

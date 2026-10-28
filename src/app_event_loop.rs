@@ -6,7 +6,9 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::Backend, Terminal};
+#[cfg(test)]
+use ratatui::backend::CrosstermBackend;
 
 use crate::app::{ActivePane, App, TabKind};
 use crate::input_keyboard;
@@ -1825,6 +1827,25 @@ mod tests {
     }
 
     #[test]
+    fn workspace_search_debounce_arms_one_wait_even_without_terminal_focus() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = crate::app::App::new_deferred(root.path().to_owned());
+        app.workspace_watcher_active = true;
+        app.idle_quiescent = true;
+        app.terminal_has_focus = false;
+        assert_eq!(next_event_wait(&app, false, false), None);
+        app.global_search_query = "needle".into();
+        app.schedule_global_search();
+        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait <= Duration::from_millis(300)));
+        assert!(app.search_cancel_token.is_none());
+        app.search_debounce_ms = 0;
+        assert_eq!(next_event_wait(&app, false, false), Some(Duration::ZERO));
+        crate::input::handle_global_search_key(&mut app, crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        assert_eq!(next_event_wait(&app, false, false), None);
+        assert!(!app.bg_global_search_running);
+    }
+
+    #[test]
     fn loading_feedback_wakes_only_a_visible_focused_pending_view() {
         let mut app = crate::app::App::new_deferred("loading-workspace".into());
         app.idle_quiescent = true;
@@ -2680,6 +2701,9 @@ fn next_event_wait(
             crate::app_search_algo::FILE_SEARCH_EDIT_QUIET_PERIOD,
         ));
     }
+    if let Some(wait) = app.global_search_debounce_wait(std::time::Instant::now()) {
+        include(wait);
+    }
     if !app.lsp_manager.configs.is_empty()
         && app.last_edit_time.elapsed() < crate::app_lsp_poll::LSP_EDIT_QUIET_PERIOD
     {
@@ -3227,7 +3251,6 @@ fn capture_caret_state(app: &App) -> Option<CaretState> {
 fn relight_cursor(app: &mut App) {
     app.cursor_visible = true;
     app.last_blink = std::time::Instant::now();
-    app.terminal_cursor_shown = false;
 }
 
 fn note_user_activity(app: &mut App) {
@@ -3237,8 +3260,8 @@ fn note_user_activity(app: &mut App) {
     relight_cursor(app);
 }
 
-pub(crate) fn run_app<W: io::Write>(
-    terminal: &mut Terminal<CrosstermBackend<W>>,
+pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
+    terminal: &mut Terminal<B>,
     app: &mut App,
     mut event_pump: TerminalEventPump,
     mut startup_timings: Option<crate::startup::Timings>,
@@ -3262,9 +3285,8 @@ pub(crate) fn run_app<W: io::Write>(
     // between updating the selection and drawing it, precisely under load.
     let mut input_priority: Option<crate::worker_priority::InputPriority> = None;
     let mut selection_drag = None;
-    app.terminal_cursor_shown = true; // force one hide pass; editor caret is UI-rendered.
-                                      // Explorer decorations are populated by the Git worker; constructing or
-                                      // refreshing the tree never runs a repository status scan on the UI.
+    // Explorer decorations are populated by the Git worker; constructing or
+    // refreshing the tree never runs a repository status scan on the UI.
     app.refresh_explorer_async();
     app.refresh_source_control_async();
     app.refresh_git_branch_async();
@@ -3298,6 +3320,9 @@ pub(crate) fn run_app<W: io::Write>(
         // Ordinary edits update Find incrementally. Pathological or very wide
         // edits are coalesced into one background scan after typing settles.
         if app.refresh_pending_file_search() {
+            needs_redraw = true;
+        }
+        if app.poll_pending_global_search(std::time::Instant::now()) {
             needs_redraw = true;
         }
 
@@ -3538,30 +3563,6 @@ pub(crate) fn run_app<W: io::Write>(
                 app.refresh_wrap_layout_async();
             }
 
-            // Caret is rendered in ui_editor.rs; keep terminal cursor hidden for consistent blinking.
-            let desired_cursor_pos: Option<(u16, u16)> = None;
-
-            if let Some((term_col, term_row)) = desired_cursor_pos {
-                if !app.terminal_cursor_shown
-                    || app.last_terminal_cursor_pos != Some((term_col, term_row))
-                {
-                    use crossterm::cursor::{MoveTo, SetCursorStyle, Show};
-                    let _ = execute!(
-                        terminal.backend_mut(),
-                        Show,
-                        SetCursorStyle::SteadyBlock,
-                        MoveTo(term_col, term_row)
-                    ); // Error OK: cursor rendering is best-effort
-                    app.last_terminal_cursor_pos = Some((term_col, term_row));
-                    app.terminal_cursor_shown = true;
-                }
-            } else if app.terminal_cursor_shown {
-                use crossterm::cursor::Hide;
-                let _ = execute!(terminal.backend_mut(), Hide); // Error OK: cursor rendering is best-effort
-                app.terminal_cursor_shown = false;
-                app.last_terminal_cursor_pos = None;
-            }
-
             needs_redraw = false;
             input_redraw = false;
             chat_redraw_pending = false;
@@ -3712,8 +3713,8 @@ pub(crate) fn run_app<W: io::Write>(
         refresh_blame_cache(app);
 
         // Native watcher coverage needs no metadata polling. Keep a low-rate
-        // fallback only for files outside the workspace, ignored build/cache
-        // trees, or platforms where watcher startup failed.
+        // fallback only for files outside the workspace, private Git metadata,
+        // or platforms where watcher startup failed.
         let periodic_disk_paths = periodic_disk_paths_cache.get(app);
         if app.terminal_has_focus
             && !app.idle_quiescent

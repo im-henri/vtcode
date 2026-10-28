@@ -573,3 +573,128 @@ fn benchmark_local_changed_path_status() {
         timings[1][timings[1].len() / 2]
     );
 }
+
+#[test]
+#[ignore = "manual remote status timing and protocol traffic measurement"]
+fn benchmark_remote_changed_path_status() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    let outputs = root.join("generated");
+    std::fs::create_dir(&outputs).unwrap();
+    for index in 0u64..6000 {
+        let hash = index.wrapping_mul(0x9e3779b97f4a7c15).rotate_left(17);
+        std::fs::write(outputs.join(format!("file-{index:04}-{hash:016x}")), "output\n").unwrap();
+    }
+    let incoming = Arc::new(AtomicUsize::new(0));
+    let outgoing = Arc::new(AtomicUsize::new(0));
+    let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection_with_traffic(
+        &root, Arc::default(), outgoing.clone(), Arc::default(), incoming.clone()));
+    let mut app = app_at(&workspace.view_root);
+    let key = workspace.target_key("first.txt").unwrap();
+    app.remote_workspace = Some(workspace.clone());
+    full(&mut app);
+    let mut times = [Vec::new(), Vec::new()];
+    let mut bytes = [Vec::new(), Vec::new()];
+    for sample in 0..9 {
+        for scoped in [sample % 2 == 0, sample % 2 != 0] {
+            std::fs::write(root.join("first.txt"), format!("changed {sample} {scoped}\n")).unwrap();
+            let before = incoming.load(Ordering::Relaxed) + outgoing.load(Ordering::Relaxed);
+            let started = Instant::now();
+            if scoped { changed(&mut app, [key.clone()]); }
+            else { full(&mut app); }
+            let elapsed = started.elapsed();
+            let traffic = incoming.load(Ordering::Relaxed) + outgoing.load(Ordering::Relaxed) - before;
+            assert_eq!(app.source_control_files.len(), 6001);
+            assert!(app.source_control_files.iter().any(|file| file.path == "first.txt" && file.status == 'M'));
+            if sample > 1 {
+                times[usize::from(scoped)].push(elapsed.as_secs_f64() * 1000.);
+                bytes[usize::from(scoped)].push(traffic);
+            }
+        }
+    }
+    for values in &mut times { values.sort_by(f64::total_cmp); }
+    for values in &mut bytes { values.sort_unstable(); }
+    println!("VTCODE_REMOTE_GIT_STATUS {}", serde_json::json!({
+        "untracked_files":6000,
+        "full_ms":times[0][times[0].len()/2], "scoped_ms":times[1][times[1].len()/2],
+        "full_bytes":bytes[0][bytes[0].len()/2], "scoped_bytes":bytes[1][bytes[1].len()/2]
+    }));
+}
+
+fn remote_app_at(root: &Path) -> (App, crate::remote::workspace::Workspace) {
+    let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection(
+        root, Default::default(), Default::default()));
+    let mut app = app_at(&workspace.view_root);
+    app.remote_workspace = Some(workspace.clone());
+    full(&mut app);
+    (app, workspace)
+}
+
+#[test]
+fn remote_status_deltas_preserve_staged_renames_and_query_literal_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    std::fs::rename(root.join("first.txt"), root.join("renamed.txt")).unwrap();
+    let repo = git2::Repository::open(&root).unwrap();
+    let mut index = repo.index().unwrap();
+    index.remove_path(Path::new("first.txt")).unwrap();
+    for name in ["literal[1].rs", "literal1.rs", "renamed.txt"] {
+        if name != "renamed.txt" { std::fs::write(root.join(name), "original\n").unwrap(); }
+        index.add_path(Path::new(name)).unwrap();
+    }
+    index.write().unwrap();
+    let (mut app, workspace) = remote_app_at(&root);
+    let change = |app: &mut App, name: &str| changed(app, [workspace.target_key(name).unwrap()]);
+    std::fs::write(root.join("other.txt"), "unreported\n").unwrap();
+    std::fs::write(root.join("renamed.txt"), "edited after staging\n").unwrap();
+    change(&mut app, "renamed.txt");
+    assert!(app.source_control_files.iter().any(|file| file.path == "renamed.txt" && file.staged
+        && file.status == 'R' && file.original_path.as_deref() == Some("first.txt")));
+    assert!(app.source_control_files.iter().any(|file| file.path == "renamed.txt" && !file.staged && file.status == 'M'));
+    assert!(!app.source_control_files.iter().any(|file| file.path == "other.txt"));
+    std::fs::write(root.join("literal[1].rs"), "selected\n").unwrap();
+    std::fs::write(root.join("literal1.rs"), "unreported neighbor\n").unwrap();
+    change(&mut app, "literal[1].rs");
+    assert!(app.source_control_files.iter().any(|file| file.path == "literal[1].rs" && !file.staged));
+    assert!(!app.source_control_files.iter().any(|file| file.path == "literal1.rs" && !file.staged));
+    std::fs::write(root.join("renamed.txt"), "first\n").unwrap();
+    change(&mut app, "renamed.txt");
+    assert!(!app.source_control_files.iter().any(|file| file.path == "renamed.txt" && !file.staged));
+    full(&mut app);
+    assert_eq!(key(&app.source_control_files), key(&collect_source_control_status(root).files));
+}
+
+#[test]
+fn remote_directory_deltas_remove_deleted_rows_and_refresh_rules() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    let (mut app, workspace) = remote_app_at(&root);
+    let change = |app: &mut App, names: &[&str]| changed(app,
+        names.iter().map(|name| workspace.target_key(name).unwrap()).collect::<Vec<_>>());
+    let matches_full = |app: &App| {
+        let normalized = |files: &[GitFileChange]| key(files).into_iter().map(|(path, original, status, staged)|
+            (path.replace(std::path::MAIN_SEPARATOR, "/"), original.map(|path| path.replace(std::path::MAIN_SEPARATOR, "/")), status, staged))
+            .collect::<Vec<_>>();
+        assert_eq!(normalized(&app.source_control_files), normalized(&collect_source_control_status(root.clone()).files));
+    };
+    std::fs::create_dir_all(root.join("build/sub")).unwrap();
+    std::fs::write(root.join("build/sub/界.txt"), "source\n").unwrap();
+    change(&mut app, &["build"]);
+    matches_full(&app);
+    std::fs::rename(root.join("build"), root.join("target")).unwrap();
+    change(&mut app, &["build", "target"]);
+    matches_full(&app);
+    std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+    change(&mut app, &[".gitignore"]);
+    matches_full(&app);
+    std::fs::write(root.join(".gitignore"), "").unwrap();
+    change(&mut app, &[".gitignore"]);
+    matches_full(&app);
+    std::fs::remove_dir_all(root.join("target")).unwrap();
+    change(&mut app, &["target"]);
+    matches_full(&app);
+}

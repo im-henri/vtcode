@@ -100,10 +100,8 @@ fn changing_theme_recolors_retained_output_without_rebuilding_its_wrap_layout() 
 fn imported_theme_timestamp_color_matches_its_comment_scope() {
     for key in ["dark", "light", "monokai", "high-contrast"] {
         let theme = crate::app_theme_loader::builtin_theme(key).unwrap();
-        let style = syntect::highlighting::Highlighter::new(theme.syntect_theme.as_ref().unwrap())
-            .style_for_stack(&[syntect::parsing::Scope::new("comment").unwrap()]);
-        let colors = theme.to_theme_colors();
-        let color = style.foreground;
+        let color=theme.textmate_theme.as_ref().unwrap().scope_foreground(&["comment"]);
+        let colors=theme.to_theme_colors();
         assert_eq!(
             colors.ui.output_timestamp.over(colors.ui.bg_panel),
             ColorLayer::rgba(color.r, color.g, color.b, color.a).over(colors.ui.bg_panel)
@@ -158,7 +156,7 @@ fn wrapped_selection_copies_original_text_without_inserted_newlines_or_padding()
     let mut reader = Reader::default();
     paint(&mut reader, &log, 45, 8);
     assert!(reader.wrap && reader.horizontal_bar.is_none());
-    reader.view.follow = false;
+    reader.view.autoscroll = false;
     reader.scroll_to(0);
     paint(&mut reader, &log, 45, 8);
     let start = reader.position_on_row(1, 3);
@@ -185,7 +183,7 @@ fn vertical_keys_and_wheel_scroll_by_visual_rows() {
     log.event("Test", &"alpha beta gamma delta ".repeat(40));
     let mut reader = Reader::default();
     paint(&mut reader, &log, 40, 6);
-    reader.view.follow = false;
+    reader.view.autoscroll = false;
     reader.scroll_to(0);
     reader.editor.set_cursor_without_scrolling(0, 0);
     reader.key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
@@ -243,7 +241,7 @@ fn wrap_toggle_and_resize_preserve_the_buffer_selection_and_reading_anchor() {
     log.event("Test", &"alpha beta gamma delta ".repeat(50));
     let mut reader = Reader::default();
     paint(&mut reader, &log, 45, 8);
-    reader.view.follow = false;
+    reader.view.autoscroll = false;
     reader.scroll_to(3);
     let anchor = reader.row_at(reader.offset()).unwrap();
     reader.editor.set_cursor_without_scrolling(0, 80);
@@ -288,7 +286,7 @@ fn retention_removes_wrap_prefixes_without_relaying_out_retained_lines() {
     }
     let mut reader = Reader::default();
     paint(&mut reader, &log, 60, 8);
-    reader.view.follow = false;
+    reader.view.autoscroll = false;
     reader.editor.set_cursor_without_scrolling(500, 40);
     reader.editor.selection_anchor = Some((500, 30));
     reader.scroll_to(reader.layout.row_for_line(500));

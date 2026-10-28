@@ -98,6 +98,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
     let Reply::GitStatus { discovery, scans } = workspace
         .client
         .call(Command::GitStatus {
+            changed: None,
             include_untracked: true,
             known: None,
             parent_open: false,
@@ -146,6 +147,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
             ExplorerSortMode::Name,
             None,
             true,
+            &crate::settings::default_files_exclude(),
             &CancellationToken::new(),
         )
         .unwrap();
@@ -265,6 +267,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
                     ExplorerSortMode::Name,
                     None,
                     true,
+            &crate::settings::default_files_exclude(),
                     &CancellationToken::new(),
                 )
                 .unwrap();
@@ -272,6 +275,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
             background_workspace
                 .client
                 .call(Command::GitStatus {
+                    changed: None,
                     include_untracked: true,
                     known: Some(discovery.clone()),
                     parent_open: false,

@@ -557,6 +557,7 @@ impl App {
                 view_id: view_id.to_string(),
                 title: view.title.clone(),
             }),
+            file_search: Default::default(),
             terminal_idx: None,
         });
         self.active_tab = self.tabs.len() - 1;

@@ -4,6 +4,7 @@ mod clipboard;
 mod cli;
 mod portable;
 mod native_paths;
+mod filesystem_roots;
 mod file_icons;
 mod app;
 mod animation_config;
@@ -69,6 +70,9 @@ mod app_formatters;
 mod file_associations;
 mod scope_bubble_config;
 mod ui_file_associations;
+mod ui_exclusion_settings;
+#[cfg(test)]
+mod workspace_exclusion_tests;
 mod ui_scope_bubble_settings;
 mod formatters;
 mod ui_formatter_settings;
@@ -93,6 +97,8 @@ mod search_results;
 #[cfg(test)]
 mod vscode_search_tests;
 mod app_search_fields;
+mod file_search;
+mod editor_view_state;
 mod app_session;
 #[cfg(test)]
 mod app_workspace_session_tests;
@@ -275,10 +281,17 @@ mod source_control_rows;
 mod ui_welcome;
 mod ui_widgets;
 mod vscode_theme;
+mod semantic_theme;
+mod scope_selector;
+mod textmate;
+#[cfg(test)]
+mod textmate_tests;
+mod textmate_theme;
+mod textmate_backend;
 mod vscode_color_registry;
 #[cfg(test)]
 mod vscode_color_render_tests;
-mod vscode_grammar;
+mod textmate_grammar;
 mod theme_install;
 mod theme_catalog;
 mod app_theme_management;

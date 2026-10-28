@@ -93,13 +93,7 @@ fn changed_unselected_theme(app: &App) -> crate::app_theme::ThemeFile {
         .unwrap()
         .clone();
     theme.name = "Updated unselected theme".into();
-    theme.syntect_theme.as_mut().unwrap().settings.foreground =
-        Some(syntect::highlighting::Color {
-            r: 12,
-            g: 34,
-            b: 56,
-            a: 255,
-        });
+    theme.textmate_theme=Some(crate::textmate::Theme::new("updated","#0c2238","#272822",&theme.token_colors).unwrap());
     theme
 }
 

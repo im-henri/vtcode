@@ -313,7 +313,7 @@ fn child() {
         .backend_mut()
         .write_all(b"\x1b]0;VTCODE_POINTER_READY\x07")
         .unwrap();
-    terminal.backend_mut().flush().unwrap();
+    std::io::Write::flush(terminal.backend_mut()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut sample = 0usize;
     loop {
@@ -345,7 +345,7 @@ fn child() {
             if done { "DONE" } else { "ACK" }
         )
         .unwrap();
-        terminal.backend_mut().flush().unwrap();
+        std::io::Write::flush(terminal.backend_mut()).unwrap();
         if done {
             break;
         }

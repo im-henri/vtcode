@@ -36,6 +36,7 @@ pub(crate) enum SearchControl {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SearchControlRegion {
+    pub owner: Option<u64>,
     pub scope: SearchScope,
     pub control: SearchControl,
     pub area: Rect,
@@ -95,6 +96,7 @@ pub(crate) fn draw_button(
         area,
     );
     app.search_control_regions.push(SearchControlRegion {
+        owner: (scope == SearchScope::File).then(|| app.file_search_owner()).flatten(),
         scope,
         control,
         area,
@@ -106,6 +108,7 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
     let Some(button) = control_at(app, scope, app.mouse_col, app.mouse_row) else {
         return;
     };
+    if scope == SearchScope::File && button.owner != app.file_search_owner() { return; }
     let text = match button.control {
         SearchControl::ToggleReplace => {
             let expanded = match scope {
@@ -164,6 +167,7 @@ pub(crate) fn handle_click(app: &mut App, scope: SearchScope, col: u16, row: u16
         app.global_search_active = true;
         app.active_pane = ActivePane::Explorer;
     } else {
+        app.focus_file_search_owner(button.owner);
         app.search_input_focused = true;
         app.active_pane = ActivePane::Editor;
     }

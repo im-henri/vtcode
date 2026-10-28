@@ -3,6 +3,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+pub(crate) type ExcludePatterns = std::collections::BTreeMap<String, serde_json::Value>;
+pub(crate) const DEFAULT_SEARCH_DEBOUNCE_MS: u64 = 300;
+
+pub(crate) fn default_files_exclude() -> ExcludePatterns {
+    ["**/.git", "**/.svn", "**/.hg", "**/.jj", "**/.DS_Store", "**/Thumbs.db"]
+        .into_iter().map(|pattern| (pattern.into(), serde_json::Value::Bool(true))).collect()
+}
+
+pub(crate) fn default_search_exclude() -> ExcludePatterns {
+    ["**/node_modules", "**/bower_components", "**/*.code-search"]
+        .into_iter().map(|pattern| (pattern.into(), serde_json::Value::Bool(true))).collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SettingsScope {
     #[default]
@@ -36,7 +49,7 @@ pub struct KeybindingSetting {
 
 /// Persistent settings, serialized to/from JSON.
 /// Mirrors VS Code's settings.json approach:
-///   - Global: <vtcode-base>/settings.json, beside themes/ and syntaxes/
+///   - Global: <vtcode-base>/settings.json, beside themes/ and grammars/
 ///   - Per-workspace: <vtcode-base>/.vtcode/workspaces/<id>/settings.json
 ///
 /// Workspace settings override global settings (field by field).
@@ -68,6 +81,8 @@ pub struct Settings {
     pub whitespace_mode: Option<String>,
     pub comment_whitespace_mode: Option<String>,
     pub read_only: Option<bool>,
+    #[serde(rename = "diffEditor.renderSideBySide", skip_serializing_if = "Option::is_none")]
+    pub diff_side_by_side: Option<bool>,
 
     // Appearance
     pub theme: Option<String>,
@@ -200,6 +215,10 @@ pub struct Settings {
     pub search_regex: Option<bool>,
     pub search_whole_word: Option<bool>,
     pub search_preserve_case: Option<bool>,
+    #[serde(rename = "search.searchOnTypeDebouncePeriod")]
+    pub search_debounce_ms: Option<u64>,
+    // Retained for settings-file compatibility. Workspace content search uses
+    // explicit exclusion settings instead of ignore files.
     #[serde(alias = "search.useIgnoreFiles")]
     pub search_use_ignore_files: Option<bool>,
     #[serde(alias = "search.useGlobalIgnoreFiles")]
@@ -362,6 +381,7 @@ impl Settings {
             whitespace_mode: other.whitespace_mode.clone().or_else(|| self.whitespace_mode.clone()),
             comment_whitespace_mode: other.comment_whitespace_mode.clone().or_else(|| self.comment_whitespace_mode.clone()),
             read_only: other.read_only.or(self.read_only),
+            diff_side_by_side: other.diff_side_by_side.or(self.diff_side_by_side),
             theme: other.theme.clone().or_else(|| self.theme.clone()),
             workbench_color_customizations: crate::theme_customizations::merge(&self.workbench_color_customizations, &other.workbench_color_customizations),
             show_explorer: other.show_explorer.or(self.show_explorer),
@@ -495,6 +515,7 @@ impl Settings {
             search_regex: other.search_regex.or(self.search_regex),
             search_whole_word: other.search_whole_word.or(self.search_whole_word),
             search_preserve_case: other.search_preserve_case.or(self.search_preserve_case),
+            search_debounce_ms: other.search_debounce_ms.or(self.search_debounce_ms),
             search_use_ignore_files: other.search_use_ignore_files.or(self.search_use_ignore_files),
             search_use_global_ignore_files: other.search_use_global_ignore_files.or(self.search_use_global_ignore_files),
             search_use_parent_ignore_files: other.search_use_parent_ignore_files.or(self.search_use_parent_ignore_files),

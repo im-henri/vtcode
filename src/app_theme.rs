@@ -227,7 +227,7 @@ impl EditorTheme {
         if self == Self::Dark {
             "dark-plus"
         } else {
-            "InspiredGitHub"
+            "light"
         }
     }
     pub(crate) fn colors(self) -> ThemeColors {

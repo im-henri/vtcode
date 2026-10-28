@@ -93,6 +93,7 @@ fn undo_of_a_later_edit_keeps_deleted_rows_marked_unsaved() {
     let source = include_str!("../examples/rebuild_syntax_cache.rs");
     let mut editor = saved_editor(source);
     select_print_arm(&mut editor);
+    let deleted_line=editor.selection_anchor.unwrap().0;
     let mut app = app(editor);
     key(&mut app, KeyCode::Delete, KeyModifiers::NONE);
     let deleted = app.editor().unwrap().rope.clone();
@@ -100,7 +101,7 @@ fn undo_of_a_later_edit_keeps_deleted_rows_marked_unsaved() {
     key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
     assert_eq!(app.editor().unwrap().rope, deleted);
     assert!(app.tabs[0].has_unsaved_changes());
-    assert_ne!(app.editor().unwrap().unsaved_line_status(13), ' ');
+    assert_ne!(app.editor().unwrap().unsaved_line_status(deleted_line), ' ');
     key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
     assert_eq!(app.editor().unwrap().rope, source);
     assert!(!app.tabs[0].has_unsaved_changes());

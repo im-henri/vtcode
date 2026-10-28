@@ -7,9 +7,10 @@ use std::{path::Path, time::Duration};
 
 fn write_grammar(folder: &Path, name: &str, scope: &str) {
     std::fs::create_dir_all(folder).unwrap();
-    std::fs::write(folder.join("Example.sublime-syntax"), format!(
-        "%YAML 1.2\n---\nname: {name}\nfile_extensions: [reloadtest]\nscope: source.reloadtest\ncontexts:\n  main:\n    - match: magic\n      scope: {scope}\n"
-    )).unwrap();
+    std::fs::write(folder.join("Example.tmLanguage.json"), serde_json::json!({
+        "name":name,"scopeName":"source.reloadtest","fileTypes":["reloadtest"],
+        "patterns":[{"match":"magic","name":scope}]
+    }).to_string()).unwrap();
 }
 
 fn test_app(root: &Path) -> App {
@@ -31,7 +32,7 @@ fn wait_loaded(app: &mut App) {
     });
 }
 
-fn first_color(app: &mut App) -> Option<syntect::highlighting::Color> {
+fn first_color(app: &mut App) -> Option<crate::textmate::Color> {
     let path = app.editor().unwrap().file_path.clone();
     app.highlighter
         .highlighted_line_by_index_if_cached(0, path.as_deref(), None, &app.syntax_theme, 0)
@@ -56,13 +57,13 @@ fn syntax_reload_builds_on_first_launch_and_recolors_open_files_without_restarti
     assert_eq!(action, "performance");
     assert!(width <= 3);
     wait_loaded(&mut app);
-    assert!(syntaxes.join(".cache/default_newlines.packdump").is_file());
+    assert!(syntaxes.join(".cache/textmate-registry.json.gz").is_file());
     assert!(syntaxes.join(".cache/source.fingerprint").is_file());
     app.wait_for_background(Duration::from_secs(5), |app| {
         !app.background.has_active_jobs() && !app.background.has_pending_results()
     });
     let before = first_color(&mut app).unwrap();
-    assert_eq!((before.r, before.g, before.b), (86, 156, 214));
+    assert_eq!((before.r, before.g, before.b), (197, 134, 192));
     assert!(app
         .palette
         .commands
@@ -151,8 +152,8 @@ fn syntax_reload_keeps_the_previous_registry_when_edited_grammars_are_invalid() 
     let mut app = test_app(directory.path());
     app.request_syntax_assets_async();
     wait_loaded(&mut app);
-    let cache = std::fs::read(syntaxes.join(".cache/default_newlines.packdump")).unwrap();
-    std::fs::write(syntaxes.join("Example.sublime-syntax"), "contexts: [").unwrap();
+    let cache = std::fs::read(syntaxes.join(".cache/textmate-registry.json.gz")).unwrap();
+    std::fs::write(syntaxes.join("Example.tmLanguage.json"), "contexts: [").unwrap();
     app.execute_palette_command("reload_syntaxes");
     wait_loaded(&mut app);
     assert!(app.highlighter.syntax_names().contains(&"Valid".into()));
@@ -161,7 +162,7 @@ fn syntax_reload_keeps_the_previous_registry_when_edited_grammars_are_invalid() 
         .iter()
         .any(|notice| notice.0.contains("Could not load syntaxes:")));
     assert_eq!(
-        std::fs::read(syntaxes.join(".cache/default_newlines.packdump")).unwrap(),
+        std::fs::read(syntaxes.join(".cache/textmate-registry.json.gz")).unwrap(),
         cache
     );
 }
@@ -181,7 +182,7 @@ fn syntax_reload_first_launch_still_highlights_when_the_cache_cannot_be_written(
         !app.background.has_active_jobs() && !app.background.has_pending_results()
     });
     let color = first_color(&mut app).unwrap();
-    assert_eq!((color.r, color.g, color.b), (86, 156, 214));
+    assert_eq!((color.r, color.g, color.b), (197, 134, 192));
     assert!(app.highlighter.syntax_names().contains(&"Valid".into()));
     assert!(app
         .notification_history

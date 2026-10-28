@@ -1,4 +1,5 @@
 //! CommonMark/GFM preview, laid out in terminal cells before viewport scrolling.
+use crate::textmate_backend::HighlightLines;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
@@ -9,11 +10,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use syntect::{
-    easy::HighlightLines,
-    highlighting::{FontStyle, Theme},
-    parsing::SyntaxSet,
-};
+use crate::textmate::{Theme,SyntaxRegistry};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -93,7 +90,7 @@ struct CodeView {
 }
 
 impl CachedPreview {
-    fn highlight_visible(&mut self, rows: Range<usize>, syntax: (&SyntaxSet, Option<&Theme>)) {
+    fn highlight_visible(&mut self, rows: Range<usize>, syntax: (&SyntaxRegistry, Option<&Theme>)) {
         // Layout ranges are sorted. A scroll inspects only the visible fences,
         // and previously highlighted fences retain their measured text/spans.
         let first = self.code_views.partition_point(|view| view.rows.end <= rows.start);
@@ -509,7 +506,7 @@ pub(crate) fn chat_lines(
     source: &str,
     width: usize,
     colors: &ThemeColors,
-    syntax: Option<(&SyntaxSet, Option<&Theme>)>,
+    syntax: Option<(&SyntaxRegistry, Option<&Theme>)>,
 ) -> Vec<Line<'static>> {
     chat_lines_on_surface(source, width, colors, syntax, colors.bg_sidebar)
 }
@@ -520,7 +517,7 @@ pub(crate) fn chat_lines_on_surface(
     source: &str,
     width: usize,
     colors: &ThemeColors,
-    syntax: Option<(&SyntaxSet, Option<&Theme>)>,
+    syntax: Option<(&SyntaxRegistry, Option<&Theme>)>,
     surface: Color,
 ) -> Vec<Line<'static>> {
     let palette = surface_palette(colors, surface);
@@ -706,12 +703,12 @@ impl PreparedDocument {
         &self,
         width: usize,
         palette: Palette,
-        syntax: Option<(&SyntaxSet, Option<&Theme>)>,
+        syntax: Option<(&SyntaxRegistry, Option<&Theme>)>,
     ) -> Vec<Row> {
         self.layout(width, palette, syntax).0
     }
 
-    fn layout(&self, width: usize, palette: Palette, syntax: Option<(&SyntaxSet, Option<&Theme>)>) -> (Vec<Row>, Vec<CodeView>) {
+    fn layout(&self, width: usize, palette: Palette, syntax: Option<(&SyntaxRegistry, Option<&Theme>)>) -> (Vec<Row>, Vec<CodeView>) {
         let mut renderer = Renderer {
             rows: Vec::new(),
             code_views: Vec::new(),
@@ -732,7 +729,7 @@ struct Renderer<'a> {
     width: usize,
     palette: Palette,
     document: &'a PreparedDocument,
-    syntax: Option<(&'a SyntaxSet, Option<&'a Theme>)>,
+    syntax: Option<(&'a SyntaxRegistry, Option<&'a Theme>)>,
 }
 
 #[cfg(test)]
@@ -740,7 +737,7 @@ fn render_document(
     source: &str,
     width: usize,
     palette: Palette,
-    syntax: Option<(&SyntaxSet, Option<&Theme>)>,
+    syntax: Option<(&SyntaxRegistry, Option<&Theme>)>,
 ) -> Vec<Row> {
     PreparedDocument::new(source).render(width, palette, syntax)
 }
@@ -1177,7 +1174,7 @@ impl Renderer<'_> {
                         .iter()
                         .find(|s| s.name.eq_ignore_ascii_case(language))
                 })?;
-                Some((syntaxes, HighlightLines::new(syntax, theme?)))
+                Some(HighlightLines::new(syntax, theme?))
             });
             let mut highlighted_bytes = 0usize;
             for child in &node.children {
@@ -1194,20 +1191,14 @@ impl Renderer<'_> {
                         if line.len() > 4096 || highlighted_bytes > 262_144 { highlighter = None; }
                         let mut spans: Vec<Piece> = highlighter
                             .as_mut()
-                            .and_then(|(syntaxes, h)| h.highlight_line(&expanded, syntaxes).ok())
+                            .map(|h| h.highlight_line(&expanded))
                             .map(|ranges| {
                                 ranges
                                     .into_iter()
                                     .map(|(s, text)| {
-                                        let foreground = crate::ui_colors::syntect_color(s.foreground, self.palette.code_bg);
+                                        let foreground = crate::ui_colors::syntax_color(s.foreground, self.palette.code_bg);
                                         let mut token_style = style.fg(crate::ui_colors::ensure_contrast(foreground, self.palette.code_bg, 4.5, crate::ui_colors::contrast_colors(&self.palette.contrast)));
-                                        if s.font_style.contains(FontStyle::BOLD) {
-                                            token_style = token_style.add_modifier(Modifier::BOLD);
-                                        }
-                                        if s.font_style.contains(FontStyle::ITALIC) {
-                                            token_style =
-                                                token_style.add_modifier(Modifier::ITALIC);
-                                        }
+                                        token_style = token_style.add_modifier(crate::ui_colors::syntax_font_modifiers(s.font_style));
                                         self.piece(
                                             text.trim_end_matches(['\n', '\r']),
                                             token_style,
@@ -2729,7 +2720,7 @@ mod resize_tests {
         draw(&mut app, &mut terminal, 80, 25);
         PREVIEWS.with_borrow(|cache| assert_eq!(cache.len(), 3));
         app.highlighter
-            .register_theme(&app.syntax_theme, Theme::default());
+            .register_theme(&app.syntax_theme, Theme::new("test","#000000","#ffffff",&[]).unwrap());
         draw(&mut app, &mut terminal, 80, 25);
         PREVIEWS.with_borrow(|cache| {
             assert_eq!(cache.len(), 4);

@@ -825,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn command_list_uses_every_visible_syntect_language() {
+    fn command_list_uses_every_visible_textmate_language() {
         let syntax_names = crate::highlight::Highlighter::new().syntax_names();
         let commands = App::build_command_list();
         let command_languages: Vec<&str> = commands

@@ -113,18 +113,17 @@ fn both_search_histories_survive_restart_including_uncommitted_queries() {
 }
 
 #[test]
-fn replacing_a_search_term_keeps_the_previous_term_without_recording_prefixes() {
+fn replacing_a_search_field_keeps_the_previous_value_without_recording_prefixes() {
     let workspace = Workspace::new();
-    for id in [TextInputId::SearchFind, TextInputId::GlobalSearch(0)] {
+    for id in [TextInputId::SearchFind, TextInputId::GlobalSearch(0), TextInputId::GlobalSearch(1),
+        TextInputId::GlobalSearch(2), TextInputId::GlobalSearch(3)] {
         let mut app = workspace.app();
         let (text, cursor, anchor) = if id == TextInputId::SearchFind {
-            (
-                &mut app.search_query,
-                &mut app.search_cursor,
-                &mut app.search_selection_anchor,
-            )
+            let state: &mut crate::file_search::State = &mut app;
+            (&mut state.search_query, &mut state.search_cursor, &mut state.search_selection_anchor)
         } else {
-            app.global_search_field_state_mut(0)
+            let TextInputId::GlobalSearch(field) = id else { unreachable!() };
+            app.global_search_field_state_mut(field)
         };
         *text = "old term".into();
         *cursor = text.len();
@@ -142,10 +141,13 @@ fn replacing_a_search_term_keeps_the_previous_term_without_recording_prefixes() 
                 .changed
         );
         let saved = app.build_session();
-        let history = if id == TextInputId::SearchFind {
-            saved.search_history
-        } else {
-            saved.global_search_history
+        let history = match id {
+            TextInputId::SearchFind => saved.search_history,
+            TextInputId::GlobalSearch(0) => saved.global_search_history,
+            TextInputId::GlobalSearch(1) => saved.global_search_replace_history,
+            TextInputId::GlobalSearch(2) => saved.search_include_history,
+            TextInputId::GlobalSearch(3) => saved.search_exclude_history,
+            _ => unreachable!(),
         };
         assert_eq!(history, ["old term", "new"]);
     }
@@ -179,6 +181,92 @@ fn editing_a_recalled_workspace_query_resets_navigation_for_keyboard_and_paste()
 }
 
 #[test]
+fn workspace_fields_browse_independent_histories_restore_drafts_and_persist() {
+    let workspace = Workspace::new();
+    let values = [
+        ["first term", "second term"],
+        ["first replacement", "second replacement"],
+        ["./first/*/path", "./世界/*/path"],
+        ["**/first", "**/second"],
+    ];
+    let set = |app: &mut App, field, value: &str| {
+        let (text, cursor, anchor) = app.global_search_field_state_mut(field);
+        *text = value.into();
+        *cursor = text.len();
+        *anchor = None;
+    };
+    let mut app = workspace.app();
+    for index in 0..2 {
+        for field in 0..4 { set(&mut app, field, values[field as usize][index]); }
+        app.push_global_search_history();
+    }
+    for field in 0..4 { set(&mut app, field, &format!("saved draft {field}")); }
+    app.save_session();
+    let mut app = workspace.reopen();
+    for field in 0..4 { set(&mut app, field, &format!("new draft {field}")); }
+    for field in 0..4 {
+        app.search_focus_field = field;
+        app.global_search_field_selection_anchors[field as usize] = Some(0);
+        for expected in [format!("saved draft {field}"), values[field as usize][1].into(), values[field as usize][0].into()] {
+            let generation = app.search_generation;
+            crate::input::handle_global_search_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+            let (text, cursor, anchor) = app.global_search_field_state_mut(field);
+            assert_eq!(*text, expected);
+            assert_eq!(*cursor, expected.len());
+            assert_eq!(*anchor, None);
+            if field == 1 { assert_eq!(app.search_generation, generation); }
+            else { assert_ne!(app.search_generation, generation); }
+        }
+        for _ in 0..3 {
+            crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        }
+        for other in 0..4 {
+            assert_eq!(app.global_search_field_state_mut(other).0, &format!("new draft {other}"));
+        }
+    }
+}
+
+#[test]
+fn editing_recalled_filter_and_replacement_values_resets_their_history_cursor() {
+    let workspace = Workspace::new();
+    for field in 1..4 {
+        let mut app = workspace.app();
+        app.search_focus_field = field;
+        *app.global_search_field_state_mut(field).0 = "α".into();
+        app.push_global_search_history();
+        *app.global_search_field_state_mut(field).0 = "draft".into();
+        crate::input::handle_global_search_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        crate::input::handle_global_search_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+        crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.global_search_field_state_mut(field).0, "αx");
+        crate::input::handle_global_search_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert!(app.edit_text_input(TextInputId::GlobalSearch(field), KeyCode::Null,
+            KeyModifiers::NONE, Some("β")).changed);
+        app.text_input_changed(TextInputId::GlobalSearch(field));
+        crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(app.global_search_field_state_mut(field).0, "αβ");
+    }
+}
+
+#[test]
+fn sessions_without_field_histories_keep_their_last_filter_and_replacement_values() {
+    let workspace = Workspace::new();
+    let mut app = workspace.app();
+    let saved = crate::session::Session {
+        global_search_replace_query: "replacement".into(),
+        search_include_pattern: "./my/*/path".into(),
+        search_exclude_pattern: "**/skip".into(),
+        ..Default::default()
+    };
+    app.restore_search_histories(&saved);
+    for (field, expected) in [(1, "replacement"), (2, "./my/*/path"), (3, "**/skip")] {
+        app.search_focus_field = field;
+        crate::input::handle_global_search_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.global_search_field_state_mut(field).0, expected);
+    }
+}
+
+#[test]
 fn workspace_history_keys_leave_other_fields_and_result_navigation_available() {
     let workspace = Workspace::new();
     let mut app = workspace.app();
@@ -203,6 +291,8 @@ fn workspace_history_keys_leave_other_fields_and_result_navigation_available() {
     app.search_focus_field = 1;
     app.global_search_replace_query = "replacement".into();
     crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.global_search_selected, 1, "plain arrows belong to field history");
+    crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::ALT);
     assert_eq!(app.global_search_selected, 2);
     assert_eq!(app.global_search_replace_query, "replacement");
     app.search_focus_field = 0;

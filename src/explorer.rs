@@ -137,6 +137,8 @@ pub(crate) struct ExplorerRefreshRequest {
     root: PathBuf,
     directory_cache: DirectoryCache,
     ignore_cache: IgnoreCache,
+    exclude_rules: std::sync::Arc<crate::search_paths::ExcludeRules>,
+    exclude_patterns: std::sync::Arc<crate::settings::ExcludePatterns>,
     sort_mode: ExplorerSortMode,
     expanded_dirs: FxHashSet<PathBuf>,
     find: Option<crate::explorer_find::Query>,
@@ -166,9 +168,20 @@ pub struct FileExplorer {
     path_indices: FxHashMap<u64, usize>,
     directory_cache: DirectoryCache,
     ignore_cache: IgnoreCache,
+    exclude_rules: std::sync::Arc<crate::search_paths::ExcludeRules>,
+    exclude_patterns: std::sync::Arc<crate::settings::ExcludePatterns>,
+}
+
+fn default_exclusions() -> std::sync::Arc<crate::search_paths::ExcludeRules> {
+    std::sync::Arc::new(crate::search_paths::ExcludeRules::new(&crate::settings::default_files_exclude(), &Default::default()))
 }
 
 impl FileExplorer {
+    pub(crate) fn set_files_exclude(&mut self, patterns: &crate::settings::ExcludePatterns) {
+        if *self.exclude_patterns == *patterns { return; }
+        self.exclude_patterns = std::sync::Arc::new(patterns.clone());
+        self.exclude_rules = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(patterns, &Default::default()));
+    }
     pub(crate) fn insert_remote_placeholder(&mut self, path: PathBuf, name: String, is_dir: bool) {
         if self.find_path(&path).is_some() { return; }
         let parent = path.parent().unwrap_or(&self.root);
@@ -216,6 +229,8 @@ impl FileExplorer {
             path_indices: FxHashMap::default(),
             directory_cache,
             ignore_cache: IgnoreCache::default(),
+            exclude_rules: default_exclusions(),
+            exclude_patterns: std::sync::Arc::new(crate::settings::default_files_exclude()),
         };
         explorer.refresh();
         explorer
@@ -243,6 +258,8 @@ impl FileExplorer {
             path_indices: FxHashMap::default(),
             directory_cache: DirectoryCache::default(),
             ignore_cache: IgnoreCache::default(),
+            exclude_rules: default_exclusions(),
+            exclude_patterns: std::sync::Arc::new(crate::settings::default_files_exclude()),
         }
     }
 
@@ -268,6 +285,8 @@ impl FileExplorer {
             root: self.root.clone(),
             directory_cache: self.directory_cache.clone(),
             ignore_cache: self.ignore_cache.clone(),
+            exclude_rules: self.exclude_rules.clone(),
+            exclude_patterns: self.exclude_patterns.clone(),
             sort_mode: self.sort_mode,
             expanded_dirs: self.expanded_dirs.clone(),
             find: self.find.request(),
@@ -309,6 +328,8 @@ impl FileExplorer {
             path_indices: FxHashMap::default(),
             directory_cache: request.directory_cache,
             ignore_cache: request.ignore_cache,
+            exclude_rules: request.exclude_rules,
+            exclude_patterns: request.exclude_patterns,
         };
         let matcher = request.find.as_ref().map(crate::explorer_find::NameMatcher::new).transpose();
         let matcher = match matcher {
@@ -730,7 +751,17 @@ impl FileExplorer {
             Some(items)
         }) else { return; };
 
+        let fold_names = cfg!(any(windows, target_os = "macos"));
+        let siblings = self.exclude_rules.requires_siblings().then(|| items.iter().map(|(path, _, _, _, name)| {
+            if fold_names { std::ffi::OsStr::new(name) } else { path.file_name().unwrap_or_default() }
+        }).collect::<std::collections::HashSet<_>>());
         for (path, is_dir, _, _, _) in items.iter() {
+            if self.exclude_rules.excludes_with(&crate::search_paths::Candidate::new(path), &self.root,
+                |sibling| siblings.as_ref().is_some_and(|names| {
+                    let name = sibling.file_name().unwrap_or_default();
+                    if fold_names { names.contains(std::ffi::OsStr::new(&name.to_string_lossy().to_lowercase())) }
+                    else { names.contains(name) }
+                })) { continue; }
             let path = path.clone();
             let is_dir = *is_dir;
             if cancel.is_some_and(|token| token.is_cancelled()) { return; }
@@ -1183,6 +1214,8 @@ mod tests {
             path_indices: FxHashMap::default(),
             directory_cache: DirectoryCache::default(),
             ignore_cache: IgnoreCache::default(),
+            exclude_rules: default_exclusions(),
+            exclude_patterns: std::sync::Arc::new(crate::settings::default_files_exclude()),
         };
         explorer.rebuild_parent_indices();
         explorer
@@ -1834,6 +1867,8 @@ mod tests {
             path_indices: FxHashMap::default(),
             directory_cache: DirectoryCache::default(),
             ignore_cache: IgnoreCache::default(),
+            exclude_rules: default_exclusions(),
+            exclude_patterns: std::sync::Arc::new(crate::settings::default_files_exclude()),
         };
         explorer.git_statuses.insert(
             std::fs::canonicalize(&file).expect("canonical file"),

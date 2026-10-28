@@ -574,8 +574,7 @@ fn acp_chat_theme_syntax_registry_changes_recolor_existing_fenced_code() {
     let mut terminal = Terminal::new(TestBackend::new(70, 30)).unwrap();
     app.syntax_theme = "chat-test-syntax".into();
     for color in ["#F2BE76", "#ABE7FF"] {
-        let mut theme = syntect::highlighting::Theme::default();
-        theme.settings.foreground = crate::vscode_theme::parse_syntect_color(color);
+        let theme = crate::textmate::Theme::new("chat",color,"#000000",&[]).unwrap();
         app.highlighter.register_theme(&app.syntax_theme, theme);
         render(&mut app, &mut terminal);
         pair(

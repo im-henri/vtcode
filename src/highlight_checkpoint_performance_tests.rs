@@ -4,11 +4,8 @@ use super::*;
 fn prepared_workers_preserve_grammar_identity_when_names_are_duplicated() {
     let mut highlighter = Highlighter::new();
     let mut builder = highlighter.syntax_set.as_ref().clone().into_builder();
-    builder.add(syntect::parsing::SyntaxDefinition::load_from_str(
-        "%YAML 1.2\n---\nname: Rust\nfile_extensions: [different-rust]\nscope: source.different-rust\ncontexts:\n  main:\n    - match: magic\n      scope: keyword.control.rust\n",
-        true, None,
-    ).unwrap());
-    highlighter.syntax_set = Arc::new(builder.build());
+    builder.add(crate::textmate_grammar::parse_source(br#"{"name":"Rust","scopeName":"source.different-rust","fileTypes":["different-rust"],"patterns":[{"match":"magic","name":"keyword.control.rust"}]}"#,"Rust").unwrap());
+    highlighter.syntax_set=Arc::new(builder.build().unwrap());
     highlighter.registry_generation += 1;
     let rope = Rope::from_str("let magic = 123;\n");
     let path = Path::new("ordinary.rs");
@@ -102,7 +99,7 @@ fn warm_viewports_still_restart_for_registry_theme_language_and_document_changes
     assert!(highlighter.apply_batch(refreshed.run(&rope, &syntaxes, &themes, || false)));
     assert!(
         highlighter
-            .prepare_job(&rope, path, 0, None, 0..1, None, "base16-ocean.dark")
+            .prepare_job(&rope, path, 0, None, 0..1, None, "monokai")
             .is_some()
     );
     assert!(
@@ -270,11 +267,9 @@ fn benchmark_shared_syntax_checkpoint_snapshots() {
     let (syntaxes, themes) = highlighter.shared_sets();
     let syntax = syntaxes.find_syntax_by_extension("rs").unwrap();
     let theme = select_theme(&themes, "dark-plus").unwrap();
-    let parser = syntect::highlighting::Highlighter::new(theme);
-    let mut state = SyntectState::new(syntax, &parser);
+    let mut state = TextMateState::new(syntax, theme);
     state
-        .highlight_line(&("{".repeat(64) + "\n"), &syntaxes, &parser, false, &mut Vec::new())
-        .unwrap();
+        .line(&("{".repeat(64) + "\n"), false, &mut Vec::new());
     let state = Arc::new(state);
     for count in [256, 4_096] {
         let checkpoints: Vec<_> = (0..count)
@@ -306,7 +301,7 @@ fn benchmark_shared_syntax_checkpoint_snapshots() {
                     elapsed
                 } else {
                     // Original suffix snapshot contents, including a deep
-                    // mutable SyntectState clone for every retained checkpoint.
+                    // mutable TextMateState clone for every retained checkpoint.
                     let snapshots: Vec<_> = checkpoints
                         .iter()
                         .map(|(line, checkpoint)| {

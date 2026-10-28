@@ -1286,7 +1286,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
 
     // Search mode input
-    if app.search_active && app.search_input_focused {
+    if app.file_search_visible() && app.search_input_focused {
         input::handle_search_key(app, key.code, key.modifiers);
         return false;
     }

@@ -1,5 +1,4 @@
 use crate::app::{App, fuzzy_match};
-use crate::app_global_search::EXCLUDE_DIRS;
 use std::path::PathBuf;
 #[cfg(test)]
 use crate::source_symbols::source_symbol;
@@ -106,6 +105,7 @@ struct QuickOpenFileIndex {
     generation: u64,
     entries: std::sync::Arc<Vec<QuickOpenEntry>>,
     built_at: std::time::Instant,
+    excludes: crate::settings::ExcludePatterns,
 }
 
 struct QuickOpenEntry {
@@ -160,7 +160,8 @@ impl QuickOpenIndex {
         watched: bool,
         cancel: &crate::background::CancellationToken,
     ) -> Option<std::sync::Arc<Vec<QuickOpenEntry>>> {
-        self.files_with_remote(root, generation, watched, cancel, None)
+        self.files_with_remote(root, generation, watched, cancel, None,
+            &crate::settings::default_files_exclude().into_iter().chain(crate::settings::default_search_exclude()).collect())
     }
     fn files_with_remote(
         &self,
@@ -169,6 +170,7 @@ impl QuickOpenIndex {
         watched: bool,
         cancel: &crate::background::CancellationToken,
         remote: Option<&crate::remote::workspace::Workspace>,
+        excludes: &crate::settings::ExcludePatterns,
     ) -> Option<std::sync::Arc<Vec<QuickOpenEntry>>> {
         let mut cached = self
             .files
@@ -182,6 +184,8 @@ impl QuickOpenIndex {
         let max_age = std::time::Duration::from_secs(if watched { 30 } else { 2 });
         if let Some(index) = cached.as_ref().filter(|index| {
             index.root == root
+                && index.excludes == *excludes
+                && !excludes.values().any(serde_json::Value::is_object)
                 && index.generation == generation
                 && index.built_at.elapsed() < max_age
         }) {
@@ -197,6 +201,7 @@ impl QuickOpenIndex {
                 .call(crate::remote::Command::Files {
                     generation,
                     known_version,
+                    excludes: excludes.clone(),
                 })
                 .ok()?
             else {
@@ -219,9 +224,11 @@ impl QuickOpenIndex {
                     entries,
                     built_at: std::time::Instant::now(),
                     remote_version: Some(version),
+                    excludes: excludes.clone(),
                 });
             } else if let Some(index) = cached.as_mut() {
                 index.generation = generation;
+                index.excludes = excludes.clone();
                 index.built_at = std::time::Instant::now();
             }
             return cached.as_ref().map(|index| index.entries.clone());
@@ -229,13 +236,13 @@ impl QuickOpenIndex {
         // Finish a shared index even if this query is superseded. Subsequent
         // requests reuse the completed traversal rather than
         // repeatedly restarting it. The UI never acquires this mutex.
+        let rules = crate::search_paths::ExcludeRules::new(excludes, &Default::default());
         let entries = walkdir::WalkDir::new(root)
             .min_depth(1)
             .into_iter()
             .filter_entry(|entry| {
-                let name = entry.file_name().to_str().unwrap_or("");
-                !name.starts_with('.')
-                    && (!entry.file_type().is_dir() || !EXCLUDE_DIRS.contains(&name))
+                !rules.excludes(&crate::search_paths::Candidate::new(entry.path()), root)
+                    && !crate::editor::is_save_temporary_path(entry.path())
             })
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())
@@ -262,6 +269,7 @@ impl QuickOpenIndex {
             entries: std::sync::Arc::clone(&entries),
             built_at: std::time::Instant::now(),
             remote_version: None,
+            excludes: excludes.clone(),
         });
         Some(entries)
     }
@@ -1153,12 +1161,14 @@ impl App {
 
     /// Push current search query to history (called when search is committed).
     pub(crate) fn push_search_history(&mut self) {
-        self.search_history.record(&self.search_query);
+        let query = self.search_query.clone();
+        self.search_history.record(&query);
     }
 
     /// Navigate search history backwards (older).
     pub(crate) fn search_history_prev(&mut self) {
-        if let Some(query) = self.search_history.previous(&self.search_query) {
+        let current = self.search_query.clone();
+        if let Some(query) = self.search_history.previous(&current) {
             self.search_query = query;
             self.search_cursor = self.search_query.len();
             self.search_selection_anchor = None;
@@ -1631,8 +1641,13 @@ impl App {
         self.quick_open_generation = self.quick_open_generation.wrapping_add(1);
         self.bg_quick_open_running = false;
 
-        if self.quick_open_query.is_empty() {
-            self.quick_open_results = self.recent_files.clone();
+        let settings = self.settings_for_scope(crate::settings::SettingsScope::Workspace);
+        let excludes: crate::settings::ExcludePatterns = settings.files_exclude.into_iter().chain(settings.search_exclude).collect();
+        if self.quick_open_query.is_empty() && self.remote_workspace.is_none()
+            && !excludes.values().any(serde_json::Value::is_object) {
+            let rules = crate::search_paths::ExcludeRules::new(&excludes, &Default::default());
+            self.quick_open_results = self.recent_files.iter().filter(|path| !rules.excludes_with(
+                &crate::search_paths::Candidate::new(path), std::path::Path::new(""), |_| false)).cloned().collect();
             self.quick_open_selected = 0;
             return;
         }
@@ -1647,9 +1662,22 @@ impl App {
         let sender = self.background.sender.clone();
         self.quick_open_selected = 0;
         let remote = self.remote_workspace.clone();
+        let recent = self.quick_open_query.is_empty().then(|| self.recent_files.clone());
         let token = index.submit_latest(&mut self.background, move |index, cancel| {
+            if let Some(paths) = recent {
+                let files = if let Some(remote) = &remote {
+                    let indices = remote.search_history_scope(&paths, &excludes, &cancel).unwrap_or_default();
+                    indices.into_iter().map(|i| (0, paths[i].clone())).collect()
+                } else {
+                    let rules = crate::search_paths::ExcludeRules::new(&excludes, &Default::default());
+                    paths.into_iter().filter(|path| !rules.excludes(&crate::search_paths::Candidate::new(path), std::path::Path::new("")))
+                        .map(|path| (0, path)).collect()
+                };
+                if !cancel.is_cancelled() { let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles { files, generation }); }
+                return;
+            }
             let Some(entries) =
-                index.files_with_remote(&root, index_generation, watched, &cancel, remote.as_ref())
+                index.files_with_remote(&root, index_generation, watched, &cancel, remote.as_ref(), &excludes)
             else {
                 return;
             };
@@ -2204,7 +2232,7 @@ mod tests {
         let index = super::QuickOpenIndex::default();
         let cancel = crate::background::CancellationToken::new();
         let files = index.files(root, 1, true, &cancel).unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
         assert!(std::sync::Arc::ptr_eq(
             &files,
             &index.files(root, 1, true, &cancel).unwrap()
@@ -2218,15 +2246,15 @@ mod tests {
         }
         std::fs::write(root.join("new.rs"), "").unwrap();
         let refreshed = index.files(root, 2, true, &cancel).unwrap();
-        assert_eq!(refreshed.len(), 3);
+        assert_eq!(refreshed.len(), 4);
         assert!(!std::sync::Arc::ptr_eq(&files, &refreshed));
         index.files.lock().unwrap().as_mut().unwrap().built_at -= std::time::Duration::from_secs(3);
         std::fs::write(root.join("external.rs"), "").unwrap();
-        assert_eq!(index.files(root, 2, false, &cancel).unwrap().len(), 4);
+        assert_eq!(index.files(root, 2, false, &cancel).unwrap().len(), 5);
         index.files.lock().unwrap().as_mut().unwrap().built_at -=
             std::time::Duration::from_secs(31);
         std::fs::write(root.join("remote.rs"), "").unwrap();
-        assert_eq!(index.files(root, 2, true, &cancel).unwrap().len(), 5);
+        assert_eq!(index.files(root, 2, true, &cancel).unwrap().len(), 6);
         cancel.cancel();
         assert!(index.files(root, 2, true, &cancel).is_none());
     }

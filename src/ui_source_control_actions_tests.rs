@@ -271,3 +271,48 @@ fn actions_and_reopen_buttons_have_hover_styles_without_tooltips() {
         }
     }
 }
+
+#[test]
+fn file_row_icons_fit_both_sidebar_sides_and_have_hover_tooltips() {
+    for width in [16, 24, 44, 80] {
+        for right in [false, true] {
+            let mut app = fixture();
+            app.sidebar_right = right;
+            app.source_control_files = [("a.rs", true, 'M'), ("b.rs", false, 'M'), ("c.rs", false, '?')]
+                .into_iter().map(|(path, staged, status)| crate::app::GitFileChange {
+                    path: path.into(), staged, status, original_path: None,
+                }).collect();
+            let area = Rect::new(3, 1, width, 26);
+            let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+            terminal.draw(|f| draw_source_control_sidebar(f, &mut app, area)).unwrap();
+            assert_eq!(app.source_control_file_actions.len(), 3);
+            let buttons: Vec<_> = app.source_control_file_actions.iter().flat_map(|row| {
+                let labels: Vec<_> = row.buttons().map(|(action, _)| action.label()).collect();
+                assert_eq!(labels, if row.change.staged {
+                    vec!["Open File", "Unstage Changes"]
+                } else { vec!["Open File", "Discard Changes", "Stage Changes"] });
+                let rendered = text(terminal.backend().buffer(), Rect::new(area.x, row.area.y, area.width, 1));
+                assert!(rendered.contains(&row.change.path[..2]), "{rendered:?}");
+                if width >= 24 { assert!(rendered.contains(&row.change.path), "{rendered:?}"); }
+                assert!(rendered.contains('↗') && rendered.contains(if row.change.staged { '−' } else { '+' }));
+                if !row.change.staged { assert!(rendered.contains('↶')); }
+                assert!(!rendered.contains("Open File"));
+                row.buttons().map(|(action, button)| {
+                    assert!(area.contains((button.x, button.y).into()));
+                    assert!(button.right() < area.right());
+                    assert!(button.width > 0);
+                    (action.label(), button)
+                }).collect::<Vec<_>>()
+            }).collect();
+            for (label, button) in buttons {
+                app.mouse_col = button.x;
+                app.mouse_row = button.y;
+                terminal.draw(|f| {
+                    draw_source_control_sidebar(f, &mut app, area);
+                    draw_action_tooltip(f, &app);
+                }).unwrap();
+                assert!(text(terminal.backend().buffer(), Rect::new(0, 0, 120, 36)).contains(label), "{label}");
+            }
+        }
+    }
+}

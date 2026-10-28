@@ -46,9 +46,13 @@ impl<T> Cache<T> {
         self.entries.insert(path, (self.clock, bytes, value));
     }
     pub(super) fn remove(&mut self, path: &RemotePath) {
-        if let Some((_, bytes, _)) = self.entries.remove(path) {
+        let _ = self.take(path);
+    }
+    pub(super) fn take(&mut self, path: &RemotePath) -> Option<T> {
+        self.entries.remove(path).map(|(_, bytes, value)| {
             self.bytes -= bytes;
-        }
+            value
+        })
     }
     pub(super) fn remove_under(&mut self, path: &RemotePath) {
         self.entries.retain(|key, (_, bytes, _)| {

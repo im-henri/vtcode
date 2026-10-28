@@ -46,9 +46,34 @@ enum Engine {
     Pcre2(grep_pcre2::RegexMatcher),
 }
 
+const LITERAL_WARMUP_BYTES: usize = 64 * 1024;
+
+struct AsciiLiteral {
+    query: String,
+    case_sensitive: bool,
+    searched: std::sync::atomic::AtomicUsize,
+    program: std::sync::OnceLock<Option<regex::bytes::Regex>>,
+}
+
+impl AsciiLiteral {
+    fn matcher(&self, bytes: usize) -> Option<&regex::bytes::Regex> {
+        if let Some(program) = self.program.get() { return program.as_ref(); }
+        // Amortize compilation over actual ASCII input, across repeated scans.
+        // Short first searches and tiny selections use the existing program.
+        let previous = self.searched.fetch_add(bytes.min(LITERAL_WARMUP_BYTES), std::sync::atomic::Ordering::Relaxed);
+        if previous.saturating_add(bytes) < LITERAL_WARMUP_BYTES { return None; }
+        self.program.get_or_init(|| regex::bytes::RegexBuilder::new(&regex::escape(&self.query))
+            .case_insensitive(!self.case_sensitive).unicode(false)
+            .size_limit(256 * 1024).dfa_size_limit(256 * 1024).build().ok()).as_ref()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SearchRegex {
     engine: Engine,
+    // Cached literal queries share this bounded program across document scans.
+    // Unicode input keeps JavaScript's exact case-folding and match semantics.
+    ascii_literal: Option<std::sync::Arc<AsciiLiteral>>,
     pub needs_document: bool,
     whole_word: bool,
     capture_regex: Option<std::sync::Arc<regress::Regex>>,
@@ -59,6 +84,21 @@ pub(crate) struct SearchCaptures {
     pub range: Range<usize>,
     pub groups: Vec<Option<Range<usize>>>,
     pub names: Vec<(String, Option<Range<usize>>)>,
+}
+
+enum EditorMatches<'r, 't> {
+    JavaScript(regress::Matches<'r, 't>),
+    Ascii(regex::bytes::Matches<'r, 't>),
+}
+
+impl Iterator for EditorMatches<'_, '_> {
+    type Item = Range<usize>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::JavaScript(matches) => matches.next().map(|found| found.range()),
+            Self::Ascii(matches) => matches.next().map(|found| found.range()),
+        }
+    }
 }
 
 /// VS Code searches LF text in editors, then maps results back to CRLF.
@@ -213,8 +253,15 @@ impl SearchRegex {
             },
         )
         .map_err(|error| error.to_string())?;
+        let ascii_literal = (!is_regex && !query.is_empty() && query.is_ascii() && !needs_document)
+            .then(|| std::sync::Arc::new(AsciiLiteral {
+                query: query.into(), case_sensitive,
+                searched: std::sync::atomic::AtomicUsize::new(0),
+                program: std::sync::OnceLock::new(),
+            }));
         Ok(Self {
             engine: Engine::JavaScript(std::sync::Arc::new(regex)),
+            ascii_literal,
             needs_document,
             whole_word,
             capture_regex: None,
@@ -234,6 +281,7 @@ impl SearchRegex {
         let editor = if is_regex { Self::new(query, case_sensitive, whole_word)? }
             else { Self::editor(query, case_sensitive, whole_word, false)? };
         let needs_document = editor.needs_document;
+        let ascii_literal = editor.ascii_literal;
         let Engine::JavaScript(editor_regex) = editor.engine else { unreachable!() };
         let original = if is_regex {
             query.to_owned()
@@ -318,6 +366,7 @@ impl SearchRegex {
         };
         Ok(Self {
             engine,
+            ascii_literal,
             needs_document,
             whole_word,
             capture_regex: Some(capture_regex),
@@ -328,6 +377,7 @@ impl SearchRegex {
         if let Some(regex) = &self.editor_regex {
             Self {
                 engine: Engine::JavaScript(regex.clone()),
+                ascii_literal: self.ascii_literal.clone(),
                 needs_document: self.needs_document,
                 whole_word: self.whole_word,
                 capture_regex: None,
@@ -424,29 +474,38 @@ impl SearchRegex {
             let input = normalized
                 .as_ref()
                 .map_or(text, |input| input.text.as_str());
+            let ascii = input.is_ascii();
+            let literal = self.ascii_literal.as_ref().filter(|_| ascii)
+                .and_then(|literal| literal.matcher(input.len()));
+            let found = if let Some(literal) = literal {
+                EditorMatches::Ascii(literal.find_iter(input.as_bytes()))
+            } else { EditorMatches::JavaScript(regex.find_iter(input)) };
             let mut column_byte = 0;
             let mut column_char = line_context.map_or(0, |(_, col)| col);
             // Reuse the regex executor across matches. Recreating find_from
             // for each dense hit repeatedly allocates its capture/backtrack state.
-            for found in regex.find_iter(input) {
+            for found in found {
                 if cancel.is_cancelled() {
                     return false;
                 }
-                let found = found.range();
                 let original_start = normalized
                     .as_ref()
                     .map_or(found.start, |input| input.original_offset(found.start));
                 let original_end = normalized
                     .as_ref()
                     .map_or(found.end, |input| input.original_offset(found.end));
-                let coordinates = if let Some((row, _)) = line_context {
+                let coordinates = if let Some((row, base)) = line_context {
                     // Match positions advance monotonically. Decode each UTF-8
                     // prefix once, avoiding several rope tree seeks per hit.
-                    let start = column_char + text[column_byte..original_start].chars().count();
-                    let end = start + text[original_start..original_end].chars().count();
-                    column_byte = original_end;
-                    column_char = end;
-                    (row, start, end)
+                    if ascii {
+                        (row, base + original_start, base + original_end)
+                    } else {
+                        let start = column_char + text[column_byte..original_start].chars().count();
+                        let end = start + text[original_start..original_end].chars().count();
+                        column_byte = original_end;
+                        column_char = end;
+                        (row, start, end)
+                    }
                 } else {
                     let start = rope.byte_to_char(byte_offset + original_start);
                     let end = rope.byte_to_char(byte_offset + original_end);
@@ -483,16 +542,34 @@ impl SearchRegex {
             let mut line_buffer = String::new();
             let first_line = first_line.min(rope.len_lines());
             let last_line = last_line.min(rope.len_lines());
+            let (first_line, last_line) = bounds.map_or((first_line, last_line), |(low, high)| {
+                (first_line.max(rope.char_to_line(low)), last_line.min(rope.char_to_line(high) + 1))
+            });
+            // The line iterator already carries its position through the Rope.
+            // Only selections need absolute character offsets; advance those
+            // once per row instead of seeking from the tree root for every row.
+            let mut line_start = bounds.map_or(0, |_| rope.line_to_char(first_line));
             for (row, line) in (first_line..last_line).zip(rope.lines_at(first_line)) {
                 if cancel.is_cancelled() {
                     return (Vec::new(), false);
                 }
-                let line_start = rope.line_to_char(row);
-                let text = if let Some(text) = line.as_str() {
+                let (selected, start_col) = if let Some((low, high)) = bounds {
+                    let row_start = line_start;
+                    line_start += line.len_chars();
+                    let trailing = line.chars_at(line.len_chars()).reversed()
+                        .take_while(|&ch| matches!(ch, '\r' | '\n')).count();
+                    let start = low.max(row_start);
+                    let end = high.min(line_start - trailing);
+                    if start > end { continue; }
+                    (line.slice(start - row_start..end - row_start), start - row_start)
+                } else { (line, 0) };
+                // Clip to the selection before copying fragmented text. Tiny
+                // selections in minified lines should only copy selected bytes.
+                let text = if let Some(text) = selected.as_str() {
                     text
                 } else {
                     line_buffer.clear();
-                    for chunk in line.chunks() {
+                    for chunk in selected.chunks() {
                         if cancel.is_cancelled() {
                             return (Vec::new(), false);
                         }
@@ -501,25 +578,7 @@ impl SearchRegex {
                     &line_buffer
                 };
                 let clean = text.trim_end_matches(['\r', '\n']);
-                let line_end = line_start + line.len_chars() - (text.len() - clean.len());
-                let (start, end) = bounds.map_or((line_start, line_end), |(low, high)| {
-                    (low.max(line_start), high.min(line_end))
-                });
-                if start > end {
-                    continue;
-                }
-                let start_col = start - line_start;
-                let start_byte = if start_col == 0 {
-                    0
-                } else {
-                    line.char_to_byte(start_col)
-                };
-                let end_byte = if end == line_end {
-                    clean.len()
-                } else {
-                    line.char_to_byte(end - line_start)
-                };
-                if scan(&text[start_byte..end_byte], 0, Some((row, start_col))) {
+                if scan(clean, 0, Some((row, start_col))) {
                     limited = true;
                     break;
                 }
@@ -1015,6 +1074,84 @@ mod performance_tests {
     }
 
     #[test]
+    fn literal_acceleration_matches_javascript_for_unicode_folding_limits_and_selections() {
+        let fragmented = "foo β FOO k K s ſ café\r\n".repeat(400);
+        let cancel = CancellationToken::new();
+        for text in [
+            "", "foo FOO foobar [x] . \\b\r\nfoo\n", "k K K s S ſ i I İ ı\n",
+            "😀foo café CAFÉ 界foo\r\n\r\nend foo", "foo\rFOO\r\nfoo\0foo", &fragmented,
+        ] {
+            let rope = ropey::Rope::from_str(text);
+            for query in ["foo", "FOO", "k", "s", "i", "[x]", ".", r"\b", "café", "界", "", "\0"] {
+                for sensitive in [false, true] {
+                    for whole in [false, true] {
+                        let regex = SearchRegex::editor(query, sensitive, whole, false).unwrap();
+                        // Verify the accelerated iterator as well as the
+                        // Unicode fallback, independent of warm-up policy.
+                        if let Some(literal) = &regex.ascii_literal {
+                            assert!(literal.matcher(LITERAL_WARMUP_BYTES).is_some());
+                        }
+                        for selection in [None, Some((0, 1, 0, 8)), Some((0, 2, 2, 1)),
+                            Some((1, 0, 2, 999)), Some((0, 999, 0, 999))] {
+                            for limit in [0, 1, 17, 1000] {
+                                assert_eq!(regex.scan(&rope, selection, limit, &cancel),
+                                    regex.legacy_scan_lines(&rope, selection, 0, rope.len_lines(), limit, &cancel),
+                                    "query={query:?} sensitive={sensitive} whole={whole} selection={selection:?} limit={limit} source={:?}",
+                                    text.chars().take(30).collect::<String>());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selected_regex_search_preserves_context_and_columns_in_fragmented_long_lines() {
+        let mut rope = ropey::Rope::from_str(&format!("{}foo café FOO{}\r\nlast foo\n",
+            "界".repeat(10_000), "😀".repeat(10_000)));
+        rope.insert(10_000, "界");
+        let cancel = CancellationToken::new();
+        for pattern in ["foo", "(?<=f)oo", "^foo", "$", "(?=.)", "(?:)", r"\b", "café"] {
+            let regex = SearchRegex::editor(pattern, false, false, true).unwrap();
+            for selection in [Some((0, 10_001, 0, 10_013)), Some((0, 10_002, 1, 8)), Some((1, 0, 2, 0))] {
+                for (first, last) in [(0, rope.len_lines()), (1, 2), (2, 2)] {
+                    assert_eq!(regex.scan_lines(&rope, selection, first, last, 100, &cancel),
+                        regex.legacy_scan_lines(&rope, selection, first, last, 100, &cancel),
+                        "pattern={pattern:?} selection={selection:?} rows={first}..{last}");
+                }
+            }
+        }
+        cancel.cancel();
+        let regex = SearchRegex::editor("foo", false, false, false).unwrap();
+        assert_eq!(regex.scan(&rope, None, 100, &cancel), (Vec::new(), false));
+    }
+
+    #[test]
+    fn literal_program_setup_is_shared_and_amortized_over_only_searched_ascii_text() {
+        let cancel = CancellationToken::new();
+        let regex = SearchRegex::editor("value", false, false, false).unwrap();
+        let literal = regex.ascii_literal.as_ref().unwrap();
+        let rope = ropey::Rope::from_str(&format!("{}VALUE{}", "界".repeat(30_000), "界".repeat(30_000)));
+        assert_eq!(regex.scan(&rope, Some((0, 30_000, 0, 30_005)), 100, &cancel).0,
+            vec![(0, 30_000, 30_005)]);
+        assert!(literal.program.get().is_none(), "unselected bytes must not trigger compilation");
+        let small = ropey::Rope::from_str("value VALUE\r\n");
+        assert_eq!(regex.scan(&small, None, 100, &cancel).0.len(), 2);
+        assert!(literal.program.get().is_none());
+        let unicode = ropey::Rope::from_str(&"界 value\n".repeat(12_000));
+        regex.scan(&unicode, None, 100_000, &cancel);
+        assert!(literal.program.get().is_none(), "Unicode rows use JavaScript directly");
+        let large = ropey::Rope::from_str(&"value VALUE\r\n".repeat(12_000));
+        let expected = regex.legacy_scan_lines(&large, None, 0, large.len_lines(), 100_000, &cancel);
+        assert_eq!(regex.clone().scan(&large, None, 100_000, &cancel), expected);
+        assert!(literal.program.get().unwrap().is_some(), "clones share completed setup");
+        let workspace = SearchRegex::workspace("value", false, true, false).unwrap();
+        let open = workspace.for_open_buffer();
+        assert!(std::sync::Arc::ptr_eq(workspace.ascii_literal.as_ref().unwrap(), open.ascii_literal.as_ref().unwrap()));
+    }
+
+    #[test]
     fn cached_editor_patterns_reuse_engines_and_preserve_options_and_errors() {
         let first = SearchRegex::cached_editor("cache-[0-9]+", true, false, true).unwrap();
         let second = SearchRegex::cached_editor("cache-[0-9]+", true, false, true).unwrap();
@@ -1124,6 +1261,47 @@ mod performance_tests {
                 "regex Find {name}: before={:?} after={:?}",
                 before[3], after[3]
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual optimized core Find workload; fixture preparation is excluded"]
+    fn benchmark_core_find_workloads() {
+        use std::{hash::{Hash, Hasher}, hint::black_box, time::Instant};
+        let small = "let value = ordinary_source();\r\n".repeat(250);
+        let selected_ascii = format!("{}needle VALUE other{}", "x".repeat(3_000_000), "z".repeat(3_000_000));
+        let selected_unicode = format!("{}needle café NEEDLE{}", "界".repeat(500_000), "界".repeat(500_000));
+        for (name, text, query, is_regex, selection, compile, rounds) in [
+            ("small-first-query", small.clone(), "VALUE", false, None, true, 100),
+            ("small-repeated-query", small, "VALUE", false, None, false, 100),
+            ("source-file", include_str!("editor_cursor.rs").repeat(4), "cursor", false, None, false, 30),
+            ("selected-ascii", selected_ascii, "NEEDLE", false, Some((0, 3_000_000, 0, 3_000_018)), false, 10),
+            ("selected-unicode-regex", selected_unicode, "n[e]+dle", true, Some((0, 500_000, 0, 500_018)), false, 10),
+            ("many-lines-regex", "let value = ordinary_source();\r\n".repeat(50_000), "absent-[0-9]+", true, None, false, 3),
+        ] {
+            let rope = ropey::Rope::from_str(&text);
+            let cancel = CancellationToken::new();
+            let regex = SearchRegex::editor(query, false, false, is_regex).unwrap();
+            let expected = regex.scan(&rope, selection, 19_999, &cancel);
+            let mut samples = Vec::new();
+            for _ in 0..7 {
+                let mut elapsed = std::time::Duration::ZERO;
+                for _ in 0..rounds {
+                    let started = Instant::now();
+                    let result = if compile {
+                        SearchRegex::editor(black_box(query), false, false, is_regex).unwrap()
+                            .scan(black_box(&rope), selection, 19_999, &cancel)
+                    } else { regex.scan(black_box(&rope), selection, 19_999, &cancel) };
+                    elapsed += started.elapsed();
+                    assert_eq!(black_box(result), expected);
+                }
+                samples.push(elapsed / rounds);
+            }
+            samples.sort();
+            let mut digest = std::collections::hash_map::DefaultHasher::new();
+            expected.hash(&mut digest);
+            eprintln!("core Find {name}: bytes={} median={:?} matches={} truncated={} digest={:016x}",
+                text.len(), samples[3], expected.0.len(), expected.1, digest.finish());
         }
     }
 

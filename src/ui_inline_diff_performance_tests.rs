@@ -15,25 +15,25 @@ fn reference<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
     run()
 }
 
-fn style(index: usize) -> syntect::highlighting::Style {
-    syntect::highlighting::Style {
-        foreground: syntect::highlighting::Color {
+fn style(index: usize) -> crate::textmate::Style {
+    crate::textmate::Style {
+        foreground: crate::textmate::Color {
             r: (index * 71) as u8,
             g: (index * 29 + 80) as u8,
             b: 190,
             a: if index % 2 == 0 { 255 } else { 128 },
         },
-        background: syntect::highlighting::Color {
+        background: crate::textmate::Color {
             r: 0,
             g: 0,
             b: 0,
             a: 0,
         },
         font_style: match index % 4 {
-            0 => syntect::highlighting::FontStyle::BOLD,
-            1 => syntect::highlighting::FontStyle::ITALIC,
-            2 => syntect::highlighting::FontStyle::UNDERLINE,
-            _ => syntect::highlighting::FontStyle::empty(),
+            0 => crate::textmate::FontStyle::BOLD,
+            1 => crate::textmate::FontStyle::ITALIC,
+            2 => crate::textmate::FontStyle::UNDERLINE,
+            _ => crate::textmate::FontStyle::empty(),
         },
     }
 }

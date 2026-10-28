@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 #[path = "git_repository_reopen_tests.rs"]
 mod reopen;
+#[path = "git_repository_headers_tests.rs"]
+mod headers;
 
 fn init(root: &Path, text: &str) {
     std::fs::create_dir_all(root).unwrap();
@@ -642,14 +644,16 @@ fn git_subprocess_cannot_fall_back_to_parent_after_nested_metadata_disappears() 
 }
 
 #[test]
-fn discovery_prunes_dependency_caches_even_when_the_workspace_has_no_gitignore() {
+fn discovery_keeps_repositories_in_all_project_directory_names() {
     let directory = tempfile::tempdir().unwrap();
     let root = canonical(directory.path());
     init(&root.join("src/project"), "project\n");
     init(&root.join("node_modules/package/repository"), "cache\n");
     init(&root.join("target/cache/repository"), "cache\n");
+    init(&root.join("build/nested"), "project\n");
     let discovery = discover(&root, &CancellationToken::new());
-    assert_eq!(discovery.roots, vec![root.join("src/project")]);
+    assert_eq!(discovery.roots, vec![root.join("build/nested"), root.join("node_modules/package/repository"),
+        root.join("src/project"), root.join("target/cache/repository")]);
 }
 
 #[test]

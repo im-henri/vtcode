@@ -2863,7 +2863,7 @@ fn imported_annotations_inherit_diagnostics_and_native_annotations_survive_custo
     // A legacy native theme has an explicitly authored palette and no imported
     // grammar/workbench metadata. Overrides must not replace its annotations.
     let mut native = crate::app_theme::load_builtin_themes().remove(0);
-    native.syntect_theme = None;
+    native.textmate_theme = None;
     native.workbench_colors.clear();
     native.colors.fg_todo = Some("#123456".into());
     native.colors.fg_fixme = Some("#654321".into());
@@ -4004,7 +4004,7 @@ fn merge_header_defaults_and_native_overrides_do_not_borrow_content_or_list_colo
         );
     }
     theme.high_contrast = false;
-    theme.syntect_theme = None;
+    theme.textmate_theme = None;
     theme.colors.bg_merge_current = Some("#1c406680".into());
     let palette = theme.to_theme_colors();
     assert_eq!(

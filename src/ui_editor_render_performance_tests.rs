@@ -203,7 +203,7 @@ fn cached_span_lengths_validate_unicode_without_recounting_text() {
 fn borrowed_highlight_views_keep_worker_styles_and_reject_incomplete_runs() {
     use crate::ui_editor_highlight::{HighlightedLine, PLAIN_STYLE};
     let mut styled = PLAIN_STYLE;
-    styled.font_style = syntect::highlighting::FontStyle::BOLD;
+    styled.font_style = crate::textmate::FontStyle::BOLD;
     styled.foreground.r = 7;
     let spans = [(styled, "界".to_owned()), (PLAIN_STYLE, "😀x\n".to_owned())];
     let view = HighlightedLine::new(Some((&spans, 3)), "界😀x", 3, PLAIN_STYLE);
@@ -524,7 +524,6 @@ fn benchmark_plain_editor_line_preparation() {
 fn semantic_color_cache_preserves_language_modifiers_and_missing_selector_behavior() {
     use crate::lsp::DecodedSemanticToken;
     use lsp_types::{SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
-    use ratatui::style::Color;
     let legend = SemanticTokensLegend {
         token_types: vec![
             SemanticTokenType::new("variable"),
@@ -532,7 +531,7 @@ fn semantic_color_cache_preserves_language_modifiers_and_missing_selector_behavi
         ],
         token_modifiers: vec![SemanticTokenModifier::new("readonly")],
     };
-    let theme = rustc_hash::FxHashMap::from_iter([
+    let theme = crate::semantic_theme::SemanticTheme::from_iter([
         ("variable".to_string(), (1, 2, 3)),
         ("variable.readonly:rust".to_string(), (4, 5, 6)),
         ("variable:python".to_string(), (7, 8, 9)),
@@ -557,8 +556,7 @@ fn semantic_color_cache_preserves_language_modifiers_and_missing_selector_behavi
     let expected: Vec<_> = tokens
         .iter()
         .map(|token| {
-            crate::lsp::themed_semantic_token_color(token, &legend, "rust", Some(&theme))
-                .map(|(r, g, b)| Color::Rgb(r, g, b))
+            crate::lsp::themed_semantic_token_style(token, &legend, "rust", Some(&theme))
         })
         .collect();
     assert_eq!(colors, expected);
@@ -658,6 +656,7 @@ fn benchmark_semantic_selector_resolution() {
         ("function".to_string(), (61, 71, 83)),
         ("variable.readonly:rust".to_string(), (97, 101, 107)),
     ]);
+    let theme = crate::semantic_theme::SemanticTheme::from_iter(theme);
     let tokens: Vec<_> = (0..512)
         .map(|index| DecodedSemanticToken {
             line: 0,
@@ -691,13 +690,12 @@ fn benchmark_semantic_selector_resolution() {
                         let color = if optimized {
                             cached_color
                         } else {
-                            crate::lsp::themed_semantic_token_color(
+                            crate::lsp::themed_semantic_token_style(
                                 black_box(token),
                                 &legend,
                                 "rust",
                                 Some(&theme),
                             )
-                            .map(|(r, g, b)| ratatui::style::Color::Rgb(r, g, b))
                         };
                         black_box(color);
                     }

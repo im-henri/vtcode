@@ -1,0 +1,63 @@
+{
+  "name": "git-base",
+  "contributes": {
+    "languages": [
+      {
+        "id": "git-commit",
+        "aliases": [
+          "Git Commit Message",
+          "git-commit"
+        ],
+        "filenames": [
+          "COMMIT_EDITMSG",
+          "MERGE_MSG"
+        ],
+        "configuration": "./languages/git-commit.language-configuration.json"
+      },
+      {
+        "id": "git-rebase",
+        "aliases": [
+          "Git Rebase Message",
+          "git-rebase"
+        ],
+        "filenames": [
+          "git-rebase-todo"
+        ],
+        "filenamePatterns": [
+          "**/rebase-merge/done"
+        ],
+        "configuration": "./languages/git-rebase.language-configuration.json"
+      },
+      {
+        "id": "ignore",
+        "aliases": [
+          "Ignore",
+          "ignore"
+        ],
+        "extensions": [
+          ".gitignore_global",
+          ".gitignore",
+          ".git-blame-ignore-revs"
+        ],
+        "configuration": "./languages/ignore.language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "git-commit",
+        "scopeName": "text.git-commit",
+        "path": "./git-commit.tmLanguage.json"
+      },
+      {
+        "language": "git-rebase",
+        "scopeName": "text.git-rebase",
+        "path": "./git-rebase.tmLanguage.json"
+      },
+      {
+        "language": "ignore",
+        "scopeName": "source.ignore",
+        "path": "./ignore.tmLanguage.json"
+      }
+    ]
+  }
+}

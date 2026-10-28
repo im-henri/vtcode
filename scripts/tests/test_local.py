@@ -26,7 +26,8 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
 
     def archive(self, target=None, *, preview=False, dirty=False, revision="a" * 40, executable=True,
-                baseline="2.28", required_glibc=None, report_baseline=None, skip_tests=False):
+                baseline="2.28", required_glibc=None, report_baseline=None, skip_tests=False,
+                missing_bundled=False):
         target = target or local.TARGETS["win32"]
         binary = "vtcode.exe" if target == local.TARGETS["win32"] else "vtcode"
         state = {"sourceRevision": revision, "sourceDirty": dirty, "sourceFingerprint": "b" * 64}
@@ -35,15 +36,20 @@ class ReleaseIntegrityTests(unittest.TestCase):
         if skip_tests:
             report.update(passed=False, testsSkipped=True, checks=[])
         payload = {name: b"payload" for name in (binary, "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md",
-                   "vendor/crossterm/LICENSE", "syntaxes/.cache/default_newlines.packdump",
-                   "syntaxes/.cache/source.fingerprint", "themes/dark.json")}
+                   "vendor/crossterm/LICENSE", "grammars/.cache/textmate-registry.json.gz",
+                   "grammars/.cache/source.fingerprint", "themes/dark.json")}
         payload["settings.json"] = b"{}\n"
         if target == local.TARGETS["linux"] and baseline:
             from test_linux_abi import elf
             payload[binary] = elf(glibc=required_glibc or baseline)
             report["glibcBaseline"] = report_baseline or baseline
         payload["validation.json"] = json.dumps(report).encode()
-        payload.update({f"syntaxes/grammar-{number}.sublime-syntax": b"grammar" for number in range(226)})
+        payload.update({f"grammars/grammar-{number}.tmLanguage.json": b"grammar" for number in range(3)})
+        payload["grammars/bundled/index.json"] = b'{"version":1,"grammars":{"fixture":{"scopeName":"source.fixture"}}}'
+        payload["grammars/bundled/fixture.json"] = b'{"scopeName":"source.fixture","patterns":[]}'
+        if missing_bundled:
+            del payload["grammars/bundled/fixture.json"]
+
         manifest = {"formatVersion": 2 if baseline else 1, "product": "VTCode", "version": "1.2.3", "tag": "v1.2.3",
                     "target": target, "binary": binary, "portable": True, "preview": preview, **state,
                     "files": [{"path": name, "size": len(data), "sha256": local.digest(io.BytesIO(data))}
@@ -77,6 +83,11 @@ class ReleaseIntegrityTests(unittest.TestCase):
         self.archive(local.TARGETS["linux"])
         self.archive(local.TARGETS["linux"], baseline="2.43")
         local.verify(self.directory, require_both=True)
+
+    def test_archive_requires_every_source_in_the_bundled_grammar_catalog(self):
+        archive = self.archive(missing_bundled=True)
+        with self.assertRaisesRegex(local.Failure, "Missing bundled grammar source"):
+            local.verify_archive(archive)
 
     def test_linux_pair_can_be_verified_without_windows(self):
         self.archive(local.TARGETS["linux"])
@@ -197,10 +208,13 @@ class ReleaseIntegrityTests(unittest.TestCase):
         from test_linux_abi import elf
 
         root = self.directory / "source"
-        (root / "syntaxes").mkdir(parents=True)
+        (root / "grammars").mkdir(parents=True)
         (root / "themes").mkdir()
-        for number in range(226):
-            (root / f"syntaxes/grammar-{number}.sublime-syntax").write_bytes(b"grammar")
+        (root / "grammars/bundled").mkdir()
+        (root / "grammars/bundled/index.json").write_bytes(b'{"version":1,"grammars":{"fixture":{"scopeName":"source.fixture"}}}')
+        (root / "grammars/bundled/fixture.json").write_bytes(b'{"scopeName":"source.fixture","patterns":[]}')
+        for number in range(3):
+            (root / f"grammars/grammar-{number}.tmLanguage.json").write_bytes(b"grammar")
         (root / "themes/dark.json").write_bytes(b"{}")
         for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "vendor/crossterm/LICENSE"):
             path = root / name
@@ -210,9 +224,9 @@ class ReleaseIntegrityTests(unittest.TestCase):
 
         def run(command, **kwargs):
             if command[0] != "cargo":
-                cache = kwargs["cwd"] / "syntaxes" / ".cache"
+                cache = kwargs["cwd"] / "grammars" / ".cache"
                 cache.mkdir()
-                (cache / "default_newlines.packdump").write_bytes(b"cache")
+                (cache / "textmate-registry.json.gz").write_bytes(b"cache")
                 (cache / "source.fingerprint").write_bytes(b"fingerprint")
 
         target = local.TARGETS[sys.platform]

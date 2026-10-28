@@ -379,7 +379,8 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
     }
 
     // Use the controls recorded by the rendered Find widget.
-    if app.search_active && app.search_bar_area.is_some_and(|area| area.contains((col, row).into())) {
+    if let Some(bar) = app.file_search_bar_at(col, row) {
+        app.focus_file_search_owner(bar.owner);
         if crate::ui_search_dialog::search_bar_resize_hit(app, col, row) {
             app.clear_drag_states();
             app.search_bar_layout.resizing = true;

@@ -260,6 +260,7 @@ pub(crate) fn collect_source_control_status_cancellable(
     collect_source_control_status_with_paths(root, repository_found_callback, cancel, true, |path| path.to_string_lossy().into_owned())
 }
 
+#[cfg(test)]
 pub(crate) fn collect_source_control_status_with_paths<P: Ord>(
     root: PathBuf,
     repository_found_callback: impl FnOnce(),
@@ -443,7 +444,12 @@ impl App {
         }
         if self.workspace_watcher_active {
             self.refresh_dirty_source_control_diffs();
-            self.start_source_control_status_refresh(None);
+            // Navigation does not invalidate remote Git state. Reuse fresh
+            // snapshots; their full-read deadline still catches missed events.
+            let paths = self.remote_workspace.as_ref()
+                .filter(|_| self.source_control_repository_state == crate::app::SourceControlRepositoryState::Available)
+                .map(|_| Default::default());
+            self.start_source_control_status_refresh(paths);
         } else {
             self.refresh_source_control_async();
         }

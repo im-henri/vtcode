@@ -4,11 +4,12 @@ struct ClosedTab {
     navigation_id: u64,
     kind: TabKind,
     file: Option<(std::path::PathBuf, usize, usize)>,
+    position: Option<crate::editor_view_state::ViewState>,
     view: Option<crate::app::ExtensionViewTabRef>,
 }
 
 impl ClosedTab {
-    fn new(tab: &Tab) -> Self {
+    fn new(tab: &mut Tab) -> Self {
         Self {
             navigation_id: tab.editor.navigation_id,
             kind: tab.kind,
@@ -20,6 +21,8 @@ impl ClosedTab {
                         .map(|path| (path, tab.editor.cursor_line, tab.editor.cursor_col))
                 })
                 .flatten(),
+            position: (tab.kind == TabKind::File && !tab.editor.load_failed)
+                .then(|| crate::editor_view_state::ViewState::capture(&mut tab.editor)),
             view: tab.extension_view.clone(),
         }
     }
@@ -199,7 +202,7 @@ impl App {
             };
             if indices.len() == 1 {
                 let index = indices[0];
-                closed.push(ClosedTab::new(&tabs[index]));
+                closed.push(ClosedTab::new(&mut tabs[index]));
                 tabs.remove(index);
                 crate::tab_collection::removed(mru, index);
                 if index < *active {
@@ -212,7 +215,7 @@ impl App {
             }
             let mut remove = vec![false; tabs.len()];
             for index in indices {
-                closed.push(ClosedTab::new(&tabs[index]));
+                closed.push(ClosedTab::new(&mut tabs[index]));
                 remove[index] = true;
             }
             crate::tab_collection::retain(tabs, active, mru, |i, _| !remove[i]);
@@ -246,6 +249,9 @@ impl App {
                 _ => {}
             }
             if let Some((path, line, col)) = tab.file {
+                if let Some(position) = tab.position {
+                    self.closed_file_views.insert(path.clone(), position);
+                }
                 paths.insert(path.clone());
                 self.closed_tab_paths.push_back((path, line, col));
                 if self.closed_tab_paths.len() > 20 {

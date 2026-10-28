@@ -14,6 +14,8 @@ pub(crate) struct Query {
     sort: crate::explorer::ExplorerSortMode,
     find: Option<Find>,
     source_control: bool,
+    #[serde(default)]
+    files_exclude: crate::settings::ExcludePatterns,
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct Find {
@@ -78,6 +80,7 @@ pub(crate) fn read(
         *epoch = query.epoch;
     }
     explorer.set_source_control_enabled(query.source_control);
+    explorer.set_files_exclude(&query.files_exclude);
     let expanded = query
         .expanded
         .into_iter()
@@ -123,6 +126,7 @@ impl workspace::Workspace {
         sort: crate::explorer::ExplorerSortMode,
         find: Option<crate::explorer_find::Query>,
         source_control: bool,
+        files_exclude: &crate::settings::ExcludePatterns,
         cancel: &crate::background::CancellationToken,
     ) -> io::Result<(
         Vec<crate::explorer::FileEntry>,
@@ -141,6 +145,7 @@ impl workspace::Workspace {
             expanded: paths(expanded.clone())?,
             sort,
             source_control,
+            files_exclude: files_exclude.clone(),
             find: find
                 .map(|find| -> io::Result<_> {
                     Ok(Find {

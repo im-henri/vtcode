@@ -1179,6 +1179,29 @@ impl App {
             && self.editor().is_some_and(|editor| editor.read_only)
     }
 
+    pub(crate) fn has_diff_layout_preference(&self) -> bool {
+        self.settings_workspace.diff_side_by_side.is_some() || self.settings_global.diff_side_by_side.is_some()
+    }
+
+    pub(crate) fn save_diff_layout_preference(&mut self) {
+        let side_by_side = match self.diff_mode {
+            DiffMode::Off => return,
+            DiffMode::SideBySide => true,
+            DiffMode::Inline => false,
+        };
+        self.preferred_diff_mode = self.diff_mode;
+        // A layout choice follows the user unless the workspace explicitly
+        // overrides it. The currently selected Settings page is unrelated.
+        let scope = if self.settings_workspace.diff_side_by_side.is_some() {
+            crate::settings::SettingsScope::Workspace
+        } else { crate::settings::SettingsScope::Global };
+        if let Err(error) = self.patch_settings_scope(scope, "diffEditor.renderSideBySide", |settings| {
+            settings.diff_side_by_side = Some(side_by_side);
+        }) {
+            self.notify_error(format!("Could not save diff layout: {error}"));
+        }
+    }
+
     pub(crate) fn clear_diff_state(&mut self) {
         self.clear_diff_selection();
         self.diff_scope_source.forget_original_view(&mut self.animations);
@@ -1292,7 +1315,7 @@ impl App {
         let palette_was_active = self.palette.active;
         let previous_generation = self.highlighter.registry_generation();
         for theme in &themes {
-            if let Some(syntax_theme) = &theme.syntect_theme {
+            if let Some(syntax_theme) = &theme.textmate_theme {
                 self.highlighter
                     .register_theme(&theme.syntax_theme, syntax_theme.clone());
             }
@@ -1420,9 +1443,7 @@ impl App {
                 tf, &self.settings_effective.workbench_color_customizations,
             );
             self.colors = selected.to_theme_colors();
-            if let Some(mut syntax) = selected.syntect_theme.clone() {
-                syntax.settings.foreground = crate::vscode_theme::parse_syntect_color(&selected.colors.fg_text);
-                syntax.settings.background = crate::vscode_theme::parse_syntect_color(&selected.colors.bg_editor);
+            if let Some(syntax) = selected.textmate_theme.clone() {
                 highlights_changed |= self.highlighter.register_theme(&selected.syntax_theme, syntax);
             }
             self.semantic_theme_colors = selected.semantic_colors.clone();

@@ -470,6 +470,8 @@ fn remote_context_completion_includes_hidden_files_and_skips_build_trees() {
         .call(remote::Command::Files {
             generation: 0,
             known_version: None,
+            excludes: ["**/.config", "**/target"].into_iter()
+                .map(|pattern| (pattern.into(), serde_json::json!(true))).collect(),
         })
         .unwrap()
     else {
@@ -477,7 +479,7 @@ fn remote_context_completion_includes_hidden_files_and_skips_build_trees() {
     };
     assert!(
         files.is_empty(),
-        "sharing a richer chat index must not expose hidden files in Quick Open"
+        "sharing a richer chat index must respect Quick Open's configured exclusions"
     );
 }
 

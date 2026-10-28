@@ -5,9 +5,10 @@ redistributing source or portable packages.
 
 | Material | Source and notice |
 | --- | --- |
-| Sublime syntax definitions | `sublimehq/Packages` at `ceda1630fa4990371fad48def6ebef28993c3d22`; [syntaxes/LICENSE](syntaxes/LICENSE) and [Rust notice](syntaxes/Rust/LICENSE.txt). |
-| Additional syntax definitions | Pinned repositories and revisions in [syntaxes/SOURCES.json](syntaxes/SOURCES.json); each affected language folder retains its upstream license and notices. |
-| Python TextMate grammars | VS Code 1.103.0 and MagicPython; [Microsoft notice](syntaxes/Python/LICENSE.txt) and [MagicPython notice](syntaxes/Python/MagicPython-LICENSE). The Python language manifest is adapted for vtcode's asset layout. |
+| Native TextMate engine and embedded grammars | Irosashi 0.3.0 and Shiki TextMate grammars; pinned in [grammars/SOURCES.json](grammars/SOURCES.json) and [grammars/BUNDLED-GRAMMARS.json](grammars/BUNDLED-GRAMMARS.json). [Engine license](grammars/IROSASHI-LICENSE), [grammar catalog license](grammars/TEXTMATE-GRAMMARS-LICENSE), [individual grammar notices](grammars/TEXTMATE-GRAMMARS-NOTICE). Local tokenizer corrections are described in `vendor/irosashi/VTCODE-PATCH.md`. |
+| Rust TextMate grammar and semantic token contributions | Pinned VS Code and rust-analyzer revisions in [grammars/SOURCES.json](grammars/SOURCES.json); [Microsoft license](grammars/Rust/VSCode-LICENSE.txt), [grammar license](grammars/Rust/Rust-Syntax-LICENSE.txt), [rust-analyzer license](grammars/Rust/Rust-Analyzer-LICENSE-MIT). |
+| Semantic theme selector port and tokenizer reference fixtures | Microsoft VS Code and vscode-textmate, MIT; [Microsoft license](#vs-code-color-data-license). `src/scope_selector.rs` and reference generators in `scripts/tests/`. |
+| Python TextMate grammars | VS Code 1.103.0 and MagicPython; [Microsoft notice](grammars/Python/LICENSE.txt) and [MagicPython notice](grammars/Python/MagicPython-LICENSE). The Python language manifest is adapted for vtcode's asset layout. |
 | Bundled VS Code themes | [themes/SOURCE.md](themes/SOURCE.md) and [themes/LICENSE](themes/LICENSE). |
 | VS Code color defaults and test references | Microsoft VS Code commit `04d61b08def5469aaa7af86fba5a9415ebc2495f`; [MIT notice](#vs-code-color-data-license). `src/vscode_color_defaults.json` records the upstream source modules. |
 | VS Code search behavior ports and regression references | Microsoft VS Code commit `959031245ebb1fe077e0d512e1397c0ae82006e4`; [MIT notice](#vs-code-color-data-license). Regression fixture generator: [tests/support/generate_vscode_search_fixtures.mjs](tests/support/generate_vscode_search_fixtures.mjs). |

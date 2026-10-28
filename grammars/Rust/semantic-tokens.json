@@ -1,0 +1,250 @@
+{
+  "source": "https://github.com/rust-lang/rust-analyzer/blob/889bb47e853003f62b0a593b955ab9afc97e7885/editors/code/package.json",
+  "semanticTokenScopes": [
+    {
+      "language": "rust",
+      "scopes": {
+        "attribute": [
+          "meta.attribute.rust"
+        ],
+        "boolean": [
+          "constant.language.boolean.rust"
+        ],
+        "builtinType": [
+          "support.type.primitive.rust"
+        ],
+        "constParameter": [
+          "constant.other.caps.rust"
+        ],
+        "enum": [
+          "entity.name.type.enum.rust"
+        ],
+        "formatSpecifier": [
+          "punctuation.section.embedded.rust"
+        ],
+        "function": [
+          "entity.name.function.rust"
+        ],
+        "interface": [
+          "entity.name.type.trait.rust"
+        ],
+        "keyword": [
+          "keyword.other.rust"
+        ],
+        "keyword.controlFlow": [
+          "keyword.control.rust"
+        ],
+        "lifetime": [
+          "storage.modifier.lifetime.rust"
+        ],
+        "macroBang": [
+          "entity.name.function.macro.rust"
+        ],
+        "method": [
+          "entity.name.function.rust"
+        ],
+        "struct": [
+          "entity.name.type.struct.rust"
+        ],
+        "typeAlias": [
+          "entity.name.type.declaration.rust"
+        ],
+        "union": [
+          "entity.name.type.union.rust"
+        ],
+        "variable": [
+          "variable.other.rust"
+        ],
+        "variable.constant": [
+          "variable.other.constant.rust"
+        ],
+        "*.mutable": [
+          "markup.underline"
+        ]
+      }
+    }
+  ],
+  "semanticTokenTypes": [
+    {
+      "id": "angle",
+      "description": "Style for < or >",
+      "superType": "punctuation"
+    },
+    {
+      "id": "arithmetic",
+      "description": "Style for arithmetic operators",
+      "superType": "operator"
+    },
+    {
+      "id": "attribute",
+      "description": "Style for attributes"
+    },
+    {
+      "id": "attributeBracket",
+      "description": "Style for attribute invocation brackets, that is the `#[` and `]` tokens",
+      "superType": "punctuation"
+    },
+    {
+      "id": "bitwise",
+      "description": "Style for bitwise operators",
+      "superType": "operator"
+    },
+    {
+      "id": "boolean",
+      "description": "Style for boolean literals",
+      "superType": "keyword"
+    },
+    {
+      "id": "brace",
+      "description": "Style for { or }",
+      "superType": "punctuation"
+    },
+    {
+      "id": "bracket",
+      "description": "Style for [ or ]",
+      "superType": "punctuation"
+    },
+    {
+      "id": "builtinAttribute",
+      "description": "Style for builtin attributes",
+      "superType": "attribute"
+    },
+    {
+      "id": "builtinType",
+      "description": "Style for builtin types",
+      "superType": "type"
+    },
+    {
+      "id": "character",
+      "description": "Style for character literals",
+      "superType": "string"
+    },
+    {
+      "id": "colon",
+      "description": "Style for :",
+      "superType": "punctuation"
+    },
+    {
+      "id": "comma",
+      "description": "Style for ,",
+      "superType": "punctuation"
+    },
+    {
+      "id": "comparison",
+      "description": "Style for comparison operators",
+      "superType": "operator"
+    },
+    {
+      "id": "constParameter",
+      "description": "Style for const generics"
+    },
+    {
+      "id": "const",
+      "description": "Style for consts",
+      "superType": "variable"
+    },
+    {
+      "id": "derive",
+      "description": "Style for derives",
+      "superType": "attribute"
+    },
+    {
+      "id": "deriveHelper",
+      "description": "Style for derive helpers",
+      "superType": "attribute"
+    },
+    {
+      "id": "dot",
+      "description": "Style for .",
+      "superType": "punctuation"
+    },
+    {
+      "id": "escapeSequence",
+      "description": "Style for char or byte escapes in strings"
+    },
+    {
+      "id": "formatSpecifier",
+      "description": "Style for {} placeholders in format strings"
+    },
+    {
+      "id": "invalidEscapeSequence",
+      "description": "Style for invalid char or byte escapes in strings"
+    },
+    {
+      "id": "label",
+      "description": "Style for labels"
+    },
+    {
+      "id": "lifetime",
+      "description": "Style for lifetimes"
+    },
+    {
+      "id": "logical",
+      "description": "Style for logic operators",
+      "superType": "operator"
+    },
+    {
+      "id": "macroBang",
+      "description": "Style for the ! token of macro calls",
+      "superType": "punctuation"
+    },
+    {
+      "id": "parenthesis",
+      "description": "Style for ( or )",
+      "superType": "punctuation"
+    },
+    {
+      "id": "procMacro",
+      "description": "Style for proc macro code",
+      "superType": "macro"
+    },
+    {
+      "id": "punctuation",
+      "description": "Style for generic punctuation"
+    },
+    {
+      "id": "operator",
+      "description": "Style for operators",
+      "superType": "punctuation"
+    },
+    {
+      "id": "selfKeyword",
+      "description": "Style for the self keyword",
+      "superType": "keyword"
+    },
+    {
+      "id": "selfTypeKeyword",
+      "description": "Style for the self type keyword",
+      "superType": "keyword"
+    },
+    {
+      "id": "semicolon",
+      "description": "Style for ;",
+      "superType": "punctuation"
+    },
+    {
+      "id": "static",
+      "description": "Style for statics",
+      "superType": "variable"
+    },
+    {
+      "id": "toolModule",
+      "description": "Style for tool module attributes",
+      "superType": "decorator"
+    },
+    {
+      "id": "typeAlias",
+      "description": "Style for type aliases",
+      "superType": "type"
+    },
+    {
+      "id": "union",
+      "description": "Style for C-style untagged unions",
+      "superType": "type"
+    },
+    {
+      "id": "unresolvedReference",
+      "description": "Style for names which can not be resolved due to compilation errors"
+    }
+  ]
+}

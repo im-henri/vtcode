@@ -141,6 +141,7 @@ impl App {
         // Reopen Closed Editor must not recreate a deleted file with empty text.
         self.closed_tab_paths
             .retain(|(path, _, _)| !normalized(path).starts_with(&target));
+        self.closed_file_views.retain(|path, _| !normalized(path).starts_with(&target));
         self.navigation.remove_path(path);
         if self
             .groups

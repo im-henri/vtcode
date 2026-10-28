@@ -1,6 +1,6 @@
 //! One include-aware, cancellable traversal for local and headless disk search.
-//! Keep the original roots: starting at a narrower folder would lose inherited
-//! ignore files and change root-relative exclusion rules.
+//! Settings globs always use the workspace root. Ignore files never filter
+//! workspace searches, including explicit roots outside the workspace.
 use crate::{
     background::CancellationToken,
     search_paths::{Candidate, ExcludeRules, SearchPaths},
@@ -20,9 +20,6 @@ pub(crate) fn take_visited_entries() -> usize {
 
 #[derive(Clone, Copy)]
 pub(crate) struct Options {
-    pub use_ignores: bool,
-    pub parent_ignores: bool,
-    pub global_ignores: bool,
     pub follow_links: bool,
 }
 
@@ -37,6 +34,7 @@ pub(crate) fn paths(
     let walks = includes
         .roots()
         .take_while(|_| !cancel.is_cancelled())
+        .filter(|folder| !settings.excludes_tree(folder, workspace))
         .map(|folder| {
             builder(
                 workspace, folder, &includes, &excludes, &settings, options, cancel,
@@ -58,6 +56,7 @@ pub(crate) fn paths(
             entry.depth() != 0 || {
                 let candidate = Candidate::new(entry.path());
                 includes.includes(&candidate) && !excludes.excludes(&candidate, &workspace)
+                    && !settings.excludes_tree(entry.path(), &workspace)
             }
         })
         .map(|entry| entry.into_path())
@@ -79,6 +78,7 @@ pub(crate) fn visit(
         if cancel.is_cancelled() {
             break;
         }
+        if settings.excludes_tree(folder, workspace) { continue; }
         builder(
             workspace, folder, &includes, &excludes, &settings, options, cancel,
         )
@@ -94,6 +94,7 @@ pub(crate) fn visit(
                     && (entry.depth() != 0 || {
                         let candidate = Candidate::new(entry.path());
                         includes.includes(&candidate) && !excludes.excludes(&candidate, workspace)
+                            && !settings.excludes_tree(entry.path(), workspace)
                     })
                 {
                     visit(entry.path());
@@ -114,7 +115,6 @@ fn builder(
     cancel: &CancellationToken,
 ) -> ignore::WalkBuilder {
     let mut walk = ignore::WalkBuilder::new(folder);
-    let folder = folder.to_owned();
     let workspace = workspace.to_owned();
     let includes = includes.clone();
     let excludes = excludes.clone();
@@ -122,11 +122,11 @@ fn builder(
     let cancel = cancel.clone();
     walk.hidden(false)
         .require_git(false)
-        .parents(options.use_ignores && options.parent_ignores)
-        .ignore(options.use_ignores)
-        .git_ignore(options.use_ignores)
-        .git_exclude(options.use_ignores)
-        .git_global(options.use_ignores && options.global_ignores)
+        .parents(false)
+        .ignore(false)
+        .git_ignore(false)
+        .git_exclude(false)
+        .git_global(false)
         .follow_links(options.follow_links)
         .filter_entry(move |entry| {
             #[cfg(test)]
@@ -136,9 +136,6 @@ fn builder(
             if cancel.is_cancelled() {
                 return true;
             }
-            if crate::formatters::is_temporary_path(entry.path()) {
-                return false;
-            }
             let candidate = Candidate::new(entry.path());
             let in_scope = if entry.file_type().is_some_and(|kind| kind.is_dir()) {
                 includes.may_descend(&candidate)
@@ -146,7 +143,7 @@ fn builder(
                 includes.includes(&candidate)
             };
             in_scope
-                && !settings.excludes(&candidate, &folder)
+                && !settings.excludes(&candidate, &workspace)
                 && !excludes.excludes(&candidate, &workspace)
         });
     walk

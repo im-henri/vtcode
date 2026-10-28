@@ -580,6 +580,7 @@ pub(crate) struct Editor {
     /// snapshot arrives. Keeping this on the placeholder supports duplicate
     /// tabs with different cursor positions.
     pub(crate) pending_session_restore: Option<crate::session::SessionRestore>,
+    pub(crate) pending_reopen_view: Option<crate::editor_view_state::ViewState>,
     pub(crate) blame: crate::editor_blame::View,
     /// Active snippet tab stops (index, line, col, placeholder_len)
     pub snippet_tab_stops: Vec<SnippetTabStop>,
@@ -714,6 +715,7 @@ impl Editor {
             pending_cursor_utf16: false,
             pending_navigation_selection: None,
             pending_session_restore: None,
+            pending_reopen_view: None,
             blame: Default::default(),
             snippet_tab_stops: Vec::new(),
             snippet_active_stop: 0,
@@ -1588,6 +1590,7 @@ impl Editor {
     /// Mouse hit testing already chose a visible position. Keyboard scroll
     /// margins must not move that text out from under a click or drag.
     pub(crate) fn set_cursor_without_scrolling(&mut self, line: usize, col: usize) {
+        self.pending_reopen_view = None;
         self.pending_cursor_utf16 = false;
         if self.bg_loading {
             self.pending_cursor_position = Some((line, col));
@@ -1856,7 +1859,7 @@ impl Editor {
         }
     }
 
-    /// Explicit grammar token for Syntect. Ordinary files are best resolved
+    /// Explicit grammar token for TextMate. Ordinary files are best resolved
     /// from their path, while user overrides and language associations should
     /// take precedence over the extension built into a grammar.
     pub(crate) fn syntax_file_path(&self) -> Option<&std::path::Path> {

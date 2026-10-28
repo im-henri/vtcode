@@ -346,8 +346,15 @@ impl Workspace {
         };
         Ok(self.view_key(&path))
     }
+    pub(super) fn windows_paths(&self) -> bool {
+        let root = self.client.hello().root.as_bytes();
+        root.starts_with(b"\\\\") || root.get(1) == Some(&b':')
+    }
     pub(crate) fn parent_key(&self, key: &Path) -> io::Result<Option<PathBuf>> {
         let path = self.remote_path(key)?;
+        let drive_root = |path: &RemotePath| self.windows_paths() && path.is_absolute()
+            && path.0.len() == 2 && path.0[0].is_ascii_alphabetic() && path.0[1] == b':';
+        if drive_root(&path) { return Ok(None); }
         if let Some(parent) = path.parent() {
             return Ok(Some(self.view_key(&parent)));
         }
@@ -355,12 +362,15 @@ impl Workspace {
             return Ok(None);
         }
         let uri = url::Url::parse(&self.client.hello().root_uri).map_err(io::Error::other)?;
+        // UNC ancestors cannot be represented by a hostless absolute path.
+        if uri.host_str().is_some() { return Ok(None); }
         let mut bytes = super::lsp::uri_path(&uri)
             .ok_or_else(|| io::Error::other("Invalid remote root URI"))?;
         while bytes.len() > 1 && bytes.last() == Some(&b'/') {
             bytes.pop();
         }
         let absolute = RemotePath::absolute(&bytes)?;
+        if drive_root(&absolute) { return Ok(None); }
         Ok(absolute.parent().map(|parent| self.view_key(&parent)))
     }
     pub(crate) fn display_path(&self, key: &Path) -> io::Result<String> {
@@ -386,6 +396,54 @@ impl Workspace {
         } else {
             format!("{}/{}", self.display_root, path.display())
         })
+    }
+    pub(crate) fn breadcrumbs(&self, key: &Path) -> io::Result<Vec<(String, PathBuf)>> {
+        // Walk the node's URI hierarchy, never the client's opaque view-key
+        // ancestors. Map each clickable location back through the path codec.
+        let uri = url::Url::from_file_path(key)
+            .map_err(|_| io::Error::other("Invalid remote view key"))?;
+        let mut uri = self.lsp_uri(uri.as_str(), true)
+            .and_then(|uri| url::Url::parse(&uri).ok())
+            .ok_or_else(|| io::Error::other("Invalid remote file URL"))?;
+        let mut key = key.to_path_buf();
+        let mut parts = Vec::new();
+        loop {
+            let path = uri.path().trim_end_matches('/');
+            let drive_root = self.windows_paths() && path.len() == 3
+                && path.as_bytes()[1].is_ascii_alphabetic() && path.ends_with(':');
+            let parent = path.rfind('/').filter(|_| !drive_root).and_then(|end| {
+                let mut parent = uri.clone();
+                parent.set_path(if end == 0 { "/" } else { &path[..end] });
+                self.file_uri_key(parent.as_str())
+                    .filter(|parent_key| parent_key != &key)
+                    .map(|key| (parent, key))
+            });
+            let name = if parent.is_some() {
+                display_name(&key).unwrap_or_else(|| {
+                    key.file_name().unwrap_or_default().to_string_lossy().into_owned()
+                })
+            } else if drive_root {
+                format!("{}\\", &path[1..])
+            } else if uri.host_str().is_none() && uri.path() == "/" {
+                "/".into()
+            } else {
+                // A hosted UNC workspace may not allow mapping its parents.
+                // Keep its full remote location as the first breadcrumb.
+                self.display_path(&key)?
+            };
+            parts.push((name, key));
+            let Some((parent_uri, parent_key)) = parent else { break; };
+            uri = parent_uri;
+            key = parent_key;
+        }
+        parts.reverse();
+        Ok(parts)
+    }
+    pub(crate) fn filesystem_roots(&self) -> io::Result<Vec<(String, PathBuf)>> {
+        let Reply::FilesystemRoots(roots) = self.client.call(Command::FilesystemRoots)? else {
+            return Err(io::Error::other("Invalid remote filesystem roots reply"));
+        };
+        Ok(roots.into_iter().map(|(name, path)| (name, self.view_key(&path))).collect())
     }
     pub(crate) fn initial_save_path(&self, suggested: Option<&str>) -> String {
         let path = RemotePath::new(

@@ -5,12 +5,76 @@
 use std::io::{BufWriter, Write};
 use ratatui::{Terminal, TerminalOptions, Viewport, backend::Backend, layout::{Rect, Size}};
 
+/// Keep the native cursor hidden while a frame diff moves the output cursor.
+/// Ratatui requests visibility before setting the final position; apply that
+/// request at the frame flush, after the position has actually been restored.
+pub(crate) struct CursorBackend<B> {
+    backend: B,
+    frame_cursor: Option<bool>,
+}
+
+impl<B> CursorBackend<B> {
+    fn new(backend: B) -> Self { Self { backend, frame_cursor: None } }
+}
+
+impl<B> std::ops::Deref for CursorBackend<B> {
+    type Target = B;
+    fn deref(&self) -> &B { &self.backend }
+}
+
+impl<B> std::ops::DerefMut for CursorBackend<B> {
+    fn deref_mut(&mut self) -> &mut B { &mut self.backend }
+}
+
+impl<B: Write> Write for CursorBackend<B> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { self.backend.write(bytes) }
+    fn flush(&mut self) -> std::io::Result<()> { Write::flush(&mut self.backend) }
+}
+
+impl<B: Backend> Backend for CursorBackend<B> {
+    type Error = B::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+    where I: Iterator<Item = (u16, u16, &'a ratatui::buffer::Cell)> {
+        self.frame_cursor = None;
+        self.backend.hide_cursor()?;
+        self.backend.draw(content)?;
+        self.frame_cursor = Some(false);
+        Ok(())
+    }
+    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        if let Some(visible) = &mut self.frame_cursor { *visible = false; Ok(()) }
+        else { self.backend.hide_cursor() }
+    }
+    fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        if let Some(visible) = &mut self.frame_cursor { *visible = true; Ok(()) }
+        else { self.backend.show_cursor() }
+    }
+    fn get_cursor_position(&mut self) -> Result<ratatui::layout::Position, Self::Error> {
+        self.backend.get_cursor_position()
+    }
+    fn set_cursor_position<P: Into<ratatui::layout::Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        self.backend.set_cursor_position(position).inspect_err(|_| self.frame_cursor = None)
+    }
+    fn clear(&mut self) -> Result<(), Self::Error> { self.backend.clear() }
+    fn clear_region(&mut self, region: ratatui::backend::ClearType) -> Result<(), Self::Error> {
+        self.backend.clear_region(region)
+    }
+    fn append_lines(&mut self, count: u16) -> Result<(), Self::Error> { self.backend.append_lines(count) }
+    fn size(&self) -> Result<Size, Self::Error> { self.backend.size() }
+    fn window_size(&mut self) -> Result<ratatui::backend::WindowSize, Self::Error> { self.backend.window_size() }
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        if self.frame_cursor.take() == Some(true) { self.backend.show_cursor()?; }
+        self.backend.flush()
+    }
+}
+
 /// Resize packets already contain the terminal dimensions. Polling the console
 /// host from every draw can take a whole scheduling quantum on a busy Windows
 /// machine; use those packets and reconcile once when focus returns instead.
-pub(crate) fn event_driven_terminal<B: Backend>(backend: B) -> Result<Terminal<B>, B::Error> {
+pub(crate) fn event_driven_terminal<B: Backend>(backend: B) -> Result<Terminal<CursorBackend<B>>, B::Error> {
     let size = backend.size()?;
-    Terminal::with_options(backend, TerminalOptions {
+    Terminal::with_options(CursorBackend::new(backend), TerminalOptions {
         viewport: Viewport::Fixed(Rect::new(0, 0, size.width, size.height)),
     })
 }
@@ -203,3 +267,7 @@ mod tests {
 #[cfg(test)]
 #[path = "terminal_viewport_tests.rs"]
 mod viewport_tests;
+
+#[cfg(all(test, windows))]
+#[path = "terminal_cursor_tests.rs"]
+mod cursor_tests;

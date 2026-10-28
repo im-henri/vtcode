@@ -129,6 +129,12 @@ pub struct Session {
     pub search_history: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub global_search_history: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_search_replace_history: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_include_history: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_exclude_history: Vec<String>,
     #[serde(default)]
     pub global_search_query: String,
     #[serde(default)]

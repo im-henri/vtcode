@@ -95,7 +95,7 @@ pub(crate) fn rows(cache: &DiffRenderCache, mode: DiffMode) -> usize {
 
 pub(crate) fn mode(app: &App, width: u16) -> DiffMode {
     app.commit_details.review.forced_mode.unwrap_or_else(|| {
-        if width < 100 {
+        if width < 100 && !app.has_diff_layout_preference() {
             DiffMode::Inline
         } else {
             app.preferred_diff_mode

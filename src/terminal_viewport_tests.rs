@@ -11,10 +11,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Debug)]
+enum CursorEvent {
+    Paint(bool),
+    Move(Position, bool),
+    Show(Position),
+}
+
 struct CountingBackend {
     inner: TestBackend,
     queries: Rc<Counter<usize>>,
     delay: Duration,
+    cursor_visible: bool,
+    cursor_events: Vec<CursorEvent>,
 }
 
 impl CountingBackend {
@@ -23,6 +32,8 @@ impl CountingBackend {
             inner: TestBackend::new(width, height),
             queries: Rc::default(),
             delay,
+            cursor_visible: false,
+            cursor_events: Vec::new(),
         }
     }
 }
@@ -33,18 +44,29 @@ impl Backend for CountingBackend {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        self.inner.draw(content)
+        self.cursor_events.push(CursorEvent::Paint(self.cursor_visible));
+        let mut last = None;
+        self.inner.draw(content.inspect(|(x, y, _)| last = Some(Position::new(x.saturating_add(1), *y))))?;
+        // Like a real terminal, printing the diff leaves the output cursor at
+        // the final painted cell, not at the focused input's caret position.
+        if let Some(position) = last { self.inner.set_cursor_position(position)?; }
+        Ok(())
     }
     fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        self.cursor_visible = false;
         self.inner.hide_cursor()
     }
     fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        self.cursor_visible = true;
+        self.cursor_events.push(CursorEvent::Show(self.inner.get_cursor_position()?));
         self.inner.show_cursor()
     }
     fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
         self.inner.get_cursor_position()
     }
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        let position = position.into();
+        self.cursor_events.push(CursorEvent::Move(position, self.cursor_visible));
         self.inner.set_cursor_position(position)
     }
     fn clear(&mut self) -> Result<(), Self::Error> {
@@ -68,12 +90,67 @@ impl Backend for CountingBackend {
     }
 }
 
-fn paint(terminal: &mut Terminal<CountingBackend>, text: &str) {
+fn paint<B: Backend>(terminal: &mut Terminal<B>, text: &str) {
     terminal
         .draw(|frame| {
             frame.render_widget(ratatui::widgets::Paragraph::new(text), frame.area());
         })
         .unwrap();
+}
+
+#[test]
+fn loading_animation_never_exposes_the_output_cursor_while_painting() {
+    let mut terminal = event_driven_terminal(CountingBackend::new(80, 12, Duration::ZERO)).unwrap();
+    let mut app = crate::app::App::test_new();
+    let started = Instant::now();
+    for tick in 0..36 {
+        let now = started + Duration::from_millis(tick * 80);
+        if tick > 0 { assert!(app.loading.advance(true, now)); }
+        app.loading.begin_frame();
+        // Switch between a native caret (terminal/output/extension), an editor
+        // caret painted into cells, and another native input while it animates.
+        let caret = match tick / 12 {
+            0 => Some(Position::new(50, 8)),
+            1 => None,
+            _ => Some(Position::new(60, 9)),
+        };
+        terminal.backend_mut().cursor_events.clear();
+        terminal.draw(|frame| {
+            crate::ui_loading::draw_header(frame, &mut app, Rect::new(1, 0, 24, 1));
+            if let Some(caret) = caret { frame.set_cursor_position(caret); }
+        }).unwrap();
+        app.loading.finish_frame(now);
+        let backend = terminal.backend();
+        assert_eq!(backend.cursor_visible, caret.is_some());
+        for event in &backend.cursor_events {
+            match event {
+                CursorEvent::Paint(visible) => assert!(!visible, "tick {tick}: painted with a visible cursor"),
+                CursorEvent::Move(position, visible) => {
+                    assert!(!visible, "tick {tick}: moved a visible cursor to {position:?}");
+                    assert_eq!(Some(*position), caret);
+                }
+                CursorEvent::Show(position) => assert_eq!(Some(*position), caret,
+                    "tick {tick}: cursor appeared at the animation's output position"),
+            }
+        }
+    }
+}
+
+#[test]
+fn explicit_cursor_visibility_outside_a_frame_and_terminal_cleanup_still_work() {
+    let mut terminal = event_driven_terminal(CountingBackend::new(80, 12, Duration::ZERO)).unwrap();
+    terminal.show_cursor().unwrap();
+    assert!(terminal.backend().cursor_visible);
+    terminal.hide_cursor().unwrap();
+    assert!(!terminal.backend().cursor_visible);
+    terminal.draw(|frame| frame.set_cursor_position((10, 4))).unwrap();
+    assert!(terminal.backend().cursor_visible);
+    terminal.hide_cursor().unwrap();
+    assert!(!terminal.backend().cursor_visible);
+    paint(&mut terminal, "editor frame without a native cursor");
+    assert!(!terminal.backend().cursor_visible);
+    terminal.show_cursor().unwrap();
+    assert!(terminal.backend().cursor_visible);
 }
 
 #[test]
@@ -134,7 +211,7 @@ fn benchmark_event_driven_terminal_geometry() {
         let mut terminal = if fixed {
             event_driven_terminal(backend)
         } else {
-            Terminal::new(backend)
+            Terminal::new(CursorBackend::new(backend))
         }
         .unwrap();
         let started = Instant::now();

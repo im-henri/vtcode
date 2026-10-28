@@ -1047,6 +1047,8 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
         }
         crate::ui_loading::draw_editor_header(f, app, pane_layout[0], pane_layout[1]);
         app.editor_area = Some(area);
+        app.viewport = Some(pane_layout[2]);
+        app.refresh_file_search_view(group_id);
         if let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {
             app.settings_editor_active = false;
             crate::ui_chat::queue_editor(app, key, group_id, pane_layout[2]);
@@ -1237,6 +1239,10 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
         crate::ui_chrome_tabs::draw_tab_bar(f, app, layout[0]);
     } else if !is_split {
         app.tab_bar_area = None;
+    }
+    if !is_split {
+        app.viewport = Some(layout[2]);
+        app.refresh_file_search_view(app.active_group);
     }
     if show_breadcrumbs {
         crate::ui_chrome_tabs::draw_breadcrumb(f, app, layout[1]);

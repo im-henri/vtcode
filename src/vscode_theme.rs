@@ -1,12 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use serde_json::{Map, Value};
-use syntect::highlighting::{
-    Color as SyntectColor, FontStyle, ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSet,
-};
+use crate::textmate::{Color as SyntaxColor, Theme};
 
 use crate::app_theme_loader::{ThemeColorsFile, ThemeFile};
+
+#[cfg(test)]
+#[path = "vscode_rust_theme_tests.rs"]
+mod rust_tests;
 
 #[derive(Default)]
 struct ResolvedTheme {
@@ -16,7 +17,6 @@ struct ResolvedTheme {
     colors: Map<String, Value>,
     token_rules: Vec<Value>,
     semantic_colors: Map<String, Value>,
-    tm_theme: Option<Theme>,
 }
 
 pub(crate) fn load_theme_file(
@@ -72,15 +72,15 @@ fn finish_theme(
         theme_file.high_contrast,
     );
     apply_imported_annotation_colors(&mut theme_file.colors, &effective_colors);
-    theme_file.syntect_theme = Some(build_syntect_theme(&name, &theme_file.colors, &resolved));
+    theme_file.textmate_theme = Some(build_textmate_theme(&name, &theme_file.colors, &resolved)?);
     theme_file.semantic_color_rules = if resolved.semantic_highlighting == Some(false) {
         Map::new()
     } else {
         resolved.semantic_colors
     };
-    theme_file.semantic_colors = Some(build_semantic_colors(
-        &theme_file.semantic_color_rules, &theme_file.colors.bg_editor,
-    ));
+    theme_file.semantic_colors = (resolved.semantic_highlighting != Some(false)).then(||
+        crate::semantic_theme::SemanticTheme::new(&resolved.token_rules,
+            &theme_file.semantic_color_rules, &theme_file.colors.bg_editor));
     theme_file.workbench_colors = resolved.colors;
     theme_file.token_colors = resolved.token_rules;
     Ok(theme_file)
@@ -246,6 +246,7 @@ fn resolve_with(
     }
     if let Some(semantic) = object.get("semanticTokenColors").and_then(Value::as_object) {
         for (key, value) in semantic {
+            resolved.semantic_colors.shift_remove(key);
             resolved.semantic_colors.insert(key.clone(), value.clone());
         }
     }
@@ -260,12 +261,9 @@ fn resolve_with(
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("tmTheme"))
             {
-                let loaded = ThemeSet::get_theme(&token_path).map_err(|error| error.to_string())?;
-                if let Some(existing) = &mut resolved.tm_theme {
-                    existing.scopes.extend(loaded.scopes);
-                } else {
-                    resolved.tm_theme = Some(loaded);
-                }
+                let value=crate::textmate_grammar::parse_value(&std::fs::read(&token_path).map_err(|e|e.to_string())?)?;
+                if let Some(rules)=value["settings"].as_array() {resolved.token_rules.extend(rules.iter().cloned());}
+
             } else {
                 let text =
                     std::fs::read_to_string(&token_path).map_err(|error| error.to_string())?;
@@ -317,13 +315,13 @@ pub(crate) fn customized_theme(
     let mut selected = theme.clone();
     selected.workbench_colors =
         crate::theme_customizations::resolve(&theme.workbench_colors, overrides, &theme.name);
-    let effective_colors = if theme.syntect_theme.is_some() {
+    let effective_colors = if theme.textmate_theme.is_some() {
         std::borrow::Cow::Owned(crate::vscode_color_registry::resolve(
             &selected.workbench_colors, selected.is_light, selected.high_contrast))
     } else {
         std::borrow::Cow::Borrowed(&selected.workbench_colors)
     };
-    if theme.syntect_theme.is_some() {
+    if theme.textmate_theme.is_some() {
         // Imported VS Code themes (including bundled themes) use registered
         // fallbacks. Legacy vtcode themes retain their explicitly authored palette.
         selected.colors = base_theme(theme.is_light, theme.high_contrast)
@@ -340,14 +338,16 @@ pub(crate) fn customized_theme(
         selected.is_light,
         selected.high_contrast,
     );
-    if theme.syntect_theme.is_some() {
+    if theme.textmate_theme.is_some() {
         apply_imported_annotation_colors(&mut selected.colors, &effective_colors);
     }
-    if !theme.semantic_color_rules.is_empty() {
-        selected.semantic_colors = Some(build_semantic_colors(
-            &theme.semantic_color_rules,
-            &selected.colors.bg_editor,
-        ));
+    if theme.textmate_theme.is_some() {
+        selected.textmate_theme=Some(Theme::new(&selected.name,&selected.colors.fg_text,&selected.colors.bg_editor,&theme.token_colors)
+            .expect("validated VS Code token rules"));
+    }
+    if theme.semantic_colors.is_some() {
+        selected.semantic_colors = Some(crate::semantic_theme::SemanticTheme::new(
+            &theme.token_colors, &theme.semantic_color_rules, &selected.colors.bg_editor));
     }
     selected
 }
@@ -759,123 +759,11 @@ pub(crate) fn apply_workbench_colors(
     );
 }
 
-fn build_syntect_theme(name: &str, colors: &ThemeColorsFile, resolved: &ResolvedTheme) -> Theme {
-    let mut theme = resolved.tm_theme.clone().unwrap_or_default();
-    theme.name = Some(name.to_string());
-    theme.settings.foreground = parse_syntect_color(&colors.fg_text);
-    theme.settings.background = parse_syntect_color(&colors.bg_editor);
-    theme.settings.caret = colors.bg_cursor.as_deref().and_then(parse_syntect_color);
-    theme.settings.line_highlight = parse_syntect_color(&colors.bg_line_highlight);
-    theme.settings.selection = colors.bg_selection.as_deref().and_then(parse_syntect_color);
-    theme.settings.find_highlight = colors
-        .bg_search_match
-        .as_deref()
-        .and_then(parse_syntect_color);
-
-    for rule in &resolved.token_rules {
-        let Some(settings) = rule.get("settings").and_then(Value::as_object) else {
-            continue;
-        };
-        let selector = match rule.get("scope") {
-            Some(Value::String(scope)) => scope.clone(),
-            Some(Value::Array(scopes)) => scopes
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(", "),
-            _ => {
-                if !resolved.colors.contains_key("editor.foreground") {
-                    if let Some(c) = settings
-                        .get("foreground")
-                        .and_then(Value::as_str)
-                        .and_then(parse_syntect_color)
-                    {
-                        theme.settings.foreground = Some(c);
-                    }
-                }
-                if !resolved.colors.contains_key("editor.background") {
-                    if let Some(c) = settings
-                        .get("background")
-                        .and_then(Value::as_str)
-                        .and_then(parse_syntect_color)
-                    {
-                        theme.settings.background = Some(c);
-                    }
-                }
-                continue;
-            }
-        };
-        let Ok(scope) = ScopeSelectors::from_str(&selector) else {
-            continue;
-        };
-        let foreground = settings
-            .get("foreground")
-            .and_then(Value::as_str)
-            .and_then(parse_syntect_color);
-        let background = settings
-            .get("background")
-            .and_then(Value::as_str)
-            .and_then(parse_syntect_color);
-        let font_style = settings
-            .get("fontStyle")
-            .and_then(Value::as_str)
-            .map(parse_font_style);
-        theme.scopes.push(ThemeItem {
-            scope,
-            style: StyleModifier {
-                foreground,
-                background,
-                font_style,
-            },
-        });
-    }
-    theme
+fn build_textmate_theme(name: &str, colors: &ThemeColorsFile, resolved: &ResolvedTheme) -> Result<Theme,String> {
+    Theme::new(name,&colors.fg_text,&colors.bg_editor,&resolved.token_rules)
 }
 
-fn build_semantic_colors(
-    semantic: &Map<String, Value>,
-    editor_background: &str,
-) -> rustc_hash::FxHashMap<String, (u8, u8, u8)> {
-    let mut result = rustc_hash::FxHashMap::default();
-    for (selector, style) in semantic {
-        let token_type = selector.trim();
-        if token_type.is_empty() {
-            continue;
-        }
-        let foreground = style
-            .as_str()
-            .or_else(|| style.get("foreground").and_then(Value::as_str));
-        let Some(foreground) = foreground else {
-            continue;
-        };
-        if let Some((r, g, b, a)) = parse_rgba(foreground) {
-            let (br, bg, bb, _) = parse_rgba(editor_background).unwrap_or((0, 0, 0, 255));
-            result.insert(
-                token_type.to_string(),
-                composite((r, g, b, a), (br, bg, bb)),
-            );
-        }
-    }
-    result
-}
-
-fn parse_font_style(value: &str) -> FontStyle {
-    let mut style = FontStyle::empty();
-    for part in value.split_whitespace() {
-        match part {
-            "bold" => style |= FontStyle::BOLD,
-            "italic" => style |= FontStyle::ITALIC,
-            "underline" | "strikethrough" => style |= FontStyle::UNDERLINE,
-            _ => {}
-        }
-    }
-    style
-}
-
-pub(crate) fn parse_syntect_color(value: &str) -> Option<SyntectColor> {
-    let (r, g, b, a) = parse_rgba(value)?;
-    Some(SyntectColor { r, g, b, a })
-}
+pub(crate) fn parse_syntax_color(value: &str) -> Option<SyntaxColor> { SyntaxColor::parse(value) }
 
 pub(crate) fn resolved_color(
     colors: &Map<String, Value>,
@@ -1072,7 +960,7 @@ mod tests {
             {"scope":"punctuation.definition.decorator.python","settings":{"foreground":"#f92672"}},
             {"scope":"entity.name.function.decorator.python","settings":{"foreground":"#66d9ef"}}
         ]}).to_string()).unwrap();
-        let theme = crate::vscode_theme::load_theme_file(&path,None,None).unwrap().syntect_theme.unwrap();
+        let theme = crate::vscode_theme::load_theme_file(&path,None,None).unwrap().textmate_theme.unwrap();
         assert_python_preview_colors(&theme);
     }
 
@@ -1080,13 +968,13 @@ mod tests {
     #[ignore = "requires the user's installed Monokai ST3 package; read-only comparison"]
     fn installed_monokai_st3_matches_screenshot_tokens() {
         let path = crate::portable::theme_extensions_dir().join("AndreyVolosovich.monokai-st3/themes/Monokai-ST3-color-theme.json");
-        let theme = load_theme_file(&path, None, None).unwrap().syntect_theme.unwrap();
+        let theme = load_theme_file(&path, None, None).unwrap().textmate_theme.unwrap();
         assert_python_preview_colors(&theme);
     }
 
     fn assert_python_preview_colors(theme: &Theme) {
-        use syntect::{easy::HighlightLines, highlighting::{Color, FontStyle}};
-        let set = crate::syntax_assets::build_syntax_set(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("syntaxes/Python")]).unwrap();
+        use crate::textmate_backend::HighlightLines; use crate::textmate::{Color, FontStyle};
+        let set = crate::syntax_assets::build_syntax_set(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars/Python")]).unwrap();
         let syntax = set.find_syntax_by_extension("py").unwrap();
         assert_eq!(syntax.name, "Python");
         let mut parser = HighlightLines::new(syntax, theme);
@@ -1101,7 +989,7 @@ mod tests {
         ];
         for (line_index,line) in source.lines().enumerate() {
             let line = format!("{line}\n");
-            let spans = parser.highlight_line(&line,&set).unwrap();
+            let spans = parser.highlight_line(&line);
             let per_byte: Vec<_> = spans.iter().flat_map(|(s,t)| std::iter::repeat_n(*s,t.len())).collect();
             for (_,token,rgb,italic) in checks.iter().filter(|c| c.0 == line_index) {
                 let offset = line.find(token).unwrap();
@@ -1330,9 +1218,9 @@ mod tests {
         assert_eq!(theme.colors.bg_editor, "#102030");
         assert_eq!(theme.colors.bg_sidebar, "#203040");
         assert_eq!(theme.colors.bg_input.as_deref(), Some("#304050"));
-        assert_eq!(theme.syntect_theme.as_ref().unwrap().scopes.len(), 1);
+        assert_eq!(theme.textmate_theme.as_ref().unwrap().token_rules().len(), 1);
         assert_eq!(
-            theme.semantic_colors.as_ref().unwrap()["type"],
+            theme.semantic_colors.as_ref().unwrap().color("type").unwrap(),
             (17, 34, 51)
         );
     }

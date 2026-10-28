@@ -48,6 +48,46 @@ fn windows_ssh_git_explorer_and_editor_combination_keeps_hunks_saves_and_undo_co
 }
 
 #[test]
+#[ignore = "Real SSH: matching headless build and a fresh disposable workspace"]
+fn windows_ssh_scoped_git_status_keeps_full_state_and_native_filename_identity() {
+    let (workspace, owner, _) = connect();
+    let workflow = super::core_workflow_tests::run(&workspace);
+    super::core_workflow_tests::raw_git_paths(&workspace);
+    let cancel = crate::background::CancellationToken::new();
+    let (initial, _) = workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let known = super::git::Discovery {
+        roots: initial.roots.iter().map(|root| workspace.remote_path(root).unwrap()).collect(),
+        parent: None,
+    };
+    let file = RemotePath::new("core-workflow/file[1] λ.rs".as_bytes().to_vec()).unwrap();
+    let Reply::GitStatus { scans, .. } = workspace.client.call(Command::GitStatus {
+        known: Some(known.clone()), closed: Vec::new(), parent_open: false, include_untracked: true,
+        changed: Some(vec![file.clone()]),
+    }).unwrap() else { panic!(); };
+    assert_eq!(scans.len(), 1);
+    assert_eq!(scans[0].worktree_paths.as_ref().unwrap().paths,
+        [RemotePath::new("file[1] λ.rs".as_bytes().to_vec()).unwrap()]);
+    assert!(!scans[0].worktree_paths.as_ref().unwrap().ignore_case);
+    tool_line(&workspace, "python3", vec!["-c".into(),
+        "from pathlib import Path; Path('core-workflow/file[1] λ.rs').write_text('scoped status edit\\n'); print('written')".into()]);
+    let (_, scoped) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(), Some(vec![file]), &cancel).unwrap();
+    let (_, complete) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(), None, &cancel).unwrap();
+    let keys = |scans: Vec<crate::git_repositories::Scan>| scans.into_iter().map(|scan| (scan.root,
+        scan.files.into_iter().map(|file| (file.path, file.original_path, file.status, file.staged)).collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    assert_eq!(keys(scoped), keys(complete));
+    let Reply::GitStatus { scans, .. } = workspace.client.call(Command::GitStatus {
+        known: Some(known), closed: Vec::new(), parent_open: false, include_untracked: true,
+        changed: Some(vec![RemotePath::new(b"git-identities/byte-\xff.rs".to_vec()).unwrap()]),
+    }).unwrap() else { panic!(); };
+    assert_eq!(scans.len(), 1);
+    assert!(scans[0].worktree_paths.is_none(), "Non-UTF-8 paths require a lossless complete snapshot");
+    println!("VTCODE_SSH_SCOPED_GIT {}", json!({"workflow":workflow,"scoped_equals_full":true,"raw_names":true}));
+    shutdown(&workspace);
+    drop((workspace, owner));
+}
+
+#[test]
 #[ignore = "Requires an incompatible headless build in VTCODE_HEADLESS_MISMATCH_SSH_ARGS"]
 fn ssh_version_mismatch_explains_both_endpoints_and_stops_attachment() {
     let arguments =
@@ -143,7 +183,7 @@ fn ssh_logs_are_available_while_connected_and_after_transport_disconnect() {
     assert!(screen.contains("Remote SSH Connection") && screen.contains("Handshake"));
     assert!(!workspace.client.capturing_cpu(), "opening Logs never samples the node");
     workspace.client.call(Command::Watch).unwrap();
-    workspace.client.call(Command::GitStatus { include_untracked: true, known: None, parent_open: false, closed: Vec::new() }).unwrap();
+    workspace.client.call(Command::GitStatus { include_untracked: true, known: None, parent_open: false, closed: Vec::new(), changed: None }).unwrap();
     app.execute_palette_command("remote_capture_cpu");
     assert!(workspace.client.capturing_cpu());
     app.wait_for_background(Duration::from_secs(30), |_| !workspace.client.capturing_cpu());

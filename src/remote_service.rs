@@ -75,6 +75,7 @@ struct FileIndex {
     files: Vec<RemotePath>,
     labels: Vec<String>,
     include_hidden: bool,
+    excludes: Option<crate::settings::ExcludePatterns>,
     watch_stamp: watch::Stamp,
     _observation: std::sync::Arc<watch::Observation>,
 }
@@ -412,28 +413,18 @@ impl Service {
             Command::Files {
                 generation,
                 known_version,
+                excludes,
             } => {
                 self.ensure_file_index(
                     generation,
-                    false,
+                    true,
+                    Some(&excludes),
                     &crate::background::CancellationToken::new(),
                 )?;
                 let index = self.index.as_ref().unwrap();
                 Ok(Reply::Files {
                     version: index.version,
-                    files: (known_version != Some(index.version)).then(|| {
-                        index
-                            .files
-                            .iter()
-                            .filter(|path| {
-                                !path
-                                    .0
-                                    .split(|&b| b == b'/')
-                                    .any(|part| part.starts_with(b"."))
-                            })
-                            .cloned()
-                            .collect()
-                    }),
+                    files: (known_version != Some(index.version)).then(|| index.files.clone()),
                 })
             }
             Command::GitStatus {
@@ -441,12 +432,14 @@ impl Service {
                 parent_open,
                 closed,
                 include_untracked,
+                changed,
             } => git::status(
                 &self.root,
                 known,
                 parent_open,
                 closed,
                 include_untracked,
+                changed,
                 &crate::background::CancellationToken::new(),
             ),
             Command::GitSources {
@@ -586,6 +579,12 @@ impl Service {
             Command::Heartbeat { nonce } => Ok(Reply::Heartbeat { nonce }),
             Command::Ping => Ok(Reply::Done),
             Command::Shutdown => Ok(Reply::Done),
+            Command::FilesystemRoots => {
+                let roots = crate::filesystem_roots::list()?.into_iter()
+                    .map(|(name, path)| Ok((name, git::from_native(&path, &self.root)?)))
+                    .collect::<io::Result<_>>()?;
+                Ok(Reply::FilesystemRoots(roots))
+            }
             Command::List { path } => {
                 let mut entries = Vec::new();
                 for entry in fs::read_dir(path.resolve(&self.root)?)? {
@@ -758,6 +757,7 @@ impl Service {
         &mut self,
         generation: u64,
         include_hidden: bool,
+        excludes: Option<&crate::settings::ExcludePatterns>,
         cancel: &crate::background::CancellationToken,
     ) -> io::Result<()> {
         let observation = self.observations.get(&self.root);
@@ -765,6 +765,8 @@ impl Service {
         if self.index.as_ref().is_some_and(|index| {
             index.generation == generation
                 && (!include_hidden || index.include_hidden)
+                && index.excludes.as_ref() == excludes
+                && !excludes.is_some_and(|map| map.values().any(serde_json::Value::is_object))
                 && index.watch_stamp == watch_stamp
                 // Shared filesystems can accept a watch yet omit other
                 // machines' changes. Recheck on use, never on an idle timer.
@@ -777,6 +779,7 @@ impl Service {
                 .index
                 .as_ref()
                 .is_some_and(|index| index.include_hidden);
+        let rules = excludes.map(|map| crate::search_paths::ExcludeRules::new(map, &Default::default()));
         let mut files = Vec::new();
         let mut bytes = 0;
         for entry in walkdir::WalkDir::new(&self.root)
@@ -785,10 +788,10 @@ impl Service {
             .filter_entry(|entry| {
                 let name = entry.file_name().to_str().unwrap_or("");
                 !cancel.is_cancelled()
-                    && (include_hidden || !name.starts_with('.'))
                     && !crate::editor::is_save_temporary_path(entry.path())
-                    && (!entry.file_type().is_dir()
-                        || !crate::app_global_search::EXCLUDE_DIRS.contains(&name))
+                    && rules.as_ref().map_or_else(|| (include_hidden || !name.starts_with('.'))
+                        && (!entry.file_type().is_dir() || !crate::app_global_search::EXCLUDE_DIRS.contains(&name)),
+                        |rules| !rules.excludes(&crate::search_paths::Candidate::new(entry.path()), &self.root))
             })
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())
@@ -825,6 +828,7 @@ impl Service {
             files,
             labels,
             include_hidden,
+            excludes: excludes.cloned(),
             watch_stamp,
             _observation: observation,
         });
@@ -839,7 +843,7 @@ impl Service {
         explicit: Option<RemotePath>,
         cancel: &crate::background::CancellationToken,
     ) -> io::Result<Reply> {
-        self.ensure_file_index(generation, true, cancel)?;
+        self.ensure_file_index(generation, true, None, cancel)?;
         let index = self.index.as_ref().unwrap();
         context::suggest(
             &self.root,
@@ -1399,7 +1403,7 @@ fn serve_service(
             Command::GitNetwork { .. } => network.get()?,
             Command::Files { .. } => index.get()?,
             Command::Explorer(_) => explorer.get()?,
-            Command::Inspect { .. } | Command::SearchScope(_) => metadata.get()?,
+            Command::FilesystemRoots | Command::Inspect { .. } | Command::SearchScope(_) => metadata.get()?,
             Command::Search(_) => search.get()?,
             Command::Filesystem(_) | Command::Replace(_) => filesystem.get()?,
             Command::Format { .. } | Command::FormatSource { .. } => formatter.get()?,
@@ -1727,12 +1731,14 @@ fn actor(
                             parent_open,
                             closed,
                             include_untracked,
+                            changed,
                         } => git::status(
                             &service.root,
                             known,
                             parent_open,
                             closed,
                             include_untracked,
+                            changed,
                             cancel.as_ref().unwrap(),
                         ),
                         Command::Search(query) => {

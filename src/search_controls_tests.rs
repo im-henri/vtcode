@@ -369,7 +369,7 @@ fn find_bar_resizes_horizontally_and_keeps_inputs_and_controls_working() {
     mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), (original.x - 35, 20));
     draw(&mut app, &mut terminal);
     let wider = app.search_bar_area.unwrap();
-    assert_eq!(wider.width, original.width + 35);
+    assert_eq!(wider.width, (original.width + 35).min(app.viewport.unwrap().width - 2));
     assert_eq!(wider.right(), original.right());
     assert!(has_text(&terminal, &app.search_query));
     assert!(has_text(&terminal, &app.replace_query));
@@ -408,7 +408,8 @@ fn find_bar_resize_limits_follow_the_viewport_and_keep_the_preferred_width() {
     app.active_pane = ActivePane::Editor;
     app.execute_palette_command("find");
     draw(&mut app, &mut terminal);
-    for (col, expected_width) in [(u16::MAX, 40), (0, 118)] {
+    let max_width = app.viewport.unwrap().width - 2;
+    for (col, expected_width) in [(u16::MAX, 40.min(max_width)), (0, max_width)] {
         let bar = app.search_bar_area.unwrap();
         mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (bar.x, bar.y + 1));
         mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), (col, 20));
@@ -418,13 +419,18 @@ fn find_bar_resize_limits_follow_the_viewport_and_keep_the_preferred_width() {
     }
     terminal = Terminal::new(TestBackend::new(30, 16)).unwrap();
     draw(&mut app, &mut terminal);
-    let small = app.search_bar_area.unwrap();
-    assert_eq!(small.width, 28);
-    assert_eq!(small.x, 1);
-    assert_eq!(app.search_bar_layout.width, 118);
+    let viewport = app.viewport.unwrap();
+    if let Some(small) = app.search_bar_area {
+        assert_eq!(small.width, viewport.width - 2);
+        assert_eq!(small.x, viewport.x + 1);
+        assert_eq!(small.intersection(viewport), small);
+    } else {
+        assert!(viewport.width < 14 || viewport.height < 3);
+    }
+    assert_eq!(app.search_bar_layout.width, max_width);
     terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     draw(&mut app, &mut terminal);
-    assert_eq!(app.search_bar_area.unwrap().width, 118);
+    assert_eq!(app.search_bar_area.unwrap().width, max_width);
 
     let bar = app.search_bar_area.unwrap();
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (bar.x, bar.y + 1));

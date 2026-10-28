@@ -23,6 +23,7 @@ pub(crate) enum Kind {
     LspSettings,
     FormatterSettings,
     FileAssociations,
+    ExclusionSettings,
     ScopeBubbleSettings,
     CloseAgent,
     ThemeInstall,
@@ -104,6 +105,8 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::FormattingError)
     } else if app.scope_bubble_settings.active {
         Some(Kind::ScopeBubbleSettings)
+    } else if app.exclusion_settings.active {
+        Some(Kind::ExclusionSettings)
     } else if app.file_associations.active {
         Some(Kind::FileAssociations)
     } else if app.formatter_settings.active {
@@ -125,6 +128,13 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
 
 fn sync(app: &mut App, kind: Kind) {
     if app.modal.kind != Some(kind) {
+        // An asynchronous dialog interrupts workbench gestures and shortcut
+        // prefixes; dismissing it must not resume an obscured interaction.
+        app.clear_drag_states();
+        app.text_input_drag = None;
+        app.drag_start_pos = None;
+        app.drag_has_moved = false;
+        app.chord_pending = false;
         app.modal = ModalState {
             kind: Some(kind),
             mouse_position: (app.mouse_col, app.mouse_row),
@@ -173,7 +183,7 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         Kind::SaveError => vec!["Dismiss"],
         Kind::FormattingError => vec!["Formatter settings…", "Dismiss"],
         Kind::ScopeBubbleSettings => vec!["Done"],
-        Kind::FileAssociations => vec!["Done"],
+        Kind::ExclusionSettings | Kind::FileAssociations => vec!["Done"],
         Kind::FormatterSettings => vec!["Done"],
         Kind::AgentSettings => vec!["Done"],
         Kind::LspSettings => vec!["Done"],
@@ -235,6 +245,7 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::SaveError => app.dismiss_save_error(),
         Kind::FormattingError => app.formatting.error = None,
         Kind::ScopeBubbleSettings => crate::ui_scope_bubble_settings::activate(app, crate::ui_scope_bubble_settings::Action::Close),
+        Kind::ExclusionSettings => crate::ui_exclusion_settings::activate(app, crate::ui_exclusion_settings::Action::Close),
         Kind::FileAssociations => crate::ui_file_associations::activate(app, crate::ui_file_associations::Action::Close),
         Kind::FormatterSettings => crate::ui_formatter_settings::activate(app, crate::ui_formatter_settings::Action::Close),
         Kind::AgentSettings => crate::ui_agent_settings::activate(app, crate::ui_agent_settings::Action::Close),
@@ -295,7 +306,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
             app.formatting.error = None;
             app.open_formatter_settings(None);
         }
-        Kind::FormatterSettings | Kind::FileAssociations | Kind::ScopeBubbleSettings => {},
+        Kind::FormatterSettings | Kind::FileAssociations | Kind::ExclusionSettings | Kind::ScopeBubbleSettings => {},
         Kind::ThemeInstall if index == 1 => app.show_theme_vsix_link(),
         Kind::ThemeInstall => app.start_theme_install(),
         Kind::ThemeVsixLink if index == 0 => app.copy_theme_vsix_link(),
@@ -367,6 +378,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     let kind = active(app)?;
+    app.chord_pending = false;
     if kind == Kind::ThemeInstall && app.palette.extension_versions.is_some() {
         crate::ui_extension_versions::handle_key(app, key);
         return Some(false);
@@ -378,6 +390,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     if kind == Kind::ScopeBubbleSettings {
         crate::ui_scope_bubble_settings::handle_key(app, key);
         return Some(false);
+    }
+    if kind == Kind::ExclusionSettings {
+        crate::ui_exclusion_settings::handle_key(app, key); return Some(false);
     }
     if kind == Kind::FileAssociations {
         crate::ui_file_associations::handle_key(app, key);
@@ -483,6 +498,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if kind == Kind::ScopeBubbleSettings {
         crate::ui_scope_bubble_settings::handle_mouse(app, mouse);
         return true;
+    }
+    if kind == Kind::ExclusionSettings {
+        crate::ui_exclusion_settings::handle_mouse(app, mouse); return true;
     }
     if kind == Kind::FileAssociations {
         crate::ui_file_associations::handle_mouse(app, mouse);
@@ -677,6 +695,7 @@ fn copy(app: &App, kind: Kind) -> Copy {
             title: "Language Servers", message: String::new(), context: Vec::new(), help: String::new(), field: "",
         },
         Kind::ScopeBubbleSettings => Copy { title: "Scope Bubble", message: String::new(), context: Vec::new(), help: String::new(), field: "" },
+        Kind::ExclusionSettings => Copy { title: "Exclusions", message: String::new(), context: Vec::new(), help: String::new(), field: "" },
         Kind::FileAssociations => Copy {
             title: "File Associations", message: String::new(), context: Vec::new(), help: String::new(), field: "",
         },
@@ -723,7 +742,7 @@ fn copy(app: &App, kind: Kind) -> Copy {
         Kind::ThemeInstall if app.palette.install_syntax_mode => Copy {
             title: "Install Syntax",
             message: "Add a language for syntax highlighting.".into(),
-            context: vec!["Sublime Text (.sublime-syntax) or TextMate (.json)".into()],
+            context: vec!["TextMate (.tmLanguage.json or .tmLanguage)".into()],
             help: if app.install_prompt_running() {
                 "Validating and installing syntax…".into()
             } else {
@@ -1013,6 +1032,7 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::AgentSettings) => crate::ui_agent_settings::draw(f, app),
         Some(Kind::LspSettings) => crate::ui_lsp_settings::draw(f, app),
         Some(Kind::ScopeBubbleSettings) => crate::ui_scope_bubble_settings::draw(f, app),
+        Some(Kind::ExclusionSettings) => crate::ui_exclusion_settings::draw(f, app),
         Some(Kind::FileAssociations) => crate::ui_file_associations::draw(f, app),
         Some(Kind::FormatterSettings) => crate::ui_formatter_settings::draw(f, app),
         Some(Kind::CloseAgent) => draw(f, app, Kind::CloseAgent),
@@ -1503,6 +1523,7 @@ mod tests {
             Kind::AgentSettings => app.open_agent_settings(),
             Kind::LspSettings => app.open_lsp_settings(),
             Kind::ScopeBubbleSettings => app.open_scope_bubble_settings(),
+            Kind::ExclusionSettings => app.open_exclusion_settings("files_exclude", None, false),
             Kind::FileAssociations => app.open_file_associations(),
             Kind::FormatterSettings => app.open_formatter_settings(None),
             Kind::CloseAgent => app.chat.confirm_close_agent = Some(app.chat.active_agent),

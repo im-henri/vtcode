@@ -857,7 +857,7 @@ fn row_spans(
         .take(usize::from(row.highlighted.is_empty()))
         .chain(row.highlighted.iter().map(|(s, text)| {
             (
-                crate::ui_colors::syntect_color(s.foreground, normal.bg.unwrap_or(Color::Reset)),
+                crate::ui_colors::syntax_color(s.foreground, normal.bg.unwrap_or(Color::Reset)),
                 text.as_str(),
             )
         }));

@@ -702,7 +702,7 @@ impl App {
         self.replace_cursor = self.replace_query.len();
         self.replace_selection_anchor = None;
         self.global_search_query = layout.search;
-        self.global_search_history.edited();
+        for field in 0..4 { self.global_search_field_history_mut(field).edited(); }
         self.global_search_replace_query = layout.search_replace;
         self.search_include_pattern = layout.search_include;
         self.search_exclude_pattern = layout.search_exclude;
@@ -755,9 +755,7 @@ impl App {
         self.desks.group_drag = None;
         self.dismiss_vtcomplete();
         self.clear_tab_tooltip();
-        self.search_active = false;
         self.search_input_focused = false;
-        self.clear_file_search_results();
         self.global_search_active = false;
         self.tab_context_active = false;
         self.context_menu_active = false;
@@ -906,6 +904,7 @@ impl App {
             preview: false,
             kind: tab.kind,
             extension_view: tab.extension_view.clone(),
+            file_search: Default::default(),
             terminal_idx: tab.terminal_idx,
         }
     }

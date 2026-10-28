@@ -46,13 +46,16 @@ class LinuxReleaseTests(unittest.TestCase):
     def test_payload_paths_distinguish_lsp_literals_from_build_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             package = Path(temporary)
-            (package / "syntaxes/.cache").mkdir(parents=True)
+            (package / "grammars/.cache").mkdir(parents=True)
             (package / "themes").mkdir()
-            for number in range(226):
-                (package / f"syntaxes/grammar-{number}.sublime-syntax").write_bytes(b"grammar")
+            (package / "grammars/bundled").mkdir()
+            (package / "grammars/bundled/index.json").write_bytes(b'{"version":1,"grammars":{"fixture":{"scopeName":"source.fixture"}}}')
+            (package / "grammars/bundled/fixture.json").write_bytes(b'{"scopeName":"source.fixture","patterns":[]}')
+            for number in range(3):
+                (package / f"grammars/grammar-{number}.tmLanguage.json").write_bytes(b"grammar")
             (package / "themes/dark.json").write_bytes(b"{}")
-            (package / "syntaxes/.cache/default_newlines.packdump").write_bytes(b"cache")
-            (package / "syntaxes/.cache/source.fingerprint").write_bytes(b"fingerprint")
+            (package / "grammars/.cache/textmate-registry.json.gz").write_bytes(b"cache")
+            (package / "grammars/.cache/source.fingerprint").write_bytes(b"fingerprint")
             binary = package / "vtcode"
             binary.write_bytes(b"/workspaceSymbolProvider\0/workspace/fileOperations/willRename\0.vtcode/workspaces")
             with (patch.object(local, "ROOT", Path(linux_release.CONTAINER_WORKSPACE)),

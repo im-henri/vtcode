@@ -1,4 +1,4 @@
-//! Local watcher status reads: literal worktree prefixes, with complete reads
+//! Watcher status reads: literal worktree prefixes, with complete reads
 //! reserved for discovery, metadata, and rules that affect other files.
 use super::*;
 use crate::{
@@ -80,6 +80,30 @@ impl WorktreePaths {
                 .rmatch_indices('/')
                 .any(|(end, _)| self.keys.contains(&key[..end]))
     }
+
+    pub(crate) fn ignore_case(&self) -> bool { self.ignore_case }
+}
+
+/// Keep staged entries and unrelated worktree rows, then merge ordered deltas
+/// without cloning all cached paths. Used by both editor views and SSH snapshots.
+pub(crate) fn merge_worktree(files: &mut Vec<GitFileChange>, changed: Vec<GitFileChange>, paths: &WorktreePaths) {
+    files.retain(|file| file.staged || !paths.contains(&file.path));
+    if changed.is_empty() { return; }
+    let compare = |a: &GitFileChange, b: &GitFileChange|
+        crate::source_control_rows::Group::of(a).cmp(&crate::source_control_rows::Group::of(b)).then(a.path.cmp(&b.path));
+    if files.last().is_none_or(|last| !compare(last, &changed[0]).is_gt()) {
+        files.extend(changed);
+    } else {
+        let mut previous = std::mem::take(files).into_iter().peekable();
+        let mut changed = changed.into_iter().peekable();
+        files.reserve(previous.len() + changed.len());
+        while let (Some(old), Some(new)) = (previous.peek(), changed.peek()) {
+            if compare(old, new).is_le() { files.push(previous.next().unwrap()); }
+            else { files.push(changed.next().unwrap()); }
+        }
+        files.extend(previous);
+        files.extend(changed);
+    }
 }
 
 fn native_key(path: &Path) -> Cow<'_, Path> {
@@ -151,6 +175,19 @@ pub(super) fn collect(
     cancel: &CancellationToken,
     include_untracked: bool,
 ) -> Vec<Scan> {
+    collect_with_paths(discovery, roots, changed, workspace, cancel, include_untracked,
+        |path| path.to_string_lossy().into_owned())
+}
+
+pub(crate) fn collect_with_paths<P: Ord>(
+    discovery: &mut Discovery,
+    roots: Vec<PathBuf>,
+    changed: Option<FxHashSet<PathBuf>>,
+    workspace: &Path,
+    cancel: &CancellationToken,
+    include_untracked: bool,
+    format_path: impl Fn(&Path) -> P,
+) -> Vec<Scan<P>> {
     if cancel.is_cancelled() {
         return Vec::new();
     }
@@ -223,7 +260,7 @@ pub(super) fn collect(
             workdir.clone(),
             || {},
             cancel,
-            |path| path.to_string_lossy().into_owned(),
+            &format_path,
             paths.as_mut(),
             include_untracked,
         );

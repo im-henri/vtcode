@@ -50,6 +50,12 @@ pub(crate) struct Scan {
     pub root: RemotePath,
     pub files: Vec<crate::app::GitFileChange<RemotePath>>,
     pub branch: String,
+    pub worktree_paths: Option<WorktreeScope>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct WorktreeScope {
+    pub paths: Vec<RemotePath>,
+    pub ignore_case: bool,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Sources {
@@ -150,8 +156,9 @@ pub(crate) fn from_native(path: &Path, root: &Path) -> io::Result<RemotePath> {
         // without treating a Windows spelling as POSIX-relative components.
         let uri = url::Url::from_file_path(path)
             .map_err(|_| io::Error::other("Unsupported absolute Windows path"))?;
-        let bytes = super::lsp::uri_path(&uri)
+        let mut bytes = super::lsp::uri_path(&uri)
             .ok_or_else(|| io::Error::other("Invalid absolute Windows path URI"))?;
+        while bytes.last() == Some(&b'/') { bytes.pop(); }
         return RemotePath::absolute(&bytes);
     }
     let (native, absolute) = match path.strip_prefix(root) {
@@ -188,12 +195,14 @@ pub(crate) fn status(
     parent_open: bool,
     closed: Vec<RemotePath>,
     include_untracked: bool,
+    changed: Option<Vec<RemotePath>>,
     cancel: &crate::background::CancellationToken,
 ) -> io::Result<Reply> {
     if cancel.is_cancelled() {
         return Err(io::Error::from(io::ErrorKind::Interrupted));
     }
-    let discovery = match known {
+    let scoped = known.is_some();
+    let mut discovery = match known {
         Some(known) => crate::git_repositories::Discovery {
             roots: known
                 .roots
@@ -209,6 +218,15 @@ pub(crate) fn status(
         },
         None => crate::git_repositories::discover(root, cancel),
     };
+    let mut roots = discovery.roots.clone();
+    if parent_open && let Some(parent) = &discovery.parent { roots.push(parent.clone()); }
+    let closed = closed.iter().map(|path| path.resolve(root)).collect::<io::Result<Vec<_>>>()?;
+    roots.retain(|path| !closed.contains(path));
+    let changed = if scoped {
+        changed.map(|paths| paths.iter().map(|path| path.resolve(root)).collect::<io::Result<_>>()).transpose()?
+    } else { None };
+    let scans = crate::app_git::refresh::collect_with_paths(&mut discovery, roots, changed, root,
+        cancel, include_untracked, Path::to_path_buf);
     let discovery = Discovery {
         roots: discovery
             .roots
@@ -221,34 +239,20 @@ pub(crate) fn status(
             .map(|path| from_native(path, root))
             .transpose()?,
     };
-    let mut roots = discovery.roots.clone();
-    if parent_open && let Some(parent) = &discovery.parent {
-        roots.push(parent.clone());
-    }
-    let mut scans = Vec::new();
-    for path in roots {
-        if cancel.is_cancelled() {
-            return Err(io::Error::from(io::ErrorKind::Interrupted));
-        }
-        if closed.contains(&path) {
-            continue;
-        }
-        let native = path.resolve(root)?;
-        let snapshot = crate::app_git::collect_source_control_status_with_paths(
-            native.clone(),
-            || {},
-            cancel,
-            include_untracked,
-            Path::to_path_buf,
-        );
-        if snapshot.repository_found && snapshot.workdir.as_ref() == Some(&native) {
-            scans.push(Scan {
-                root: path,
-                files: snapshot.files.into_iter().map(|file| file.try_map_paths(relative_native_path)).collect::<io::Result<_>>()?,
-                branch: snapshot.branch,
-            });
-        }
-    }
+    let scans = scans.into_iter().map(|scan| {
+        let worktree_paths = scan.worktree_paths.map(|scope| {
+            Ok::<_, io::Error>(WorktreeScope {
+                ignore_case: scope.ignore_case(),
+                paths: scope.paths.into_iter().map(relative_native_path).collect::<io::Result<_>>()?,
+            })
+        }).transpose()?;
+        Ok(Scan {
+            root: from_native(&scan.root, root)?,
+            files: scan.files.into_iter().map(|file| file.try_map_paths(relative_native_path)).collect::<io::Result<_>>()?,
+            branch: scan.branch,
+            worktree_paths,
+        })
+    }).collect::<io::Result<_>>()?;
     if cancel.is_cancelled() {
         return Err(io::Error::from(io::ErrorKind::Interrupted));
     }
@@ -392,28 +396,25 @@ impl workspace::Workspace {
         let mut skipped = Vec::new();
         let mut selected = Vec::new();
         let mut refreshed = std::collections::HashMap::new();
+        let mut previous = std::collections::HashMap::new();
+        let mut delta_safe = partial.is_some();
         if let Some(roots) = &roots {
             for root in roots {
+                let cached = snapshots.get(root).filter(|snapshot| {
+                    snapshot.scan.include_untracked == include_untracked
+                        && snapshot.checked.elapsed() < std::time::Duration::from_secs(30)
+                });
                 let unaffected = partial.is_some_and(|paths| {
                     paths.iter().all(|path| {
                         !repository_contains(root, path) && !repository_contains(path, root)
                     })
                 });
-                if let Some(snapshot) = unaffected
-                    .then(|| {
-                        snapshots
-                            .get(root)
-                            .filter(|snapshot| {
-                                snapshot.scan.include_untracked == include_untracked
-                                    && snapshot.checked.elapsed() < std::time::Duration::from_secs(30)
-                            })
-                            .map(|snapshot| snapshot.scan.clone())
-                    })
-                    .flatten()
+                if let Some(snapshot) = cached.filter(|_| unaffected).map(|snapshot| snapshot.scan.clone())
                 {
                     skipped.push(root.clone());
                     refreshed.insert(root.clone(), snapshot);
                 } else {
+                    delta_safe &= cached.is_some();
                     selected.push(root.clone());
                 }
             }
@@ -421,7 +422,7 @@ impl workspace::Workspace {
         // A failed/cancelled partial read must leave its repositories missing,
         // so the next refresh retries them rather than reusing stale snapshots.
         for root in &selected {
-            snapshots.remove(root);
+            if let Some(cached) = snapshots.take(root) { previous.insert(root.clone(), cached); }
         }
         let (discovery, scans) = if partial.is_some() && selected.is_empty() {
             (known.unwrap(), Vec::new())
@@ -434,6 +435,7 @@ impl workspace::Workspace {
                     parent_open,
                     closed: excluded,
                     include_untracked,
+                    changed: if delta_safe { partial.cloned() } else { None },
                 },
                 cancel,
             )?
@@ -442,6 +444,7 @@ impl workspace::Workspace {
             };
             (discovery, scans)
         };
+        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
         let refresh_sources = partial.is_none()
             || changed
                 .as_ref()
@@ -460,26 +463,38 @@ impl workspace::Workspace {
         for scan in scans {
             let remote_root = scan.root.clone();
             let key = self.view_key(&scan.root);
-            let files = scan.files.into_iter().map(|file| {
-                file.try_map_paths(|path: RemotePath| -> io::Result<String> {
-                    if path.is_absolute() { return Err(io::Error::other("Git status path must be repository-relative")); }
-                    let remote = scan.root.join_relative(&path.0)?;
-                    Ok(self
-                        .view_key(&remote)
-                        .strip_prefix(&key)
-                        .map_err(io::Error::other)?
-                        .to_string_lossy()
-                        .into_owned())
-                })
+            let local_path = |path: RemotePath| -> io::Result<PathBuf> {
+                if path.is_absolute() { return Err(io::Error::other("Git status path must be repository-relative")); }
+                let remote = remote_root.join_relative(&path.0)?;
+                Ok(self.view_key(&remote).strip_prefix(&key).map_err(io::Error::other)?.to_owned())
+            };
+            let mut files = scan.files.into_iter().map(|file| {
+                file.try_map_paths(|path| local_path(path).map(|path| path.to_string_lossy().into_owned()))
             }).collect::<io::Result<Vec<_>>>()?;
-            let scan = crate::git_repositories::Scan {
-                root: key,
+            // The node's raw path ordering may change when view keys escape
+            // names that the client OS cannot represent directly.
+            files.sort_unstable_by(|a, b| crate::source_control_rows::Group::of(a)
+                .cmp(&crate::source_control_rows::Group::of(b)).then(a.path.cmp(&b.path)));
+            let mut merged = crate::git_repositories::Scan {
+                root: key.clone(),
                 files,
                 branch: scan.branch,
                 worktree_paths: None,
                 include_untracked,
             };
-            let bytes = scan
+            let checked = if let Some(scope) = scan.worktree_paths {
+                let mut paths = crate::app_git::refresh::WorktreePaths::new(
+                    scope.paths.into_iter().map(local_path).collect::<io::Result<_>>()?);
+                paths.set_ignore_case(scope.ignore_case);
+                let mut cached = previous.remove(&remote_root)
+                    .ok_or_else(|| io::Error::other("Git status delta has no cached baseline"))?;
+                crate::app_git::refresh::merge_worktree(&mut cached.scan.files, merged.files, &paths);
+                merged.files = cached.scan.files;
+                // A path delta does not revalidate unrelated files. Retain the
+                // full-snapshot deadline so missed shared-disk events expire.
+                cached.checked
+            } else { std::time::Instant::now() };
+            let bytes = merged
                 .files
                 .iter()
                 .map(|file| {
@@ -492,11 +507,11 @@ impl workspace::Workspace {
                 remote_root.clone(),
                 bytes,
                 CachedStatus {
-                    scan: scan.clone(),
-                    checked: std::time::Instant::now(),
+                    scan: merged.clone(),
+                    checked,
                 },
             );
-            refreshed.insert(remote_root, scan);
+            refreshed.insert(remote_root, merged);
         }
         let scans = active
             .into_iter()

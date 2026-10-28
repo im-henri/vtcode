@@ -6,52 +6,22 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
 };
-use syntect::{
-    easy::HighlightLines,
-    highlighting::{Style, Theme, ThemeSet},
-    parsing::{SyntaxReference, SyntaxSet},
-};
+use crate::textmate::{Style, ThemeSet, SyntaxRegistry};
 
 /// Resolve the document's grammar once per batch, using its real first line.
 /// Each diff row still starts a fresh parser because adjacent rows may belong
 /// to different revisions or omit context.
-pub(crate) struct FragmentHighlighter<'a> {
-    syntax_set: &'a SyntaxSet,
-    syntax: &'a SyntaxReference,
-    theme: Option<&'a Theme>,
-}
-
-impl<'a> FragmentHighlighter<'a> {
-    pub(crate) fn new(
-        first_line: &str,
-        file_path: Option<&Path>,
-        language: Option<&str>,
-        theme_key: &str,
-        syntax_set: &'a SyntaxSet,
-        theme_set: &'a ThemeSet,
-    ) -> Self {
-        Self {
-            syntax_set,
-            syntax: select_syntax(syntax_set, file_path, language, first_line),
-            theme: select_theme(theme_set, theme_key),
-        }
+pub(crate) struct FragmentHighlighter { state: Option<crate::textmate_backend::State> }
+impl FragmentHighlighter {
+    pub(crate) fn new(first_line: &str, file_path: Option<&Path>, language: Option<&str>, theme_key: &str,
+        syntax_set: &SyntaxRegistry, theme_set: &ThemeSet) -> Self {
+        let syntax = select_syntax(syntax_set,file_path,language,first_line);
+        Self { state:select_theme(theme_set,theme_key).map(|theme|crate::textmate_backend::State::new(syntax,theme)) }
     }
-
     pub(crate) fn highlight_line(&self, line: &str) -> HighlightSpans {
-        let Some(theme) = self.theme else {
-            return vec![(Style::default(), line.to_string())];
-        };
-        HighlightLines::new(self.syntax, theme)
-            .highlight_line(line, self.syntax_set)
-            .map_or_else(
-                |_| vec![(Style::default(), line.to_string())],
-                |ranges| {
-                    ranges
-                        .into_iter()
-                        .map(|(style, text)| (style, text.to_string()))
-                        .collect()
-                },
-            )
+        self.state.as_ref().map_or_else(||vec![(Style::default(),line.to_owned())], |state| {
+            state.initial().line(line,true,&mut Vec::new()).into_iter().map(|(s,t)|(s,t.to_owned())).collect()
+        })
     }
 }
 
@@ -196,7 +166,7 @@ mod tests {
     #[test]
     fn fragment_contexts_keep_paths_themes_languages_hashes_and_replacements_separate() {
         let mut cache = FragmentCache::default();
-        let spans = |label: &str| vec![(syntect::highlighting::Style::default(), label.to_owned())];
+        let spans = |label: &str| vec![(crate::textmate::Style::default(), label.to_owned())];
         for path in ["first.rs", "second.rs"] {
             for theme in ["dark", "light"] {
                 for language in [None, Some(""), Some("Rust"), Some("C")] {

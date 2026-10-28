@@ -127,8 +127,8 @@ struct ChatTheme<'a> {
 }
 
 type ChatSyntax<'a> = Option<(
-    &'a syntect::parsing::SyntaxSet,
-    Option<&'a syntect::highlighting::Theme>,
+    &'a crate::textmate::SyntaxRegistry,
+    Option<&'a crate::textmate::Theme>,
 )>;
 
 const ACTIVITY_INTERVAL: Duration = Duration::from_millis(120);

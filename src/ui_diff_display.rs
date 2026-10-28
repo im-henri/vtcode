@@ -412,21 +412,21 @@ fn diff_spacer_pattern(width: usize, row: usize, starts_block: bool, ends_block:
 fn plain_diff_highlight_line(
     text: &str,
     foreground: Color,
-) -> Vec<(syntect::highlighting::Style, String)> {
+) -> Vec<(crate::textmate::Style, String)> {
     let (r, g, b) = match foreground {
         Color::Rgb(r, g, b) => (r, g, b),
         _ => (212, 212, 212),
     };
     vec![(
-        syntect::highlighting::Style {
-            foreground: syntect::highlighting::Color { r, g, b, a: 255 },
-            background: syntect::highlighting::Color {
+        crate::textmate::Style {
+            foreground: crate::textmate::Color { r, g, b, a: 255 },
+            background: crate::textmate::Color {
                 r: 0,
                 g: 0,
                 b: 0,
                 a: 0,
             },
-            font_style: syntect::highlighting::FontStyle::empty(),
+            font_style: crate::textmate::FontStyle::empty(),
         },
         text.to_string(),
     )]
@@ -576,10 +576,10 @@ fn diff_highlight_index(
 
 #[cfg(test)]
 fn normalize_diff_highlight_line(
-    highlighted: &[(syntect::highlighting::Style, String)],
+    highlighted: &[(crate::textmate::Style, String)],
     text: &str,
     foreground: Color,
-) -> Option<Vec<(syntect::highlighting::Style, String)>> {
+) -> Option<Vec<(crate::textmate::Style, String)>> {
     let expected_len = text.chars().count();
     let highlighted_len: usize = highlighted
         .iter()
@@ -593,7 +593,7 @@ fn normalize_diff_highlight_line(
 }
 
 fn render_diff_highlighted_spans(
-    highlighted: &[(syntect::highlighting::Style, String)],
+    highlighted: &[(crate::textmate::Style, String)],
     index: &DiffHighlightIndex,
     visible_width: usize,
     horizontal_scroll: usize,
@@ -622,21 +622,9 @@ fn render_diff_highlighted_spans(
         };
         let skipped = horizontal_scroll.saturating_sub(span_start);
         let segment = index.segment_tail(span, segment, skipped);
-        let fg = crate::ui_colors::syntect_color(style.foreground, bg);
-        let mut token_style = Style::default().fg(fg);
-        for (font, modifier) in [
-            (syntect::highlighting::FontStyle::BOLD, Modifier::BOLD),
-            (syntect::highlighting::FontStyle::ITALIC, Modifier::ITALIC),
-            (
-                syntect::highlighting::FontStyle::UNDERLINE,
-                Modifier::UNDERLINED,
-            ),
-        ] {
-            if style.font_style.contains(font) {
-                token_style = token_style.add_modifier(modifier);
-            }
-        }
-        let highlighted_style = token_style.fg(crate::ui_colors::syntect_color(
+        let fg = crate::ui_colors::syntax_color(style.foreground, bg);
+        let token_style = Style::default().fg(fg).add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
+        let highlighted_style = token_style.fg(crate::ui_colors::syntax_color(
             style.foreground,
             bg_highlight.unwrap_or(bg),
         ));
@@ -687,7 +675,7 @@ fn render_diff_highlighted_spans(
 
 #[cfg(test)]
 fn render_diff_highlighted_spans_reference(
-    highlighted: &[(syntect::highlighting::Style, String)],
+    highlighted: &[(crate::textmate::Style, String)],
     visible_width: usize,
     horizontal_scroll: usize,
     bg: Color,
@@ -704,16 +692,9 @@ fn render_diff_highlighted_spans_reference(
     let mut batch_buf = String::with_capacity(128);
     let mut batch_style = Style::default();
     'outer: for (style, segment) in highlighted {
-        let fg = crate::ui_colors::syntect_color(style.foreground, bg);
-        let mut token_style = Style::default().fg(fg);
-        for (font, modifier) in [
-            (syntect::highlighting::FontStyle::BOLD, Modifier::BOLD),
-            (syntect::highlighting::FontStyle::ITALIC, Modifier::ITALIC),
-            (syntect::highlighting::FontStyle::UNDERLINE, Modifier::UNDERLINED),
-        ] {
-            if style.font_style.contains(font) { token_style = token_style.add_modifier(modifier); }
-        }
-        let highlighted_style = token_style.fg(crate::ui_colors::syntect_color(
+        let fg = crate::ui_colors::syntax_color(style.foreground, bg);
+        let token_style = Style::default().fg(fg).add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
+        let highlighted_style = token_style.fg(crate::ui_colors::syntax_color(
             style.foreground, bg_highlight.unwrap_or(bg),
         ));
         for ch in segment.trim_end_matches('\n').chars() {
@@ -847,7 +828,7 @@ fn render_diff_line<'a>(
             );
         }
     }
-    // Keep the previous neutral Syntect fallback color, while borrowing just
+    // Keep the previous neutral TextMate fallback color, while borrowing just
     // the visible source window instead of copying the complete logical line.
     let content_fg = match fg {
         Color::Rgb(..) => fg,
@@ -1866,20 +1847,20 @@ mod tests {
     #[test]
     fn diff_token_alpha_and_font_styles_follow_character_highlight_surfaces() {
         let highlighted = vec![(
-            syntect::highlighting::Style {
-                foreground: syntect::highlighting::Color {
+            crate::textmate::Style {
+                foreground: crate::textmate::Color {
                     r: 255,
                     g: 255,
                     b: 255,
                     a: 128,
                 },
-                background: syntect::highlighting::Color {
+                background: crate::textmate::Color {
                     r: 0,
                     g: 0,
                     b: 0,
                     a: 0,
                 },
-                font_style: syntect::highlighting::FontStyle::ITALIC,
+                font_style: crate::textmate::FontStyle::ITALIC,
             },
             "ab".to_string(),
         )];
@@ -2539,7 +2520,7 @@ mod tests {
         let mut keyword_colors = Vec::new();
         for (theme, path, language) in [
             ("dark-plus", "example.rs", None),
-            ("base16-ocean.dark", "example.txt", Some("Rust")),
+            ("monokai", "example.txt", Some("Rust")),
         ] {
             app.syntax_theme = theme.into();
             app.editor_mut().unwrap().file_path = Some(path.into());

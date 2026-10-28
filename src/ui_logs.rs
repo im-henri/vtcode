@@ -37,7 +37,7 @@ enum Control {
     Channel(Source),
     CaptureCpu,
     Copy,
-    Follow,
+    Autoscroll,
     Wrap,
     Clear,
     More,
@@ -65,7 +65,7 @@ struct View {
     entries: VecDeque<(u64, usize, usize)>,
     widths: BTreeMap<usize, usize>,
     omitted: u64,
-    follow: bool,
+    autoscroll: bool,
     generation: u64,
     first_line: u64,
 }
@@ -77,7 +77,7 @@ impl Default for View {
             entries: VecDeque::new(),
             widths: BTreeMap::new(),
             omitted: 0,
-            follow: true,
+            autoscroll: true,
             generation: 0,
             first_line: 0,
         }
@@ -98,13 +98,13 @@ impl View {
             return;
         };
         let reset = self.log.as_ref().is_none_or(|previous| !previous.same(log));
-        // Reading old output, selecting text or scrolling must pause following.
+        // Reading old output or selecting text must pause autoscroll.
         if !reset
             && (editor.selection_anchor.is_some()
                 || !editor.extra_cursors.is_empty()
                 || editor.cursor_line + 1 < editor.rope.len_lines())
         {
-            self.follow = false;
+            self.autoscroll = false;
         }
         if !reset && self.version == log.version() {
             return;
@@ -194,7 +194,7 @@ impl View {
             editor.scroll_offset = editor.scroll_offset.saturating_sub(removed_lines);
             editor.modified = false;
         }
-        if self.follow {
+        if self.autoscroll {
             end(editor);
         }
         self.version = snapshot.version;
@@ -374,11 +374,11 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
     let remote = app.remote_workspace.as_ref().filter(|_| app.logs.source == Source::RemoteSsh);
     let capturing = remote.is_some_and(|remote| remote.client.capturing_cpu());
     let can_capture = remote.is_some_and(|remote| remote.client.can_capture_cpu()) && !capturing;
-    let follow = app
+    let autoscroll = app
         .logs
         .reader
         .as_ref()
-        .is_none_or(|reader| reader.view.follow);
+        .is_none_or(|reader| reader.view.autoscroll);
     let bg = app.colors.ui.bg_panel;
     let mut right = area.right();
     let mut take = |width: u16| {
@@ -388,8 +388,8 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
         rect
     };
     let more = take(3);
-    let follow_rect = if area.width >= 34 {
-        take(10)
+    let autoscroll_rect = if area.width >= 34 {
+        take(14)
     } else {
         Rect::default()
     };
@@ -419,9 +419,9 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         (copy, Control::Copy, "Copy", app.logs.log.is_none()),
         (
-            follow_rect,
-            Control::Follow,
-            if follow { "✓ Follow" } else { "Follow" },
+            autoscroll_rect,
+            Control::Autoscroll,
+            if autoscroll { "✓ Autoscroll" } else { "Autoscroll" },
             app.logs.log.is_none(),
         ),
         (more, Control::More, "⋯", false),
@@ -491,13 +491,13 @@ fn menu_actions(app: &App, menu: Control) -> Vec<(&'static str, Control)> {
                 .logs
                 .reader
                 .as_ref()
-                .is_none_or(|reader| reader.view.follow)
+                .is_none_or(|reader| reader.view.autoscroll)
             {
-                "✓ Auto scroll"
+                "✓ Autoscroll"
             } else {
-                "Auto scroll"
+                "Autoscroll"
             },
-            Control::Follow,
+            Control::Autoscroll,
         ),
     ];
     if app.remote_workspace.is_some() && app.logs.source == Source::RemoteSsh {
@@ -511,7 +511,7 @@ fn disabled(app: &App, control: Control) -> bool {
             .remote_workspace
             .as_ref()
             .is_none_or(|remote| !remote.client.can_capture_cpu() || remote.client.capturing_cpu()),
-        Control::Copy | Control::Follow => app.logs.log.is_none(),
+        Control::Copy | Control::Autoscroll => app.logs.log.is_none(),
         _ => false,
     }
 }
@@ -585,12 +585,12 @@ fn action(app: &mut App, control: Control) {
                 app.capture_remote_cpu();
             }
         }
-        Control::Follow => {
+        Control::Autoscroll => {
             let reader = app.logs.reader();
-            if reader.view.follow {
-                reader.view.follow = false;
+            if reader.view.autoscroll {
+                reader.view.autoscroll = false;
             } else {
-                reader.follow();
+                reader.resume_autoscroll();
             }
         }
         Control::Wrap => app.logs.reader().toggle_wrap(),
@@ -906,7 +906,7 @@ pub(crate) fn hint(app: &App) -> Option<String> {
             }
         }
         Control::Copy => "Copy all displayed output".into(),
-        Control::Follow => "Auto scroll to new output · Selection and scrolling pause it".into(),
+        Control::Autoscroll => "Autoscroll · Scroll up to pause; scroll past the bottom to resume".into(),
         Control::CaptureCpu => {
             "Measure headless process and thread CPU for 10 seconds · Runs only when requested"
                 .into()

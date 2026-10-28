@@ -1,3 +1,4 @@
+use crate::ui_colors::syntax_font_modifiers;
 use std::fmt::Write as FmtWrite;
 use unicode_width::UnicodeWidthStr;
 
@@ -386,19 +387,12 @@ fn paint_editor_row(f: &mut Frame, rows: &mut prepared_text::Rows, spans: &mut V
     rows.push(f.buffer_mut(), spans, marker.unwrap_or_default());
 }
 
-fn plain_theme_style(color: Color) -> syntect::highlighting::Style {
+fn plain_theme_style(color: Color) -> crate::textmate::Style {
     let mut style = PLAIN_STYLE;
-    if let Color::Rgb(r,g,b) = color { style.foreground = syntect::highlighting::Color {r,g,b,a:255}; }
+    if let Color::Rgb(r,g,b) = color { style.foreground = crate::textmate::Color {r,g,b,a:255}; }
     style
 }
-fn syntax_font_modifiers(font: syntect::highlighting::FontStyle) -> Modifier {
-    use syntect::highlighting::FontStyle;
-    let mut modifiers = Modifier::empty();
-    if font.contains(FontStyle::BOLD) { modifiers |= Modifier::BOLD; }
-    if font.contains(FontStyle::ITALIC) { modifiers |= Modifier::ITALIC; }
-    if font.contains(FontStyle::UNDERLINE) { modifiers |= Modifier::UNDERLINED; }
-    modifiers
-}
+
 
 /// Occurrence highlighting only accepts short single-line selections. Check
 /// the rope range before copying it so dragging over a generated/minified line
@@ -731,16 +725,15 @@ fn semantic_color_for_token(
     token: &crate::lsp::DecodedSemanticToken,
     legend: Option<&lsp_types::SemanticTokensLegend>,
     language: &str,
-    theme: Option<&FxHashMap<String, (u8, u8, u8)>>,
-    cache: &mut FxHashMap<(u32, u32), Option<Color>>,
-) -> Option<Color> {
+    theme: Option<&crate::semantic_theme::SemanticTheme>,
+    cache: &mut FxHashMap<(u32, u32), Option<Style>>,
+) -> Option<Style> {
     let legend = legend?;
     let theme = theme?;
     // A file usually has just a handful of token type/modifier combinations.
     // Resolve theme selectors once per combination, never once per character.
     *cache.entry((token.token_type, token._token_modifiers)).or_insert_with(|| {
-        crate::lsp::themed_semantic_token_color(token, legend, language, Some(theme))
-            .map(|(r, g, b)| Color::Rgb(r, g, b))
+        crate::lsp::themed_semantic_token_style(token, legend, language, Some(theme))
     })
 }
 
@@ -752,22 +745,21 @@ fn editor_semantic_color_for_token(
     token: &crate::lsp::DecodedSemanticToken,
     manager: &crate::lsp::LspManager,
     editor: &crate::editor::Editor,
-    theme: Option<&FxHashMap<String, (u8, u8, u8)>>,
-    cache: &mut FxHashMap<(u32, u32), Option<Color>>,
-) -> Option<Color> {
+    theme: Option<&crate::semantic_theme::SemanticTheme>,
+    cache: &mut FxHashMap<(u32, u32), Option<Style>>,
+) -> Option<Style> {
     let theme = theme?;
     // The cache lives for one editor draw. Resolve the server and language
     // only for a new style, including caching unsupported token styles.
     *cache.entry((token.token_type, token._token_modifiers)).or_insert_with(|| {
         let legend = manager.semantic_legend_for_file(editor.file_path.as_deref())?;
-        crate::lsp::themed_semantic_token_color(token, legend, editor.language_name(), Some(theme))
-            .map(|(r, g, b)| Color::Rgb(r, g, b))
+        crate::lsp::themed_semantic_token_style(token, legend, editor.language_name(), Some(theme))
     })
 }
 
 #[cfg(test)]
 fn syntax_foregrounds_for_range(
-    highlighted: &[(syntect::highlighting::Style, String)],
+    highlighted: &[(crate::textmate::Style, String)],
     span_char_lengths: &[usize],
     background: Color,
     start: usize,
@@ -780,7 +772,7 @@ fn syntax_foregrounds_for_range(
         if span_end > start && span_start < end {
             let from = span_start.max(start) - start;
             let to = span_end.min(end) - start;
-            foregrounds[from..to].fill(Some(crate::ui_colors::syntect_color(style.foreground, background)));
+            foregrounds[from..to].fill(Some(crate::ui_colors::syntax_color(style.foreground, background)));
         }
         span_start = span_end;
         if span_start >= end {
@@ -794,7 +786,7 @@ fn syntax_foregrounds_for_range(
 /// foreground vector duplicated the visible window and allocated per row,
 /// even though the bounded renderer consumes those colors only once.
 struct SyntaxForegroundCursor<'a> {
-    spans: &'a [(syntect::highlighting::Style, String)],
+    spans: &'a [(crate::textmate::Style, String)],
     lengths: &'a [usize],
     background: Color,
     next: usize,
@@ -806,7 +798,7 @@ struct SyntaxForegroundCursor<'a> {
 
 impl<'a> SyntaxForegroundCursor<'a> {
     fn new(
-        source: Option<(&'a [(syntect::highlighting::Style, String)], &'a [usize])>,
+        source: Option<(&'a [(crate::textmate::Style, String)], &'a [usize])>,
         background: Color,
         _start: usize,
         _end: usize,
@@ -837,7 +829,7 @@ impl<'a> SyntaxForegroundCursor<'a> {
             self.end = self.end.saturating_add(length);
             // No color conversion for spans wholly left of the viewport.
             if self.end > column {
-                self.color = Some(crate::ui_colors::syntect_color(style.foreground, self.background));
+                self.color = Some(crate::ui_colors::syntax_color(style.foreground, self.background));
             }
         }
         self.color
@@ -1078,10 +1070,10 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             line_bg, slice_start, slice_end,
         );
         matches_for_line(
-            &app.search_matches,
+            &app.tabs[app.active_tab].file_search.search_matches,
             &editor.rope,
             line_idx,
-            app.search_current,
+            app.tabs[app.active_tab].file_search.search_current,
             &mut line_matches,
         );
         if !reference_cell_paint() {
@@ -1240,7 +1232,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 editor,
                 scroll,
                 visible_lines,
-                search_matches: &app.search_matches,
+                search_matches: &app.tabs[app.active_tab].file_search.search_matches,
                 diagnostic_lines: &[],
                 diagnostic_index: None,
                 change_index: Some(&app.cached_editor_change_index),
@@ -1259,7 +1251,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             total_lines: editor.line_count(),
             visible_lines,
             scroll,
-            search_matches: &app.search_matches,
+            search_matches: &app.tabs[app.active_tab].file_search.search_matches,
             diagnostic_lines: &[],
             diagnostic_index: None,
             change_rows: &change_rows,
@@ -1360,7 +1352,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         (editor.content_version, editor.wrap_revision, editor.tab_size),
         &editor.rope, first, end, editor.cursor_line,
     );
-    let max_line_width = if editor.large_file_mode {
+    // Whole-document analysis belongs to the active editor. Inactive panes
+    // have their own visible-line cache, not the active file's width estimate.
+    let max_line_width = if editor.large_file_mode || app.rendering_inactive_editor {
         visible_max_line_width
     } else {
         app.cached_max_line_width.max(visible_max_line_width)
@@ -1510,9 +1504,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Update viewport dimensions
     let mut selection_style = app.copy_animation_selection_style();
-    let editor = &mut app.tabs[app.active_tab].editor;
+    let crate::app::Tab { editor, file_search, .. } = &mut app.tabs[app.active_tab];
     editor.viewport_height = code_area.height as usize;
     editor.viewport_width = code_area.width as usize;
+    editor.restore_reopen_wrap_scroll();
     editor.scroll_past_end = app.scroll_past_end;
     // Defensive clamp: ensure cursor is within rope bounds before rendering
     editor.clamp_cursor();
@@ -1718,10 +1713,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let selection_range = editor.selection_range();
         let matching_bracket = matching_bracket_cached;
         let matching_tag = matching_tag_cached;
-        let search_matches = &app.search_matches;
-        let search_current = app.search_current;
+        let search_matches = &file_search.search_matches;
+        let search_current = file_search.search_current;
         let cursor_word_owned: Option<std::sync::Arc<str>>;
-        let cursor_word: Option<&str> = if app.search_active {
+        let cursor_word: Option<&str> = if file_search.search_active {
             None
         } else if has_selection {
             cursor_word_owned = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
@@ -2085,7 +2080,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     break;
                 }
                 let syntax_style = Style::default()
-                    .fg(crate::ui_colors::syntect_color(style.foreground, line_bg))
+                    .fg(crate::ui_colors::syntax_color(style.foreground, line_bg))
                     .bg(line_bg)
                     .add_modifier(syntax_font_modifiers(style.font_style));
                 for ch in wrapped_chars[abs_col..span_end.min(paint_end)]
@@ -2124,7 +2119,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                                     sem_color_idx = sem_tok_idx;
                                 }
                                 if let Some(color) = sem_color {
-                                    s = s.fg(color);
+                                    s = s.patch(color);
                                 }
                             }
                         }
@@ -2450,7 +2445,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 total_lines: wrap_total_rows.max(1),
                 visible_lines,
                 scroll: wrap_scroll,
-                search_matches: &app.search_matches,
+                search_matches: &file_search.search_matches,
                 diagnostic_lines: diag_lines,
                 diagnostic_index: Some(&app.cached_diagnostic_index),
                 change_rows: &change_rows,
@@ -2471,7 +2466,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     editor,
                     scroll: editor.scroll_offset,
                     visible_lines,
-                    search_matches: &app.search_matches,
+                    search_matches: &file_search.search_matches,
                     diagnostic_lines: diag_lines,
                     diagnostic_index: Some(&app.cached_diagnostic_index),
                     change_index: Some(&app.cached_editor_change_index),
@@ -2581,11 +2576,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let selection_range = editor.selection_range();
     let matching_bracket = matching_bracket_cached;
     let matching_tag = matching_tag_cached;
-    let search_matches = &app.search_matches;
-    let search_current = app.search_current;
+    let search_matches = &app.tabs[app.active_tab].file_search.search_matches;
+    let search_current = app.tabs[app.active_tab].file_search.search_current;
     // Word/selection occurrence highlighting
     let cursor_word_owned_nw: Option<std::sync::Arc<str>>;
-    let cursor_word: Option<&str> = if app.search_active {
+    let cursor_word: Option<&str> = if app.tabs[app.active_tab].file_search.search_active {
         None
     } else if has_selection {
         cursor_word_owned_nw = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
@@ -2913,7 +2908,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 break;
             }
             let syntax_style = Style::default()
-                .fg(crate::ui_colors::syntect_color(style.foreground, line_bg))
+                .fg(crate::ui_colors::syntax_color(style.foreground, line_bg))
                 .bg(line_bg)
                 .add_modifier(syntax_font_modifiers(style.font_style));
             while col < span_end.min(glyphs.chars.len()) {
@@ -2938,7 +2933,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                                     editor, app.semantic_theme_colors.as_ref(), &mut semantic_color_cache);
                                 sem_color_idx = sem_tok_idx;
                             }
-                            if let Some(color) = sem_color { text_style = text_style.fg(color); }
+                            if let Some(color) = sem_color { text_style = text_style.patch(color); }
                             style_end = style_end.min((token.start_char + token.length) as usize);
                         } else {
                             style_end = style_end.min(token.start_char as usize);
@@ -3666,7 +3661,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 editor: &app.tabs[app.active_tab].editor,
                 scroll,
                 visible_lines,
-                search_matches: &app.search_matches,
+                search_matches: &app.tabs[app.active_tab].file_search.search_matches,
                 diagnostic_lines: diag_lines,
                 diagnostic_index: Some(&app.cached_diagnostic_index),
                 change_index: Some(&app.cached_editor_change_index),
@@ -3687,7 +3682,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             total_lines: effective_lines,
             visible_lines,
             scroll,
-            search_matches: &app.search_matches,
+            search_matches: &app.tabs[app.active_tab].file_search.search_matches,
             diagnostic_lines: diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &change_rows,
@@ -4740,7 +4735,7 @@ mod tests {
     }
 
     #[test]
-    fn large_file_renderer_uses_cached_syntect_foregrounds() {
+    fn large_file_renderer_uses_cached_textmate_foregrounds() {
         let mut app = App::test_new();
         let path = std::path::PathBuf::from("large.rs");
         let mut editor = Editor::test_with_text("let answer = 42;\n");

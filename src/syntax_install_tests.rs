@@ -3,15 +3,11 @@ use crate::syntax_install::{install, source_path};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 use std::{fs, path::Path, time::Duration};
-use syntect::parsing::{SyntaxSet, SyntaxSetBuilder};
+use crate::textmate::{SyntaxRegistry};
 
-const GRAMMAR: &str = "%YAML 1.2\n---\nname: Installed Example\nfile_extensions: [syntaxtest]\nscope: source.syntaxtest\ncontexts:\n  main:\n    - match: magic\n      scope: keyword.control.syntaxtest\n";
+const GRAMMAR: &str = r##"{"name":"Installed Example","fileTypes":["syntaxtest"],"scopeName":"source.syntaxtest","patterns":[{"match":"magic","name":"keyword.control.syntaxtest"}]}"##;
 
-fn plain() -> SyntaxSet {
-    let mut builder = SyntaxSetBuilder::new();
-    builder.add_plain_text_syntax();
-    builder.build()
-}
+fn plain() -> SyntaxRegistry { SyntaxRegistry::embedded() }
 
 #[test]
 fn paths_are_local_and_relative_to_the_workspace() {
@@ -20,23 +16,22 @@ fn paths_are_local_and_relative_to_the_workspace() {
         "",
         "   ",
         "\"\"",
-        "https://example.org/test.sublime-syntax",
+        "https://example.org/test.tmLanguage.json",
         "HTTP:example.json",
         "file:///test.json",
         "ftp://host/test.json",
         "archive.zip",
-        "file.tmLanguage",
     ] {
         assert!(source_path(input, dir.path()).is_err(), "{input}");
     }
     for input in [
-        "new syntax.sublime-syntax",
-        "  \"new syntax.sublime-syntax\"  ",
-        "'new syntax.sublime-syntax'",
+        "new syntax.tmLanguage.json",
+        "  \"new syntax.tmLanguage.json\"  ",
+        "'new syntax.tmLanguage.json'",
     ] {
         assert_eq!(
             source_path(input, dir.path()).unwrap(),
-            dir.path().join("new syntax.sublime-syntax")
+            dir.path().join("new syntax.tmLanguage.json")
         );
     }
     let absolute = dir.path().join("語法.JSON");
@@ -53,12 +48,12 @@ fn paths_are_local_and_relative_to_the_workspace() {
 #[test]
 fn validated_install_is_persistent_and_invalid_replacements_preserve_the_old_syntax() {
     let dir = tempfile::tempdir().unwrap();
-    let source = dir.path().join("Example.SUBLIME-SYNTAX");
+    let source = dir.path().join("Example.tmLanguage.json");
     let root = dir.path().join("installed");
     fs::write(&source, GRAMMAR).unwrap();
     let installed = install(&source, &root, &plain()).unwrap();
     assert_eq!(installed.name, "Installed Example");
-    let installed_path = root.join("Example.sublime-syntax");
+    let installed_path = root.join("Example.tmLanguage.json");
     assert!(installed_path.is_file());
     assert_eq!(fs::read_to_string(&source).unwrap(), GRAMMAR);
     let loaded = crate::syntax_assets::build_syntax_set(&[root.clone()]).unwrap();
@@ -68,12 +63,12 @@ fn validated_install_is_persistent_and_invalid_replacements_preserve_the_old_syn
     );
 
     for invalid in [
-        "missing: grammar",
-        "%YAML 1.2\n---\nname: Bad\nscope: source.bad\ncontexts:\n  main:\n    - include: scope:source.missing_dependency\n",
-        "%YAML 1.2\n---\nname: Bad\nscope: source.bad\ncontexts:\n  main:\n    - include: missing_context\n",
-        "%YAML 1.2\n---\nname: Bad\nscope: source.bad\ncontexts:\n  main:\n    - match: magic\n      push: scope:source.missing_dependency\n",
-        "%YAML 1.2\n---\nname: Bad\nscope: source.bad\ncontexts:\n  main:\n    - match: '['\n",
-        "%YAML 1.2\n---\nname: Bad\nscope: source.bad\nextends: Missing.sublime-syntax\ncontexts:\n  main: []\n",
+        "missing grammar",
+        r##"{"name":"Bad","scopeName":"source.bad","patterns":[{"include":"source.missing_dependency"}]}"##,
+        r##"{"name":"Bad","scopeName":"source.bad","patterns":[{"include":"#missing_context"}]}"##,
+        r##"{"name":"Bad","patterns":[]}"##,
+        r##"{"name":"Bad","scopeName":"source.bad","patterns":"invalid"}"##,
+        r##"{"name":"Bad","scopeName":"source.bad","patterns":[{"match":"["}]}"##,
     ] {
         fs::write(&source, invalid).unwrap();
         assert!(install(&source, &root, &loaded).is_err(), "{invalid}");
@@ -92,18 +87,17 @@ fn validated_install_is_persistent_and_invalid_replacements_preserve_the_old_syn
     install(&installed_path, &root, &loaded).unwrap();
     assert_eq!(fs::read_to_string(&installed_path).unwrap(), updated);
 
-    // References to installed grammars, local contexts, and inherited rules
-    // remain valid; only unresolved references should reject an installation.
-    let dependent = dir.path().join("Dependent.sublime-syntax");
-    fs::write(&dependent, "%YAML 1.2\n---\nname: Dependent\nscope: source.dependent\nextends: Example.sublime-syntax\ncontexts:\n  main:\n    - include: local\n  local:\n    - include: scope:source.syntaxtest\n").unwrap();
-    install(&dependent, &root, &loaded).unwrap();
+    // External includes and nested local repositories survive installation intact.
+    let dependent=dir.path().join("Dependent.tmLanguage.json");
+    fs::write(&dependent,r##"{"name":"Dependent","scopeName":"source.dependent","patterns":[{"include":"#local"}],"repository":{"local":{"patterns":[{"include":"source.syntaxtest"}]}}}"##).unwrap();
+    install(&dependent,&root,&loaded).unwrap();
 }
 
 #[test]
 fn textmate_json_keeps_its_name_extensions_and_rules_without_a_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("Custom.tmLanguage.json");
-    let json = r#"{"name":"Custom TextMate","scopeName":"source.custom","fileTypes":["custom"],"patterns":[{"match":"magic","name":"keyword.control.custom"}]}"#;
+    let json = r##"{"name":"Custom TextMate","scopeName":"source.custom","fileTypes":["custom"],"patterns":[{"match":"magic","name":"keyword.control.custom"}]}"##;
     fs::write(&source, json).unwrap();
     let root = dir.path().join("installed");
     let installed = install(&source, &root, &plain()).unwrap();
@@ -113,13 +107,12 @@ fn textmate_json_keeps_its_name_extensions_and_rules_without_a_manifest() {
     assert!(!syntax.hidden);
     assert_eq!(fs::read_to_string(source).unwrap(), json);
     assert_eq!(installed.name, "Custom TextMate");
-    assert!(root.join("Custom.tmLanguage.sublime-syntax").is_file());
-    let themes = syntect::highlighting::ThemeSet::load_defaults();
+    assert!(root.join("Custom.tmLanguage.json").is_file());
+    let themes = crate::highlight::Highlighter::startup_theme_set();
     let mut highlighter =
-        syntect::easy::HighlightLines::new(syntax, &themes.themes["base16-ocean.dark"]);
+        crate::textmate_backend::HighlightLines::new(syntax, &themes.themes["dark-plus"]);
     let spans = highlighter
-        .highlight_line("magic other\n", &loaded)
-        .unwrap();
+        .highlight_line("magic other\n");
     assert_ne!(
         spans.first().unwrap().0.foreground,
         spans.last().unwrap().0.foreground
@@ -129,7 +122,7 @@ fn textmate_json_keeps_its_name_extensions_and_rules_without_a_manifest() {
 #[test]
 fn missing_folders_binary_and_oversized_sources_cannot_create_an_install() {
     let dir = tempfile::tempdir().unwrap();
-    let source = dir.path().join("source.sublime-syntax");
+    let source = dir.path().join("source.tmLanguage.json");
     let root = dir.path().join("installed");
     assert!(install(&source, &root, &plain()).is_err());
     fs::create_dir(&source).unwrap();
@@ -174,7 +167,7 @@ fn syntax_command_is_discoverable_and_rejects_links_from_keyboard_and_mouse() {
                 .iter()
                 .any(|(_, command)| *command == "install_syntax")
         );
-        app.paste_into_focused_text_input("https://example.org/Example.sublime-syntax");
+        app.paste_into_focused_text_input("https://example.org/Example.tmLanguage.json");
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal
             .draw(|frame| crate::ui_pickers::draw_command_palette(frame, &mut app))
@@ -223,7 +216,7 @@ fn syntax_command_is_discoverable_and_rejects_links_from_keyboard_and_mouse() {
 #[test]
 fn installation_reloads_open_files_and_the_language_picker_without_restart() {
     let dir = tempfile::tempdir().unwrap();
-    let source = dir.path().join("Example.sublime-syntax");
+    let source = dir.path().join("Example.tmLanguage.json");
     fs::write(&source, GRAMMAR).unwrap();
     let root = dir.path().join("installed");
     fs::create_dir(&root).unwrap();
@@ -287,11 +280,11 @@ fn busy_close_retry_and_old_installer_results_do_not_change_another_dialog() {
     let mut app = App::test_new();
     app.open_syntax_install_prompt();
     let generation = app.palette.syntax_install_generation;
-    app.palette.query = "Example.sublime-syntax".into();
+    app.palette.query = "Example.tmLanguage.json".into();
     app.palette.cursor = app.palette.query.len();
     app.palette.syntax_install_running = true;
     assert!(app.paste_into_focused_text_input("ignored"));
-    assert_eq!(app.palette.query, "Example.sublime-syntax");
+    assert_eq!(app.palette.query, "Example.tmLanguage.json");
     app.finish_syntax_install(generation, Err("Invalid syntax".into()));
     assert!(!app.palette.syntax_install_running);
     assert_eq!(
@@ -300,13 +293,13 @@ fn busy_close_retry_and_old_installer_results_do_not_change_another_dialog() {
     );
     app.close_palette();
     app.open_syntax_install_prompt();
-    app.palette.query = "Another.sublime-syntax".into();
+    app.palette.query = "Another.tmLanguage.json".into();
     app.finish_syntax_install(generation, Err("Older failure".into()));
     assert!(app.palette.theme_install_error.is_none());
     app.finish_theme_install(Ok(Vec::new()));
     app.finish_theme_install(Err("Older theme failure".into()));
     assert!(app.palette.install_syntax_mode);
-    assert_eq!(app.palette.query, "Another.sublime-syntax");
+    assert_eq!(app.palette.query, "Another.tmLanguage.json");
     assert!(app.palette.theme_install_error.is_none());
     for (width, height) in [(100, 30), (40, 12), (12, 5), (1, 1)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

@@ -227,26 +227,22 @@ fn legacy_paths(root: &Path, query: &Query) -> (std::collections::BTreeSet<PathB
     let mut paths = std::collections::BTreeSet::new();
     for folder in include.roots() {
         let mut walk = ignore::WalkBuilder::new(folder);
-        let folder = folder.to_owned();
         let workspace = root.to_owned();
         let excludes = exclude.clone();
         let settings = settings.clone();
         let visited = visited.clone();
         walk.hidden(false)
             .require_git(false)
-            .parents(query.use_ignores && query.parent_ignores)
-            .ignore(query.use_ignores)
-            .git_ignore(query.use_ignores)
-            .git_exclude(query.use_ignores)
-            .git_global(query.use_ignores && query.global_ignores)
+            .parents(false)
+            .ignore(false)
+            .git_ignore(false)
+            .git_exclude(false)
+            .git_global(false)
             .follow_links(query.follow_links)
             .filter_entry(move |entry| {
                 visited.fetch_add(1, Ordering::Relaxed);
-                if crate::formatters::is_temporary_path(entry.path()) {
-                    return false;
-                }
                 let candidate = Candidate::new(entry.path());
-                !settings.excludes(&candidate, &folder)
+                !settings.excludes(&candidate, &workspace)
                     && !excludes.excludes(&candidate, &workspace)
             });
         for entry in walk
@@ -279,9 +275,6 @@ fn optimized_paths(
             &query.search_exclude,
         )),
         crate::search_walk::Options {
-            use_ignores: query.use_ignores,
-            parent_ignores: query.parent_ignores,
-            global_ignores: query.global_ignores,
             follow_links: query.follow_links,
         },
         cancel,
@@ -290,7 +283,79 @@ fn optimized_paths(
 }
 
 #[test]
-fn cached_include_plans_keep_file_discovery_ignores_and_sibling_checks_live() {
+fn workspace_search_finds_existing_and_generated_files_without_implicit_exclusions() {
+    use crate::{app::App, remote};
+    use std::sync::Arc;
+
+    for use_remote in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let initial = [
+            "my/first/path/build/existing.txt",
+            "my/second/path/regular.txt",
+            "my/second/path/node_modules/dependency.txt",
+            "my/third/path/cache/ignored.txt",
+            "my/third/path/.hidden/hidden.txt",
+            "my/third/path/.git/metadata.txt",
+        ];
+        for relative in initial.into_iter().chain(["outside/existing.txt"]) {
+            write(root.path(), relative, "mysearch value\n");
+        }
+        write(root.path(), ".gitignore", "build/\nnode_modules/\n");
+        write(root.path(), ".ignore", "cache/\n");
+        let remote = use_remote.then(|| remote::workspace::Workspace::new(
+            remote::tests::connection(root.path(), Arc::default(), Arc::default()),
+        ));
+        let mut app = App::new_deferred(remote.as_ref()
+            .map_or_else(|| root.path().to_owned(), |remote| remote.view_root.clone()));
+        app.source_control_enabled = false;
+        app.remote_workspace = remote.clone();
+        app.global_search_query = "mysearch".into();
+        app.search_include_pattern = "./my/*/path".into();
+        app.settings_workspace.search_use_ignore_files = Some(true);
+        app.settings_workspace.search_use_parent_ignore_files = Some(true);
+        app.settings_workspace.search_use_global_ignore_files = Some(true);
+        app.settings_workspace.files_exclude.insert("**/cache".into(), serde_json::json!(true));
+        app.settings_workspace.search_exclude.insert("**/build".into(), serde_json::json!(true));
+        let search = |app: &mut App, expected: &[&str]| {
+            app.update_global_search();
+            app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+            assert!(!app.bg_global_search_running);
+            assert!(app.global_search_error.is_none(), "{:?}", app.global_search_error);
+            assert!(!app.global_search_truncated);
+            let mut actual = app.global_search_results.iter().map(|hit| {
+                remote.as_ref().map_or_else(
+                    || hit.file_path.strip_prefix(root.path()).unwrap().to_string_lossy().replace('\\', "/"),
+                    |remote| remote.remote_path(&hit.file_path).unwrap().display(),
+                )
+            }).collect::<Vec<_>>();
+            actual.sort();
+            let mut expected = expected.to_vec();
+            expected.sort();
+            assert_eq!(actual, expected, "remote={use_remote}, include={:?}", app.search_include_pattern);
+        };
+        search(&mut app, &[initial[1], initial[4]]);
+        for pattern in ["**/cache", "**/build", "**/node_modules", "**/.git"] {
+            app.settings_workspace.search_exclude.insert(pattern.into(), serde_json::json!(false));
+        }
+        search(&mut app, &initial);
+        let generated = ["my/first/path/build/generated.txt", "my/new/path/build/generated.txt"];
+        for relative in generated { write(root.path(), relative, "mysearch generated\n"); }
+        app.global_search_query = "no such match".into();
+        search(&mut app, &[]);
+        app.global_search_query = "mysearch".into();
+        let expected = initial.into_iter().chain(generated).collect::<Vec<_>>();
+        search(&mut app, &expected);
+        app.search_exclude_pattern = "**/build/**".into();
+        search(&mut app, &initial[1..]);
+        app.search_exclude_pattern.clear();
+        app.search_include_pattern.clear();
+        search(&mut app, &expected.into_iter().chain(["outside/existing.txt"]).collect::<Vec<_>>());
+        if let Some(remote) = remote { remote.client.call(remote::Command::Shutdown).unwrap(); }
+    }
+}
+
+#[test]
+fn cached_include_plans_keep_file_discovery_and_sibling_checks_live_without_ignore_files() {
     let workspace = tempfile::tempdir().unwrap();
     write(
         workspace.path(),
@@ -335,8 +400,8 @@ fn cached_include_plans_keep_file_discovery_ignores_and_sibling_checks_live() {
     write(workspace.path(), ".gitignore", "b.js\n");
     assert_eq!(
         hits(&request),
-        1,
-        "new ignore rules are read on the next search"
+        2,
+        "ignore files never filter workspace search"
     );
 }
 
@@ -361,7 +426,7 @@ fn scoped_workspace_search_prunes_unrelated_entries_before_exclusion_and_file_re
 }
 
 #[test]
-fn scoped_workspace_traversal_preserves_ignores_globs_and_conditional_excludes() {
+fn scoped_workspace_traversal_preserves_globs_and_sibling_excludes_without_ignore_files() {
     let parent = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
     let root = parent.path().join("workspace");
     for file in [
@@ -478,7 +543,7 @@ fn scoped_workspace_search_keeps_unsaved_and_ignored_models_locally_and_remotely
             );
         };
         search(&mut app);
-        assert_eq!(app.global_search_results.len(), 1, "remote={use_remote}");
+        assert_eq!(app.global_search_results.len(), 2, "remote={use_remote}");
         for (relative, text) in [
             ("cores/arm/src/ignored.cps", "CoreProperty draft"),
             ("cores/arm/src/a.cps", "unsaved without a match"),

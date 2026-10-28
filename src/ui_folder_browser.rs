@@ -170,19 +170,27 @@ fn breadcrumbs(f: &mut Frame, app: &mut App, area: Rect) {
     if inner.width < 5 {
         return;
     }
-    let mut parts: Vec<_> = app
-        .folder_browser_path
-        .ancestors()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| {
-            let name = p
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.display().to_string());
-            (name, p.to_path_buf())
-        })
-        .collect();
-    parts.reverse();
+    let mut parts: Vec<_> = if app.folder_browser_is_computer() {
+        Vec::new()
+    } else if let Some(remote) = &app.remote_workspace {
+        remote.breadcrumbs(&app.folder_browser_path).unwrap_or_default()
+    } else {
+        let mut parts: Vec<_> = app
+            .folder_browser_path
+            .ancestors()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| {
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.display().to_string());
+                (name, p.to_path_buf())
+            })
+            .collect();
+        parts.reverse();
+        parts
+    };
+    parts.insert(0, ("Computer".into(), std::path::PathBuf::new()));
     let mut total: usize = parts.iter().map(|(n, _)| n.width() + 3).sum();
     let budget = inner.width.saturating_sub(4) as usize;
     let mut skipped = false;
@@ -286,6 +294,7 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
             app.colors.bg_sidebar, selected, active, hovered);
         let bg = style.bg.unwrap();
         let icon = match name.as_str() {
+            "Computer" => "▣",
             "Home" => "⌂",
             "Desktop" => "▣",
             "Downloads" => "↓",
@@ -448,7 +457,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         ),
         " + New folder ",
         Action::NewFolder,
-        !app.folder_browser_loading && !app.folder_browser.creating,
+        !app.folder_browser_loading && !app.folder_browser.creating && !app.folder_browser_is_computer(),
     );
     let hidden_width = layout.tools.width.saturating_sub(new_width).min(21);
     if search_width > 0 {
@@ -605,14 +614,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 .get(index - parent)
                 .map(|&i| &app.folder_browser_entries[i])
         };
-        let name = path
-            .map(|p| {
-                p.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .unwrap_or_else(|| "..  Parent folder".into());
+        let name = path.map(|path| app.folder_browser_entry_name(path).into_owned())
+            .unwrap_or_else(|| if app.folder_browser_parent().is_some_and(|parent| parent.as_os_str().is_empty()) {
+                "..  Computer".into()
+            } else { "..  Parent folder".into() });
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
@@ -653,7 +658,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             label(
                 f,
                 Rect::new(row.right().saturating_sub(14), row.y, 13, 1),
-                if is_parent { "" } else { " File folder" },
+                if is_parent { "" } else if app.folder_browser_is_computer() { " File system" } else { " File folder" },
                 Style::default()
                     .fg(description)
                     .bg(bg),
@@ -665,11 +670,16 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             crate::ui_loading::draw_header(f, app, layout.header);
         }
         let message = if app.folder_browser_loading {
+            if app.folder_browser_is_computer() { "Loading file systems…" } else {
             "Loading folders…"
+            }
         } else if app.folder_browser.error.is_some() {
             "This folder could not be fully listed."
         } else if !app.folder_browser.search.is_empty() {
-            "No folders match your search."
+            if app.folder_browser_is_computer() { "No file systems match your search." }
+            else { "No folders match your search." }
+        } else if app.folder_browser_is_computer() {
+            "No file systems are available."
         } else {
             "This folder has no subfolders."
         };
@@ -715,6 +725,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         );
     }
 
+    let noun = if app.folder_browser_is_computer() { "locations" } else { "folders" };
     let status = if let Some(error) = &app.folder_browser.error {
         format!("  {error}")
     } else if app.folder_browser.creating {
@@ -724,10 +735,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else if app.folder_browser.new_folder {
         "  Choose a name for the new folder.".into()
     } else if app.folder_browser.search.is_empty() {
-        format!("  {} folders  ·  Double-click to browse", indices.len())
+        format!("  {} {noun}  ·  Double-click to browse", indices.len())
     } else {
         format!(
-            "  {} of {} folders  ·  Search in this location",
+            "  {} of {} {noun}  ·  Search in this location",
             indices.len(),
             app.folder_browser_entries.len()
         )
@@ -811,7 +822,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let width = (text.trim().width() as u16 + 4).min(layout.actions.right().saturating_sub(x));
         let rect = Rect::new(x, layout.actions.y, width, layout.actions.height);
         let focused = app.folder_browser.focus == if i == 0 { Focus::Open } else { Focus::Cancel };
-        let enabled = i != 0 || !app.folder_browser.creating;
+        let enabled = i != 0 || (!app.folder_browser.creating
+            && (!app.folder_browser_is_computer() || !app.folder_browser.folder.is_empty()));
         let mut style = app.colors.ui.button_style(app.colors.bg_sidebar, i == 0,
             rect.contains((app.mouse_col, app.mouse_row).into()), enabled);
         if focused && enabled {
@@ -904,6 +916,97 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect()
+    }
+
+    #[test]
+    fn computer_page_renders_drive_labels_and_disables_folder_creation() {
+        let mut app = App::test_new();
+        app.change_dir_active = true;
+        app.folder_browser_path = PathBuf::new();
+        let roots: Vec<_> = if cfg!(windows) {
+            [r"C:\", r"Z:\"].map(PathBuf::from).into()
+        } else { ["/", "/media/second"].map(PathBuf::from).into() };
+        app.folder_browser.locations = vec![
+            ("Computer".into(), PathBuf::new()),
+            ("Disk (C:)".into(), roots[0].clone()),
+            ("Disk (Z:)".into(), roots[1].clone()),
+        ];
+        app.folder_browser_entries = roots.clone();
+        app.filter_folder_browser();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let text = render_text(&terminal);
+        assert!(text.contains("Computer"));
+        assert!(text.contains("Disk (C:)"));
+        assert!(text.contains("Disk (Z:)"));
+        assert!(text.contains("2 locations"));
+        assert!(!text.contains("Parent folder"));
+        assert!(!app.folder_browser.controls.iter().any(|(_, action)| matches!(action, Action::NewFolder | Action::Up)));
+        app.folder_browser.search = "Z:".into();
+        app.filter_folder_browser();
+        assert_eq!(&*app.folder_browser_indices(), &[1]);
+        app.select_browser_row(0);
+        assert_eq!(app.folder_browser.folder, app.display_path(&roots[1]));
+        app.folder_browser_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('n'),
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT));
+        assert!(!app.folder_browser.new_folder);
+    }
+
+    #[test]
+    fn remote_folder_browser_breadcrumbs_show_node_paths_and_keep_remote_targets() {
+        use crate::remote::{self, RemotePath};
+        let hello = remote::Hello {
+            version: remote::VERSION,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            root: "/home/henri/project space".into(),
+            root_uri: "file:///home/henri/project%20space/".into(),
+            session: 42,
+        };
+        let client = remote::client::Client::attach(
+            std::io::Cursor::new(Vec::new()), Vec::new(), hello,
+        ).unwrap();
+        let remote = remote::workspace::Workspace::new(client);
+        let mut app = App::test_new();
+        app.remote_workspace = Some(remote.clone());
+        let mut terminal = Terminal::new(TestBackend::new(180, 30)).unwrap();
+        for (path, expected) in [
+            (RemotePath::default(), vec!["/", "home", "henri", "project space"]),
+            (RemotePath::new(b"src/child".to_vec()).unwrap(),
+                vec!["/", "home", "henri", "project space", "src", "child"]),
+            (RemotePath::absolute(b"/home/henri/other").unwrap(),
+                vec!["/", "home", "henri", "other"]),
+            (RemotePath::absolute(b"/").unwrap(), vec!["/"]),
+        ] {
+            app.folder_browser_path = remote.view_key(&path);
+            app.folder_browser.folder = app.display_path(&app.folder_browser_path);
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let parts = remote.breadcrumbs(&app.folder_browser_path).unwrap();
+            assert_eq!(parts.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), expected);
+            let targets: Vec<_> = app.folder_browser.controls.iter().filter_map(|(area, action)| {
+                let Action::Navigate(target) = action else { return None; };
+                let label: String = (area.x..area.right())
+                    .map(|x| terminal.backend().buffer()[(x, area.y)].symbol()).collect();
+                Some((label, target.clone()))
+            }).collect();
+            let mut expected_targets = vec![("Computer".to_string(), PathBuf::new())];
+            expected_targets.extend(parts);
+            assert_eq!(targets, expected_targets);
+            assert_eq!(targets.last().unwrap().1, app.folder_browser_path);
+            let text = render_text(&terminal);
+            assert!(!text.contains("vtcode-remote-"));
+            assert!(!text.contains("~host"));
+            for (i, (_, target)) in targets.iter().skip(1).enumerate() {
+                let uri = url::Url::from_file_path(target).unwrap();
+                let uri = remote.lsp_uri(uri.as_str(), true).unwrap();
+                let expected = if i == 0 { "file:///".into() }
+                    else { format!("file:///{}", expected[1..=i].join("/").replace(' ', "%20")) };
+                assert_eq!(uri.trim_end_matches('/'), expected.trim_end_matches('/'));
+            }
+            app.folder_browser_action(Action::Address);
+            assert_eq!(remote.target_key(&app.change_dir_query).unwrap(), app.folder_browser_path);
+            app.folder_browser.focus = Focus::List;
+        }
     }
 
     #[test]

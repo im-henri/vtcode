@@ -193,6 +193,7 @@ impl App {
             whitespace_mode: Some(whitespace_mode_str),
             comment_whitespace_mode: Some(self.comment_whitespace_mode.map_or("inherit", |mode| mode.name()).to_lowercase()),
             read_only: Some(self.default_read_only),
+            diff_side_by_side: Some(self.preferred_diff_mode == crate::app::DiffMode::SideBySide),
             theme: Some(theme_name),
             workbench_color_customizations: self.settings_effective.workbench_color_customizations.clone(),
             show_explorer: Some(show_explorer),
@@ -317,6 +318,7 @@ impl App {
             search_regex: Some(self.search_regex),
             search_whole_word: Some(self.search_whole_word),
             search_preserve_case: Some(self.search_preserve_case),
+            search_debounce_ms: Some(self.search_debounce_ms),
             search_use_ignore_files: Some(self.settings_effective.search_use_ignore_files.unwrap_or(true)),
             search_use_global_ignore_files: Some(self.settings_effective.search_use_global_ignore_files.unwrap_or(false)),
             search_use_parent_ignore_files: Some(self.settings_effective.search_use_parent_ignore_files.unwrap_or(false)),
@@ -338,6 +340,9 @@ impl App {
 
     /// Apply a Settings struct to the app
     pub(crate) fn apply_settings(&mut self, s: &Settings) {
+        if let Some(side_by_side) = s.diff_side_by_side {
+            self.preferred_diff_mode = if side_by_side { crate::app::DiffMode::SideBySide } else { crate::app::DiffMode::Inline };
+        }
         if let Some(enabled) = s.source_control_enabled {
             self.set_source_control_enabled(enabled);
         }
@@ -755,6 +760,9 @@ impl App {
         if let Some(v) = s.search_preserve_case {
             self.search_preserve_case = v;
         }
+        if let Some(v) = s.search_debounce_ms {
+            self.search_debounce_ms = v;
+        }
         if self.zen_mode {
             let mut state = self.zen_pre_state.unwrap_or((true, true, false, true, true, true));
             if let Some(value) = s.show_explorer { state.0 = value; }
@@ -850,8 +858,18 @@ impl App {
     pub(crate) fn apply_effective_settings(&mut self) {
         let mut effective = self.settings_for_scope(crate::settings::SettingsScope::Workspace);
         effective.validate();
+        let files_changed = effective.files_exclude != self.settings_effective.files_exclude;
+        let search_changed = files_changed || effective.search_exclude != self.settings_effective.search_exclude;
         self.apply_resolved_settings(&effective);
         self.settings_effective = effective;
+        if files_changed {
+            self.refresh_explorer_tree_async();
+        }
+        if search_changed {
+            self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
+            if self.quick_open_active { self.update_quick_open(); }
+            if !self.global_search_query.is_empty() { self.update_global_search(); }
+        }
         self.refresh_language_servers(false);
         self.preview_palette_theme();
     }
@@ -952,7 +970,9 @@ impl App {
                     .ok_or("Settings must be an object")?
                     .insert(
                         key.into(),
-                        serde_json::to_value(&updated)?[key].clone(),
+                        if matches!(key, "files.exclude" | "search.exclude") {
+                            serde_json::to_value(&updated)?[key].as_object().cloned().map(serde_json::Value::Object).unwrap_or_else(|| serde_json::json!({}))
+                        } else { serde_json::to_value(&updated)?[key].clone() },
                     );
                 let parent = path.parent().ok_or("Settings path has no parent")?;
                 std::fs::create_dir_all(parent)?;
@@ -1460,6 +1480,9 @@ impl App {
             outline_scroll: self.outline_scroll,
             search_history: self.search_history.saved(&self.search_query),
             global_search_history: self.global_search_history.saved(&self.global_search_query),
+            global_search_replace_history: self.global_search_replace_history.saved(&self.global_search_replace_query),
+            search_include_history: self.search_include_history.saved(&self.search_include_pattern),
+            search_exclude_history: self.search_exclude_history.saved(&self.search_exclude_pattern),
             global_search_query: self.global_search_query.clone(),
             global_search_replace_query: self.global_search_replace_query.clone(),
             search_include_pattern: self.search_include_pattern.clone(),
@@ -1540,6 +1563,7 @@ impl App {
                     && saved_tab.pending_unsaved_content.is_none(),
                 kind: TabKind::File,
                 extension_view: None,
+                file_search: Default::default(),
                 terminal_idx: None,
             }
         };

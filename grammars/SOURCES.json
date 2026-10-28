@@ -1,0 +1,75 @@
+{
+  "engine": {
+    "crate": "irosashi",
+    "version": "0.3.0",
+    "repository": "https://github.com/frostybee/irosashi",
+    "license": "IROSASHI-LICENSE",
+    "patch": "vendor/irosashi/VTCODE-PATCH.md"
+  },
+  "bundled TextMate grammars": {
+    "repository": "https://github.com/shikijs/textmate-grammars-themes",
+    "revision": "022eed00a8dd29481123f08e1cccf5a5bfee23f9",
+    "count": 257,
+    "storage": "grammars/bundled",
+    "provenance": "BUNDLED-GRAMMARS.json",
+    "license": "TEXTMATE-GRAMMARS-LICENSE"
+  },
+  "Rust TextMate": {
+    "repository": "microsoft/vscode",
+    "revision": "c35365ad68a00ebd0a35ef9b33396d7dccc43733",
+    "path": "extensions/rust",
+    "destination": "grammars/Rust",
+    "policy": "Verbatim VS Code TextMate grammar; semantic token contributions from rust-analyzer.",
+    "sha256": {
+      "package.json": "8e7a5e537d1de76053b532e4ad691fa4bcde93723095e0f638f1f3ecbfd12500",
+      "syntaxes/rust.tmLanguage.json": "30350e6c350779bfe614cd07313d7cd386bb147a08e9311806c9a095bae2a69c",
+      "VSCode-LICENSE.txt": "9480271317925265e806a9a196aaa33410a962fa9d4d1e248a4a5187bc8c9df9",
+      "Rust-Syntax-LICENSE.txt": "a7e8bd973440be8627284a007a3b76c269c483f6fa059aa9a86d19303357a952",
+      "semantic-tokens.json": "e8f19145d270060c42837713a92f5c10285eff2014dac6c82578ee6a89f9573a",
+      "Rust-Analyzer-LICENSE-MIT": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    "sources": {
+      "Rust-Syntax-LICENSE.txt": "https://raw.githubusercontent.com/dustypomerleau/rust-syntax/ca34cf382a7b250144f2ccb99ff9af96912c79f2/LICENSE.txt",
+      "semantic-tokens.json": "semanticTokenScopes and semanticTokenTypes from https://github.com/rust-lang/rust-analyzer/blob/889bb47e853003f62b0a593b955ab9afc97e7885/editors/code/package.json",
+      "Rust-Analyzer-LICENSE-MIT": "https://raw.githubusercontent.com/rust-lang/rust-analyzer/889bb47e853003f62b0a593b955ab9afc97e7885/LICENSE-MIT"
+    }
+  },
+  "Python TextMate": {
+    "repository": "microsoft/vscode",
+    "revision": "1.103.0",
+    "path": "extensions/python",
+    "sha256": {
+      "LICENSE.txt": "9480271317925265e806a9a196aaa33410a962fa9d4d1e248a4a5187bc8c9df9",
+      "package.json": "17f8cd73cf764e7d6bb0bcb1ff4d29a2151e06aaa3cfa3f0c9feea8d1471d9a0",
+      "syntaxes/MagicPython.tmLanguage.json": "ca981430eb3df004f4955bb7cba51ad06c4d8408d168c81eec7059d7d9aec5c8",
+      "syntaxes/MagicRegExp.tmLanguage.json": "d44f8811521bd35ea6bb9f7049b9e8a2cb6a04c514dcb9ec369633ab2cb139d1",
+      "MagicPython-LICENSE": "9185f3c77e9f6ef8859a6ba4c94128ac1329876be3e813aad32d7645e51ae409"
+    },
+    "sources": {
+      "MagicPython-LICENSE": "https://raw.githubusercontent.com/MagicStack/MagicPython/7d0f2b22a5ad8fccbd7341bc7b7a715169283044/LICENSE"
+    },
+    "destination": "grammars/Python"
+  },
+  "Git TextMate": {
+    "repository": "microsoft/vscode",
+    "revision": "c35365ad68a00ebd0a35ef9b33396d7dccc43733",
+    "path": "extensions/git-base",
+    "destination": "grammars/Git",
+    "license": "grammars/Rust/VSCode-LICENSE.txt",
+    "sha256": {
+      "git-commit.tmLanguage.json": "f972e38c85ccfe9d151ff3d25b14cb0794a1db503594407e7f9a362b59b39eb7",
+      "git-rebase.tmLanguage.json": "d98e2cca9c165c3dfccf28fbf93d5bf4378ab937f6b1902161ba792ee5f8f282",
+      "ignore.tmLanguage.json": "1a3ed223e92899c46954118389f941dd2567bf8f8cfdb99e591e4ed74079f3aa",
+      "package.json": "f6866ae58f87e0498f6256291cd64150ced976dc473a6d0e1bbabaae16ea2112"
+    }
+  },
+  "language metadata": {
+    "path": "src/language_metadata.json",
+    "sources": [
+      "VS Code language contributions at c35365ad68a00ebd0a35ef9b33396d7dccc43733",
+      "Shiki TextMate grammar catalog at 022eed00a8dd29481123f08e1cccf5a5bfee23f9",
+      "Curated file associations"
+    ],
+    "policy": "Language names, aliases and file associations only; no token or keyword remapping."
+  }
+}

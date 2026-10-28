@@ -1,6 +1,13 @@
 use crate::app::App;
 
 impl App {
+    pub(crate) fn file_search_visible(&self) -> bool {
+        self.search_active
+            && !self.tabs
+                .get(self.active_tab)
+                .is_some_and(|tab| tab.kind == crate::app::TabKind::Terminal)
+    }
+
     pub(crate) fn restore_search_histories(&mut self, session: &crate::session::Session) {
         self.search_history = crate::search_history::History::restore(&session.search_history);
         self.global_search_history =
@@ -10,35 +17,57 @@ impl App {
             self.global_search_history
                 .record(&session.global_search_query);
         }
+        for (field, entries, current) in [
+            (1, &session.global_search_replace_history, &session.global_search_replace_query),
+            (2, &session.search_include_history, &session.search_include_pattern),
+            (3, &session.search_exclude_history, &session.search_exclude_pattern),
+        ] {
+            let history = self.global_search_field_history_mut(field);
+            *history = crate::search_history::History::restore(entries);
+            if entries.is_empty() { history.record(current); }
+        }
         self.search_query.clear();
         self.search_cursor = 0;
         self.search_selection_anchor = None;
     }
 
     pub(crate) fn push_global_search_history(&mut self) {
-        self.global_search_history.record(&self.global_search_query);
+        for field in 0..4 {
+            let value = self.global_search_field_state_mut(field).0.clone();
+            self.global_search_field_history_mut(field).record(&value);
+        }
+    }
+
+    pub(crate) fn global_search_field_history_mut(&mut self, field: u8) -> &mut crate::search_history::History {
+        match field.min(3) {
+            0 => &mut self.global_search_history,
+            1 => &mut self.global_search_replace_history,
+            2 => &mut self.search_include_history,
+            _ => &mut self.search_exclude_history,
+        }
     }
 
     pub(crate) fn global_search_history_prev(&mut self) {
-        if let Some(query) = self
-            .global_search_history
-            .previous(&self.global_search_query)
-        {
-            self.apply_global_search_history_query(query);
+        let field = self.search_focus_field.min(3);
+        let current = self.global_search_field_state_mut(field).0.clone();
+        if let Some(value) = self.global_search_field_history_mut(field).previous(&current) {
+            self.apply_global_search_history_field(field, value);
         }
     }
 
     pub(crate) fn global_search_history_next(&mut self) {
-        if let Some(query) = self.global_search_history.next() {
-            self.apply_global_search_history_query(query);
+        let field = self.search_focus_field.min(3);
+        if let Some(value) = self.global_search_field_history_mut(field).next() {
+            self.apply_global_search_history_field(field, value);
         }
     }
 
-    fn apply_global_search_history_query(&mut self, query: String) {
-        self.global_search_query = query;
-        self.global_search_field_cursors[0] = self.global_search_query.len();
-        self.global_search_field_selection_anchors[0] = None;
-        self.update_global_search();
+    fn apply_global_search_history_field(&mut self, field: u8, value: String) {
+        let (text, cursor, anchor) = self.global_search_field_state_mut(field);
+        *text = value;
+        *cursor = text.len();
+        *anchor = None;
+        if field != 1 { self.schedule_global_search(); }
     }
 
     pub(crate) fn global_search_field_state_mut(

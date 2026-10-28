@@ -372,6 +372,66 @@ fn index_text(root: &Path, path: &str) -> Option<String> {
     Some(String::from_utf8(repo.find_blob(entry.id).unwrap().content().to_vec()).unwrap())
 }
 
+fn file_action(app: &mut App, path: &str, staged: bool, label: &str) -> Rect {
+    draw(app, false);
+    app.source_control_file_actions.iter()
+        .find(|row| row.change.path == path && row.change.staged == staged).unwrap()
+        .buttons().find(|(action, _)| action.label() == label).unwrap().1
+}
+
+#[test]
+fn file_row_buttons_stage_and_unstage_the_clicked_file() {
+    let (directory, mut app) = fixture();
+    for (staged, label, expected) in [(false, "Stage Changes", "modified\n"), (true, "Unstage Changes", "base\n")] {
+        let button = file_action(&mut app, "a.txt", staged, label);
+        mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+        wait(&mut app);
+        assert_eq!(index_text(directory.path(), "a.txt").as_deref(), Some(expected));
+        for path in ["b.txt", "c.txt"] {
+            assert_eq!(index_text(directory.path(), path).as_deref(), Some("base\n"));
+        }
+        assert_eq!(std::fs::read_to_string(directory.path().join("a.txt")).unwrap(), "modified\n");
+    }
+}
+
+#[test]
+fn file_row_open_uses_normal_editor_and_discard_keeps_confirmation() {
+    let (directory, mut app) = fixture();
+    let button = file_action(&mut app, "b.txt", false, "Open File");
+    mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+    app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor| !editor.bg_loading));
+    assert_eq!(app.tabs[app.active_tab].kind, crate::app::TabKind::File);
+    assert_eq!(std::fs::canonicalize(app.editor().unwrap().file_path.as_ref().unwrap()).unwrap(),
+        std::fs::canonicalize(directory.path().join("b.txt")).unwrap());
+    assert_eq!(app.editor().unwrap().rope.to_string(), "modified\n");
+    let button = file_action(&mut app, "c.txt", false, "Discard Changes");
+    mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+    assert!(app.sc_discard_confirm_active);
+    let request = app.sc_discard_request.as_ref().unwrap();
+    assert_eq!(request.changes.len(), 1);
+    assert_eq!(request.changes[0].path, "c.txt");
+    assert_eq!(std::fs::read_to_string(directory.path().join("c.txt")).unwrap(), "modified\n");
+    app.execute_source_control_discard_confirm(false);
+    assert!(!app.sc_discard_confirm_active && !app.bg_git_action_running);
+}
+
+#[test]
+fn file_row_buttons_reject_busy_operations_and_stale_status_rows() {
+    let (directory, mut app) = fixture();
+    let button = file_action(&mut app, "a.txt", false, "Discard Changes");
+    app.bg_git_action_running = true;
+    mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+    assert!(!app.sc_discard_confirm_active);
+    app.bg_git_action_running = false;
+    app.source_control_files.remove(0);
+    assert!(!crate::ui_source_control::handle_file_action_click(&mut app, button.x, button.y, KeyModifiers::NONE));
+    assert!(!app.sc_discard_confirm_active);
+    for path in ["a.txt", "b.txt", "c.txt"] {
+        assert_eq!(index_text(directory.path(), path).as_deref(), Some("base\n"));
+        assert_eq!(std::fs::read_to_string(directory.path().join(path)).unwrap(), "modified\n");
+    }
+}
+
 #[test]
 fn ctrl_and_shift_click_select_files_and_context_stages_the_whole_selection() {
     let (directory, mut app) = fixture();
