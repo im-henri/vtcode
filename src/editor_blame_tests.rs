@@ -179,6 +179,7 @@ fn open_blame_commit_tab(remote_mode: bool) {
     assert_eq!(app.commit_details.data.author, "Jamie Lee");
     let paths: Vec<_> = app.commit_details.data.files.iter().map(|file| file.path.as_str()).collect();
     assert_eq!(paths, ["example.c", "other.rs"]);
+    app.commit_details.review.collapsed.remove(&0);
     app.request_commit_diff();
     app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.diff_loading);
     assert!(app.commit_details.diff_error.is_none(), "{:?}", app.commit_details.diff_error);
