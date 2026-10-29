@@ -755,7 +755,7 @@ mod tests {
 
     fn source_control_changes(count: usize) -> Vec<GitFileChange> {
         (0..count)
-            .map(|index| GitFileChange {
+            .map(|index| GitFileChange { directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',

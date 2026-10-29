@@ -43,9 +43,22 @@ pub struct Config {
     /// See [BackendConfig::with_compare_contents]
     compare_contents: bool,
     open_events: bool,
+    follow_symlinks: bool,
 }
 
 impl Config {
+    /// Follow directory symlinks during Linux recursive watch registration.
+    /// Construction-only; other backends retain their own link behavior.
+    pub fn with_follow_symlinks(mut self, follow: bool) -> Self {
+        self.follow_symlinks = follow;
+        self
+    }
+
+    /// Whether Linux recursive watch registration follows directory symlinks.
+    pub fn follow_symlinks(&self) -> bool {
+        self.follow_symlinks
+    }
+
     /// Emit open-access notifications on the Linux inotify backend.
     ///
     /// Disabled watchers omit IN_OPEN from the kernel watch mask, so reading
@@ -119,6 +132,7 @@ impl Default for Config {
             poll_interval: Some(Duration::from_secs(30)),
             compare_contents: false,
             open_events: true,
+            follow_symlinks: true,
         }
     }
 }

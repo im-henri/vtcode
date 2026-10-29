@@ -48,9 +48,11 @@ mod app_deleted_files;
 mod app_event_loop;
 mod app_explorer;
 mod app_explorer_hover;
+mod app_workspace_events;
 mod app_external_open;
 mod app_extensions;
 mod app_git;
+mod hunk_preview;
 mod app_git_branch;
 mod app_git_display;
 mod app_source_control;
@@ -94,6 +96,7 @@ mod search_replace;
 mod search_paths;
 mod search_walk;
 mod search_results;
+mod file_order;
 #[cfg(test)]
 mod vscode_search_tests;
 mod app_search_fields;
@@ -113,8 +116,10 @@ mod app_terminal_selection;
 mod app_text_fields;
 mod app_theme;
 mod app_theme_loader;
+mod builtin_themes;
 mod app_ui_state;
 mod background;
+mod workspace_watch;
 mod worker_priority;
 #[cfg(any(windows, test))]
 mod terminal_input_batch;
@@ -224,6 +229,7 @@ mod git_diff_sources;
 mod inline_diff;
 mod git_history;
 mod git_repositories;
+mod git_trust;
 mod git_blame;
 mod editor_blame;
 mod ui_inline_blame;
@@ -305,6 +311,8 @@ mod theme_customizations;
 mod theme_visibility_tests;
 #[cfg(test)]
 mod theme_audit_tests;
+#[cfg(test)]
+mod theme_coverage_tests;
 #[cfg(test)]
 mod ui_control_visibility_tests;
 
@@ -432,10 +440,17 @@ fn run_main() -> io::Result<()> {
         let size = terminal.get_frame().area().as_size();
         let setup_loader = startup::Loader::start(wake.clone(), {
             let wake = wake.clone();
-            move || launch.start(size, wake)
+            move || -> std::io::Result<_> {
+                let setup = launch.start(size, wake)?;
+                let mut settings = settings::load_from_file(&settings::global_settings_path());
+                settings.validate();
+                let colors = startup::connection_colors(&settings, &portable::base_dir());
+                Ok((setup, colors))
+            }
         })?;
-        let Some(setup) = setup_loader.wait(&mut terminal, &mut events)? else { return Ok(()); };
-        let Some(workspace) = setup?.wait(&mut terminal, &mut events)? else { return Ok(()); };
+        let Some(loaded) = setup_loader.wait(&mut terminal, &mut events)? else { return Ok(()); };
+        let (setup, colors) = loaded?;
+        let Some(workspace) = setup.wait(&mut terminal, &mut events, &colors)? else { return Ok(()); };
         Some(workspace)
     } else { None };
     let remote_root = remote_workspace.as_ref().map(|remote| remote.view_root.clone());

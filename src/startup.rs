@@ -67,6 +67,16 @@ pub(crate) struct Prepared {
     pub session: Option<crate::session::Session>,
 }
 
+/// Used on the launch worker before a remote workspace is available. Resolve
+/// just the saved global palette, including installed themes and overrides.
+pub(crate) fn connection_colors(settings: &Settings, portable_base: &std::path::Path) -> crate::app_theme::ThemeColors {
+    let key = settings.theme.as_deref().unwrap_or("dark");
+    let theme = crate::app_theme_loader::builtin_theme(key).cloned()
+        .or_else(|| crate::app_theme_loader::load_installed_theme(portable_base, key))
+        .unwrap_or_else(|| crate::app_theme_loader::builtin_theme("dark").unwrap().clone());
+    crate::vscode_theme::customized_theme(&theme, &settings.workbench_color_customizations).to_theme_colors()
+}
+
 impl Prepared {
     pub(crate) fn load_remote(root: PathBuf) -> Self {
         let mut global = crate::settings::load_from_file(&crate::settings::global_settings_path());

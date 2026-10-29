@@ -140,6 +140,7 @@ pub(crate) struct ExplorerRefreshRequest {
     exclude_rules: std::sync::Arc<crate::search_paths::ExcludeRules>,
     exclude_patterns: std::sync::Arc<crate::settings::ExcludePatterns>,
     sort_mode: ExplorerSortMode,
+    ordering: std::sync::Arc<crate::file_order::FileOrder>,
     expanded_dirs: FxHashSet<PathBuf>,
     find: Option<crate::explorer_find::Query>,
     cancel: Option<crate::background::CancellationToken>,
@@ -155,7 +156,9 @@ pub struct FileExplorer {
     pub(crate) horizontal: width::HorizontalScroll,
     pub visible_height: usize,
     pub git_statuses: FxHashMap<PathBuf, GitStatusSummary>,
+    git_untracked_directories: FxHashSet<PathBuf>,
     pub sort_mode: ExplorerSortMode,
+    ordering: std::sync::Arc<crate::file_order::FileOrder>,
     expanded_dirs: FxHashSet<PathBuf>,
     /// File to select after the next asynchronous tree rebuild.
     pending_reveal: Option<PathBuf>,
@@ -177,6 +180,14 @@ fn default_exclusions() -> std::sync::Arc<crate::search_paths::ExcludeRules> {
 }
 
 impl FileExplorer {
+    pub(crate) fn set_sort_locale(&mut self, locale: &str) -> bool {
+        if self.ordering.locale() == locale { return true; }
+        let Some(ordering) = crate::file_order::FileOrder::new(locale) else { return false };
+        self.ordering = std::sync::Arc::new(ordering);
+        // In-flight projections retain their own ordering and cache.
+        self.directory_cache = self.directory_cache.for_new_order();
+        true
+    }
     pub(crate) fn set_files_exclude(&mut self, patterns: &crate::settings::ExcludePatterns) {
         if *self.exclude_patterns == *patterns { return; }
         self.exclude_patterns = std::sync::Arc::new(patterns.clone());
@@ -221,7 +232,9 @@ impl FileExplorer {
             horizontal: Default::default(),
             visible_height: 0,
             git_statuses: FxHashMap::default(),
+            git_untracked_directories: FxHashSet::default(),
             sort_mode: ExplorerSortMode::Name,
+            ordering: crate::file_order::FileOrder::system(),
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
@@ -250,7 +263,9 @@ impl FileExplorer {
             horizontal: Default::default(),
             visible_height: 0,
             git_statuses: FxHashMap::default(),
+            git_untracked_directories: FxHashSet::default(),
             sort_mode: ExplorerSortMode::Name,
+            ordering: crate::file_order::FileOrder::system(),
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
@@ -288,6 +303,7 @@ impl FileExplorer {
             exclude_rules: self.exclude_rules.clone(),
             exclude_patterns: self.exclude_patterns.clone(),
             sort_mode: self.sort_mode,
+            ordering: self.ordering.clone(),
             expanded_dirs: self.expanded_dirs.clone(),
             find: self.find.request(),
             cancel: self.find.cancel.clone(),
@@ -320,7 +336,9 @@ impl FileExplorer {
             // entries arrive. Cloning a potentially huge status map before
             // every folder expansion was both redundant and immediately stale.
             git_statuses: FxHashMap::default(),
+            git_untracked_directories: FxHashSet::default(),
             sort_mode: request.sort_mode,
+            ordering: request.ordering,
             expanded_dirs: request.expanded_dirs,
             pending_reveal: None,
             parent_indices: Vec::new(),
@@ -372,6 +390,7 @@ impl FileExplorer {
         self.ignore_cache.set_enabled(enabled);
         if !enabled {
             self.git_statuses.clear();
+            self.git_untracked_directories.clear();
             self.refresh_visible_git_statuses();
         }
     }
@@ -680,6 +699,7 @@ impl FileExplorer {
             return;
         }
         let sort_mode = self.sort_mode;
+        let ordering = self.ordering.clone();
         let cache = self.directory_cache.clone();
         let covered = crate::background::workspace_path_is_watched(&self.root, dir);
         let Some(items) = cache.get_or_read(dir, sort_mode, covered, cancel, || {
@@ -708,41 +728,33 @@ impl FileExplorer {
                             .as_ref()
                             .and_then(|metadata| metadata.modified().ok())
                             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                        // Cache the case-insensitive name once per entry rather
-                        // than allocating it on every comparison.
+                        // Keep the original name for locale-aware comparisons.
                         let path = e.path();
                         let name_key = path
                             .file_name()
                             .unwrap_or_default()
                             .to_string_lossy()
-                            .to_lowercase();
+                            .into_owned();
                         Some((path, is_dir, size, modified, name_key))
                     })
                     .collect(),
                 Err(_) => return None,
             };
 
-            items.sort_unstable_by(
-                |(a_path, a_dir, a_size, a_time, a_name), (b_path, b_dir, b_size, b_time, b_name)| {
+            items.sort_by(
+                |(_, a_dir, a_size, a_time, a_name), (_, b_dir, b_size, b_time, b_name)| {
                     // Always sort directories first
                     let dir_ord = b_dir.cmp(a_dir);
                     if dir_ord != std::cmp::Ordering::Equal {
                         return dir_ord;
                     }
-                    // Use the original name only to make case-only ties deterministic.
-                    let name_order = || {
-                        a_name
-                            .cmp(b_name)
-                            .then_with(|| a_path.file_name().cmp(&b_path.file_name()))
-                    };
+                    let name_order = || ordering.names(a_name, b_name);
                     match sort_mode {
                         ExplorerSortMode::Name => name_order(),
                         ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name_order),
                         ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name_order),
                         ExplorerSortMode::Type => {
-                            let a_ext = a_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            let b_ext = b_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            a_ext.cmp(b_ext).then_with(name_order)
+                            if *a_dir { name_order() } else { ordering.extensions(a_name, b_name) }
                         }
                     }
                 },
@@ -775,6 +787,7 @@ impl FileExplorer {
 
             let git_status_summary = Self::git_status_summary_for_path(
                 &self.git_statuses,
+                &self.git_untracked_directories,
                 &self.root,
                 &self.canonical_root,
                 &path,
@@ -971,6 +984,7 @@ impl FileExplorer {
 
     fn git_status_summary_for_path(
         statuses: &FxHashMap<PathBuf, GitStatusSummary>,
+        directories: &FxHashSet<PathBuf>,
         root: &Path,
         canonical_root: &Path,
         path: &Path,
@@ -985,6 +999,13 @@ impl FileExplorer {
                 path.strip_prefix(root)
                     .ok()
                     .and_then(|relative| statuses.get(&canonical_root.join(relative)).copied())
+            })
+            .or_else(|| {
+                if directories.is_empty() { return None; }
+                let canonical = path.strip_prefix(root).ok().map(|path| canonical_root.join(path));
+                (path.ancestors().any(|path| directories.contains(path))
+                    || canonical.as_ref().is_some_and(|path| path.ancestors().any(|path| directories.contains(path))))
+                    .then(|| GitStatus::Untracked.into())
             })
             .unwrap_or_default()
     }
@@ -1014,8 +1035,9 @@ impl FileExplorer {
             // omits these paths and must not erase their cached decoration.
             let ignored = enabled && entry.git_status_summary.contains(GitStatus::Ignored);
             entry.git_status_summary =
-                Self::git_status_summary_for_path(statuses, root, canonical_root, &entry.path);
+                Self::git_status_summary_for_path(statuses, &self.git_untracked_directories, root, canonical_root, &entry.path);
             if ignored {
+                entry.git_status_summary.0 &= !GitStatusSummary::bit(GitStatus::Untracked);
                 entry.git_status_summary.insert(GitStatus::Ignored);
             }
             entry.git_status = entry.git_status_summary.primary();
@@ -1025,6 +1047,7 @@ impl FileExplorer {
     pub(crate) fn root_git_status_summary(&self) -> GitStatusSummary {
         Self::git_status_summary_for_path(
             &self.git_statuses,
+            &self.git_untracked_directories,
             &self.root,
             &self.canonical_root,
             &self.root,
@@ -1039,19 +1062,20 @@ impl FileExplorer {
         changes: impl IntoIterator<Item = (&'a str, char)>,
     ) {
         let workdir = workdir.unwrap_or(&self.canonical_root).to_owned();
-        self.apply_git_repository_changes(changes.into_iter().map(|(path, status)| (workdir.as_path(), path, status)));
+        self.apply_git_repository_changes(changes.into_iter().map(|(path, status)| (workdir.as_path(), path, status, false)));
     }
 
     /// Combine repository snapshots in one pass without allocating temporary
     /// absolute path strings or clearing another project's decorations.
     pub(crate) fn apply_git_repository_changes<'a>(
         &mut self,
-        changes: impl IntoIterator<Item = (&'a Path, &'a str, char)>,
+        changes: impl IntoIterator<Item = (&'a Path, &'a str, char, bool)>,
     ) {
         self.git_statuses.clear();
+        self.git_untracked_directories.clear();
         if !self.ignore_cache.enabled() { self.refresh_visible_git_statuses(); return; }
 
-        for (workdir, relative_path, marker) in changes {
+        for (workdir, relative_path, marker, directory) in changes {
             let status = match marker {
                 'A' => GitStatus::Added,
                 'D' => GitStatus::Deleted,
@@ -1061,6 +1085,9 @@ impl FileExplorer {
                 _ => continue,
             };
             let full_path = workdir.join(relative_path);
+            if directory && marker == '?' {
+                self.git_untracked_directories.insert(full_path.clone());
+            }
 
             // A path may have both staged and unstaged records. Keep every
             // distinct state so mixed directory decorations tell the full story.
@@ -1206,7 +1233,9 @@ mod tests {
             horizontal: Default::default(),
             visible_height: 5,
             git_statuses: FxHashMap::default(),
+            git_untracked_directories: FxHashSet::default(),
             sort_mode: ExplorerSortMode::Name,
+            ordering: crate::file_order::FileOrder::system(),
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),
@@ -1859,7 +1888,9 @@ mod tests {
             horizontal: Default::default(),
             visible_height: 5,
             git_statuses: FxHashMap::default(),
+            git_untracked_directories: FxHashSet::default(),
             sort_mode: ExplorerSortMode::Name,
+            ordering: crate::file_order::FileOrder::system(),
             expanded_dirs: FxHashSet::default(),
             pending_reveal: None,
             parent_indices: Vec::new(),

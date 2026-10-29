@@ -3,35 +3,15 @@ use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Official VS Code themes are compiled in, using the same importer as installed themes.
+/// Bundled VS Code themes use the same importer as installed themes.
 pub(crate) fn load_builtin_themes() -> Vec<ThemeFile> {
-    ["dark", "light", "high-contrast", "monokai"].into_iter()
-        .map(|key| builtin_theme(key).expect("bundled theme").clone()).collect()
+    crate::builtin_themes::THEMES.iter().map(|entry| entry.theme().clone()).collect()
 }
 
 /// Resolve only the requested built-in. Starting with Dark+ must not parse
 /// every other workbench and syntax palette or clone the whole catalog.
 pub(crate) fn builtin_theme(key: &str) -> Option<&'static ThemeFile> {
-    use std::sync::OnceLock;
-    static DARK: OnceLock<ThemeFile> = OnceLock::new();
-    static LIGHT: OnceLock<ThemeFile> = OnceLock::new();
-    static HC: OnceLock<ThemeFile> = OnceLock::new();
-    static MONOKAI: OnceLock<ThemeFile> = OnceLock::new();
-    let (slot, name, file, kind) = match key {
-        "dark" => (&DARK, "Dark+", "dark_plus.json", "vs-dark"),
-        "light" => (&LIGHT, "Light+", "light_plus.json", "vs"),
-        "high-contrast" => (&HC, "High Contrast", "hc_black.json", "hc-black"),
-        "monokai" => (&MONOKAI, "Monokai", "monokai-color-theme.json", "vs-dark"),
-        _ => return None,
-    };
-    Some(slot.get_or_init(|| {
-        let mut theme = crate::vscode_theme::load_embedded_theme(file, name, kind)
-            .expect("valid bundled VS Code theme");
-        theme.config_key = key.into();
-        theme.syntax_theme = if key == "dark" { "dark-plus" } else { key }.into();
-        theme.builtin = true;
-        theme
-    }))
+    crate::builtin_themes::THEMES.iter().find(|entry| entry.key == key).map(|entry| entry.theme())
 }
 
 /// Load themes explicitly installed into vtcode. Keep filesystem discovery off
@@ -52,7 +32,6 @@ fn load_external_themes_from_base(portable_base: &Path) -> Vec<ThemeFile> {
     themes
 }
 
-#[cfg(test)]
 pub(crate) fn load_installed_theme(portable_base: &Path, key: &str) -> Option<ThemeFile> {
     if crate::theme_catalog::removed(&portable_base.join(".vtcode/theme-extensions")).ok()?.contains(key) {
         return None;
@@ -862,7 +841,9 @@ mod tests {
         serialized["builtin"] = true.into();
         let imported: ThemeFile = serde_json::from_value(serialized).unwrap();
         assert!(!imported.builtin, "theme files cannot claim bundled provenance");
-        assert_eq!(themes.len(), 4);
+        assert_eq!(themes.len(), crate::builtin_themes::THEMES.len());
+        assert_eq!(themes.len(), 29);
+        assert!(themes.iter().skip(4).all(|theme| !theme.is_light));
         for theme in &themes {
             assert!(
                 theme

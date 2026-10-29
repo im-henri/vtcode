@@ -127,7 +127,7 @@ pub(crate) fn draw_source_control_context_menu(f: &mut Frame, app: &mut App) {
 }
 
 pub(crate) fn draw_hunk_popup(f: &mut Frame, app: &mut App) {
-    if app.hunk_peek.is_some() {
+    if app.hunk_peek.is_some() || app.hunk_preview_feedback.is_some() {
         crate::ui_hunk_peek::draw(f, app);
         return;
     }

@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn bundled_themes_cannot_be_removed_and_inactive_removal_keeps_current_theme() {
         let (_temp, mut app, themes) = fixture();
-        for key in ["dark", "light", "high-contrast", "monokai"] {
+        for key in crate::builtin_themes::THEMES.iter().map(|theme| theme.key) {
             let row = row(&app, key);
             assert!(!app.theme_picker_deletable(row));
             app.request_theme_removal(row);
@@ -541,7 +541,7 @@ mod tests {
         app.request_theme_removal(row(&app, &themes[1].config_key));
         app.confirm_theme_removal();
         assert_eq!(app.theme_key, "dark");
-        assert_eq!(app.loaded_themes.iter().filter(|t| t.builtin).count(), 4);
+        assert_eq!(app.loaded_themes.iter().filter(|t| t.builtin).count(), crate::builtin_themes::THEMES.len());
     }
 
     #[test]
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(app.theme_key, "dark");
         assert_eq!(app.theme_name, "Dark+");
         assert!(!app.theme_picker_deletable(row(&app, "dark")));
-        assert_eq!(app.loaded_themes.iter().filter(|t| t.builtin).count(), 4);
+        assert_eq!(app.loaded_themes.iter().filter(|t| t.builtin).count(), crate::builtin_themes::THEMES.len());
     }
 
     #[test]

@@ -166,9 +166,13 @@ Foreground roles: `text`, `muted`, `accent`, `offset`, `changed`, `warning`,
 `error`, `success`, `selection`, `cursor`, and eight distinguishable plot colors
 `chart1` through `chart8`. Background roles: `panel`, `header`,
 `selection`, `cursor`, `match`. Unknown roles use the editor defaults. Bold and
-underline are supported. The host enforces readable contrast and clips drawing
+underline are supported. The host uses the active theme's colors and clips drawing
 to the viewport. Control characters in span text are rejected. Use Unicode
 terminal column widths when computing layout.
+
+Chart colors follow the active theme's `charts.*` palette, with cyan and an
+additional green from its terminal ANSI palette. Selection, search-match, and
+cursor backgrounds also honor their corresponding editor foreground colors.
 
 Register `editor::register_resize_handler` and read JSON through
 `current_view_event()`. All rich-view events include `viewId`:
@@ -180,7 +184,15 @@ Register `editor::register_resize_handler` and read JSON through
   `select_all`, `find_next`, or `find_prev`.
 - Bracketed paste: `code: "paste"`, `text` containing the pasted content.
 - Pointer: `kind: "down" | "up" | "drag"`, absolute `column`/`row`, relative
-  `viewColumn`/`viewRow`, `width`, `height`, and modifier flags.
+  `viewColumn`/`viewRow`, `width`, `height`, and modifier flags. Mouse payloads also
+  include `button` (`left` or `middle`) and host-generated `clickCount` (1–3 on
+  presses). A repeated press counts only within 400 ms at the same view, viewport,
+  position, button and modifiers; dragging resets the sequence. Treat missing
+  fields as a single left press for compatibility with older hosts.
+- Additional buttons: include `pointerButtons: ["middle"]` in `editor::Frame` to
+  route middle presses, drags and releases to the mouse handler. This is optional:
+  legacy views retain editor middle-button behavior and older hosts ignore the
+  field. Right presses continue to use the context-menu handler.
 - Passive pointer: opt in with `editor::register_hover_handler(view_id, export)`.
   That handler receives `kind: "move"` inside the view and `kind: "leave"` when
   the pointer exits, with the same coordinates, size, and modifiers. Relative
@@ -192,7 +204,7 @@ Register `editor::register_resize_handler` and read JSON through
   owns rendering and dismissing its menu; this event does not begin pointer
   capture. Without this registration, right-click keeps its workbench behavior.
 - Pointer capture: opt in with `editor::enable_pointer_capture(view_id, true)`
-  for a rich view. A left press inside the view captures subsequent drags and
+  for a rich view. A left press, or an opted-in middle press, captures drags and
   release, including outside its bounds. Mouse payloads include `pointerInside`;
   outside coordinates saturate at zero above/left. A `kind: "cancel"` mouse
   event ends a gesture interrupted by a key, fresh press, view switch, or resize.

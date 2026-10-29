@@ -1578,6 +1578,12 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         if app.source_control_repository_state
                             != crate::app::SourceControlRepositoryState::Available
                         {
+                            if let Some((_, action)) = app.repositories.recovery_buttons.iter()
+                                .find(|(area, _)| area.contains((col, row).into())).copied()
+                            {
+                                action.run(app);
+                                return;
+                            }
                             if app.source_control_repository_state
                                 == crate::app::SourceControlRepositoryState::Missing
                                 && app.source_control_initialize_area.is_some_and(|area| {
@@ -1912,6 +1918,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 crate::ui_panels::capture_pointer(app, MouseButton::Middle);
                 return;
             }
+            crate::mouse_selection::switch_focus_if_split(app, col, row, false);
+            if app.handle_active_extension_view_middle_button("down", col, row, mouse.modifiers) {
+                app.active_pane = ActivePane::Editor;
+                return;
+            }
             crate::mouse_selection::handle_middle_button_down(app, col, row);
         }
         MouseEventKind::Down(MouseButton::Right) => {
@@ -1943,10 +1954,12 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             crate::mouse_drag::handle_left_drag(app, col, row, prev_mouse_col, prev_mouse_row, mouse.modifiers);
         }
         MouseEventKind::Drag(MouseButton::Middle) => {
+            if app.handle_active_extension_view_middle_button("drag", col, row, mouse.modifiers) { return; }
             // Middle drag: column/block selection
             crate::mouse_drag::handle_block_drag(app, col, row);
         }
         MouseEventKind::Up(MouseButton::Middle) => {
+            if app.handle_active_extension_view_middle_button("up", col, row, mouse.modifiers) { return; }
                 app.block_drag_cache = None;
             app.middle_drag_start = None;
         }

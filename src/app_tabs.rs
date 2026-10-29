@@ -1318,8 +1318,6 @@ impl App {
         self.navigation = Default::default();
         self.closed_tab_paths.clear();
         self.closed_file_views.clear();
-        self.tab_switcher_active = false;
-        self.tab_switcher_selected = 0;
         self.tab_mru_order.clear();
         self.tab_scroll_offset = 0;
         self.tab_scroll_manual_anchor = None;

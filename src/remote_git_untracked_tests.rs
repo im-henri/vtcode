@@ -57,6 +57,14 @@ fn headless_status_omits_untracked_discovery_but_keeps_staged_and_modified_files
             files.iter().any(|file| file.status == '?'),
             include_untracked
         );
+        if include_untracked {
+            let directory = files.iter().find(|file| file.status == '?').unwrap();
+            assert!(directory.directory);
+            assert_eq!(directory.path, path("generated"));
+            let encoded = serde_json::to_vec(directory).unwrap();
+            let decoded: crate::app::GitFileChange<RemotePath> = serde_json::from_slice(&encoded).unwrap();
+            assert!(decoded.directory);
+        }
     }
 }
 

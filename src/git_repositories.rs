@@ -22,6 +22,7 @@ pub(crate) struct Repositories {
     pub parent_open: bool,
     pub closed: FxHashSet<PathBuf>,
     pub discovered: bool,
+    pub errors: Vec<crate::git_trust::Failure>,
     pub rescan: bool,
     pub expanded: bool,
     pub header_scroll: usize,
@@ -30,12 +31,23 @@ pub(crate) struct Repositories {
     pub parent_button: Option<Rect>,
     pub reopen_button: Option<Rect>,
     pub detail_area: Option<Rect>,
+    pub recovery_buttons: Vec<(Rect, crate::git_trust::RecoveryAction)>,
+    pub recovery_focus: Option<usize>,
+    pub recovery_root: Option<PathBuf>,
     pub view_generation: u64,
     pub membership_generation: u64,
     pub reopen_candidates: Vec<PathBuf>,
 }
 
 impl Repositories {
+    pub(crate) fn failure(&self) -> Option<&crate::git_trust::Failure> {
+        self.errors.iter().find(|error| {
+            !self.closed.contains(&error.root)
+                && (error.kind == crate::git_trust::FailureKind::Workspace
+                    || self.active.as_ref().is_none_or(|active| active == &error.root))
+        })
+    }
+
     pub(crate) fn open_count(&self) -> usize {
         self.entries.iter().filter(|repo| !self.closed.contains(&repo.root)).count()
     }
@@ -101,6 +113,17 @@ pub(crate) struct Discovery {
     pub roots: Vec<PathBuf>,
     pub parent: Option<PathBuf>,
     pub workspace: PathBuf,
+    pub errors: Vec<crate::git_trust::Failure>,
+}
+
+impl Discovery {
+    pub(crate) fn failed(workspace: &Path, error: crate::git_trust::Failure) -> Self {
+        let workspace = canonical(workspace);
+        let roots = if error.root == workspace { vec![workspace.clone()] } else { Vec::new() };
+        let parent = (error.root != workspace && crate::native_paths::strip_prefix(&workspace, &error.root).is_some())
+            .then(|| error.root.clone());
+        Self { roots, parent, workspace, errors: vec![error] }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -172,100 +195,139 @@ pub(crate) fn open_file_repository(
 /// submodule or embedded project is still discoverable without scanning its
 /// build/dependency output. This traversal is cached until a structural change.
 pub(crate) fn discover(workspace: &Path, cancel: &CancellationToken) -> Discovery {
-    if cancel.is_cancelled() {
-        return Discovery {
-            roots: Vec::new(),
-            parent: None,
-            workspace: workspace.to_owned(),
-        };
-    }
+    let mut result = Discovery {
+        roots: Vec::new(), parent: None, workspace: workspace.to_owned(), errors: Vec::new(),
+    };
+    if cancel.is_cancelled() { return result; }
     let workspace = canonical(workspace);
-    let containing = git2::Repository::discover(&workspace).ok();
-    if containing.as_ref().is_some_and(|repo| repo.is_bare()) {
-        return Discovery {
-            roots: Vec::new(),
-            parent: None,
-            workspace,
-        };
-    }
-    let parent = containing
-        .as_ref()
-        .and_then(|repo| repo.workdir())
-        .map(canonical)
-        .filter(|root| root != &workspace);
-    let mut contexts = containing
-        .into_iter()
-        .filter_map(|repo| {
-            let workdir = repo.workdir().map(canonical)?;
-            Some((repo, workdir))
-        })
-        .collect::<Vec<_>>();
-    let mut stack = vec![(workspace.clone(), (!contexts.is_empty()).then_some(0))];
-    let mut roots = Vec::new();
-    while let Some((directory, mut context)) = stack.pop() {
-        if cancel.is_cancelled() {
-            break;
+    result.workspace = workspace.clone();
+    let containing = match git2::Repository::discover(&workspace) {
+        Ok(repo) => Some(repo),
+        Err(error) => {
+            if let Some(failure) = crate::git_trust::Failure::opening(&workspace, &error) {
+                // An inaccessible repository is not an empty non-repository.
+                // Descending here loses its ignore context and can scan an
+                // entire shared filesystem before reporting the real failure.
+                return Discovery::failed(&workspace, failure);
+            }
+            None
         }
+    };
+    if containing.as_ref().is_some_and(|repo| repo.is_bare()) { return result; }
+    result.parent = containing.as_ref().and_then(|repo| repo.workdir()).map(canonical)
+        .filter(|root| root != &workspace);
+    let mut contexts = containing.into_iter().filter_map(|repo| {
+        let workdir = repo.workdir().map(canonical)?;
+        Some((repo, workdir))
+    }).collect::<Vec<_>>();
+    let mut stack = vec![(workspace.clone(), (!contexts.is_empty()).then_some(0))];
+    let mut failed_contexts = FxHashSet::default();
+    while let Some((directory, mut context)) = stack.pop() {
+        if cancel.is_cancelled() { break; }
+        if context.is_some_and(|index| failed_contexts.contains(&index)) { continue; }
         let marker = directory.join(".git");
+        let mut found = false;
         if directory == workspace {
             if contexts.first().is_some_and(|(_, root)| root == &workspace) {
-                roots.push(workspace.clone());
+                result.roots.push(workspace.clone());
             }
-        } else if marker.try_exists().unwrap_or(false)
-            && let Ok(repo) = git2::Repository::open(&directory)
-            && !repo.is_bare()
-            && let Some(root) = repo.workdir().map(canonical)
-            && root == directory
-        {
-            roots.push(root.clone());
-            context = Some(contexts.len());
-            contexts.push((repo, root));
-        } else if directory != workspace
-            && (!crate::background::workspace_path_is_watched(&workspace, &directory)
-                || context
-                    .and_then(|index| contexts.get(index))
-                    .is_some_and(|(repo, root)| {
-                        directory.strip_prefix(root).ok().is_some_and(|relative| {
-                            repo.status_should_ignore(relative).unwrap_or(false)
-                        })
-                    }))
-        {
-            continue;
+        } else {
+            let has_marker = match marker.try_exists() {
+                Ok(present) => present,
+                Err(error) => {
+                    result.errors.push(crate::git_trust::Failure::discovery(&directory, error));
+                    continue;
+                }
+            };
+            if has_marker {
+                match git2::Repository::open(&directory) {
+                    Ok(repo) => {
+                        if !repo.is_bare()
+                            && let Some(root) = repo.workdir().map(canonical)
+                            && root == directory
+                        {
+                            result.roots.push(root.clone());
+                            context = Some(contexts.len());
+                            contexts.push((repo, root));
+                            found = true;
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(failure) = crate::git_trust::Failure::opening(&directory, &error) {
+                            result.roots.push(directory);
+                            result.errors.push(failure);
+                        }
+                        continue;
+                    }
+                }
+            }
+            if !found {
+                if !crate::background::workspace_path_is_watched(&workspace, &directory) { continue; }
+                if let Some(index) = context
+                    && let Some((repo, root)) = contexts.get(index)
+                    && let Ok(relative) = directory.strip_prefix(root)
+                {
+                    match repo.status_should_ignore(relative) {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(error) => {
+                            result.errors.push(crate::git_trust::Failure::reading(root, error));
+                            failed_contexts.insert(index);
+                            continue;
+                        }
+                    }
+                }
+            }
         }
-        let Ok(children) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for child in children.flatten() {
-            if cancel.is_cancelled() {
-                break;
-            }
-            if !child
-                .file_type()
-                .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
-            {
+        let children = match std::fs::read_dir(&directory) {
+            Ok(children) => children,
+            Err(error) => {
+                result.errors.push(crate::git_trust::Failure::discovery(&directory, error));
                 continue;
             }
+        };
+        for child in children {
+            if cancel.is_cancelled() { break; }
+            let child = match child {
+                Ok(child) => child,
+                Err(error) => {
+                    result.errors.push(crate::git_trust::Failure::discovery(&directory, error));
+                    continue;
+                }
+            };
+            let kind = match child.file_type() {
+                Ok(kind) => kind,
+                Err(error) => {
+                    result.errors.push(crate::git_trust::Failure::discovery(&child.path(), error));
+                    continue;
+                }
+            };
+            if !kind.is_dir() || kind.is_symlink() { continue; }
             let name = child.file_name();
-            if name == ".git"
-                || name
-                    .to_string_lossy()
-                    .starts_with(crate::formatters::TEMP_DIR_PREFIX)
-            {
+            if name == ".git" || name.to_string_lossy().starts_with(crate::formatters::TEMP_DIR_PREFIX) {
                 continue;
             }
             stack.push((child.path(), context));
         }
     }
-    roots.sort_unstable();
-    roots.dedup();
-    Discovery {
-        roots,
-        parent,
-        workspace,
-    }
+    result.roots.sort_unstable();
+    result.roots.dedup();
+    result
 }
 
 impl App {
+    pub(crate) fn update_source_control_repository_state(&mut self) {
+        self.source_control_repository_state = if !self.source_control_enabled {
+            SourceControlRepositoryState::Disabled
+        } else if self.repositories.failure().is_some() {
+            SourceControlRepositoryState::Failed
+        } else if self.repositories.active.is_some() {
+            SourceControlRepositoryState::Available
+        } else {
+            SourceControlRepositoryState::Missing
+        };
+    }
+
     pub(crate) fn workspace_file_path(&self, path: &Path) -> PathBuf {
         if self.repositories.workspace.as_ref() == Some(&self.explorer.root)
             && let Some(root) = &self.repositories.canonical_workspace
@@ -473,7 +535,7 @@ impl App {
             self.repositories.header_scroll = row + 1 - visible;
         }
         self.repositories.expanded = true;
-        self.source_control_repository_state = SourceControlRepositoryState::Available;
+        self.update_source_control_repository_state();
         self.source_control_input_mode = false;
         self.sc_context_active = false;
         self.sc_context_target = None;
@@ -493,8 +555,10 @@ impl App {
             self.commit_details.diff_loading = false;
             self.close_commit_details_tab();
         }
-        self.refresh_git_log_async();
-        self.refresh_git_branch_async();
+        if self.source_control_repository_state == SourceControlRepositoryState::Available {
+            self.refresh_git_log_async();
+            self.refresh_git_branch_async();
+        }
     }
 
     pub(crate) fn close_source_control_repository(&mut self, root: &Path) {
@@ -648,7 +712,11 @@ impl App {
             return false;
         }
         self.source_control_last_refresh = Some(std::time::Instant::now());
+        let was_failed = self.source_control_repository_state == SourceControlRepositoryState::Failed;
+        let previous_active = self.repositories.active.clone();
         self.repositories.discovered = true;
+        self.repositories.errors = discovery.errors;
+        self.repositories.recovery_focus = None;
         self.repositories.canonical_workspace = Some(discovery.workspace);
         self.repositories.parent = discovery.parent;
         let parent = self
@@ -768,7 +836,7 @@ impl App {
             .filter(|repo| !closed.contains(&repo.root))
             .flat_map(|repo| {
                 let files = if active == Some(&repo.root) { active_files } else { &repo.files };
-                files.iter().map(move |file| (repo.root.as_path(), file.path.as_str(), file.status))
+                files.iter().map(move |file| (repo.root.as_path(), file.path.as_str(), file.status, file.directory))
             }));
         if let Some(preferred) = self.repositories.preferred.take()
             && Some(&preferred) != self.repositories.active.as_ref()
@@ -805,6 +873,21 @@ impl App {
                 self.git_branch_picker_active = false;
                 self.close_commit_details_tab();
             }
+        }
+        self.update_source_control_repository_state();
+        if self.source_control_repository_state == SourceControlRepositoryState::Failed {
+            if !was_failed {
+                self.repositories.view_generation = self.repositories.view_generation.wrapping_add(1);
+            }
+            self.clear_git_history();
+            self.bg_git_branch_running = false;
+            self.bg_git_branch_pending = false;
+        } else if was_failed && self.repositories.active == previous_active
+            && self.source_control_repository_state == SourceControlRepositoryState::Available
+        {
+            self.refresh_git_log_async();
+            self.refresh_git_branch_async();
+            self.refresh_git_line_status_async();
         }
         self.repositories.expand_single();
         true

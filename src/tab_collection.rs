@@ -60,7 +60,7 @@ pub(crate) fn swapped(mru: &mut [usize], left: usize, right: usize) {
 }
 
 /// Fill missing entries in linear time, retaining recency and dropping stale
-/// or duplicate indices. The selected tab must lead a newly opened switcher.
+/// or duplicate indices. The active tab leads the activation history.
 pub(crate) fn complete_mru(mru: &mut Vec<usize>, active: usize, count: usize) {
     let mut seen = vec![false; count];
     mru.retain(|&index| index < count && !std::mem::replace(&mut seen[index], true));

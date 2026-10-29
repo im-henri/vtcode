@@ -129,12 +129,12 @@ pub(crate) fn controls(app: &App, area: Rect, group: usize) -> (Rect, Rect, u16)
 
 pub(crate) fn group_color(app: &App, color: u8) -> Color {
     let color = match color % 6 {
-        0 => app.colors.fg_accent,
-        1 => app.colors.fg_accent_blue,
-        2 => app.colors.fg_success,
-        3 => app.colors.fg_warning,
-        4 => Color::Magenta,
-        _ => Color::Cyan,
+        0 => app.colors.ui.focus_border.over(app.colors.bg_tabbar).unwrap_or(app.colors.fg_accent),
+        1 => app.colors.ui.chart_color(1, app.colors.bg_tabbar),
+        2 => app.colors.ui.chart_color(0, app.colors.bg_tabbar),
+        3 => app.colors.ui.chart_color(2, app.colors.bg_tabbar),
+        4 => app.colors.ui.chart_color(3, app.colors.bg_tabbar),
+        _ => app.colors.ui.chart_color(5, app.colors.bg_tabbar),
     };
     app.colors
         .ui
@@ -786,22 +786,23 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     if area.width < 4 || area.height < 4 {
         return;
     }
-    let bg = app.colors.bg_dark;
-    let fg = app.colors.fg_text;
+    let surface = crate::ui_widgets::surface_background(f, area, app.colors.bg_editor);
+    let bg = app.colors.ui.quick_background.over(surface).unwrap_or(surface);
+    let fg = app.colors.ui.quick_text_color(bg, false);
     f.render_widget(Clear, area);
     f.render_widget(
         Block::default()
             .borders(Borders::ALL)
             .title(format!(" {title} "))
             .style(Style::default().fg(fg).bg(bg))
-            .border_style(Style::default().fg(app.colors.fg_accent)),
+            .border_style(Style::default().fg(app.colors.ui.widget_border.border(bg).unwrap_or(bg))),
         area,
     );
     let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
     p.input = Rect::new(inner.x, inner.y, inner.width, 1);
     if mode == Mode::Close {
         f.render_widget(
-            Paragraph::new(placeholder).style(Style::default().fg(app.colors.fg_dim).bg(bg)),
+            Paragraph::new(placeholder).style(Style::default().fg(app.colors.ui.description_color(bg)).bg(bg)),
             p.input,
         );
         p.input_map = None;
@@ -826,11 +827,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     for (i, (label, action)) in rows.into_iter().enumerate().skip(p.scroll).take(visible) {
         let rect = Rect::new(inner.x, inner.y + 1 + (i - p.scroll) as u16, inner.width, 1);
         let selected = i == p.selected;
-        let style = app
-            .colors
-            .ui
-            .list_row_style(app.colors.ui.widget_foreground, bg, selected, true, false)
-            .remove_modifier(Modifier::UNDERLINED);
+        let row_bg = if selected { app.colors.ui.quick_focus_background.over(bg).unwrap_or(bg) } else { bg };
+        let style = Style::default().fg(app.colors.ui.quick_text_color(row_bg, selected)).bg(row_bg);
         f.render_widget(Paragraph::new(format!(" {}", label)).style(style), rect);
         p.hits.push((rect, action));
     }

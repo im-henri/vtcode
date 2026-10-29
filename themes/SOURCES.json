@@ -1,0 +1,430 @@
+{
+  "version": 1,
+  "themes": [
+    {
+      "key": "one-dark-pro",
+      "name": "One Dark Pro",
+      "file": "one-dark-pro/OneDark-Pro.json",
+      "kind": "vs-dark",
+      "license_file": "one-dark-pro/LICENSE",
+      "sha256": "5ead6614afee49102f6e7a3c182837a1a5a83d02e5890f42804d6207e16d1cfe",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/Binaryify/OneDark-Pro",
+        "revision": "75c80ab18d90655e05ad837bb8d89f5e68d5ce53",
+        "path": "themes/OneDark-Pro.json",
+        "url": "https://github.com/Binaryify/OneDark-Pro/blob/75c80ab18d90655e05ad837bb8d89f5e68d5ce53/themes/OneDark-Pro.json",
+        "blob_sha1": "c13833d2c871edf8fd5fc79e41d65c33577ccd66",
+        "license_path": "LICENSE.txt"
+      }
+    },
+    {
+      "key": "one-dark-pro-darker",
+      "name": "One Dark Pro Darker",
+      "file": "one-dark-pro/OneDark-Pro-darker.json",
+      "kind": "vs-dark",
+      "license_file": "one-dark-pro/LICENSE",
+      "sha256": "094c0e0e2efb122e84bd2dd8453c47e6d0f12a54e0a019e0145cbcdd15f4420c",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/Binaryify/OneDark-Pro",
+        "revision": "75c80ab18d90655e05ad837bb8d89f5e68d5ce53",
+        "path": "themes/OneDark-Pro-darker.json",
+        "url": "https://github.com/Binaryify/OneDark-Pro/blob/75c80ab18d90655e05ad837bb8d89f5e68d5ce53/themes/OneDark-Pro-darker.json",
+        "blob_sha1": "2732f6a929ac46aa32e8db314ca3039936345e03",
+        "license_path": "LICENSE.txt"
+      }
+    },
+    {
+      "key": "dracula",
+      "name": "Dracula Theme",
+      "file": "dracula/dracula.json",
+      "kind": "vs-dark",
+      "license_file": "dracula/LICENSE",
+      "sha256": "ae473d11bdef6ad5d3fc3c6cf3a104e98c9fd8a195f13c5cc1699df33a2537eb",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/dracula/visual-studio-code",
+        "version": "2.25.1",
+        "url": "https://open-vsx.org/api/dracula-theme/theme-dracula/2.25.1/file/dracula-theme.theme-dracula-2.25.1.vsix",
+        "sha256": "f4d8c28fc64874b1b959cc90dbd39c84d5d35c9cf203e32b7a758dc9abf5b1cb",
+        "theme_path": "extension/theme/dracula.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "dracula-soft",
+      "name": "Dracula Theme Soft",
+      "file": "dracula/dracula-soft.json",
+      "kind": "vs-dark",
+      "license_file": "dracula/LICENSE",
+      "sha256": "4003c1709b14dc17c7e49e188a7738052bcfb47313df45f571729aebcd9ead96",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/dracula/visual-studio-code",
+        "version": "2.25.1",
+        "url": "https://open-vsx.org/api/dracula-theme/theme-dracula/2.25.1/file/dracula-theme.theme-dracula-2.25.1.vsix",
+        "sha256": "f4d8c28fc64874b1b959cc90dbd39c84d5d35c9cf203e32b7a758dc9abf5b1cb",
+        "theme_path": "extension/theme/dracula-soft.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "github-dark-default",
+      "name": "GitHub Dark Default",
+      "file": "github/dark-default.json",
+      "kind": "vs-dark",
+      "license_file": "github/LICENSE",
+      "sha256": "a81623253b9441beef340f9417fa02e668b54ad7238735b5db72de6fd1eae9ba",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/primer/github-vscode-theme",
+        "version": "6.3.5",
+        "url": "https://open-vsx.org/api/GitHub/github-vscode-theme/6.3.5/file/GitHub.github-vscode-theme-6.3.5.vsix",
+        "sha256": "a85236a58ad490b1600ec5a0fd0cea7eec56fb9d33660a1ac82c6da639ad3af4",
+        "theme_path": "extension/themes/dark-default.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "github-dark-dimmed",
+      "name": "GitHub Dark Dimmed",
+      "file": "github/dark-dimmed.json",
+      "kind": "vs-dark",
+      "license_file": "github/LICENSE",
+      "sha256": "af4c53a7a780228bda624d2a0771e216730eb6ea52598a6598614428498b159c",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/primer/github-vscode-theme",
+        "version": "6.3.5",
+        "url": "https://open-vsx.org/api/GitHub/github-vscode-theme/6.3.5/file/GitHub.github-vscode-theme-6.3.5.vsix",
+        "sha256": "a85236a58ad490b1600ec5a0fd0cea7eec56fb9d33660a1ac82c6da639ad3af4",
+        "theme_path": "extension/themes/dark-dimmed.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "github-dark-high-contrast",
+      "name": "GitHub Dark High Contrast",
+      "file": "github/dark-high-contrast.json",
+      "kind": "hc-black",
+      "license_file": "github/LICENSE",
+      "sha256": "87a49281f145b8caa312bf06be804742d3310a785ff4877f5d7cfd69a42d15b2",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/primer/github-vscode-theme",
+        "version": "6.3.5",
+        "url": "https://open-vsx.org/api/GitHub/github-vscode-theme/6.3.5/file/GitHub.github-vscode-theme-6.3.5.vsix",
+        "sha256": "a85236a58ad490b1600ec5a0fd0cea7eec56fb9d33660a1ac82c6da639ad3af4",
+        "theme_path": "extension/themes/dark-high-contrast.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "tokyo-night",
+      "name": "Tokyo Night",
+      "file": "tokyo-night/tokyo-night-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "tokyo-night/LICENSE",
+      "sha256": "e08d77c898ead9ed129dc18ff4f841e2353477e69ccd6fa7d0610561c31da4d8",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/tokyo-night/tokyo-night-vscode-theme",
+        "revision": "7c0f11eaef322f293621ca7befe462214b7ea468",
+        "path": "themes/tokyo-night-color-theme.json",
+        "url": "https://github.com/tokyo-night/tokyo-night-vscode-theme/blob/7c0f11eaef322f293621ca7befe462214b7ea468/themes/tokyo-night-color-theme.json",
+        "blob_sha1": "b663cb050c1278a5a81b428a9dea0fee9e24b0f4",
+        "license_path": "LICENSE.txt"
+      }
+    },
+    {
+      "key": "tokyo-night-storm",
+      "name": "Tokyo Night Storm",
+      "file": "tokyo-night/tokyo-night-storm-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "tokyo-night/LICENSE",
+      "sha256": "d190b57f2fa662233adc5c8f6e7aeac15330452a0569a2086b979b92b7ce6cea",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/tokyo-night/tokyo-night-vscode-theme",
+        "revision": "7c0f11eaef322f293621ca7befe462214b7ea468",
+        "path": "themes/tokyo-night-storm-color-theme.json",
+        "url": "https://github.com/tokyo-night/tokyo-night-vscode-theme/blob/7c0f11eaef322f293621ca7befe462214b7ea468/themes/tokyo-night-storm-color-theme.json",
+        "blob_sha1": "d579b0bf0bce1453df20fabecce35cc00e2dee56",
+        "license_path": "LICENSE.txt"
+      }
+    },
+    {
+      "key": "catppuccin-mocha",
+      "name": "Catppuccin Mocha",
+      "file": "catppuccin/mocha.json",
+      "kind": "vs-dark",
+      "license_file": "catppuccin/LICENSE",
+      "sha256": "ae9a2cd5944a185e5f45c8ff1408342b3ae5ebc317c8238db6fe5fb0402e3e48",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/catppuccin/vscode",
+        "version": "3.19.0",
+        "url": "https://open-vsx.org/api/Catppuccin/catppuccin-vsc/3.19.0/file/Catppuccin.catppuccin-vsc-3.19.0.vsix",
+        "sha256": "ebf347664837edbe91c9920ff3d14c96d4a28beeec0b95137c76058326329780",
+        "theme_path": "extension/themes/mocha.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "catppuccin-macchiato",
+      "name": "Catppuccin Macchiato",
+      "file": "catppuccin/macchiato.json",
+      "kind": "vs-dark",
+      "license_file": "catppuccin/LICENSE",
+      "sha256": "2b96b226a332da95c90c35325629c9abe51a7928c0322eae1afe27fec0420c8c",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/catppuccin/vscode",
+        "version": "3.19.0",
+        "url": "https://open-vsx.org/api/Catppuccin/catppuccin-vsc/3.19.0/file/Catppuccin.catppuccin-vsc-3.19.0.vsix",
+        "sha256": "ebf347664837edbe91c9920ff3d14c96d4a28beeec0b95137c76058326329780",
+        "theme_path": "extension/themes/macchiato.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "catppuccin-frappe",
+      "name": "Catppuccin Frappé",
+      "file": "catppuccin/frappe.json",
+      "kind": "vs-dark",
+      "license_file": "catppuccin/LICENSE",
+      "sha256": "630a590370ffd27e37b38c82f5bd595ee097e37a1bc444e6899fccdf1a5c9388",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/catppuccin/vscode",
+        "version": "3.19.0",
+        "url": "https://open-vsx.org/api/Catppuccin/catppuccin-vsc/3.19.0/file/Catppuccin.catppuccin-vsc-3.19.0.vsix",
+        "sha256": "ebf347664837edbe91c9920ff3d14c96d4a28beeec0b95137c76058326329780",
+        "theme_path": "extension/themes/frappe.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "nord",
+      "name": "Nord",
+      "file": "nord/nord-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "nord/LICENSE",
+      "sha256": "cd15e5a0c2edb2e373196ed2ab0f0d90c0eccc61f82c37131a4efc3be2ca8061",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/nordtheme/visual-studio-code",
+        "revision": "8ead09822c02d0d49d0f764104505e5a34d3689f",
+        "path": "themes/nord-color-theme.json",
+        "url": "https://github.com/nordtheme/visual-studio-code/blob/8ead09822c02d0d49d0f764104505e5a34d3689f/themes/nord-color-theme.json",
+        "blob_sha1": "c67473a7b6c4f9c804b2090fee3a779496996818",
+        "license_path": "license"
+      }
+    },
+    {
+      "key": "night-owl",
+      "name": "Night Owl",
+      "file": "night-owl/Night Owl-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "night-owl/LICENSE",
+      "sha256": "5f7a6aebcb28e803f30b54dc4d401a8c5f9ca42d83a31d1fadcb2494fe1dc78b",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/sdras/night-owl-vscode-theme",
+        "revision": "cc291eba7976b20d7c66bde6883c27b902196b07",
+        "path": "themes/Night Owl-color-theme.json",
+        "url": "https://github.com/sdras/night-owl-vscode-theme/blob/cc291eba7976b20d7c66bde6883c27b902196b07/themes/Night%20Owl-color-theme.json",
+        "blob_sha1": "729b426531cb574f5d9c8dd425209c83a8103056",
+        "license_path": "LICENSE.md"
+      }
+    },
+    {
+      "key": "ayu-dark",
+      "name": "Ayu Dark",
+      "file": "ayu/ayu-dark.json",
+      "kind": "vs-dark",
+      "license_file": "ayu/LICENSE",
+      "sha256": "b09efd6d8727fc8316fbb7319dcbb7d6156bfda0ab2b7d2241d71e508ee47d1b",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/ayu-theme/vscode-ayu",
+        "revision": "7f438df22446f02e79cdfc2f3771b0b273f34654",
+        "path": "ayu-dark.json",
+        "url": "https://github.com/ayu-theme/vscode-ayu/blob/7f438df22446f02e79cdfc2f3771b0b273f34654/ayu-dark.json",
+        "blob_sha1": "71fe8958d6abaff1334639abe53fcc4cb92ca45a",
+        "license_path": "LICENSE"
+      }
+    },
+    {
+      "key": "ayu-mirage",
+      "name": "Ayu Mirage",
+      "file": "ayu/ayu-mirage.json",
+      "kind": "vs-dark",
+      "license_file": "ayu/LICENSE",
+      "sha256": "1cf5f14ee8746e30c087cab1b2e8daf9899e7afbb46a3188c2d21cd55c9877f7",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/ayu-theme/vscode-ayu",
+        "revision": "7f438df22446f02e79cdfc2f3771b0b273f34654",
+        "path": "ayu-mirage.json",
+        "url": "https://github.com/ayu-theme/vscode-ayu/blob/7f438df22446f02e79cdfc2f3771b0b273f34654/ayu-mirage.json",
+        "blob_sha1": "22eca9758eae8c090ed94083a72fc6ade76923c7",
+        "license_path": "LICENSE"
+      }
+    },
+    {
+      "key": "rose-pine",
+      "name": "Rosé Pine",
+      "file": "rose-pine/rose-pine-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "rose-pine/LICENSE",
+      "sha256": "2c9270ee0a307739257d6331b6314f4b862c5f5bac32b798211ba9ffc50d6b02",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/rose-pine/vscode",
+        "revision": "d8f5ebe8e096fa833e997c07eb7685ee1677a4ba",
+        "path": "themes/rose-pine-color-theme.json",
+        "url": "https://github.com/rose-pine/vscode/blob/d8f5ebe8e096fa833e997c07eb7685ee1677a4ba/themes/rose-pine-color-theme.json",
+        "blob_sha1": "6926870772a4fb75f4e076a405443d699ccce02b",
+        "license_path": "LICENSE"
+      }
+    },
+    {
+      "key": "rose-pine-moon",
+      "name": "Rosé Pine Moon",
+      "file": "rose-pine/rose-pine-moon-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "rose-pine/LICENSE",
+      "sha256": "af64eee390a08e9f2830dbe9f3445f34d87f9a2720e515bdd6dc2c187ca8faff",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/rose-pine/vscode",
+        "revision": "d8f5ebe8e096fa833e997c07eb7685ee1677a4ba",
+        "path": "themes/rose-pine-moon-color-theme.json",
+        "url": "https://github.com/rose-pine/vscode/blob/d8f5ebe8e096fa833e997c07eb7685ee1677a4ba/themes/rose-pine-moon-color-theme.json",
+        "blob_sha1": "d164199a52398d7f761e1b111de18a8ca653084e",
+        "license_path": "LICENSE"
+      }
+    },
+    {
+      "key": "gruvbox-dark-medium",
+      "name": "Gruvbox Dark Medium",
+      "file": "gruvbox/gruvbox-dark-medium.json",
+      "kind": "vs-dark",
+      "license_file": "gruvbox/LICENSE",
+      "sha256": "b6dc507a94d9d63b8e9cf4dd7f04ea9b3fb5d667b96bd4d6750cd466e5891a87",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/jdinhify/vscode-theme-gruvbox",
+        "version": "1.29.1",
+        "url": "https://open-vsx.org/api/jdinhlife/gruvbox/1.29.1/file/jdinhlife.gruvbox-1.29.1.vsix",
+        "sha256": "8fd3166439d3bdc421ebc3d3f6d33f33985e173cb57d396c231daaaeb7e09240",
+        "theme_path": "extension/themes/gruvbox-dark-medium.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "gruvbox-dark-hard",
+      "name": "Gruvbox Dark Hard",
+      "file": "gruvbox/gruvbox-dark-hard.json",
+      "kind": "vs-dark",
+      "license_file": "gruvbox/LICENSE",
+      "sha256": "0d1af8f265893da64e70f62a23c1069f7052a3e8411dd3547f8453c4ff65c034",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/jdinhify/vscode-theme-gruvbox",
+        "version": "1.29.1",
+        "url": "https://open-vsx.org/api/jdinhlife/gruvbox/1.29.1/file/jdinhlife.gruvbox-1.29.1.vsix",
+        "sha256": "8fd3166439d3bdc421ebc3d3f6d33f33985e173cb57d396c231daaaeb7e09240",
+        "theme_path": "extension/themes/gruvbox-dark-hard.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "shades-of-purple",
+      "name": "Shades of Purple",
+      "file": "shades-of-purple/shades-of-purple-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "shades-of-purple/LICENSE",
+      "sha256": "5db19e01c34362177809c351f9c8db9985a80d7ec28d941b9dec617e5bbffb78",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/ahmadawais/shades-of-purple-vscode",
+        "revision": "e8eb49f33e5db05ceba6677367b33ddb27ad821c",
+        "path": "themes/shades-of-purple-color-theme.json",
+        "url": "https://github.com/ahmadawais/shades-of-purple-vscode/blob/e8eb49f33e5db05ceba6677367b33ddb27ad821c/themes/shades-of-purple-color-theme.json",
+        "blob_sha1": "b15cc6c1cc36191bc5b35c74c9f78931cff22bc4",
+        "license_path": "LICENSE.md"
+      }
+    },
+    {
+      "key": "synthwave-84",
+      "name": "SynthWave '84",
+      "file": "synthwave-84/synthwave-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "synthwave-84/LICENSE",
+      "sha256": "cc2361fa174b34f5c8b17ecc6b7a3d64040677c50936bff2f955000ae84e999b",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/robb0wen/synthwave-vscode",
+        "revision": "ecfa2fe1279f7233663fa3f98a96e6756000567b",
+        "path": "themes/synthwave-color-theme.json",
+        "url": "https://github.com/robb0wen/synthwave-vscode/blob/ecfa2fe1279f7233663fa3f98a96e6756000567b/themes/synthwave-color-theme.json",
+        "blob_sha1": "a52a908c4867720c3f4650d18e14eac739ea34d6",
+        "license_path": "LICENSE"
+      }
+    },
+    {
+      "key": "palenight",
+      "name": "Palenight Theme",
+      "file": "palenight/palenight.json",
+      "kind": "vs-dark",
+      "license_file": "palenight/LICENSE",
+      "sha256": "1a9b1c2718b360b004c93e4c39e0eeea143aedc00841988a01a7dcb846c5de0c",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/whizkydee/vscode-palenight-theme",
+        "revision": "63949af027921fd09466c1e6003bd2b994e14a9e",
+        "path": "themes/palenight.json",
+        "url": "https://github.com/whizkydee/vscode-palenight-theme/blob/63949af027921fd09466c1e6003bd2b994e14a9e/themes/palenight.json",
+        "blob_sha1": "167b0c34ad03e91b33475ecc6ef302deb61f0776",
+        "license_path": "license.md"
+      }
+    },
+    {
+      "key": "andromeda",
+      "name": "Andromeda",
+      "file": "andromeda/Andromeda-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "andromeda/LICENSE",
+      "sha256": "e4909a8f59538af9f9036edf4eab698f71b3a0abaff2497f52aa95bd1e6206a6",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/EliverLara/Andromeda",
+        "revision": "d1abb48c69493000aa0133a32d594eb25e523d4f",
+        "path": "themes/Andromeda-color-theme.json",
+        "url": "https://github.com/EliverLara/Andromeda/blob/d1abb48c69493000aa0133a32d594eb25e523d4f/themes/Andromeda-color-theme.json",
+        "blob_sha1": "f6043536634d81280f52a1dc81d12a5dff77f05f",
+        "license_path": "LICENSE.md"
+      }
+    },
+    {
+      "key": "solarized-dark",
+      "name": "Solarized Dark",
+      "file": "solarized-dark-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "LICENSE",
+      "sha256": "d0d54af2fd3fc4a5b01b41f6b99633a398b007f924d4120de710fc88e0334183",
+      "source": {
+        "type": "github",
+        "repository": "https://github.com/microsoft/vscode",
+        "revision": "1.103.0",
+        "path": "extensions/theme-solarized-dark/themes/solarized-dark-color-theme.json",
+        "url": "https://github.com/microsoft/vscode/blob/1.103.0/extensions/theme-solarized-dark/themes/solarized-dark-color-theme.json",
+        "blob_sha1": "af1e7a913ff461f7bbe1f004e3f275fbee9cddd3",
+        "license_path": "LICENSE.txt"
+      }
+    }
+  ]
+}

@@ -211,6 +211,67 @@ fn tooltip_scene(is_dir: bool) -> (tempfile::TempDir, App) {
 }
 
 #[test]
+fn remote_explorer_and_tab_tooltips_show_the_remote_machines_paths() {
+    use crate::remote::{self, RemotePath};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    for (native, uri, expected) in [
+        ("/home/remote/project space", "file:///home/remote/project%20space/",
+            "/home/remote/project space/src/white space λ #%.rs"),
+        (r"C:\work\project space", "file:///C:/work/project%20space/",
+            r"C:\work\project space\src\white space λ #%.rs"),
+        (r"\\server\share\project space", "file://server/share/project%20space/",
+            r"\\server\share\project space\src\white space λ #%.rs"),
+    ] {
+        let hello = remote::Hello {
+            version: remote::VERSION,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            root: native.into(),
+            root_uri: uri.into(),
+            session: 42,
+        };
+        let client = remote::client::Client::attach(
+            std::io::Cursor::new(Vec::new()), Vec::new(), hello,
+        ).unwrap();
+        let workspace = remote::workspace::Workspace::new(client);
+        let target = RemotePath::new("src/white space λ #%.rs".as_bytes().to_vec()).unwrap();
+        let key = workspace.view_key(&target);
+        assert!(key.to_string_lossy().contains("vtcode-remote-"));
+        for is_dir in [false, true] {
+            for tab_tooltip in [false, true] {
+                if is_dir && tab_tooltip { continue; }
+                let (_root, mut app) = tooltip_scene(is_dir);
+                let old = app.explorer.entries[0].path.clone();
+                let mut info = app.explorer_hover_info_cache.remove(&old).unwrap();
+                info.path = key.clone();
+                app.explorer_hover_info_cache.insert(key.clone(), info);
+                app.explorer.entries[0].path = key.clone();
+                app.explorer.entries[0].name = "white space λ #%.rs".into();
+                app.explorer.root = workspace.view_root.clone();
+                app.remote_workspace = Some(workspace.clone());
+                if tab_tooltip {
+                    app.tabs[0].editor.file_path = Some(key.clone());
+                    app.tab_tooltip_tab = Some(0);
+                    app.tab_tooltip_hover_start = Some(Instant::now() - Duration::from_secs(1));
+                } else {
+                    app.hovered_explorer = Some(0);
+                }
+                let mut terminal = Terminal::new(TestBackend::new(180, 35)).unwrap();
+                let completed = terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+                let text = completed.buffer.content.iter().map(|cell| cell.symbol()).collect::<String>();
+                assert!(text.contains(expected),
+                    "root={native}, directory={is_dir}, tab={tab_tooltip}: expected {expected:?}");
+                assert!(!text.contains("vtcode-remote-") && !text.contains('\0'));
+                assert_eq!(workspace.remote_path(&app.explorer.entries[0].path).unwrap(), target);
+                assert_eq!(app.tab_tooltip_shown, tab_tooltip);
+                assert_eq!(app.background.active_job_count(), 0,
+                    "formatting the tooltip must not request filesystem or network work");
+            }
+        }
+    }
+}
+
+#[test]
 fn commit_details_tabs_allow_explorer_hover_when_selected_hidden_or_in_another_group() {
     use crate::{app::Tab, editor::Editor};
     use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};

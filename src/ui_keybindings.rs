@@ -47,7 +47,6 @@ fn focused(app: &App) -> bool {
             .get(app.active_tab)
             .is_some_and(|tab| tab.kind == TabKind::KeyboardShortcuts)
         && !app.context_menu_active
-        && !app.tab_switcher_active
         && !app.shortcuts_active
         && !app.settings_active
         && !app.hunk_popup_active

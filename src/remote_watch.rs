@@ -1,6 +1,10 @@
 //! Native, debounced remote filesystem notifications. There is no idle polling
 //! or stat-per-frame traffic. Bursts are bounded and coalesced at both ends.
 use super::*;
+use crate::workspace_watch::{Burst, NoiseFilter};
+#[cfg(all(test, target_os = "linux"))]
+#[path = "remote_watch_scope_tests.rs"]
+mod scope_tests;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -13,19 +17,44 @@ pub(super) struct Stamp {
     epoch: u64,
 }
 #[derive(Default)]
-pub(super) struct Observation(Mutex<Stamp>);
+pub(super) struct Observation {
+    stamp: Mutex<Stamp>,
+    git: Mutex<Vec<PathBuf>>,
+    wake: Mutex<Option<mpsc::SyncSender<()>>>,
+}
 impl Observation {
     pub fn stamp(&self) -> Stamp {
-        *self.0.lock().unwrap()
+        *self.stamp.lock().unwrap()
     }
     pub fn active(&self, active: bool) {
-        let mut stamp = self.0.lock().unwrap();
+        let mut stamp = self.stamp.lock().unwrap();
         stamp.active = active;
         stamp.epoch = stamp.epoch.wrapping_add(1);
     }
     pub fn invalidate(&self) {
-        let mut stamp = self.0.lock().unwrap();
+        let mut stamp = self.stamp.lock().unwrap();
         stamp.epoch = stamp.epoch.wrapping_add(1);
+    }
+    // Repository discovery supplies explicit dependencies; arbitrary directory
+    // symlinks are not recursive workspace subscriptions.
+    pub(super) fn repositories(&self, root: &Path, discovery: &git::Discovery, parent_open: bool, closed: &[RemotePath]) {
+        let mut paths = Vec::new();
+        for path in discovery.roots.iter().chain(discovery.parent.iter().filter(|_| parent_open))
+            .filter(|path| !closed.contains(path)) {
+            let Ok(native) = path.resolve(root) else { continue };
+            let Ok(repo) = git2::Repository::open(native) else { continue };
+            for directory in [repo.path(), repo.commondir()] {
+                if let Ok(directory) = std::fs::canonicalize(directory)
+                    && !directory.starts_with(root) { paths.push(directory); }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        let mut previous = self.git.lock().unwrap();
+        if *previous != paths {
+            *previous = paths;
+            if let Some(wake) = &*self.wake.lock().unwrap() { let _ = wake.try_send(()); }
+        }
     }
 }
 
@@ -43,39 +72,6 @@ impl Registry {
         let observation = Arc::new(Observation::default());
         entries.insert(root.to_owned(), Arc::downgrade(&observation));
         observation
-    }
-}
-
-/// Repeated notifications for one hot file are one change, not an overflow
-/// requiring a workspace rescan. Once overflowed, retain flags, not stat work.
-#[derive(Default)]
-struct Burst {
-    event: crate::background::WorkspaceEventBurst,
-    paths: std::collections::HashSet<PathBuf>,
-}
-impl Burst {
-    fn push(&mut self, root: &Path, event: notify::Result<notify::Event>) {
-        let mut index = self.event.paths.len();
-        self.event.push(root, event);
-        if self.event.rescan {
-            self.event.paths.clear();
-            self.paths.clear();
-            return;
-        }
-        while index < self.event.paths.len() {
-            let path = &self.event.paths[index];
-            if self.paths.contains(path) {
-                self.event.paths.swap_remove(index);
-            } else if self.paths.len() == 1024 {
-                self.event.rescan = true;
-                self.event.paths.clear();
-                self.paths.clear();
-                break;
-            } else {
-                self.paths.insert(path.clone());
-                index += 1;
-            }
-        }
     }
 }
 
@@ -187,8 +183,10 @@ impl Watch {
         let stop = Arc::new(AtomicBool::new(false));
         let (wake, requests) = mpsc::sync_channel(1);
         let worker_stop = stop.clone();
+        let _ = wake.try_send(());
         let callback_wake = wake.clone();
         let worker_observation = observation.clone();
+        *observation.wake.lock().unwrap() = Some(wake.clone());
         let root_uri: String = url::Url::from_directory_path(&root)
             .map_err(|_| io::Error::other("Invalid watcher root"))?
             .into();
@@ -199,20 +197,29 @@ impl Watch {
                 impl Drop for InactiveOnExit {
                     fn drop(&mut self) {
                         self.0.active(false);
+                        self.0.wake.lock().unwrap().take();
                     }
                 }
                 let _inactive = InactiveOnExit(worker_observation.clone());
+                let mut noise = NoiseFilter::default();
+                let callback_observation = worker_observation.clone();
                 crate::worker_priority::lower_current_thread();
                 let callback_root = root.clone();
                 let callback_burst = burst.clone();
-                let watcher = native_watcher(
+                let coverage_root = root.clone();
+                let coverage_observation = worker_observation.clone();
+                let coverage_stop = worker_stop.clone();
+                let watcher = crate::workspace_watch::native_watcher(
                     move |event| {
                         let mut burst = callback_burst.lock().unwrap();
-                        burst.push(&callback_root, event);
+                        burst.push_with_dependencies(&callback_root, event, &callback_observation.git.lock().unwrap());
                         if !burst.event.is_empty() {
                             let _ = callback_wake.try_send(());
                         }
                     },
+                    native_watch_config(),
+                    move |path| !coverage_stop.load(Ordering::Acquire) && crate::workspace_watch::directory_is_relevant(
+                        &coverage_root, path, &coverage_observation.git.lock().unwrap()),
                 );
                 let mut watcher = match watcher.and_then(|mut watcher| {
                     watcher.watch(&root, RecursiveMode::Recursive)?;
@@ -233,6 +240,8 @@ impl Watch {
                     }
                 };
                 worker_observation.active(true);
+                let mut git_watches = Vec::new();
+                let mut git_dependencies = Vec::new();
                 if output
                     .send(Response {
                         id: 0,
@@ -256,10 +265,63 @@ impl Watch {
                             )
                             .is_ok()
                     {}
-                    if worker_stop.load(Ordering::Acquire) {
-                        break;
+                    if worker_stop.load(Ordering::Acquire) { break; }
+                    // Only discovery changes alter subscriptions. This is not
+                    // a recurring directory scan or a background Git query.
+                    let changed_dependencies = {
+                        let paths = worker_observation.git.lock().unwrap();
+                        (*paths != git_dependencies).then(|| paths.clone())
+                    };
+                    let mut failed = false;
+                    if let Some(paths) = changed_dependencies {
+                        let mut dependencies: Vec<PathBuf> = Vec::new();
+                        // Discovery supplies sorted paths. A retained parent
+                        // covers adjacent descendants in that sorted inventory.
+                        for path in &paths {
+                            if !dependencies.last().is_some_and(|parent| path.starts_with(parent)) {
+                                dependencies.push(path.clone());
+                            }
+                        }
+                        // A newly explicit Git root may be below a pruned
+                        // objects/logs directory of an unchanged parent watch.
+                        let filter_changed = cfg!(target_os = "linux") && paths.iter().chain(&git_dependencies)
+                            .filter(|path| paths.binary_search(path).is_err()
+                                || git_dependencies.binary_search(path).is_err())
+                            .any(|path| !crate::workspace_watch::directory_is_relevant(&root, path, &dependencies));
+                        git_dependencies = paths;
+                        if git_watches != dependencies || filter_changed {
+                            // Remove first: unwatching a parent also removes its
+                            // children, including a newly narrowed subscription.
+                            let mut rearm_workspace = false;
+                            for path in &git_watches {
+                                if filter_changed || dependencies.binary_search(path).is_err() {
+                                    rearm_workspace |= root.starts_with(path);
+                                    let _ = watcher.unwatch(path);
+                                }
+                            }
+                            if rearm_workspace && watcher.watch(&root, RecursiveMode::Recursive).is_err() {
+                                failed = true;
+                            }
+                            for path in &dependencies {
+                                if (filter_changed || git_watches.binary_search(path).is_err())
+                                    && watcher.watch(path, RecursiveMode::Recursive).is_err() {
+                                    failed = true;
+                                }
+                            }
+                            let mut pending = burst.lock().unwrap();
+                            pending.event.git_metadata_changed = true;
+                            pending.event.rescan |= rearm_workspace;
+                            git_watches = dependencies;
+                        }
                     }
-                    let event = std::mem::take(&mut *burst.lock().unwrap()).event;
+                    if failed {
+                        worker_observation.active(false);
+                        let mut pending = burst.lock().unwrap();
+                        pending.event.rescan = true;
+                        pending.event.watcher_failed = true;
+                    }
+                    let pending = std::mem::take(&mut *burst.lock().unwrap());
+                    let event = noise.filter(pending);
                     if event.is_empty() {
                         continue;
                     }
@@ -292,6 +354,7 @@ impl Watch {
                     {
                         break;
                     }
+                    if event.watcher_failed { break; }
                 }
                 let _ = watcher.unwatch(&root);
             })?;
@@ -303,24 +366,16 @@ impl Watch {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
 fn native_watcher(event_handler: impl notify::EventHandler) -> notify::Result<notify::RecommendedWatcher> {
-    #[cfg(target_os = "linux")]
-    {
-        notify::INotifyWatcher::new_with_event_batching(event_handler, native_watch_config(),
-            std::time::Duration::from_millis(10))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        use notify::Watcher;
-        notify::RecommendedWatcher::new(event_handler, native_watch_config())
-    }
+    crate::workspace_watch::native_watcher(event_handler, native_watch_config(), |_| true)
 }
 
 fn native_watch_config() -> notify::Config {
     // VTCode consumes modifications, including close-after-write, but ignores
     // read-only opens. Filter those in the kernel, before allocating events or
     // waking a thread for other tools' reads of the workspace and its caches.
-    notify::Config::default().with_open_events(false)
+    notify::Config::default().with_open_events(false).with_follow_symlinks(false)
 }
 
 impl workspace::Workspace {

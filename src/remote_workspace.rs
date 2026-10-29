@@ -397,6 +397,16 @@ impl Workspace {
             format!("{}/{}", self.display_root, path.display())
         })
     }
+    pub(crate) fn search_sort_key(&self, key: &Path) -> Option<crate::file_order::SearchPathKey> {
+        let view_uri = url::Url::from_file_path(key).ok()?;
+        let node_uri = self.lsp_uri(view_uri.as_str(), true)?;
+        let uri = url::Url::parse(&node_uri).ok()?;
+        let bytes = lsp::uri_path(&uri)?;
+        let path = String::from_utf8_lossy(&bytes);
+        let name = path.rsplit('/').next().unwrap_or("");
+        let full = if let Some(host) = uri.host_str() { format!("//{host}{path}") } else { path.to_string() };
+        Some(crate::file_order::SearchPathKey::new(&full, name))
+    }
     pub(crate) fn breadcrumbs(&self, key: &Path) -> io::Result<Vec<(String, PathBuf)>> {
         // Walk the node's URI hierarchy, never the client's opaque view-key
         // ancestors. Map each clickable location back through the path codec.

@@ -286,22 +286,8 @@ pub(crate) fn load_embedded_theme(
     label: &str,
     kind: &str,
 ) -> Result<ThemeFile, String> {
-    let read = |path: &Path| {
-        Ok(
-            match path.file_name().and_then(|s| s.to_str()).unwrap_or("") {
-                "dark_vs.json" => include_str!("../themes/dark_vs.json"),
-                "dark_plus.json" => include_str!("../themes/dark_plus.json"),
-                "light_vs.json" => include_str!("../themes/light_vs.json"),
-                "light_plus.json" => include_str!("../themes/light_plus.json"),
-                "hc_black.json" => include_str!("../themes/hc_black.json"),
-                "monokai-color-theme.json" => {
-                    include_str!("../themes/monokai-color-theme.json")
-                }
-                _ => return Err("Unknown embedded theme".into()),
-            }
-            .to_string(),
-        )
-    };
+    let read = |path: &Path| crate::builtin_themes::source(path).map(str::to_owned)
+        .ok_or_else(|| format!("Unknown embedded theme: {}", path.display()));
     let path = Path::new(file);
     finish_theme(path, Some(label), Some(kind), resolve_with(path, 0, &read)?)
 }

@@ -279,7 +279,7 @@ fn file_row_icons_fit_both_sidebar_sides_and_have_hover_tooltips() {
             let mut app = fixture();
             app.sidebar_right = right;
             app.source_control_files = [("a.rs", true, 'M'), ("b.rs", false, 'M'), ("c.rs", false, '?')]
-                .into_iter().map(|(path, staged, status)| crate::app::GitFileChange {
+                .into_iter().map(|(path, staged, status)| crate::app::GitFileChange { directory: false,
                     path: path.into(), staged, status, original_path: None,
                 }).collect();
             let area = Rect::new(3, 1, width, 26);

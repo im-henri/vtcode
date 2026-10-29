@@ -1357,11 +1357,6 @@ fn commit_inspector_diff_supports_native_find_and_tab_switching() {
     let key = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL);
     assert!(!owns_key(&app, key));
     crate::input_keyboard::handle_keyboard_event(&mut app, key);
-    assert!(app.tab_switcher_active);
-    crate::input_keyboard::handle_keyboard_event(
-        &mut app,
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-    );
     assert_eq!(app.active_tab, 1);
     app.sync_diff_tab();
     assert!(!app.should_render_diff_for_active_editor());
@@ -1860,12 +1855,6 @@ fn commit_inspector_is_an_editor_tab_and_workbench_shortcuts_still_work() {
         &mut app,
         KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
     );
-    assert!(app.tab_switcher_active);
-    assert_eq!(app.tab_mru_order[app.tab_switcher_selected], 1);
-    crate::input_keyboard::handle_keyboard_event(
-        &mut app,
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-    );
     assert_eq!(app.active_tab, 1);
     terminal
         .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -2105,7 +2094,7 @@ fn commit_inspector_workbench_previews_use_a_native_tab_and_leave_source_control
             .data
             .files
             .iter()
-            .map(|file| crate::app::GitFileChange {
+            .map(|file| crate::app::GitFileChange { directory: false,
                 path: file.path.clone(),
                 original_path: file.old_path.clone(),
                 status: file.status,

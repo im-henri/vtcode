@@ -1748,7 +1748,8 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
         };
         let unknown_count = index == 2 && matches!(app.source_control_repository_state,
             crate::app::SourceControlRepositoryState::Checking | crate::app::SourceControlRepositoryState::Loading);
-        let show_badge = (unknown_count || count > 0) && item_area.height >= 3 && content_width > 0;
+        let failed = index == 2 && app.source_control_repository_state == crate::app::SourceControlRepositoryState::Failed;
+        let show_badge = (failed || unknown_count || count > 0) && item_area.height >= 3 && content_width > 0;
         let text_height = item_area.height - u16::from(show_badge);
         let line_count = label.0.iter().filter(|line| !line.is_empty()).count().min(text_height as usize);
         let text_y = item_area.y + text_height.saturating_sub(line_count as u16) / 2;
@@ -1761,7 +1762,7 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
             }
         }
         if show_badge {
-            let badge = if unknown_count { "?".into() }
+            let badge = if failed { "!".into() } else if unknown_count { "?".into() }
                 else if count > 99 { "99+".into() } else { count.to_string() };
             let width = (UnicodeWidthStr::width(badge.as_str()) as u16).min(content_width);
             let badge_bg = app.colors.ui.bg_activity_badge;
@@ -1770,12 +1771,12 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
             let y = item_area.bottom() - 1;
             f.render_widget(Paragraph::new(badge).style(Style::default().fg(badge_fg).bg(badge_bg).add_modifier(Modifier::BOLD)),
                 Rect::new(x, y, width, 1));
-        } else if unknown_count && item_area.width >= 2 {
+        } else if (failed || unknown_count) && item_area.width >= 2 {
             // Short activity bars have no spare row; keep the unknown count
             // in the right padding without displacing SRC / CTRL or its border.
             let badge_bg = app.colors.ui.bg_activity_badge;
             let badge_fg = app.colors.ui.readable_foreground(app.colors.ui.fg_activity_badge, badge_bg, 4.5);
-            f.render_widget(Paragraph::new("?").style(Style::default().fg(badge_fg).bg(badge_bg).add_modifier(Modifier::BOLD)),
+            f.render_widget(Paragraph::new(if failed { "!" } else { "?" }).style(Style::default().fg(badge_fg).bg(badge_bg).add_modifier(Modifier::BOLD)),
                 Rect::new(item_area.right() - 1, item_area.bottom() - 1, 1, 1));
         }
     }

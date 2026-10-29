@@ -46,7 +46,7 @@ fn assert_untracked_preference(app: &mut App, show: bool) {
     assert_eq!(app.sc_visibility.untracked, show);
     assert_eq!(app.current_settings().source_control_show_untracked, Some(show));
     app.source_control_files = [("staged.rs", true, 'M'), ("tracked.rs", false, 'M'), ("new.rs", false, '?')]
-        .into_iter().map(|(path, staged, status)| crate::app::GitFileChange {
+        .into_iter().map(|(path, staged, status)| crate::app::GitFileChange { directory: false,
             path: path.into(), staged, status, original_path: None,
         }).collect();
     assert_eq!(app.source_control_change_count(), if show { 3 } else { 2 });

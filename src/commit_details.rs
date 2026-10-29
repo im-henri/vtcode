@@ -80,6 +80,8 @@ impl Default for PaneSizes {
 #[derive(Default)]
 pub(crate) struct CommitDetails {
     pub active: bool,
+    // Repository discovery context, independent of Source Control's selection.
+    pub root: Option<PathBuf>,
     pub data: CommitData,
     pub selected: usize,
     pub message_scroll: usize,
@@ -495,15 +497,38 @@ impl App {
         let Some(info) = self.git_log.get(idx).cloned() else {
             return;
         };
-        let generation = self.commit_details.generation.wrapping_add(1);
         self.git_log_selected = idx;
         self.sc_graph_focused = true;
+        self.open_commit_details(self.source_control_root().to_owned(), CommitData {
+            hash: info.full_hash,
+            message: info.message,
+            author: info.author,
+            time_ago: info.time_ago,
+            references: info.branches,
+            ..CommitData::default()
+        });
+    }
+
+    pub(crate) fn commit_details_root(&self) -> &Path {
+        self.commit_details.root.as_deref().unwrap_or_else(|| self.source_control_root())
+    }
+
+    fn commit_details_root_matches(&self, root: &Path) -> bool {
+        self.commit_details.root.as_ref().map_or_else(
+            || self.current_repository_matches(root),
+            |pinned| Self::same_open_path(pinned, root),
+        )
+    }
+
+    pub(crate) fn open_commit_details(&mut self, root: PathBuf, data: CommitData) {
+        if !self.source_control_enabled { return; }
+        let generation = self.commit_details.generation.wrapping_add(1);
         self.source_control_input_mode = false;
         self.suspend_diff_tab();
         self.auto_save_on_focus_change();
         self.clear_transient_editor_state();
-        // A single browsing tab follows graph selection. Reopening the same
-        // commit retains its filter, selection, scroll positions and layout.
+        // Graph and blame share one browsing tab. Reopening the same commit
+        // in the same repository context retains the inspector's state.
         if let Some((group, index)) = self.groups.iter().enumerate().find_map(|(group, state)| {
             state
                 .tabs
@@ -535,23 +560,22 @@ impl App {
         self.touch_tab_mru(tab);
         self.ensure_active_tab_visible();
         self.sync_diff_tab();
-        if self.commit_details.active && self.commit_details.data.hash == info.full_hash {
+        if self.commit_details.active && self.commit_details.data.hash == data.hash
+            && self.commit_details.root.as_ref() == Some(&root) {
             return;
         }
         self.clear_commit_review_files();
         self.clear_commit_diff_view();
         self.commit_details = CommitDetails {
             active: true,
+            root: Some(root),
             loading: true,
             generation,
-            data: CommitData {
-                hash: info.full_hash,
-                message: info.message,
-                author: info.author,
-                time_ago: info.time_ago,
-                references: info.branches,
-                ..CommitData::default()
+            review: crate::commit_review::Review {
+                collapsed: (0..data.files.len()).collect(),
+                ..Default::default()
             },
+            data,
             // Keep the last rendered geometry until the next frame.
             layout: self.commit_details.layout.take(),
             area: self.commit_details.area,
@@ -569,7 +593,7 @@ impl App {
         self.commit_details.error = None;
         self.commit_details.generation = self.commit_details.generation.wrapping_add(1);
         let generation = self.commit_details.generation;
-        let root = self.source_control_root().to_owned();
+        let root = self.commit_details_root().to_owned();
         let hash = self.commit_details.data.hash.clone();
         let sender = self.source_control_sender();
         let remote = self.remote_workspace.clone();
@@ -595,20 +619,26 @@ impl App {
     pub(crate) fn apply_commit_details(&mut self, result: DetailsResult) -> bool {
         if !self.commit_details.active
             || !self.has_commit_details_tab()
-            || !self.current_repository_matches(&result.root)
+            || !self.commit_details_root_matches(&result.root)
             || result.generation != self.commit_details.generation
         {
             return false;
         }
         self.commit_details.loading = false;
         match result.result {
-            Ok(data) => self.commit_details.data = data,
+            Ok(data) => {
+                // Newly loaded files start collapsed; metadata refreshes keep
+                // files the user has already expanded in this inspector.
+                self.commit_details.review.collapsed.extend(self.commit_details.data.files.len()..data.files.len());
+                self.commit_details.data = data;
+            }
             Err(error) => self.commit_details.error = Some(error),
         }
         true
     }
 
     pub(crate) fn adjacent_commit(&self, newer: bool) -> Option<usize> {
+        if !self.current_repository_matches(self.commit_details_root()) { return None; }
         let current = self
             .git_log
             .iter()
@@ -657,7 +687,7 @@ impl App {
             self.commit_details.diff_loading = true;
         }
         let file = self.commit_details.data.files[index].clone();
-        let root = self.source_control_root().to_owned();
+        let root = self.commit_details_root().to_owned();
         let generation = self.commit_details.generation;
         let hash = self.commit_details.data.hash.clone();
         let limit = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
@@ -686,7 +716,7 @@ impl App {
     pub(crate) fn apply_commit_diff(&mut self, result: DiffResult) -> bool {
         if !self.commit_details.active
             || !self.has_commit_details_tab()
-            || !self.current_repository_matches(&result.root)
+            || !self.commit_details_root_matches(&result.root)
             || result.generation != self.commit_details.generation
             || (self.commit_details.review.pending != Some(result.file)
                 && (self.commit_details.review.pending.is_some() || Some(result.file) != self.commit_details.diff_file))

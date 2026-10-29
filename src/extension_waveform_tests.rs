@@ -197,15 +197,37 @@ fn waveform_mouse_with_modifiers(
 
 fn signal_names_column(app: &App) -> Vec<String> {
     let content = text(app);
-    let body_height = content.lines().count().saturating_sub(8);
+    let header = content.lines().nth(3).unwrap();
+    let value_start = header[..header.find("Value @ A").unwrap()]
+        .chars()
+        .count()
+        .saturating_sub(1);
+    let name_end = value_start.saturating_sub(1);
+    let name_start = header
+        .chars()
+        .take(name_end)
+        .collect::<Vec<_>>()
+        .iter()
+        .rposition(|ch| *ch == '│')
+        .map_or(0, |at| at + 1);
+    let body_height = content
+        .lines()
+        .position(|line| line.trim_start().starts_with("INSPECT"))
+        .or_else(|| {
+            content
+                .lines()
+                .position(|line| line.trim_start().starts_with("Full scale"))
+        })
+        .unwrap_or_else(|| content.lines().count().saturating_sub(4))
+        .saturating_sub(5);
     content
         .lines()
         .skip(5)
         .take(body_height)
         .map(|line| {
             line.chars()
-                .skip(30)
-                .take(27)
+                .skip(name_start)
+                .take(name_end.saturating_sub(name_start))
                 .collect::<String>()
                 .trim_start_matches(['▎', '▸', '▾', '↓', '╭', '╰', '│', ' '])
                 .trim_end()
@@ -235,6 +257,11 @@ fn click_label(app: &mut App, label: &str) {
     let (x, y) = label_point(app, label);
     waveform_mouse(app, Down(Left), x, y);
     waveform_mouse(app, Up(Left), x, y);
+}
+
+fn click_menu_command(app: &mut App, menu: &str, command: &str) {
+    click_label(app, menu);
+    click_label(app, command);
 }
 
 fn saved_session(app: &mut App) -> serde_json::Value {
@@ -1144,7 +1171,7 @@ fn waveform_wasm_query_dialogs_apply_cancel_and_validate_through_real_mouse_inpu
     resize(&mut app, 150, 32);
     app.code_area = Some(Rect::new(5, 4, 150, 32));
     let original = saved_session(&mut app);
-    click_label(&mut app, " Group ");
+    click_menu_command(&mut app, "Signal", "New group");
     assert!(text(&app).contains("New group"));
     assert!(text(&app).contains("Cancel"));
     let view = app.active_extension_view().unwrap();
@@ -1173,23 +1200,23 @@ fn waveform_wasm_query_dialogs_apply_cancel_and_validate_through_real_mouse_inpu
     key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
     assert_eq!(saved_session(&mut app), original);
 
-    click_label(&mut app, " Mark ");
+    click_menu_command(&mut app, "Cursors", "Add marker");
     assert!(app.paste_into_extension_editor("discard me"));
     drain(&mut app);
     click_label(&mut app, " Cancel ");
     assert_eq!(saved_session(&mut app), original);
-    click_label(&mut app, " Mark ");
+    click_menu_command(&mut app, "Cursors", "Add marker");
     key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert!(!text(&app).contains("Marker name"));
     assert_eq!(saved_session(&mut app), original);
-    click_label(&mut app, " Mark ");
+    click_menu_command(&mut app, "Cursors", "Add marker");
     // Outside dismissal consumes the click, including its captured release.
     waveform_mouse(&mut app, Down(Left), 110, 9);
     waveform_mouse(&mut app, Up(Left), 110, 9);
     assert!(!text(&app).contains("Marker name"));
     assert_eq!(saved_session(&mut app), original);
-    click_label(&mut app, " Mark ");
+    click_menu_command(&mut app, "Cursors", "Add marker");
     assert!(app.paste_into_extension_editor("Handshake"));
     drain(&mut app);
     click_label(&mut app, " Create ");
@@ -1212,22 +1239,10 @@ fn waveform_wasm_signal_context_menu_is_opt_in_and_changes_the_clicked_signal() 
     resize(&mut app, 150, 32);
     app.code_area = Some(Rect::new(5, 4, 150, 32));
     let original = saved_session(&mut app);
-    let rendered = text(&app);
-    let row = rendered
-        .lines()
-        .enumerate()
-        .skip(5)
-        .find(|(_, line)| {
-            line.chars()
-                .skip(30)
-                .take(27)
-                .collect::<String>()
-                .contains("wdata")
-        })
-        .unwrap()
-        .0 as u16;
+    let (signal_x, signal_y) = label_point(&app, "wdata[31:0]");
+    let row = signal_y - 4;
     app.active_pane = crate::app::ActivePane::Explorer;
-    waveform_mouse(&mut app, Down(Right), 5 + 45, 4 + row);
+    waveform_mouse(&mut app, Down(Right), signal_x, signal_y);
     assert_eq!(app.active_pane, crate::app::ActivePane::Editor);
     assert!(
         app.extension_pointer_capture.is_none(),
@@ -1267,7 +1282,7 @@ fn waveform_wasm_signal_context_menu_is_opt_in_and_changes_the_clicked_signal() 
             && watch["analog"] == true
     }));
     key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
-    waveform_mouse(&mut app, Down(Right), 5 + 45, 4 + row);
+    waveform_mouse(&mut app, Down(Right), signal_x, signal_y);
     click_label(&mut app, "Rename…");
     assert!(text(&app).contains("Set a display name"));
     assert!(app.paste_into_extension_editor("Write payload"));
@@ -1344,7 +1359,7 @@ fn waveform_wasm_per_signal_sizes_round_trip_without_a_global_density_control() 
     assert!(!toolbar.contains("Compact") && !toolbar.contains("Roomy"));
     let original = saved_session(&mut app);
     assert_eq!(original["watches"][0]["size"], "Normal");
-    assert_eq!(original["watches"][4]["size"], "Small");
+    assert_eq!(original["watches"][4]["size"], "Normal");
     assert!(original.get("density").is_none());
     waveform_mouse(&mut app, Down(Right), 45, 5);
     assert!(text(&app).contains("Waveform size"));
@@ -1577,7 +1592,10 @@ fn waveform_wasm_columns_cursor_handles_and_snap_use_real_mouse_and_persist() {
     waveform_mouse(&mut app, Drag(Left), divider + 16, 7);
     waveform_mouse(&mut app, Up(Left), divider + 16, 7);
     let resized = saved_session(&mut app);
-    assert_eq!(resized["value_width"], 29);
+    assert_eq!(
+        resized["value_width"].as_u64().unwrap(),
+        original["value_width"].as_u64().unwrap() + 16
+    );
     assert_eq!(resized["cursor"], original["cursor"]);
     assert_eq!(resized["watches"], original["watches"]);
     assert!(app.extension_pointer_capture.is_none());
@@ -1606,7 +1624,7 @@ fn waveform_wasm_columns_cursor_handles_and_snap_use_real_mouse_and_persist() {
     waveform_mouse(&mut app, Down(Right), 50, 7);
     assert!(text(&app).contains("Fit values at A"));
     click_label(&mut app, "Reset column widths");
-    assert_eq!(saved_session(&mut app)["value_width"], 13);
+    assert_eq!(saved_session(&mut app)["value_width"], 23);
     key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
     assert_eq!(saved_session(&mut app), positioned);
     app.force_close_tab(app.active_tab);
@@ -1629,22 +1647,38 @@ fn waveform_wasm_scrollbars_and_small_menu_shortcuts_preserve_waveform_state() {
     let mut app = app(root.path());
     open(&mut app, &path);
     finish(&mut app);
+    key(&mut app, KeyCode::Char('b'), KeyModifiers::NONE);
     resize(&mut app, 150, 18);
     app.code_area = Some(Rect::new(0, 0, 150, 18));
     let original = saved_session(&mut app);
-    waveform_mouse(&mut app, Down(Left), 70, 5);
-    waveform_mouse(&mut app, Drag(Left), 70, 14);
-    waveform_mouse(&mut app, Up(Left), 70, 14);
+    let divider = text(&app)
+        .lines()
+        .nth(3)
+        .unwrap()
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '│')
+        .last()
+        .unwrap()
+        .0 as u16;
+    let bottom = text(&app)
+        .lines()
+        .position(|line| line.trim_start().starts_with("Full scale"))
+        .unwrap() as u16
+        - 1;
+    waveform_mouse(&mut app, Down(Left), divider, 5);
+    waveform_mouse(&mut app, Drag(Left), divider, bottom);
+    waveform_mouse(&mut app, Up(Left), divider, bottom);
     assert!(!signal_names_column(&app).iter().any(|name| name == "clk"));
     assert!(text(&app).contains("voltage"));
     assert_eq!(saved_session(&mut app), original);
-    waveform_mouse(&mut app, Down(Left), 70, 14);
-    waveform_mouse(&mut app, Drag(Left), 70, 5);
-    waveform_mouse(&mut app, Up(Left), 70, 5);
+    waveform_mouse(&mut app, Down(Left), divider, bottom);
+    waveform_mouse(&mut app, Drag(Left), divider, 5);
+    waveform_mouse(&mut app, Up(Left), divider, 5);
     assert!(signal_names_column(&app).iter().any(|name| name == "clk"));
     waveform_mouse(&mut app, Down(Left), 29, 5);
-    waveform_mouse(&mut app, Drag(Left), 29, 14);
-    waveform_mouse(&mut app, Up(Left), 29, 14);
+    waveform_mouse(&mut app, Drag(Left), 29, bottom);
+    waveform_mouse(&mut app, Up(Left), 29, bottom);
     assert!(!text(&app).lines().nth(5).unwrap().starts_with(" ▾ tb"));
     assert_eq!(saved_session(&mut app), original);
     let (x, y) = label_point(&app, "address[31:0]");
@@ -2004,9 +2038,9 @@ fn waveform_wasm_ruler_range_preview_overview_drag_and_scrollable_help_work_thro
 
     waveform_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 149, 21);
     assert_eq!(window_ns(&app), (1000.0 - span, 1000.0));
-    waveform_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 71, 21);
+    waveform_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 0, 21);
     assert_eq!(window_ns(&app), (0.0, span));
-    waveform_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 71, 25);
+    waveform_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 0, 25);
     assert!(app.extension_pointer_capture.is_none());
     assert_eq!(window_ns(&app), (0.0, span));
     let saved = window_ns(&app);
@@ -2221,7 +2255,7 @@ fn waveform_wasm_large_hierarchy_filter_and_session_import_fit_worker_budgets() 
         },
     );
     drain(&mut app);
-    assert!(text(&app).contains("Value @ t"));
+    assert!(text(&app).contains("Value @ A"));
     assert!(!app.notification_history.iter().any(|(message, _, _)| message.contains("out of fuel") || message.contains("wasm trap")));
 }
 
@@ -2273,6 +2307,171 @@ fn waveform_wasm_registered_view_can_reopen_from_the_palette_after_releasing_dat
 }
 
 #[test]
+fn waveform_wasm_compressed_cells_drill_down_and_cursor_values_remain_exact() {
+    use crossterm::event::MouseEventKind;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("compressed.vcd");
+    std::fs::write(&path, b"$timescale 1 ns $end $var wire 1 ! pulse $end $enddefinitions $end #0 0! #11 1! #12 0! #1000000").unwrap();
+    let mut app = app(root.path());
+    open(&mut app, &path);
+    finish(&mut app);
+    resize(&mut app, 150, 28);
+    let frame = text(&app);
+    assert!(
+        frame.lines().next().unwrap().contains("Overview"),
+        "{frame}"
+    );
+    assert!(frame.lines().nth(5).unwrap().contains('▒'));
+    let header = frame.lines().nth(3).unwrap();
+    let wave_x = header
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '│')
+        .last()
+        .unwrap()
+        .0
+        + 1;
+    let value_x = header[..header.find("Value @ A").unwrap()].chars().count();
+    let value = |text: &str| {
+        text.lines()
+            .nth(5)
+            .unwrap()
+            .chars()
+            .skip(value_x)
+            .take(wave_x - value_x - 1)
+            .collect::<String>()
+    };
+    let before = value(&frame);
+    assert!(before.contains('0'));
+    for _ in 0..2 {
+        waveform_mouse(&mut app, MouseEventKind::Moved, (wave_x + 1) as u16, 5);
+        let inspected = text(&app);
+        assert!(inspected.contains("Pointer @"), "{inspected}");
+        assert_eq!(value(&inspected), before);
+        key(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
+    }
+    let (start, end) = window_ns(&app);
+    assert!(end - start < 1000.0);
+    assert!(text(&app).contains("A 0 ns"));
+    key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+    let at_edge = text(&app);
+    assert!(at_edge.contains("A 11 ns"), "{at_edge}");
+    assert!(value(&at_edge).contains("0 → 1"), "{at_edge}");
+    waveform_mouse(&mut app, MouseEventKind::Moved, (value_x + 1) as u16, 5);
+    let edge_inspector = text(&app);
+    assert!(edge_inspector.contains("Edge @ 11 ns"), "{edge_inspector}");
+    assert!(edge_inspector.contains("Before HEX  0"), "{edge_inspector}");
+    assert!(edge_inspector.contains("After  HEX  1"), "{edge_inspector}");
+    click_label(&mut app, "Detail");
+    let detailed = text(&app);
+    assert!(detailed.contains("A 11 ns"));
+    assert!(
+        !detailed
+            .lines()
+            .skip(5)
+            .take(2)
+            .any(|line| line.contains('▒')),
+        "{detailed}"
+    );
+}
+
+#[test]
+fn waveform_wasm_native_middle_cursor_and_double_click_activity_use_the_host_api() {
+    use crossterm::event::{
+        MouseButton::{Left, Middle},
+        MouseEventKind::{Down, Drag, Up},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("native-pointer.vcd");
+    let source = b"$timescale 1 ns $end $var wire 1 ! pulse $end $enddefinitions $end #0 0! #10 1! #11 0! #1000";
+    std::fs::write(&path, source).unwrap();
+    let mut app = app(root.path());
+    open(&mut app, &path);
+    finish(&mut app);
+    resize(&mut app, 140, 32);
+    app.code_area = Some(Rect::new(6, 4, 140, 32));
+    let frame = text(&app);
+    let wave_x = frame
+        .lines()
+        .nth(3)
+        .unwrap()
+        .chars()
+        .enumerate()
+        .filter(|(_, ch)| *ch == '│')
+        .last()
+        .unwrap()
+        .0 as u16
+        + 1;
+    let y = 4 + 5;
+    waveform_mouse(&mut app, Down(Middle), 6 + wave_x + 20, y);
+    assert!(app.extension_pointer_capture.is_some());
+    waveform_mouse(&mut app, Drag(Middle), 170, y);
+    waveform_mouse(&mut app, Up(Middle), 170, y);
+    assert!(app.extension_pointer_capture.is_none());
+    let cursors = saved_session(&mut app);
+    assert_eq!(cursors["cursor"], 0);
+    assert_eq!(cursors["alt_cursor"], 1000);
+    assert_eq!(cursors["span"], 1000);
+    assert!(text(&app).lines().nth(5).unwrap().contains('▒'));
+    let x = 6 + wave_x + 1;
+    waveform_mouse(&mut app, Down(Left), x, y);
+    waveform_mouse(&mut app, Up(Left), x, y);
+    waveform_mouse(&mut app, Down(Left), x, y);
+    waveform_mouse(&mut app, Up(Left), x, y);
+    let resolved = saved_session(&mut app);
+    assert!(resolved["span"].as_u64().unwrap() < 20, "{resolved}");
+    assert_eq!(resolved["alt_cursor"], 1000);
+    assert!(!text(&app).lines().nth(5).unwrap().contains('▒'));
+    let view_id = app.active_extension_view().unwrap().view_id.clone();
+    let view = app.extension_manager.records[0]
+        .views
+        .get_mut(&view_id)
+        .unwrap();
+    std::sync::Arc::make_mut(view.frame.as_mut().unwrap())
+        .pointer_buttons
+        .clear();
+    assert!(!app.handle_active_extension_view_middle_button("down", x, y, KeyModifiers::NONE));
+    assert!(app.extension_pointer_capture.is_none());
+    assert_eq!(std::fs::read(&path).unwrap(), source);
+}
+
+#[test]
+fn waveform_wasm_docked_inspector_and_zoom_history_keep_measurements_stable() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("workspace.vcd");
+    std::fs::write(&path, b"$timescale 1 ns $end $var wire 1 ! pulse $end $var wire 32 # data $end $enddefinitions $end #0 0! b11011110101011011011111011101111 # #11 1! b01100000000100001000000000000000 # #31 0! b10101011 # #1000").unwrap();
+    let mut app = app(root.path());
+    open(&mut app, &path);
+    finish(&mut app);
+    resize(&mut app, 180, 38);
+    assert!(!text(&app).contains("INSPECT  "));
+    click_label(&mut app, "Inspect");
+    assert!(text(&app).contains("INSPECT"));
+    let original = window_ns(&app);
+    key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+    key(&mut app, KeyCode::Char('B'), KeyModifiers::SHIFT);
+    key(&mut app, KeyCode::Char('n'), KeyModifiers::ALT);
+    let (x, y) = label_point(&app, "data[31:0]");
+    waveform_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    waveform_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x, y);
+    let inspected = text(&app);
+    assert!(inspected.contains("Before HEX  dead_beef"), "{inspected}");
+    assert!(inspected.contains("After  HEX  6010_8000"), "{inspected}");
+    assert!(inspected.contains("Δt(B−A) +20 ns"), "{inspected}");
+    click_label(&mut app, "A–B");
+    assert_eq!(window_ns(&app), (11.0, 31.0));
+    key(&mut app, KeyCode::Char('Z'), KeyModifiers::SHIFT);
+    assert_eq!(window_ns(&app), original);
+    let saved = saved_session(&mut app);
+    assert_eq!(saved["cursor"], 11);
+    assert_eq!(saved["alt_cursor"], 31);
+    click_label(&mut app, "Inspect");
+    assert!(!text(&app).contains("INSPECT  "));
+    assert_eq!(saved_session(&mut app)["inspector"], false);
+}
+
+#[test]
 fn waveform_wasm_real_pointer_hover_is_passive_coalesced_and_clears_on_exit() {
     use crossterm::event::{MouseEvent, MouseEventKind};
     let root = tempfile::tempdir().unwrap();
@@ -2300,7 +2499,8 @@ fn waveform_wasm_real_pointer_hover_is_passive_coalesced_and_clears_on_exit() {
     }
     drain(&mut app);
     let inspected = text(&app);
-    assert!(inspected.contains("Value @ t"), "{inspected}");
+    assert!(inspected.contains("Value @ A"), "{inspected}");
+    assert!(inspected.contains("Pointer @"), "{inspected}");
     assert!(inspected.contains("HEX  6000_ef40"), "{inspected}");
     assert!(inspected.contains("held 900 ns"));
     assert_eq!(window_ns(&app), before);
@@ -2328,7 +2528,7 @@ fn waveform_wasm_real_pointer_hover_is_passive_coalesced_and_clears_on_exit() {
     assert_eq!(app.extension_manager.pending_view_events.len(), 3);
     drain(&mut app);
     assert!(text(&app).contains("snap off"));
-    assert!(text(&app).contains("Value @ t"));
+    assert!(text(&app).contains("Value @ A"));
     crate::mouse::handle_mouse(
         &mut app,
         MouseEvent {

@@ -6,6 +6,7 @@ use super::*;
 pub(crate) struct Discovery {
     pub roots: Vec<RemotePath>,
     pub parent: Option<RemotePath>,
+    pub errors: Vec<crate::git_trust::Failure<RemotePath>>,
 }
 #[derive(Clone)]
 pub(super) struct CachedStatus {
@@ -204,6 +205,7 @@ pub(crate) fn status(
     let scoped = known.is_some();
     let mut discovery = match known {
         Some(known) => crate::git_repositories::Discovery {
+            errors: Vec::new(),
             roots: known
                 .roots
                 .iter()
@@ -227,7 +229,11 @@ pub(crate) fn status(
     } else { None };
     let scans = crate::app_git::refresh::collect_with_paths(&mut discovery, roots, changed, root,
         cancel, include_untracked, Path::to_path_buf);
+    let errors = discovery.errors.into_iter().map(|error| {
+        error.try_map(|path| from_native(&path, root))
+    }).collect::<io::Result<_>>()?;
     let discovery = Discovery {
+        errors,
         roots: discovery
             .roots
             .iter()
@@ -451,7 +457,11 @@ impl workspace::Workspace {
                 .is_some_and(|paths| paths.iter().any(|path| path.name() == ".gitignore"));
         self.refresh_git_source_cache(refresh_sources);
         let active = open_roots(&discovery, parent_open, &closed);
+        let errors = discovery.errors.iter().cloned().map(|error| {
+            error.try_map(|path| Ok::<_, io::Error>(self.view_key(&path)))
+        }).collect::<io::Result<_>>()?;
         let result_discovery = crate::git_repositories::Discovery {
+            errors,
             roots: discovery
                 .roots
                 .iter()

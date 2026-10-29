@@ -771,11 +771,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         ui_settings::draw_settings(f, app);
     }
 
-    // Tab switcher overlay (Ctrl+Tab)
-    if app.tab_switcher_active {
-        ui_pickers::draw_tab_switcher(f, app);
-    }
-
     // Menu dropdown overlay (must be on top of everything)
     if app.menu_active && app.menu_open {
         ui_chrome::draw_menu_dropdown(f, app);
@@ -808,7 +803,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 if start.elapsed().as_millis() >= 500 && tab_idx < app.tabs.len() {
                     app.tab_tooltip_shown = true;
                     if let Some(ref path) = app.tabs[tab_idx].editor.file_path {
-                        let path_str = path.display().to_string();
+                        let path_str = app.display_path_label(path);
                         if let Some(tab_area) = app.tab_bar_area {
                             let hits = crate::ui_chrome_tabs::TabBarHits::new(app, tab_area);
                             let tx = hits.tabs.iter().find(|(index, _, _)| *index == tab_idx)
@@ -884,7 +879,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 } else {
                     format!(" {size_str}, {modified_str} ")
                 };
-                let path_str = format!(" {} ", entry_path.display());
+                let path_str = format!(" {} ", app.display_path_label(&entry_path));
 
                 let tooltip_height = EXPLORER_TOOLTIP_HEIGHT;
                 let header_w = UnicodeWidthStr::width(tooltip_header.as_str());
@@ -1249,7 +1244,7 @@ mod tests {
         app.show_panel = false;
         app.sc_graph_collapsed = true;
         app.source_control_files = (0..50)
-            .map(|index| crate::app::GitFileChange {
+            .map(|index| crate::app::GitFileChange { directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',

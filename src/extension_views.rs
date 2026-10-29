@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton};
 use ratatui::{Frame, layout::Rect};
 use serde::Serialize;
 
@@ -8,9 +8,192 @@ use crate::app::{App, ExtensionViewTabRef, TabKind};
 pub(crate) struct PointerCapture {
     view: ExtensionViewTabRef,
     area: Rect,
+    button: MouseButton,
+}
+
+pub(crate) struct PointerClick {
+    view: ExtensionViewTabRef,
+    area: Rect,
+    position: (u16, u16),
+    button: MouseButton,
+    at: std::time::Instant,
+    count: u8,
+    modifiers: KeyModifiers,
+}
+
+#[cfg(test)]
+mod pointer_input_tests {
+    use super::*;
+    #[test]
+    fn rich_view_click_counts_respect_gestures_and_viewport_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::new(root.path().to_path_buf());
+        let view = ExtensionViewTabRef {
+            extension_id: "test.rich".into(),
+            view_id: "wave".into(),
+            title: "Wave".into(),
+        };
+        let area = Rect::new(4, 3, 120, 40);
+        let point = (20, 10);
+        for expected in [1, 2, 3, 1] {
+            assert_eq!(
+                app.extension_click_count(
+                    &view,
+                    area,
+                    "down",
+                    MouseButton::Left,
+                    point,
+                    KeyModifiers::NONE
+                ),
+                expected
+            );
+            assert_eq!(
+                app.extension_click_count(
+                    &view,
+                    area,
+                    "up",
+                    MouseButton::Left,
+                    point,
+                    KeyModifiers::NONE
+                ),
+                expected
+            );
+        }
+        assert_eq!(
+            app.extension_click_count(
+                &view,
+                area,
+                "drag",
+                MouseButton::Left,
+                (21, 10),
+                KeyModifiers::NONE
+            ),
+            0
+        );
+        assert_eq!(
+            app.extension_click_count(
+                &view,
+                area,
+                "down",
+                MouseButton::Left,
+                point,
+                KeyModifiers::NONE
+            ),
+            1
+        );
+        assert_eq!(
+            app.extension_click_count(
+                &view,
+                area,
+                "down",
+                MouseButton::Left,
+                point,
+                KeyModifiers::ALT
+            ),
+            1
+        );
+        assert_eq!(
+            app.extension_click_count(
+                &view,
+                area,
+                "down",
+                MouseButton::Middle,
+                point,
+                KeyModifiers::ALT
+            ),
+            1
+        );
+        let resized = Rect::new(4, 3, 121, 40);
+        assert_eq!(
+            app.extension_click_count(
+                &view,
+                resized,
+                "down",
+                MouseButton::Middle,
+                point,
+                KeyModifiers::ALT
+            ),
+            1
+        );
+        app.extension_pointer_click.as_mut().unwrap().at -= std::time::Duration::from_millis(401);
+        assert_eq!(
+            app.extension_click_count(
+                &view,
+                resized,
+                "down",
+                MouseButton::Middle,
+                point,
+                KeyModifiers::ALT
+            ),
+            1
+        );
+        app.cancel_extension_pointer_capture();
+        assert!(app.extension_pointer_click.is_none());
+        assert!(!app.handle_active_extension_view_middle_button(
+            "down",
+            point.0,
+            point.1,
+            KeyModifiers::NONE
+        ));
+    }
 }
 
 impl App {
+    fn extension_click_count(
+        &mut self,
+        view: &ExtensionViewTabRef,
+        area: Rect,
+        kind: &str,
+        button: MouseButton,
+        position: (u16, u16),
+        modifiers: KeyModifiers,
+    ) -> u8 {
+        let now = std::time::Instant::now();
+        if kind == "down" {
+            let count = self
+                .extension_pointer_click
+                .as_ref()
+                .filter(|last| {
+                    last.view.extension_id == view.extension_id
+                        && last.view.view_id == view.view_id
+                        && last.area == area
+                        && last.position == position
+                        && last.button == button
+                        && last.modifiers == modifiers
+                        && now.duration_since(last.at) <= std::time::Duration::from_millis(400)
+                        && last.count < 3
+                })
+                .map_or(1, |last| last.count + 1);
+            self.extension_pointer_click = Some(PointerClick {
+                view: view.clone(),
+                area,
+                position,
+                button,
+                at: now,
+                count,
+                modifiers,
+            });
+            count
+        } else if kind == "drag"
+            && self
+                .extension_pointer_click
+                .as_ref()
+                .is_some_and(|last| last.position != position)
+        {
+            self.extension_pointer_click = None;
+            0
+        } else {
+            self.extension_pointer_click
+                .as_ref()
+                .filter(|last| {
+                    last.button == button
+                        && last.position == position
+                        && last.view.extension_id == view.extension_id
+                        && last.view.view_id == view.view_id
+                })
+                .map_or(0, |last| last.count)
+        }
+    }
     pub(crate) fn route_custom_editor_shortcut(
         &mut self,
         code: KeyCode,
@@ -193,18 +376,30 @@ impl App {
         col: u16,
         row: u16,
         modifiers: KeyModifiers,
+        button: MouseButton,
     ) -> Option<bool> {
-        let capture = self
+        let capture_area = self
             .extension_pointer_capture
             .as_ref()
-            .filter(|c| c.view.extension_id == view.extension_id && c.view.view_id == view.view_id);
-        let area = capture.map(|c| c.area).or(self.code_area)?;
+            .filter(|c| c.view.extension_id == view.extension_id && c.view.view_id == view.view_id)
+            .map(|c| c.area);
+        let area = capture_area.or(self.code_area)?;
         let inside = area.contains((col, row).into());
-        if !inside && capture.is_none() {
+        if !inside && capture_area.is_none() {
             return Some(false);
         }
+        let click_count =
+            self.extension_click_count(view, area, kind, button, (col, row), modifiers);
         let payload = serde_json::to_string(&ExtensionViewPointerEvent {
             kind,
+            button: match button {
+                MouseButton::Left => "left",
+                MouseButton::Middle => "middle",
+                MouseButton::Right => "right",
+                MouseButton::Back => "back",
+                MouseButton::Forward => "forward",
+            },
+            click_count,
             column: col,
             row,
             view_column: col.saturating_sub(area.x),
@@ -465,8 +660,12 @@ impl App {
             .enumerate()
             .any(|(index, group)| index != self.active_group && group.tabs.iter().any(matches));
         for group in &mut self.groups {
-            crate::tab_collection::retain(&mut group.tabs, &mut group.active_tab, &mut group.tab_mru_order,
-                |_, tab| !matches(tab));
+            crate::tab_collection::retain(
+                &mut group.tabs,
+                &mut group.active_tab,
+                &mut group.tab_mru_order,
+                |_, tab| !matches(tab),
+            );
         }
         self.reconcile_navigation();
         if removed_inactive {
@@ -487,8 +686,15 @@ impl App {
         let Some(view) = self.active_extension_view().cloned() else {
             return false;
         };
-        self.try_handle_custom_extension_view_mouse(&view, "drag", col, row, modifiers)
-            .unwrap_or(false)
+        self.try_handle_custom_extension_view_mouse(
+            &view,
+            "drag",
+            col,
+            row,
+            modifiers,
+            MouseButton::Left,
+        )
+        .unwrap_or(false)
     }
 
     /// Passive pointer inspection is opt-in, so existing mouse handlers retain
@@ -543,11 +749,21 @@ impl App {
         row: u16,
         modifiers: KeyModifiers,
     ) -> bool {
+        self.handle_active_extension_view_button_down(col, row, modifiers, MouseButton::Left)
+    }
+
+    fn handle_active_extension_view_button_down(
+        &mut self,
+        col: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+        button: MouseButton,
+    ) -> bool {
         let Some(view) = self.active_extension_view().cloned() else {
             return false;
         };
         if let Some(handled) =
-            self.try_handle_custom_extension_view_mouse(&view, "down", col, row, modifiers)
+            self.try_handle_custom_extension_view_mouse(&view, "down", col, row, modifiers, button)
         {
             if handled
                 && self
@@ -556,11 +772,51 @@ impl App {
                     .is_some_and(|v| v.pointer_capture && v.frame.is_some())
                 && let Some(area) = self.code_area
             {
-                self.extension_pointer_capture = Some(PointerCapture { view, area });
+                self.extension_pointer_capture = Some(PointerCapture { view, area, button });
             }
             return handled;
         }
         false
+    }
+
+    /// Additional buttons are explicit per-frame capabilities. Legacy custom
+    /// views and ordinary text editors retain their middle-button gestures.
+    pub(crate) fn handle_active_extension_view_middle_button(
+        &mut self,
+        kind: &'static str,
+        col: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+    ) -> bool {
+        let Some(view) = self.active_extension_view().cloned() else {
+            return false;
+        };
+        let opted_in = self
+            .extension_manager
+            .get_view(&view.extension_id, &view.view_id)
+            .and_then(|view| view.frame)
+            .is_some_and(|frame| {
+                frame
+                    .pointer_buttons
+                    .iter()
+                    .any(|button| button == "middle")
+            });
+        if !opted_in {
+            return false;
+        }
+        if kind == "down" {
+            self.handle_active_extension_view_button_down(col, row, modifiers, MouseButton::Middle)
+        } else {
+            self.try_handle_custom_extension_view_mouse(
+                &view,
+                kind,
+                col,
+                row,
+                modifiers,
+                MouseButton::Middle,
+            )
+            .unwrap_or(false)
+        }
     }
 
     /// Right-click menus are opt-in and keep the ordinary mouse contract intact.
@@ -596,6 +852,7 @@ impl App {
     }
 
     pub(crate) fn cancel_extension_pointer_capture(&mut self) {
+        self.extension_pointer_click = None;
         if let Some(capture) = self.extension_pointer_capture.clone() {
             self.try_handle_custom_extension_view_mouse(
                 &capture.view,
@@ -603,6 +860,7 @@ impl App {
                 capture.area.x,
                 capture.area.y,
                 KeyModifiers::NONE,
+                capture.button,
             );
             self.extension_pointer_capture = None;
             self.drag_start_pos = None;
@@ -616,18 +874,20 @@ impl App {
         &mut self,
         mouse: crossterm::event::MouseEvent,
     ) -> bool {
-        use crossterm::event::{MouseButton, MouseEventKind};
+        use crossterm::event::MouseEventKind;
         if matches!(mouse.kind, MouseEventKind::Down(_)) {
-            self.cancel_extension_pointer_capture();
+            if self.extension_pointer_capture.is_some() {
+                self.cancel_extension_pointer_capture();
+            }
             return false;
         }
-        let kind = match mouse.kind {
-            MouseEventKind::Drag(MouseButton::Left) => "drag",
-            MouseEventKind::Up(MouseButton::Left) => "up",
-            _ => return false,
-        };
         let Some(capture) = self.extension_pointer_capture.clone() else {
             return false;
+        };
+        let kind = match mouse.kind {
+            MouseEventKind::Drag(button) if button == capture.button => "drag",
+            MouseEventKind::Up(button) if button == capture.button => "up",
+            _ => return false,
         };
         let same_view = self.active_extension_view().is_some_and(|v| {
             v.extension_id == capture.view.extension_id && v.view_id == capture.view.view_id
@@ -646,6 +906,7 @@ impl App {
             mouse.column,
             mouse.row,
             mouse.modifiers,
+            capture.button,
         );
         if kind == "up" {
             self.extension_pointer_capture = None;
@@ -664,9 +925,14 @@ impl App {
         let Some(view) = self.active_extension_view().cloned() else {
             return false;
         };
-        if let Some(handled) =
-            self.try_handle_custom_extension_view_mouse(&view, "up", col, row, modifiers)
-        {
+        if let Some(handled) = self.try_handle_custom_extension_view_mouse(
+            &view,
+            "up",
+            col,
+            row,
+            modifiers,
+            MouseButton::Left,
+        ) {
             return handled;
         }
         false
@@ -787,6 +1053,8 @@ impl ExtensionViewKeyEvent {
 #[serde(rename_all = "camelCase")]
 struct ExtensionViewPointerEvent {
     kind: &'static str,
+    button: &'static str,
+    click_count: u8,
     column: u16,
     row: u16,
     view_column: u16,

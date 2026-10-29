@@ -118,6 +118,11 @@ pub struct Frame {
     pub cursor: Option<(u16, u16)>,
     pub document: Option<u32>,
     pub title: Option<String>,
+    /// Additional mouse buttons delivered to the view's mouse handler. Currently
+    /// supports "middle". Left input remains enabled; right input uses the
+    /// context-menu handler. Omit to preserve ordinary editor middle gestures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pointer_buttons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -172,6 +172,50 @@ fn fixture() -> (LspManager, TestLspServer, tempfile::TempDir, PathBuf) {
 }
 
 #[test]
+fn filesystem_bursts_send_one_complete_notification_to_each_initialized_server() {
+    let (mut manager, first, root, _) = fixture();
+    let (client, second) = LspClient::test_pair("cpp", &["*.cpp"]);
+    manager.clients.push(client);
+    let paths: Vec<_> = (0..1_000).map(|index| root.path().join(format!("source {index}.rs"))).collect();
+    manager.notify_did_change_watched_files(paths.iter().map(PathBuf::as_path));
+    for server in [&first, &second] {
+        let messages = server.take_messages();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["method"], "workspace/didChangeWatchedFiles");
+        let changes = messages[0]["params"]["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), paths.len());
+        for (change, path) in changes.iter().zip(&paths) {
+            assert_eq!(change["uri"], Url::from_file_path(path).unwrap().as_str());
+            assert_eq!(change["type"], 2);
+        }
+    }
+    manager.notify_did_change_watched_files(std::iter::empty::<&Path>());
+    assert!(first.take_messages().is_empty() && second.take_messages().is_empty());
+    manager.clients[1].initialized = false;
+    manager.notify_did_change_watched_files(std::iter::once(paths[0].as_path()));
+    assert_eq!(first.take_messages().len(), 1);
+    assert!(second.take_messages().is_empty());
+}
+
+#[test]
+fn filesystem_notification_batches_bound_long_paths_without_losing_or_reordering_events() {
+    let (mut manager, server, root, _) = fixture();
+    let directory = root.path().join("segment/".repeat(200));
+    let paths: Vec<_> = (0..1_000).map(|index| directory.join(format!("source {index}.rs"))).collect();
+    manager.notify_did_change_watched_files(paths.iter().map(PathBuf::as_path));
+    let messages = server.take_messages();
+    assert!(messages.len() > 1 && messages.len() < 20);
+    let mut received = Vec::new();
+    for message in messages {
+        assert_eq!(message["method"], "workspace/didChangeWatchedFiles");
+        assert!(message.to_string().len() < 300_000);
+        received.extend(message["params"]["changes"].as_array().unwrap().iter()
+            .map(|change| change["uri"].as_str().unwrap().to_owned()));
+    }
+    assert_eq!(received, paths.iter().map(|path| Url::from_file_path(path).unwrap().to_string()).collect::<Vec<_>>());
+}
+
+#[test]
 fn request_ids_are_unique_across_servers_and_restarts() {
     let (_manager, _server, temp, path) = fixture();
     // Retain receivers so the transport remains live.

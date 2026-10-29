@@ -13,7 +13,7 @@ fn read_result(result: &BackgroundResult) -> &BackgroundResult {
 }
 
 fn change() -> GitFileChange {
-    GitFileChange {
+    GitFileChange { directory: false,
         path: "new.txt".into(),
         original_path: None,
         status: '?',
@@ -30,6 +30,7 @@ fn status(
 ) -> BackgroundResult {
     BackgroundResult::GitRepositories {
         discovery: crate::git_repositories::Discovery {
+            errors: Vec::new(),
             workspace: root.clone(),
             roots: vec![root.clone()],
             parent: None,
@@ -427,7 +428,7 @@ fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
             app.source_control_files = Group::ALL
                 .into_iter()
                 .flat_map(|group| {
-                    (0..counts[group as usize]).map(move |index| GitFileChange {
+                    (0..counts[group as usize]).map(move |index| GitFileChange { directory: false,
                         path: format!("{group:?}-{index}.txt"),
                         staged: group == Group::Staged,
                         status: if group == Group::Merge { '!' } else if group == Group::Untracked { '?' } else { 'M' },

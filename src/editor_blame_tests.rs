@@ -98,6 +98,131 @@ fn install(app: &mut App) {
         .insert(editor.navigation_id, Arc::new(doc));
 }
 
+fn open_blame_commit_tab(remote_mode: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let repo_root = root.path().join("repo");
+    let repo = git2::Repository::init(&repo_root).unwrap();
+    commit(&repo, SOURCE, "Alex Morgan", "Initial source");
+    let committed = SOURCE.replace("sum += arr[i];", "sum += arr[i] * 2;");
+    let parent = repo.head().unwrap().peel_to_commit().unwrap();
+    let parent_tree = parent.tree().unwrap();
+    let mut builder = repo.treebuilder(Some(&parent_tree)).unwrap();
+    builder.insert("example.c", repo.blob(committed.as_bytes()).unwrap(), 0o100644).unwrap();
+    builder.insert("other.rs", repo.blob(b"fn also_changed() {}\n").unwrap(), 0o100644).unwrap();
+    let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+    let signature = git2::Signature::now("Jamie Lee", "jamie@example.test").unwrap();
+    let message = "Double each array item\n\nUpdate the other file in the same commit.";
+    let selected = repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[&parent]).unwrap();
+    let working = committed.replace("{1, 2, 3}", "{2, 4, 6}");
+    commit(&repo, &working, "Sam Rivera", "Change the entrypoint");
+    let file = repo_root.join("example.c");
+    std::fs::write(&file, &working).unwrap();
+    let other_root = root.path().join("other");
+    let other_repo = git2::Repository::init(&other_root).unwrap();
+    commit(&other_repo, SOURCE, "Another Author", "Unrelated repository");
+
+    let remote = remote_mode.then(|| crate::remote::workspace::Workspace::new(
+        crate::remote::tests::connection(root.path(), Arc::default(), Arc::default()),
+    ));
+    let file = remote.as_ref().map_or(file, |remote| remote.target_key("repo/example.c").unwrap());
+    let workspace = remote.as_ref().map_or_else(|| root.path().to_owned(), |remote| remote.view_root.clone());
+    let other_root = remote.as_ref().map_or(other_root, |remote| remote.target_key("other").unwrap());
+    let mut app = App::new_deferred(workspace.clone());
+    app.remote_workspace = remote;
+    app.source_control_enabled = true;
+    app.repositories.workspace = Some(workspace);
+    app.repositories.active = Some(other_root.clone());
+    app.repositories.discovered = true;
+    let mut editor = Editor::test_with_text(&working);
+    editor.file_path = Some(file.clone());
+    editor.blame.enabled = true;
+    editor.cursor_line = 11;
+    editor.cursor_col = 4;
+    editor.word_wrap = false;
+    let rope = editor.rope.clone();
+    let doc = match &app.remote_workspace {
+        Some(remote) => remote.prepare_blame(file, rope.clone(), None, &app.source_control_cancel),
+        None => git_blame::prepare(file, rope.clone(), None),
+    };
+    assert!(doc.notice.is_none(), "{:?}", doc.notice);
+    assert!(matches!(&doc.lines[5], git_blame::Line::Committed(commit) if commit.hash == selected.to_string()));
+    assert!(matches!(&doc.lines[11], git_blame::Line::Committed(commit) if commit.hash != selected.to_string()));
+    app.blame_documents.insert(editor.navigation_id, Arc::new(doc));
+    app.tabs = vec![Tab::new_file(editor)];
+    app.active_tab = 0;
+    app.active_pane = ActivePane::Editor;
+    app.show_minimap = false;
+    app.sticky_scroll = false;
+    app.mouse_col = u16::MAX;
+    app.mouse_row = u16::MAX;
+    app.git_log.clear();
+    let mut terminal = Terminal::new(TestBackend::new(170, 36)).unwrap();
+    render(&mut app, &mut terminal);
+    let hit = app.editor().unwrap().blame.hits.iter().find(|(_, line)| *line == 5).unwrap().0;
+    pointer(&mut app, hit, MouseEventKind::Down(MouseButton::Left));
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.open_commit.unwrap();
+    capture(&terminal, if remote_mode { "remote-open-commit" } else { "open-commit" });
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    assert!(app.is_commit_details_tab());
+    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.commit_details.data.hash, selected.to_string());
+    assert!(app.git_log.is_empty(), "blame must not require or modify graph history");
+    assert_eq!(app.source_control_root(), other_root);
+    assert!(app.tabs[0].editor.blame.selected.is_none());
+    assert!(!app.tabs[0].editor.blame.detail_mouse_down);
+    assert_eq!((app.tabs[0].editor.cursor_line, app.tabs[0].editor.cursor_col), (11, 4));
+    assert!(app.tabs[0].editor.rope.is_instance(&rope));
+    app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.loading);
+    assert!(app.commit_details.error.is_none(), "{:?}", app.commit_details.error);
+    assert_eq!(app.commit_details.data.message, message);
+    assert_eq!(app.commit_details.data.author, "Jamie Lee");
+    let paths: Vec<_> = app.commit_details.data.files.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(paths, ["example.c", "other.rs"]);
+    app.request_commit_diff();
+    app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.diff_loading);
+    assert!(app.commit_details.diff_error.is_none(), "{:?}", app.commit_details.diff_error);
+    assert!(app.commit_details.diff_full_cache.is_some());
+    terminal.draw(|frame| {
+        let area = frame.area();
+        crate::ui_chrome_tabs::draw_tab_bar(frame, &mut app, Rect::new(0, 0, area.width, 1));
+        crate::ui_commit_details::draw_in_area(frame, &mut app, Rect::new(0, 1, area.width, area.height - 1));
+    }).unwrap();
+    let text = output(&terminal);
+    assert!(text.contains("Commit details") && text.contains("Double each array item"), "{text}");
+    assert!(text.contains("example.c") && text.contains("other.rs"), "{text}");
+    capture(&terminal, if remote_mode { "remote-full-commit" } else { "full-commit" });
+
+    // Reopening from blame reuses the full tab and preserves its state.
+    let generation = app.commit_details.generation;
+    app.commit_details.query = "other".into();
+    app.active_tab = 0;
+    app.editor_mut().unwrap().blame.selected = Some(5);
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.open_commit.unwrap();
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    assert!(app.is_commit_details_tab());
+    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.commit_details.generation, generation);
+    assert_eq!(app.commit_details.query, "other");
+    if !remote_mode {
+        app.open_source_control_commit_details_file_diff(0);
+        assert_eq!(app.editor().unwrap().rope.to_string(), committed);
+        assert_eq!(app.compare_base_content.as_deref(), Some(SOURCE));
+        assert_eq!(app.diff_target_path.as_ref().unwrap().canonicalize().unwrap(), repo_root.join("example.c").canonicalize().unwrap());
+    }
+}
+
+#[test]
+fn blame_opens_full_commit_tab_outside_loaded_history_and_active_repository() {
+    open_blame_commit_tab(false);
+}
+
+#[test]
+fn remote_blame_opens_full_commit_tab_in_the_blamed_files_repository() {
+    open_blame_commit_tab(true);
+}
+
 fn render(app: &mut App, terminal: &mut Terminal<TestBackend>) {
     terminal
         .draw(|frame| {
@@ -645,7 +770,7 @@ fn blame_toggle_and_commit_inspector_do_not_change_source_or_other_tabs() {
     assert!(text.contains(&id.to_string()), "{text}");
     assert!(text.contains("Add array summation"));
     assert!(text.contains("Alex Morgan") && text.contains("author@example.com"));
-    assert!(text.contains("Compare") && text.contains("Open File") && text.contains("Copy Hash"));
+    assert!(text.contains("Open Commit") && text.contains("Compare") && text.contains("Open File") && text.contains("Copy Hash"));
     assert_eq!(
         app.code_area,
         Some(code),
@@ -664,6 +789,7 @@ fn blame_toggle_and_commit_inspector_do_not_change_source_or_other_tabs() {
     assert!(app.editor().unwrap().blame.copy.is_none());
     assert!(app.editor().unwrap().blame.previous.is_none());
     assert!(app.editor().unwrap().blame.open_file.is_none());
+    assert!(app.editor().unwrap().blame.open_commit.is_none());
     render(&mut app, &mut terminal);
     assert!(!output(&terminal).contains("Commit details"));
     pointer(&mut app, hit, MouseEventKind::Down(MouseButton::Left));
@@ -969,11 +1095,12 @@ fn blame_inspector_scroll_is_bounded_and_unicode_text_is_preserved() {
     let cursor = app.editor().unwrap().cursor_line;
     let source = app.editor().unwrap().rope.clone();
     let controls = (
+        app.editor().unwrap().blame.open_commit,
         app.editor().unwrap().blame.previous,
         app.editor().unwrap().blame.open_file,
         app.editor().unwrap().blame.copy,
     );
-    assert!(controls.0.is_some() && controls.1.is_some() && controls.2.is_some());
+    assert!(controls.0.is_some() && controls.1.is_some() && controls.2.is_some() && controls.3.is_some());
     assert_eq!(scrollbar.y, content.y);
     assert_eq!(scrollbar.height, content.height);
     assert_eq!(
@@ -993,6 +1120,7 @@ fn blame_inspector_scroll_is_bounded_and_unicode_text_is_preserved() {
     assert_eq!(app.code_area, Some(code));
     assert_eq!(
         (
+            app.editor().unwrap().blame.open_commit,
             app.editor().unwrap().blame.previous,
             app.editor().unwrap().blame.open_file,
             app.editor().unwrap().blame.copy
@@ -1080,6 +1208,7 @@ fn blame_inline_details_switch_commits_and_clear_actions_for_uncommitted_lines()
     assert!(app.editor().unwrap().blame.panel.is_some());
     assert!(app.editor().unwrap().blame.previous.is_none());
     assert!(app.editor().unwrap().blame.open_file.is_none());
+    assert!(app.editor().unwrap().blame.open_commit.is_none());
     assert!(app.editor().unwrap().blame.copy.is_none());
     let close = app.editor().unwrap().blame.close.unwrap();
     pointer(&mut app, close, MouseEventKind::Down(MouseButton::Left));
@@ -1340,6 +1469,7 @@ fn blame_inline_reveal_reflows_when_a_long_line_adds_the_horizontal_scrollbar() 
     assert_eq!(editor.ai_review.source_rows.len(), code.height as usize);
     for area in [
         editor.blame.close,
+        editor.blame.open_commit,
         editor.blame.previous,
         editor.blame.open_file,
         editor.blame.copy,
@@ -1414,6 +1544,7 @@ fn blame_layout_keeps_syntax_colors_and_theme_roles_across_pane_sizes() {
             for area in [
                 view.panel,
                 view.close,
+                view.open_commit,
                 view.previous,
                 view.open_file,
                 view.copy,
@@ -1427,7 +1558,7 @@ fn blame_layout_keeps_syntax_colors_and_theme_roles_across_pane_sizes() {
                 assert_eq!(area.intersection(bounds), area);
             }
             if width >= 24 {
-                assert!(view.previous.is_some() && view.open_file.is_some() && view.copy.is_some());
+                assert!(view.open_commit.is_some() && view.previous.is_some() && view.open_file.is_some() && view.copy.is_some());
                 capture(&terminal, &format!("{theme}-narrow-details-{width}"));
             }
         }

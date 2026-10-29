@@ -6,6 +6,10 @@ use crate::input_dialogs;
 use crate::input_keyboard_dialogs;
 use crate::input_pickers;
 
+#[cfg(test)]
+#[path = "tab_navigation_tests.rs"]
+mod tab_navigation_tests;
+
 fn terminal_has_focus(app: &App) -> bool {
     (app.active_pane == ActivePane::Editor
         && app
@@ -103,32 +107,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         app.execute_palette_command(id);
         return false;
     }
-    // Tab switcher: dismiss on any key that isn't Ctrl+Tab or Ctrl+Shift+Tab
-    if app.tab_switcher_active {
-        let is_tab_switch = key.modifiers.contains(KeyModifiers::CONTROL)
-            && (key.code == KeyCode::Tab || key.code == KeyCode::BackTab);
-        if !is_tab_switch {
-            // Confirm selection
-            if let Some(&tab_idx) = app.tab_mru_order.get(app.tab_switcher_selected) {
-                if tab_idx < app.tabs.len() {
-                    app.sync_duplicate_file_tabs();
-                    app.auto_save_on_focus_change();
-                    app.active_tab = tab_idx;
-                    app.active_pane = ActivePane::Editor;
-                    app.terminal_panel_focused = false;
-                    app.touch_tab_mru(tab_idx);
-                    app.refresh_git_line_status_async();
-                }
-            }
-            app.tab_switcher_active = false;
-            // Don't consume the key event - let it fall through to normal handling
-            // unless it was Escape or Enter (which should just dismiss)
-            if key.code == KeyCode::Esc || key.code == KeyCode::Enter {
-                return false;
-            }
-        }
-    }
-
     // Exit confirmation dialog
     if let Some(quit) = input_dialogs::handle_exit_confirm_key(app, key) {
         return quit;
@@ -435,42 +413,15 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                     crate::ui_panels::toggle_problems(app);
                     return false;
                 }
-                "tab_switcher_next" | "tab_switcher_prev" => {
-                    if app.tabs.len() > 1 {
-                        if !app.tab_switcher_active {
-                            crate::tab_collection::complete_mru(
-                                &mut app.tab_mru_order, app.active_tab, app.tabs.len(),
-                            );
-                            app.tab_switcher_active = true;
-                            app.tab_switcher_selected = 0;
-                        }
-                        let count = app.tab_mru_order.len();
-                        let step = if cmd_id == "tab_switcher_prev" { count - 1 } else { 1 };
-                        app.tab_switcher_selected = (app.tab_switcher_selected + step) % count;
-                    }
-                    return false;
-                }
-                "next_tab" => {
+                "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page" => {
                     if !app.tabs.is_empty() {
                         app.sync_duplicate_file_tabs();
                         app.clear_transient_editor_state();
-                        app.active_tab = (app.active_tab + 1) % app.tabs.len();
-                        app.validate_diff_state_for_active_tab();
-                        app.touch_tab_mru(app.active_tab);
-                        app.refresh_git_line_status_async();
-                        app.active_pane = ActivePane::Editor;
-                        app.terminal_panel_focused = false;
-                    }
-                    return false;
-                }
-                "prev_tab" => {
-                    if !app.tabs.is_empty() {
-                        app.sync_duplicate_file_tabs();
-                        app.clear_transient_editor_state();
-                        app.active_tab = if app.active_tab == 0 {
-                            app.tabs.len() - 1
+                        if app.tabs.len() > 1 { app.auto_save_on_focus_change(); }
+                        app.active_tab = if matches!(cmd_id, "next_tab" | "next_tab_page") {
+                            (app.active_tab + 1) % app.tabs.len()
                         } else {
-                            app.active_tab - 1
+                            app.active_tab.checked_sub(1).unwrap_or(app.tabs.len() - 1)
                         };
                         app.validate_diff_state_for_active_tab();
                         app.touch_tab_mru(app.active_tab);
@@ -940,7 +891,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
 
     if app.hunk_popup_active {
-        if app.hunk_peek.is_some() {
+        if app.hunk_peek.is_some() || app.hunk_preview_feedback.is_some() {
             crate::ui_hunk_peek::handle_key(app, key);
             return false;
         }
@@ -1691,26 +1642,6 @@ mod tests {
         let exited = handle_keyboard_event(&mut app, key(KeyCode::Char('z')));
         assert!(!exited);
         assert!(app.exit_confirm_active);
-    }
-
-    // ── Tab switcher ──────────────────────────────────────────────────
-
-    #[test]
-    fn tab_switcher_esc_dismisses() {
-        let mut app = App::test_new();
-        app.tab_switcher_active = true;
-        app.tab_switcher_selected = 0;
-        handle_keyboard_event(&mut app, key(KeyCode::Esc));
-        assert!(!app.tab_switcher_active);
-    }
-
-    #[test]
-    fn tab_switcher_ctrl_tab_keeps_active() {
-        let mut app = App::test_new();
-        app.tab_switcher_active = true;
-        app.tab_switcher_selected = 0;
-        handle_keyboard_event(&mut app, key_mod(KeyCode::Tab, KeyModifiers::CONTROL));
-        assert!(app.tab_switcher_active);
     }
 
     #[test]

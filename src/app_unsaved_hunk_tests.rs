@@ -22,6 +22,7 @@ fn unsaved_app(saved: &str, current: &str) -> App {
 fn open(app: &mut App, line: usize) {
     let file = app.editor().unwrap().file_path.clone();
     app.open_hunk_popup(10, 4, file, line, 'N');
+    app.wait_for_hunk_preview();
     assert!(app.hunk_peek.is_some(), "{:?}", app.notification_history);
 }
 
@@ -492,6 +493,7 @@ fn unsaved_minus_restores_space_replaced_code_and_redraws_it_immediately() {
         },
     );
     assert_eq!(app.hunk_popup_status, 'N');
+    app.wait_for_hunk_preview();
     assert!(app.hunk_peek.is_some());
     terminal
         .draw(|frame| {

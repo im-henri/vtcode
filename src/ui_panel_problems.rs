@@ -260,24 +260,22 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                     break;
                 };
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                let prefix = format!(
-                    " {} {name}:{} ",
-                    crate::lsp::severity_icon(diagnostic.severity),
-                    diagnostic.line + 1
-                );
+                let icon = format!(" {} ", crate::lsp::severity_icon(diagnostic.severity));
+                let location = format!("{name}:{} ", diagnostic.line + 1);
                 let message = diagnostic.message.lines().next().unwrap_or_default();
                 let message = crate::ui_pickers::truncate_to_width(
                     message,
-                    text_width as usize - prefix.width().min(text_width as usize),
+                    text_width as usize - (icon.width() + location.width()).min(text_width as usize),
                 );
                 let color = app.colors.ui.readable_foreground(
-                    app.colors.ui.diagnostic(diagnostic.severity),
+                    app.colors.ui.problem_icon_color(diagnostic.severity, row_bg),
                     row_bg,
                     4.5,
                 );
                 problem_row(
                     vec![
-                        Span::styled(prefix, Style::default().fg(color).bg(row_bg)),
+                        Span::styled(icon, Style::default().fg(color).bg(row_bg)),
+                        Span::styled(location, Style::default().fg(fg).bg(row_bg)),
                         Span::styled(message, Style::default().fg(fg).bg(row_bg)),
                     ],
                     row_bg,

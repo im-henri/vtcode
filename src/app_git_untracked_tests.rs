@@ -73,6 +73,7 @@ fn hidden_untracked_status_preserves_staged_additions_renames_and_worktree_chang
     );
 
     let mut discovery = Discovery {
+        errors: Vec::new(),
         roots: vec![root.clone()],
         parent: None,
         workspace: root.clone(),
@@ -322,6 +323,7 @@ fn benchmark_hidden_untracked_status() {
     for sample in 0..9 {
         for hidden in [sample % 2 == 0, sample % 2 != 0] {
             let mut discovery = Discovery {
+                errors: Vec::new(),
                 roots: roots.clone(),
                 parent: None,
                 workspace: root.clone(),

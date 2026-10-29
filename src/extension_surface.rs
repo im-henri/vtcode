@@ -14,6 +14,8 @@ pub(crate) struct ViewFrame {
     pub document: Option<u32>,
     pub title: Option<String>,
     #[serde(default)]
+    pub pointer_buttons: Vec<String>,
+    #[serde(default)]
     pub dirty: bool,
     pub path: Option<String>,
 }
@@ -36,30 +38,38 @@ fn surface_colors(
     colors: &crate::app_theme::ThemeColors,
     span: &ViewSpan,
 ) -> (ratatui::style::Color, ratatui::style::Color) {
-    use ratatui::style::Color;
-    let fg = match span.role.as_str() {
-        "chart1" => Color::Rgb(106, 203, 145),
-        "chart2" => Color::Rgb(106, 184, 255),
-        "chart3" => Color::Rgb(232, 196, 104),
-        "chart4" => Color::Rgb(194, 151, 235),
-        "chart5" => Color::Rgb(239, 145, 181),
-        "chart6" => Color::Rgb(104, 204, 200),
-        "chart7" => Color::Rgb(234, 170, 121),
-        "chart8" => Color::Rgb(184, 197, 125),
-        "muted" => colors.fg_dim,
-        "accent" | "offset" => colors.fg_accent,
-        "changed" | "warning" => colors.fg_warning,
-        "error" => colors.fg_error,
-        "success" => colors.fg_success,
-        "cursor" => colors.bg_editor,
-        _ => colors.fg_text,
-    };
     let bg = match span.background.as_str() {
         "panel" | "header" => colors.bg_sidebar,
         "selection" => colors.bg_selection,
-        "cursor" => colors.fg_accent,
+        "cursor" => colors.bg_cursor,
         "match" => colors.bg_search_match,
         _ => colors.bg_editor,
+    };
+    let selection_foreground = (span.background == "selection" || span.role == "selection")
+        .then(|| colors.ui.editor_selection_foreground.over(bg)).flatten();
+    let fg = if span.background == "cursor" || span.role == "cursor" {
+        colors.fg_cursor
+    } else if let Some(foreground) = selection_foreground {
+        foreground
+    } else if span.background == "match" && colors.ui.fg_find_other.is_some() {
+        colors.ui.fg_find_other.unwrap()
+    } else {
+        match span.role.as_str() {
+            "chart1" => colors.ui.chart_color(0, bg),
+            "chart2" => colors.ui.chart_color(1, bg),
+            "chart3" => colors.ui.chart_color(2, bg),
+            "chart4" => colors.ui.chart_color(3, bg),
+            "chart5" => colors.ui.chart_color(4, bg),
+            "chart6" => colors.ui.chart_color(5, bg),
+            "chart7" => colors.ui.chart_color(6, bg),
+            "chart8" => colors.ui.chart_color(7, bg),
+            "muted" => colors.ui.description_color(bg),
+            "accent" | "offset" => colors.ui.focus_border.over(bg).unwrap_or(colors.fg_accent),
+            "changed" | "warning" => colors.ui.warning_text_color(bg),
+            "error" => colors.ui.error_text_color(bg),
+            "success" => colors.fg_success,
+            _ => colors.ui.editor_text_color(bg),
+        }
     };
     (fg, bg)
 }
@@ -79,7 +89,7 @@ pub(crate) fn render_frame(
     if area.is_empty() {
         return;
     }
-    buffer.set_style(area, Style::default().bg(colors.bg_editor));
+    buffer.set_style(area, Style::default().fg(colors.fg_text).bg(colors.bg_editor));
     let mut styles = rustc_hash::FxHashMap::default();
     for (row, line) in frame
         .lines
@@ -220,7 +230,7 @@ mod tests {
                 })
                 .collect();
             Paragraph::new(lines)
-                .style(Style::default().bg(colors.bg_editor))
+                .style(Style::default().fg(colors.fg_text).bg(colors.bg_editor))
                 .render(area, &mut expected);
             assert_eq!(actual, expected, "{width} columns");
         }

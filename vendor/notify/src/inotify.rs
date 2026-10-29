@@ -72,11 +72,17 @@ struct EventLoop {
     event_loop_rx: Receiver<EventLoopMsg>,
     inotify: Option<Inotify>,
     event_handler: Box<dyn EventHandler>,
+    directory_filter: Option<Arc<dyn Fn(&Path) -> bool + Send + Sync>>,
+    #[cfg(test)]
+    registration_visits: usize,
     /// PathBuf -> (WatchDescriptor, WatchMask, is_recursive, is_dir)
     watches: HashMap<PathBuf, (WatchDescriptor, WatchMask, bool, bool)>,
     paths: HashMap<WatchDescriptor, PathBuf>,
     rename_event: Option<Event>,
     open_events: bool,
+    follow_symlinks: bool,
+    #[cfg(test)]
+    read_errors: std::collections::VecDeque<i32>,
     event_batch_interval: Option<Duration>,
 }
 
@@ -148,10 +154,16 @@ impl EventLoop {
             event_loop_rx,
             inotify: Some(inotify),
             event_handler,
+            directory_filter: None,
+            #[cfg(test)]
+            registration_visits: 0,
             watches: HashMap::new(),
             paths: HashMap::new(),
             rename_event: None,
             open_events: config.open_events(),
+            follow_symlinks: config.follow_symlinks(),
+            #[cfg(test)]
+            read_errors: Default::default(),
             event_batch_interval,
         };
         Ok(event_loop)
@@ -172,8 +184,12 @@ impl EventLoop {
                 Err(ref e) if matches!(e.kind(), std::io::ErrorKind::Interrupted) => {
                     // System call was interrupted, we will retry
                     // TODO: Not covered by tests (to reproduce likely need to setup signal handlers)
+                    continue;
                 }
-                Err(e) => panic!("poll failed: {}", e),
+                Err(e) => {
+                    self.event_handler.handle_event(Err(Error::io(e)));
+                    break;
+                }
                 Ok(()) => {}
             }
 
@@ -262,7 +278,14 @@ impl EventLoop {
             let mut buffer = [0; 64 * 1024];
             // Read all buffers available.
             loop {
-                match inotify.read_events(&mut buffer) {
+                #[cfg(test)]
+                let result = match self.read_errors.pop_front() {
+                    Some(error) => Err(std::io::Error::from_raw_os_error(error)),
+                    None => inotify.read_events(&mut buffer),
+                };
+                #[cfg(not(test))]
+                let result = inotify.read_events(&mut buffer);
+                match result {
                     Ok(events) => {
                         let mut num_events = 0;
                         for event in events {
@@ -439,8 +462,11 @@ impl EventLoop {
                         // No events read. Break out.
                         break;
                     }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) => {
                         self.event_handler.handle_event(Err(Error::io(e)));
+                        self.running = false;
+                        break;
                     }
                 }
             }
@@ -450,8 +476,18 @@ impl EventLoop {
             self.remove_watch(path, true).ok();
         }
 
-        for path in add_watches {
-            self.add_watch(path, true, false).ok();
+        self.add_created_directories(add_watches);
+    }
+
+    fn add_created_directories(&mut self, mut paths: Vec<PathBuf>) {
+        // A parent walk covers child requests from the same native batch.
+        // Retain child attempts if the parent's walk failed partway through.
+        paths.sort_unstable();
+        paths.dedup();
+        let mut covered: Option<PathBuf> = None;
+        for path in paths {
+            if covered.as_ref().map_or(false, |parent| path.starts_with(parent)) { continue; }
+            if self.add_watch(path.clone(), true, false).is_ok() { covered = Some(path); }
         }
     }
 
@@ -462,9 +498,12 @@ impl EventLoop {
             return self.add_single_watch(path, false, true);
         }
 
+        let directory_filter = self.directory_filter.clone();
         for entry in WalkDir::new(path)
-            .follow_links(true)
+            .follow_links(self.follow_symlinks)
             .into_iter()
+            .filter_entry(move |entry| !entry.file_type().is_dir()
+                || directory_filter.as_ref().map_or(true, |filter| filter(entry.path())))
             .filter_map(filter_dir)
         {
             self.add_single_watch(entry.path().to_path_buf(), is_recursive, watch_self)?;
@@ -480,6 +519,8 @@ impl EventLoop {
         is_recursive: bool,
         watch_self: bool,
     ) -> Result<()> {
+        #[cfg(test)]
+        { self.registration_visits += 1; }
         let mut watchmask = WatchMask::ATTRIB
             | WatchMask::CREATE
             | WatchMask::DELETE
@@ -598,13 +639,24 @@ impl INotifyWatcher {
     /// The default constructor continues to deliver events immediately.
     pub fn new_with_event_batching<F: EventHandler>(event_handler: F, config: Config,
         interval: Duration) -> Result<Self> {
-        Self::from_event_handler(Box::new(event_handler), config, Some(interval))
+        Self::from_event_handler(Box::new(event_handler), config, Some(interval), None)
+    }
+
+    /// Apply a directory predicate before descending or registering Linux
+    /// recursive watches, including directories created after startup.
+    pub fn new_with_event_batching_and_directory_filter<F, P>(
+        event_handler: F, config: Config, interval: Duration, directory_filter: P,
+    ) -> Result<Self>
+    where F: EventHandler, P: Fn(&Path) -> bool + Send + Sync + 'static {
+        Self::from_event_handler(Box::new(event_handler), config, Some(interval), Some(Arc::new(directory_filter)))
     }
 
     fn from_event_handler(event_handler: Box<dyn EventHandler>, config: Config,
-        event_batch_interval: Option<Duration>) -> Result<Self> {
+        event_batch_interval: Option<Duration>,
+        directory_filter: Option<Arc<dyn Fn(&Path) -> bool + Send + Sync>>) -> Result<Self> {
         let inotify = Inotify::init()?;
-        let event_loop = EventLoop::new(inotify, event_handler, config, event_batch_interval)?;
+        let mut event_loop = EventLoop::new(inotify, event_handler, config, event_batch_interval)?;
+        event_loop.directory_filter = directory_filter;
         let channel = event_loop.event_loop_tx.clone();
         let waker = event_loop.event_loop_waker.clone();
         event_loop.run();
@@ -621,10 +673,9 @@ impl INotifyWatcher {
         let (tx, rx) = unbounded();
         let msg = EventLoopMsg::AddWatch(pb, recursive_mode, tx);
 
-        // we expect the event loop to live and reply => unwraps must not panic
-        self.channel.send(msg).unwrap();
-        self.waker.wake().unwrap();
-        rx.recv().unwrap()
+        self.channel.send(msg)?;
+        self.waker.wake()?;
+        rx.recv()?
     }
 
     fn unwatch_inner(&mut self, path: &Path) -> Result<()> {
@@ -637,17 +688,16 @@ impl INotifyWatcher {
         let (tx, rx) = unbounded();
         let msg = EventLoopMsg::RemoveWatch(pb, tx);
 
-        // we expect the event loop to live and reply => unwraps must not panic
-        self.channel.send(msg).unwrap();
-        self.waker.wake().unwrap();
-        rx.recv().unwrap()
+        self.channel.send(msg)?;
+        self.waker.wake()?;
+        rx.recv()?
     }
 }
 
 impl Watcher for INotifyWatcher {
     /// Create a new watcher.
     fn new<F: EventHandler>(event_handler: F, config: Config) -> Result<Self> {
-        Self::from_event_handler(Box::new(event_handler), config, None)
+        Self::from_event_handler(Box::new(event_handler), config, None, None)
     }
 
     fn watch(&mut self, path: &Path, recursive_mode: RecursiveMode) -> Result<()> {
@@ -672,9 +722,8 @@ impl Watcher for INotifyWatcher {
 
 impl Drop for INotifyWatcher {
     fn drop(&mut self) {
-        // we expect the event loop to live => unwrap must not panic
-        self.channel.send(EventLoopMsg::Shutdown).unwrap();
-        self.waker.wake().unwrap();
+        let _ = self.channel.send(EventLoopMsg::Shutdown);
+        let _ = self.waker.wake();
     }
 }
 
@@ -682,4 +731,77 @@ impl Drop for INotifyWatcher {
 fn inotify_watcher_is_send_and_sync() {
     fn check<T: Send + Sync>() {}
     check::<INotifyWatcher>();
+}
+
+#[test]
+fn recursive_registration_batches_do_not_rewalk_child_subtrees() {
+    let root = tempfile::tempdir().unwrap();
+    let mut path = root.path().to_owned();
+    let mut paths = Vec::new();
+    for _ in 0..128 {
+        path.push("child");
+        std::fs::create_dir(&path).unwrap();
+        paths.push(path.clone());
+    }
+    let mut event_loop = EventLoop::new(Inotify::init().unwrap(),
+        Box::new(|_| {}), Config::default(), None).unwrap();
+    event_loop.add_created_directories(paths);
+    assert_eq!(event_loop.registration_visits, 128);
+    assert_eq!(event_loop.watches.len(), 128);
+    eprintln!("REGISTRATION_METRICS baseline_visits={} optimized_visits={}",
+        128 * 129 / 2, event_loop.registration_visits);
+}
+
+#[test]
+fn a_failed_parent_registration_does_not_discard_readable_child_requests() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("parent");
+    let child = parent.join("child");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o100)).unwrap();
+    if std::fs::read_dir(&parent).is_ok() {
+        // Root can bypass the read-permission restriction.
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let mut event_loop = EventLoop::new(Inotify::init().unwrap(),
+        Box::new(|_| {}), Config::default(), None).unwrap();
+    event_loop.add_created_directories(vec![parent.clone(), child.clone()]);
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(event_loop.watches.contains_key(&child));
+}
+
+#[test]
+fn fatal_read_errors_stop_after_one_notification_and_shutdown_is_safe() {
+    let (send, receive) = unbounded();
+    let mut event_loop = EventLoop::new(Inotify::init().unwrap(),
+        Box::new(move |event| { send.send(event).unwrap(); }), Config::default(), None).unwrap();
+    let mut watcher = INotifyWatcher {
+        channel: event_loop.event_loop_tx.clone(),
+        waker: event_loop.event_loop_waker.clone(),
+    };
+    event_loop.read_errors.extend([libc::EIO, libc::EIO]);
+    event_loop.handle_inotify();
+    assert!(!event_loop.running);
+    assert_eq!(event_loop.read_errors.len(), 1);
+    assert_eq!(receive.try_iter().filter(Result::is_err).count(), 1);
+    drop(event_loop);
+    let directory = tempfile::tempdir().unwrap();
+    assert!(watcher.watch(directory.path(), RecursiveMode::Recursive).is_err());
+    assert!(watcher.unwatch(directory.path()).is_err());
+    assert!(watcher.configure(Config::default()).is_err());
+    drop(watcher);
+}
+
+#[test]
+fn interrupted_reads_retry_and_would_block_preserves_the_subscription() {
+    let (send, receive) = unbounded();
+    let mut event_loop = EventLoop::new(Inotify::init().unwrap(),
+        Box::new(move |event| { send.send(event).unwrap(); }), Config::default(), None).unwrap();
+    event_loop.read_errors.extend([libc::EINTR, libc::EAGAIN]);
+    event_loop.handle_inotify();
+    assert!(event_loop.running);
+    assert!(event_loop.read_errors.is_empty());
+    assert_eq!(receive.try_iter().count(), 0);
 }

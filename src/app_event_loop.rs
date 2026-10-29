@@ -532,7 +532,6 @@ fn editor_batch_target(app: &App) -> Option<(usize, usize, u64)> {
         || app.change_dir_active
         || app.menu_open
         || app.chord_pending
-        || app.tab_switcher_active
         || app.tab_context_active
         || app.context_menu_active
         || app.status_details.open
@@ -1827,6 +1826,19 @@ mod tests {
     }
 
     #[test]
+    fn unwatched_open_files_keep_their_check_deadline_after_idle_quiescence() {
+        let mut app = crate::app::App::test_new();
+        app.workspace_watcher_active = true;
+        app.idle_quiescent = true;
+        app.terminal_has_focus = true;
+        app.disk_check_last = std::time::Instant::now();
+        assert_eq!(next_event_wait(&app, false, false), None);
+        assert!(next_event_wait(&app, false, true).is_some_and(|wait| wait <= super::UNWATCHED_DISK_CHECK_INTERVAL));
+        app.terminal_has_focus = false;
+        assert_eq!(next_event_wait(&app, false, true), None);
+    }
+
+    #[test]
     fn workspace_search_debounce_arms_one_wait_even_without_terminal_focus() {
         let root = tempfile::tempdir().unwrap();
         let mut app = crate::app::App::new_deferred(root.path().to_owned());
@@ -2742,7 +2754,7 @@ fn next_event_wait(
         if app.chord_pending {
             include(remaining(app.chord_start, CHORD_TIMEOUT));
         }
-        if !app.idle_quiescent && has_periodic_disk_paths {
+        if has_periodic_disk_paths {
             include(remaining(
                 app.disk_check_last,
                 UNWATCHED_DISK_CHECK_INTERVAL,
@@ -3717,7 +3729,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // or platforms where watcher startup failed.
         let periodic_disk_paths = periodic_disk_paths_cache.get(app);
         if app.terminal_has_focus
-            && !app.idle_quiescent
             && app.disk_check_last.elapsed() >= UNWATCHED_DISK_CHECK_INTERVAL
             && !periodic_disk_paths.is_empty()
         {

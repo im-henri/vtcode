@@ -1,6 +1,10 @@
 use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
+fn palette() -> crate::app_theme::ThemeColors {
+    crate::app_theme_loader::builtin_theme("dark").unwrap().to_theme_colors()
+}
+
 #[derive(Debug)]
 struct NoChild;
 
@@ -64,7 +68,7 @@ fn queued_login_input_does_not_wait_for_another_notification() {
     });
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     let mut events = TerminalEventPump::from_receiver(receiver);
-    let result = setup.wait(&mut terminal, &mut events);
+    let result = setup.wait(&mut terminal, &mut events, &palette());
     let _ = done.send(());
     assert!(
         !watchdog.join().unwrap(),
@@ -88,7 +92,7 @@ fn connection_screen_explains_waiting_and_preserves_authentication_prompts() {
     let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
     let mut grid = crate::terminal::TermGrid::new(100, 10);
     terminal
-        .draw(|frame| draw_setup(frame, &grid, false))
+        .draw(|frame| draw_setup(frame, &grid, false, &palette(), &mut Default::default()))
         .unwrap();
     let waiting = screen(&terminal);
     assert!(waiting.contains("Waiting for connection output"));
@@ -100,7 +104,7 @@ fn connection_screen_explains_waiting_and_preserves_authentication_prompts() {
         parser.advance(&mut grid, byte);
     }
     terminal
-        .draw(|frame| draw_setup(frame, &grid, true))
+        .draw(|frame| draw_setup(frame, &grid, true, &palette(), &mut Default::default()))
         .unwrap();
     let prompt = screen(&terminal);
     assert!(prompt.contains("Enter passphrase for key:"));
@@ -115,9 +119,33 @@ fn connection_screen_fits_small_terminals() {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             let grid = crate::terminal::TermGrid::new(width.max(2) as usize, 2);
             terminal
-                .draw(|frame| draw_setup(frame, &grid, false))
+                .draw(|frame| draw_setup(frame, &grid, false, &palette(), &mut Default::default()))
                 .unwrap();
         }
+    }
+}
+
+#[test]
+fn connection_screen_applies_every_bundled_theme_and_preserves_application_colors() {
+    use ratatui::style::Color;
+    let mut grid = crate::terminal::TermGrid::new(32, 4);
+    let mut parser = vte::Parser::new();
+    for &byte in b"P\x1b[31mR\x1b[0;38;2;1;2;3mT\x1b[0;7mI\x1b[0m" {
+        parser.advance(&mut grid, byte);
+    }
+    let mut rows = crate::ui_terminal_rows::RowCache::default();
+    let mut terminal = Terminal::new(TestBackend::new(90, 8)).unwrap();
+    for theme in crate::app_theme_loader::load_builtin_themes() {
+        let colors = theme.to_theme_colors();
+        terminal.draw(|frame| draw_setup(frame, &grid, true, &colors, &mut rows)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!((buffer[(0,0)].fg, buffer[(0,0)].bg), (colors.ui.fg_title, colors.ui.bg_title), "{}", theme.name);
+        assert_eq!((buffer[(0,1)].fg, buffer[(0,1)].bg), (colors.ui.fg_terminal, colors.ui.bg_terminal), "{}", theme.name);
+        assert_eq!(buffer[(1,1)].fg, colors.ui.ansi[1], "{}", theme.name);
+        assert_eq!(buffer[(2,1)].fg, Color::Rgb(1,2,3), "{}", theme.name);
+        assert_eq!((buffer[(3,1)].fg, buffer[(3,1)].bg), (colors.ui.bg_terminal, colors.ui.fg_terminal), "{}", theme.name);
+        assert_eq!((buffer[(0,7)].fg, buffer[(0,7)].bg), (colors.fg_statusbar, colors.bg_statusbar), "{}", theme.name);
+        crate::ui_control_visibility_tests::snapshot(buffer, &format!("coverage ssh {}", theme.config_key));
     }
 }
 
@@ -185,7 +213,7 @@ fn connection_diagnostics_explain_initial_transport_failure_and_preserve_exit_st
     let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
     let (_sender, receiver) = mpsc::channel();
     let mut events = TerminalEventPump::from_receiver(receiver);
-    let error = match setup.wait(&mut terminal, &mut events) { Err(error) => error.to_string(), Ok(_) => panic!("Failed transport started an editor") };
+    let error = match setup.wait(&mut terminal, &mut events, &palette()) { Err(error) => error.to_string(), Ok(_) => panic!("Failed transport started an editor") };
     assert!(error.contains("diagnostic fixture connection refused"), "{error}");
     assert!(error.contains("Connection diagnostics started"), "{error}");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

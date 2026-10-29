@@ -11,7 +11,7 @@ use std::{
 #[path = "remote_wire_tests.rs"]
 mod tests;
 
-const PREFIX: &str = "VTCR23";
+const PREFIX: &str = "VTCR26";
 const CHUNK: usize = 2048;
 pub(crate) const MAX_LINE: usize = 32 * 1024;
 const MAX_MESSAGE: usize = MAX_PAYLOAD_BYTES + 1024 * 1024;

@@ -135,7 +135,7 @@ fn edge_case_source_control_menu_uses_rendered_geometry() {
     for (width, height, x, y) in [(80, 40, 4, 3), (80, 40, 75, 36), (40, 18, 36, 14), (80, 40, u16::MAX, u16::MAX)] {
         for action in ["Discard Selected", "Cancel"] {
             let mut app = App::test_new();
-            app.sc_context_targets = ["first.rs", "second.rs"].into_iter().map(|path| crate::app::GitFileChange {
+            app.sc_context_targets = ["first.rs", "second.rs"].into_iter().map(|path| crate::app::GitFileChange { directory: false,
                 path: path.into(), original_path: None, status: 'M', staged: false,
             }).collect();
             app.sc_context_target = Some(app.sc_context_targets[0].clone());

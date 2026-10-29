@@ -199,7 +199,8 @@ fn directory_create_rename_delete_and_recreation_replace_the_whole_changed_prefi
     std::fs::write(root.join("dir/one.txt"), "new\n").unwrap();
     changed(&mut app, [root.join("dir")]);
     assert_matches_full(&app, &root);
-    assert_eq!(app.source_control_files.len(), 2);
+    assert_eq!(app.source_control_files.len(), 1);
+    assert!(app.source_control_files[0].directory);
     std::fs::rename(root.join("dir"), root.join("moved")).unwrap();
     changed(&mut app, [root.join("dir"), root.join("moved")]);
     assert_matches_full(&app, &root);
@@ -288,7 +289,7 @@ fn worktree_merge_obeys_git_case_policy_without_dropping_other_case_variants() {
         paths.set_ignore_case(ignore_case);
         let mut files: Vec<_> = ["File.txt", "file.txt"]
             .into_iter()
-            .map(|path| GitFileChange {
+            .map(|path| GitFileChange { directory: false,
                 path: path.into(),
                 original_path: None,
                 status: 'M',
@@ -539,6 +540,7 @@ fn benchmark_local_changed_path_status() {
     for sample in 0..9 {
         for optimized in [sample % 2 == 0, sample % 2 != 0] {
             let mut discovery = Discovery {
+                errors: Vec::new(),
                 roots: roots.clone(),
                 parent: None,
                 workspace: root.clone(),

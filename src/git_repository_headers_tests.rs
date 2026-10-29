@@ -56,7 +56,7 @@ fn discovery_removing_an_inactive_repository_reveals_the_collapsed_remaining_pro
     click(app, header);
     assert!(!app.repositories.expanded);
     assert!(app.apply_repository_scan(fixture.root.clone(), app.workspace_generation,
-        Discovery { roots: vec![fixture.root.clone()], parent: None, workspace: fixture.root.clone() }, Vec::new()));
+        Discovery { errors: Vec::new(), roots: vec![fixture.root.clone()], parent: None, workspace: fixture.root.clone() }, Vec::new()));
     assert!(app.repositories.expanded);
     draw(app, 48, 28);
     assert_eq!(app.repositories.headers.len(), 1);

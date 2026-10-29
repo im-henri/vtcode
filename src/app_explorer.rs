@@ -100,6 +100,16 @@ impl App {
     pub(crate) fn display_path(&self, path: &Path) -> String {
         let display = self.remote_workspace.as_ref().and_then(|remote| remote.display_path(path).ok())
             .unwrap_or_else(|| path.display().to_string());
+        Self::escape_path_controls(display)
+    }
+    /// Read-only labels use the remote machine's native spelling. Editable
+    /// locators can instead need URI escaping to round-trip unusual filenames.
+    pub(crate) fn display_path_label(&self, path: &Path) -> String {
+        let display = self.remote_workspace.as_ref().and_then(|remote| remote.context_path(path).ok())
+            .unwrap_or_else(|| path.display().to_string());
+        Self::escape_path_controls(display)
+    }
+    fn escape_path_controls(display: String) -> String {
         if !display.chars().any(char::is_control) { return display; }
         let mut escaped = String::with_capacity(display.len());
         for ch in display.chars() {

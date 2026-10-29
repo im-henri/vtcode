@@ -100,7 +100,6 @@ fn obscured(app: &App) -> bool {
         || app.tab_context_active
         || app.explorer_context_active
         || app.sc_context_active
-        || app.tab_switcher_active
         || app.desks.popup.mode.is_some()
         || crate::ui_logs::dropdown_open(app)
         || crate::ui_quick_picker::active(app).is_some()

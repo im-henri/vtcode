@@ -1682,6 +1682,89 @@ fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
 }
 
 #[test]
+fn remote_hunk_preview_reports_delayed_loading_and_closes_without_waiting_for_the_reply() {
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+
+    struct Release(Arc<AtomicBool>);
+    impl Drop for Release {
+        fn drop(&mut self) { self.0.store(false, Ordering::Release); }
+    }
+    for close in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let _repo = git2::Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("remote file ü.rs"), "fn remote_preview() {}\n").unwrap();
+        let hold = Arc::new(AtomicBool::new(false));
+        let _release = Release(hold.clone());
+        let blocked = Arc::new(AtomicBool::new(false));
+        let traffic = Arc::new(AtomicUsize::new(0));
+        let workspace = workspace::Workspace::new(connection_with_status(
+            dir.path(), hold.clone(), traffic.clone(), blocked.clone(),
+        ));
+        let key = workspace.target_key("remote file ü.rs").unwrap();
+        let mut app = app_for_workspace(&workspace);
+        app.open_file(&key);
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.editor().is_some_and(|editor| !editor.bg_loading)
+                && !app.background.has_active_jobs() && !app.background.has_pending_results()
+        });
+        app.editor_area = Some(Rect::new(10, 3, 110, 24));
+        app.gutter_area = Some(Rect::new(10, 3, 6, 24));
+        app.code_area = Some(Rect::new(16, 3, 104, 24));
+        hold.store(true, Ordering::Release);
+        app.open_hunk_popup(10, 4, key.clone(), 0, 'U');
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !blocked.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "The preview reply did not reach the response gate");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let sent = traffic.load(Ordering::Relaxed);
+        let mut terminal = Terminal::new(TestBackend::new(130, 32)).unwrap();
+        for _ in 0..3 {
+            app.loading.begin_frame();
+            terminal.draw(|frame| crate::ui_dialogs::draw_hunk_popup(frame, &mut app)).unwrap();
+            crate::ui_loading::finish_frame(&mut app, Instant::now());
+            let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+            assert!(text.contains("Loading changes from remote workspace…"));
+            assert!(text.contains("remote file ü.rs:1"), "Show the real filename, including escaped characters");
+            assert!(text.contains("Esc to close preview") && !text.contains("Cancel"));
+        }
+        assert_eq!(traffic.load(Ordering::Relaxed), sent, "Rendering loading feedback makes no requests");
+        crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), "Remote gutter change preview loading");
+        if close {
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app, crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE,
+                ),
+            );
+            assert!(!app.hunk_popup_active);
+            // The remote response is still held: cancellation must release the
+            // waiting worker rather than keeping a hidden preview alive.
+            app.wait_for_background(Duration::from_secs(5), |app| {
+                !app.background.has_active_jobs() && !app.background.has_pending_results()
+            });
+            assert!(app.hunk_peek.is_none() && app.hunk_preview_feedback.is_none());
+        }
+        hold.store(false, Ordering::Release);
+        if !close {
+            app.wait_for_hunk_preview();
+            let peek = app.hunk_peek.as_ref().unwrap();
+            assert!(peek.remote.is_some());
+            assert!(peek.rows.iter().any(|row| row.text == "fn remote_preview() {}"));
+            app.loading.begin_frame();
+            terminal.draw(|frame| crate::ui_dialogs::draw_hunk_popup(frame, &mut app)).unwrap();
+            crate::ui_loading::finish_frame(&mut app, Instant::now());
+            assert!(app.loading.next_wait(true, Instant::now()).is_none());
+            let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+            assert!(text.contains("remote file ü.rs") && !text.contains("Loading changes"));
+            app.close_hunk_popup();
+        }
+        workspace.client.call(Command::Shutdown).unwrap();
+        app.poll_background_results();
+        assert!(!app.hunk_popup_active && app.hunk_peek.is_none(), "A late reply cannot reopen a closed preview");
+    }
+}
+
+#[test]
 fn remote_formatter_uses_remote_snapshot_and_preserves_local_undo() {
     let dir = tempfile::tempdir().unwrap();
     let native = dir.path().join("code.txt");

@@ -1648,7 +1648,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
             let (diff_char, diff_style) = if let Some(diag) = lsp_diag {
                 let icon = crate::lsp::severity_icon(diag.severity);
-                let color = app.colors.ui.diagnostic(diag.severity);
+                let color = app.colors.ui.diagnostic_on(diag.severity, bg);
                 (icon, Style::default().fg(color).bg(bg))
             } else {
                 gutter_diff_indicator(diff_status, bg, gutter_hovered, &app.colors)
@@ -3445,7 +3445,6 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         if app.error_lens && (reference_decorations || annotation_occupied < visible_width) {
             let diag_idx = file_diags_non_wrap.partition_point(|d| d.line < i);
             if let Some(diag) = file_diags_non_wrap.get(diag_idx).filter(|d| d.line == i) {
-                let fg = app.colors.ui.diagnostic(diag.severity);
                 let bg_tint_color = if diag.severity == lsp_types::DiagnosticSeverity::ERROR {
                     bg_tint(app.colors.fg_error)
                 } else if diag.severity == lsp_types::DiagnosticSeverity::WARNING {
@@ -3453,6 +3452,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     bg_tint(app.colors.fg_info_label)
                 };
+                let fg = app.colors.ui.diagnostic_on(diag.severity, bg_tint_color);
                 let icon = crate::lsp::severity_icon(diag.severity);
                 let msg = &diag.message;
                 let first_line = msg.lines().next().unwrap_or(msg);

@@ -198,6 +198,9 @@ fn convert_and_paint(
         cell.character = if source.ch == '\0' { ' ' } else { source.ch };
         cell.foreground = palette.terminal_color(source.fg, true);
         cell.background = palette.terminal_color(source.bg, false);
+        if source.inverted {
+            std::mem::swap(&mut cell.foreground, &mut cell.background);
+        }
         let mut modifiers = Modifier::empty();
         for (enabled, modifier) in [
             (source.bold, Modifier::BOLD),

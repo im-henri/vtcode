@@ -463,6 +463,7 @@ impl Setup {
         self,
         terminal: &mut ratatui::Terminal<B>,
         events: &mut TerminalEventPump,
+        colors: &crate::app_theme::ThemeColors,
     ) -> io::Result<Option<workspace::Workspace>> {
         let size = terminal.get_frame().area().as_size();
         let mut grid = crate::terminal::TermGrid::new(
@@ -470,6 +471,7 @@ impl Setup {
             size.height.saturating_sub(2).max(2) as usize,
         );
         let mut parser = vte::Parser::new();
+        let mut rows = crate::ui_terminal_rows::RowCache::default();
         let mut dirty = true;
         let mut has_output = false;
         loop {
@@ -542,7 +544,7 @@ impl Setup {
             }
             if dirty {
                 terminal
-                    .draw(|frame| draw_setup(frame, &grid, has_output))
+                    .draw(|frame| draw_setup(frame, &grid, has_output, colors, &mut rows))
                     .map_err(|e| io::Error::other(e.to_string()))?;
                 dirty = false;
             }
@@ -557,50 +559,37 @@ impl Setup {
     }
 }
 
-fn draw_setup(frame: &mut ratatui::Frame, grid: &crate::terminal::TermGrid, has_output: bool) {
+fn draw_setup(
+    frame: &mut ratatui::Frame,
+    grid: &crate::terminal::TermGrid,
+    has_output: bool,
+    colors: &crate::app_theme::ThemeColors,
+    rows: &mut crate::ui_terminal_rows::RowCache,
+) {
     use ratatui::{
         layout::Rect,
-        style::{Color, Modifier, Style},
-        text::{Line, Span},
+        style::Style,
         widgets::Paragraph,
     };
     let area = frame.area();
+    frame.buffer_mut().set_style(area, Style::default().fg(colors.ui.fg_terminal).bg(colors.ui.bg_terminal));
     frame.render_widget(
-        Paragraph::new("Remote connection · Esc to cancel").style(Style::default().fg(Color::Cyan)),
+        Paragraph::new("Remote connection · Esc to cancel")
+            .style(Style::default().fg(colors.ui.fg_title).bg(colors.ui.bg_title)),
         Rect::new(area.x, area.y, area.width, 1),
     );
-    let lines: Vec<_> = grid
-        .cells
-        .iter()
-        .map(|row| {
-            Line::from(
-                row.iter()
-                    .map(|cell| {
-                        let mut style = Style::default().fg(cell.fg).bg(cell.bg);
-                        if cell.bold {
-                            style = style.add_modifier(Modifier::BOLD);
-                        }
-                        Span::styled(cell.ch.to_string(), style)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect();
-    frame.render_widget(
-        Paragraph::new(lines),
-        Rect::new(
+    rows.paint(frame.buffer_mut(), grid, Rect::new(
             area.x,
             area.y.saturating_add(1),
             area.width,
             area.height.saturating_sub(2),
-        ),
-    );
+        ), &colors.ui);
     if !has_output && area.height > 3 {
         frame.render_widget(
             Paragraph::new(
                 "Waiting for connection output…\nSSH authentication and remote launch messages appear here.\nThe service uses this SSH connection; no second terminal is needed.",
             )
-            .style(Style::default().fg(Color::Gray))
+            .style(Style::default().fg(colors.ui.description_color(colors.ui.bg_terminal)).bg(colors.ui.bg_terminal))
             .wrap(ratatui::widgets::Wrap { trim: false }),
             Rect::new(
                 area.x,
@@ -612,7 +601,7 @@ fn draw_setup(frame: &mut ratatui::Frame, grid: &crate::terminal::TermGrid, has_
     }
     frame.render_widget(
         Paragraph::new("Use this window for SSH authentication · Waiting for remote workspace")
-            .style(Style::default().fg(Color::Gray)),
+            .style(Style::default().fg(colors.fg_statusbar).bg(colors.bg_statusbar)),
         Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
     );
     if area.height > 2 && grid.cursor_visible {

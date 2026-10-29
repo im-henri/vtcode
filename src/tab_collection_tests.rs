@@ -48,7 +48,7 @@ fn compaction_keeps_selection_and_recency_attached_to_the_same_editors() {
 }
 
 #[test]
-fn switcher_history_is_complete_unique_and_starts_with_the_current_tab() {
+fn activation_history_is_complete_unique_and_starts_with_the_current_tab() {
     let mut mru = vec![99, 4, 1, 4, 0, 1];
     complete_mru(&mut mru, 2, 6);
     assert_eq!(mru, [2, 4, 1, 0, 3, 5]);
@@ -196,8 +196,8 @@ fn bulk_close_prompts_for_the_original_dirty_editor_after_compaction() {
 }
 
 #[test]
-#[ignore = "manual optimized MRU switcher benchmark"]
-fn benchmark_tab_switcher_mru() {
+#[ignore = "manual optimized tab history benchmark"]
+fn benchmark_tab_history_completion() {
     for count in [1_000, 10_000] {
         let mut before = Vec::new();
         let mut after = Vec::new();
@@ -220,36 +220,8 @@ fn benchmark_tab_switcher_mru() {
         before.sort_unstable();
         after.sort_unstable();
         eprintln!(
-            "switcher MRU {count}: before {:?}, after {:?}",
+            "tab history {count}: before {:?}, after {:?}",
             before[4], after[4]
         );
-    }
-}
-
-#[test]
-fn tab_switcher_keeps_distant_selection_in_the_visible_list() {
-    use ratatui::{Terminal, backend::TestBackend};
-    let mut app = App::test_new();
-    app.tabs = (0..40).map(tab).collect();
-    app.tab_mru_order = (0..40).collect();
-    for height in [8, 24] {
-        let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
-        for selected in [0, 12, 39, 3] {
-            app.tab_switcher_selected = selected;
-            terminal
-                .draw(|frame| crate::ui_pickers::draw_tab_switcher(frame, &app))
-                .unwrap();
-            let buffer = terminal.backend().buffer();
-            let selected_row: String = buffer
-                .content
-                .iter()
-                .filter(|cell| cell.bg == app.colors.ui.bg_quick_selected)
-                .map(|cell| cell.symbol())
-                .collect();
-            assert!(
-                selected_row.contains(&format!("file-{selected}.rs")),
-                "height={height}, selected={selected}: {selected_row}"
-            );
-        }
     }
 }

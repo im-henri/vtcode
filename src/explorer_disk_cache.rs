@@ -37,6 +37,11 @@ struct State {
 pub(super) struct DirectoryCache(Arc<Mutex<State>>);
 
 impl DirectoryCache {
+    pub(super) fn for_new_order(&self) -> Self {
+        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        Self(Arc::new(Mutex::new(State { watched: state.watched,
+            canonical: state.canonical.clone(), ..Default::default() })))
+    }
     pub(super) fn set_watched(&self, watched: bool) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.watched != watched {

@@ -1,7 +1,7 @@
 //! Exact, asynchronous Git hunk operations. No repository I/O runs in the local
 //! input loop, and an old preview cannot authorize applying a replacement hunk.
 use super::*;
-use crate::{app::App, app_git_display::parse_git_file_patch, background::BackgroundResult};
+use crate::{app::App, app_git_display::parse_git_file_patch};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Sources {
@@ -33,17 +33,32 @@ pub(crate) struct Action {
     pub header: String,
     pub hunk: crate::app_git_display::GitDiffHunk,
 }
-pub(crate) struct PeekResult {
-    pub generation: u64,
-    pub document: Option<(u64, u64)>,
-    pub result: Result<crate::ui_hunk_peek::HunkPeek, String>,
-}
-
 pub(crate) fn sources(
     root: &Path,
     file: RemotePath,
     repository: Option<RemotePath>,
     staged: bool,
+) -> io::Result<Sources> {
+    read_sources(root, file, repository, staged, None, Some(MAX_PAYLOAD_BYTES / 4))
+}
+
+pub(crate) fn native_sources(
+    root: &Path,
+    file: RemotePath,
+    repository: Option<RemotePath>,
+    staged: bool,
+    live: Option<&ropey::Rope>,
+) -> io::Result<Sources> {
+    read_sources(root, file, repository, staged, live, None)
+}
+
+fn read_sources(
+    root: &Path,
+    file: RemotePath,
+    repository: Option<RemotePath>,
+    staged: bool,
+    live: Option<&ropey::Rope>,
+    max_bytes: Option<usize>,
 ) -> io::Result<Sources> {
     let native = file.resolve(root)?;
     let hint = repository
@@ -64,7 +79,11 @@ pub(crate) fn sources(
     {
         return Err(io::Error::other("No changes found"));
     }
-    let (document, _, _) = service::read_document(&native)?;
+    let document = if let Some(rope) = live {
+        service::Document { rope: rope.clone(), encoding: "UTF-8", revision: super::revision(rope, "UTF-8") }
+    } else {
+        service::read_document(&native)?.0
+    };
     let index = crate::app_git::index_file_content(&repo, &relative).map_err(io::Error::other)?;
     let trackable = index.is_some()
         || repo
@@ -73,36 +92,41 @@ pub(crate) fn sources(
             .and_then(|tree| tree.get_path(&relative))
             .is_ok();
     let index = index.unwrap_or_default().to_string();
-    if document.rope.len_bytes().max(index.len()) > MAX_PAYLOAD_BYTES / 4 {
+    if max_bytes.is_some_and(|limit| document.rope.len_bytes().max(index.len()) > limit) {
         return Err(io::Error::other(
             "Hunk preview is unavailable for this large file; use the full diff",
         ));
     }
-    let mut command = crate::git_repositories::git_command(&workdir).map_err(io::Error::other)?;
-    command.args([
-        "--literal-pathspecs",
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "--inter-hunk-context=0",
-        "--unified=0",
-    ]);
-    if staged {
-        command.arg("--cached");
-    }
-    let output = command.arg("--").arg(&relative).output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
-    }
+    let patch = if !staged && live.is_some() {
+        // The live buffer supersedes the disk diff. It can outlive an external
+        // deletion and must not be replaced with another disk read.
+        String::new()
+    } else {
+        let mut command = crate::git_repositories::git_command(&workdir).map_err(io::Error::other)?;
+        command.args([
+            "--literal-pathspecs",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--inter-hunk-context=0",
+            "--unified=0",
+        ]);
+        if staged {
+            command.arg("--cached");
+        }
+        let output = command.arg("--").arg(&relative).output()?;
+        if !output.status.success() {
+            return Err(io::Error::other(String::from_utf8_lossy(&output.stderr).into_owned()));
+        }
+        String::from_utf8(output.stdout).map_err(io::Error::other)?
+    };
     Ok(Sources {
         repository: git::from_native(&workdir, root)?,
         revision: document.revision,
-        patch: String::from_utf8(output.stdout).map_err(io::Error::other)?,
+        patch,
         index,
         worktree: document.rope.to_string(),
         trackable,
@@ -161,9 +185,8 @@ pub(crate) fn prepare(
             if staged {
                 for hunk in &mut peek.hunks {
                     hunk.action_line = hunk.action_line.and_then(|line| {
-                        equal.iter().find_map(|&(old, new, len)| {
-                            (line >= old && line < old + len).then(|| new + line - old)
-                        })
+                        let range = equal.partition_point(|&(old, _, len)| old + len <= line);
+                        equal.get(range).and_then(|&(old, new, _)| (line >= old).then(|| new + line - old))
                     });
                 }
             }
@@ -226,73 +249,6 @@ pub(crate) fn execute(
 }
 
 impl App {
-    pub(crate) fn request_remote_hunk_peek(&mut self) {
-        let Some(remote) = self.remote_workspace.clone() else {
-            return;
-        };
-        let Some(path) = self.hunk_popup_file.clone() else {
-            return;
-        };
-        let repository = self.repository_hint_for_path(&path);
-        let generation = self.hunk_popup_generation;
-        let line = self.hunk_popup_line;
-        let staged = self.hunk_popup_status == 'S';
-        let editor = self.find_editor_mut_by_path(&path);
-        let document = editor
-            .as_ref()
-            .map(|editor| (editor.navigation_id, editor.content_version));
-        let tab_size = editor.as_ref().map_or(4, |editor| editor.tab_size);
-        let live = editor
-            .filter(|editor| editor.modified)
-            .map(|editor| editor.rope.clone());
-        let sender = self.source_control_sender();
-        self.background.spawn("remote-hunk-preview", move || {
-            let result = (|| -> io::Result<_> {
-                let file = remote.remote_path(&path)?;
-                let repository = repository
-                    .as_ref()
-                    .map(|path| remote.remote_path(path))
-                    .transpose()?;
-                let Reply::HunkSources(sources) = remote.client.call(Command::HunkSources {
-                    file,
-                    repository,
-                    staged,
-                })?
-                else {
-                    return Err(io::Error::other("Invalid hunk preview reply"));
-                };
-                prepare(sources, staged, live.as_ref(), line, tab_size).map_err(io::Error::other)
-            })()
-            .map_err(|error| error.to_string());
-            let _ = sender.send(BackgroundResult::RemoteHunkPeek(PeekResult {
-                generation,
-                document,
-                result,
-            }));
-        });
-    }
-    pub(crate) fn apply_remote_hunk_peek(&mut self, result: PeekResult) -> bool {
-        if !self.hunk_popup_active || self.hunk_popup_generation != result.generation {
-            return false;
-        }
-        let current = self
-            .hunk_popup_file
-            .clone()
-            .and_then(|path| self.find_editor_mut_by_path(&path))
-            .map(|editor| (editor.navigation_id, editor.content_version));
-        if current != result.document {
-            self.close_hunk_popup();
-            return true;
-        }
-        match result.result {
-            Ok(peek) => self.hunk_peek = Some(peek),
-            Err(error) => {
-                self.close_hunk_popup();
-                self.notify_error(format!("Cannot preview changes: {error}"));
-            }
-        }
-        true
-    }
     pub(crate) fn remote_hunk_action(&mut self, path: &Path, _line: usize, kind: Kind) {
         self.git_output();
         if let Err(error) = self.ensure_hunk_actions_ready(path, kind == Kind::Discard) {

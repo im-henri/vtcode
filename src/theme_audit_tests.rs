@@ -191,7 +191,7 @@ fn activity_badges_and_panel_tabs_do_not_inherit_list_colors() {
         "panelTitle.activeBorder":"#006600", "terminal.tab.activeBorder":"#880000",
         "list.activeSelectionForeground":"#ffff00", "list.hoverBackground":"#00ff00"
     }), "vs-dark").to_theme_colors();
-    app.source_control_files.push(crate::app::GitFileChange {
+    app.source_control_files.push(crate::app::GitFileChange { directory: false,
         path: "example.rs".into(),
         original_path: None,
         status: 'M',

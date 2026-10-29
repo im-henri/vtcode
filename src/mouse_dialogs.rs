@@ -25,7 +25,7 @@ pub(crate) fn handle_mouse_dialogs(
     if crate::ui_quick_picker::handle_mouse(app, *mouse) {
         return true;
     }
-    if app.hunk_popup_active && app.hunk_peek.is_some() {
+    if app.hunk_popup_active && (app.hunk_peek.is_some() || app.hunk_preview_feedback.is_some()) {
         crate::ui_hunk_peek::handle_mouse(app, *mouse);
         return true;
     }

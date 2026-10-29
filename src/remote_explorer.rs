@@ -12,6 +12,8 @@ pub(crate) struct Query {
     epoch: u64,
     expanded: Vec<RemotePath>,
     sort: crate::explorer::ExplorerSortMode,
+    #[serde(default)]
+    sort_locale: Option<String>,
     find: Option<Find>,
     source_control: bool,
     #[serde(default)]
@@ -80,6 +82,9 @@ pub(crate) fn read(
         *epoch = query.epoch;
     }
     explorer.set_source_control_enabled(query.source_control);
+    if let Some(locale) = &query.sort_locale && !explorer.set_sort_locale(locale) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid Explorer sort locale"));
+    }
     explorer.set_files_exclude(&query.files_exclude);
     let expanded = query
         .expanded
@@ -144,6 +149,7 @@ impl workspace::Workspace {
                 .load(std::sync::atomic::Ordering::Relaxed),
             expanded: paths(expanded.clone())?,
             sort,
+            sort_locale: Some(crate::file_order::FileOrder::system().locale().to_owned()),
             source_control,
             files_exclude: files_exclude.clone(),
             find: find

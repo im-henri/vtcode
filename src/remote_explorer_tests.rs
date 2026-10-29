@@ -9,6 +9,38 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[test]
+fn vscode_ordering_remote_locale_changes_apply_without_an_epoch_change() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["z.h", "õ.h", "system.h", "system_defines.h"] { std::fs::write(root.path().join(name), "needle").unwrap(); }
+    let mut cache = None;
+    let read_names = |cache: &mut _, locale| {
+        let query = serde_json::from_value(serde_json::json!({
+            "epoch": 1, "expanded": [], "sort": "Name", "find": null,
+            "source_control": false, "sort_locale": locale
+        })).unwrap();
+        read(root.path(), cache, query, &crate::background::CancellationToken::new()).unwrap()
+            .entries.into_iter().map(|row| row.name).collect::<Vec<_>>()
+    };
+    assert_eq!(read_names(&mut cache, "en-US"), ["õ.h", "system_defines.h", "system.h", "z.h"]);
+    assert_eq!(read_names(&mut cache, "et-EE"), ["system_defines.h", "system.h", "z.h", "õ.h"]);
+}
+
+#[test]
+fn vscode_ordering_remote_search_uses_native_names_instead_of_opaque_view_keys() {
+    let fixture = Fixture::new();
+    let mut results = crate::search_results::SearchResults::default();
+    results.set_remote(Some(fixture.workspace.clone()));
+    for name in ["z.h", "a/file10.h", "system.h", "a/file2.h", "system_defines.h", "a/deep/x.h"] {
+        results.extend([crate::app::GlobalSearchResult {
+            file_path: fixture.workspace.target_key(name).unwrap(), line_num: 1, line_text: "needle".into(),
+            col_start: 0, col_end: 6, context_before: None, context_after: None,
+        }]);
+    }
+    assert_eq!(results.iter().map(|row| fixture.workspace.remote_path(&row.file_path).unwrap().display())
+        .collect::<Vec<_>>(), ["system_defines.h", "system.h", "z.h", "a/file2.h", "a/file10.h", "a/deep/x.h"]);
+}
+
 struct Fixture {
     root: tempfile::TempDir,
     app: App,

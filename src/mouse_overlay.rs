@@ -556,7 +556,7 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
 
     // Source control commit details popup click
     if app.hunk_popup_active {
-        if app.hunk_peek.is_some() {
+        if app.hunk_peek.is_some() || app.hunk_preview_feedback.is_some() {
             crate::ui_hunk_peek::click(app, col, row, term_w, term_h);
             return true;
         }

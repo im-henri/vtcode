@@ -106,7 +106,7 @@ fn ui_combinations_shortcuts_tab_preserves_quick_open_typing_and_tab_switching()
         &mut app,
         KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
     );
-    assert!(app.tab_switcher_active);
+    assert_eq!(app.active_tab, 0);
 }
 
 #[test]
@@ -294,7 +294,7 @@ fn ui_combinations_opening_shortcuts_releases_docked_terminal_focus() {
 
 #[test]
 fn ui_combinations_shortcut_assignment_cannot_capture_a_popup_dismissal() {
-    for popup in 0..7 {
+    for popup in 0..6 {
         let mut app = fixture();
         draw(&mut app);
         app.keybindings_editing = true;
@@ -304,8 +304,7 @@ fn ui_combinations_shortcut_assignment_cannot_capture_a_popup_dismissal() {
             2 => app.type_hierarchy_active = true,
             3 => app.lsp_code_action_active = true,
             4 => app.context_menu_active = true,
-            5 => app.quick_open_active = true,
-            _ => app.tab_switcher_active = true,
+            _ => app.quick_open_active = true,
         }
         crate::input_keyboard::handle_keyboard_event(
             &mut app,

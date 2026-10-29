@@ -82,6 +82,7 @@ fn hit(app: &App, col: u16, row: u16) -> Option<(usize, FileAction, Rect)> {
         // Status refreshes and repository switches must not retarget an old button.
         let current = app.source_control_files.get(actions.index)?;
         if current.path != actions.change.path
+            || current.directory != actions.change.directory
             || current.staged != actions.change.staged
             || app.source_control_root() != actions.repository.as_path()
             || !app.source_control_file_visible(actions.index)
@@ -126,8 +127,11 @@ pub(crate) fn draw(f: &mut Frame, app: &App) {
 }
 
 pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
-    if let Some((_, action, area)) = hit(app, app.mouse_col, app.mouse_row) {
-        crate::ui_widgets::Tooltip::hover(vec![Line::raw(action.label())], &app.colors)
+    if let Some((index, action, area)) = hit(app, app.mouse_col, app.mouse_row) {
+        let label = if action == FileAction::Open && app.source_control_files[index].directory {
+            "Reveal in Explorer"
+        } else { action.label() };
+        crate::ui_widgets::Tooltip::hover(vec![Line::raw(label)], &app.colors)
             .prefer_below()
             .render(f, area.x, area.y);
     }
@@ -157,11 +161,8 @@ pub(crate) fn handle_click(
     app.preserve_source_control_selection(index);
     match action {
         FileAction::Open => {
-            let path = app.workspace_file_path(
-                &app.source_control_root()
-                    .join(&app.source_control_files[index].path),
-            );
-            app.open_file(&path);
+            let change = app.source_control_files[index].clone();
+            app.open_source_control_entry(&change);
         }
         FileAction::Discard => {
             app.request_source_control_discard(app.selected_source_control_changes(), false)

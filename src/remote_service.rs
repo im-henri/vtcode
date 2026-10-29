@@ -67,6 +67,7 @@ pub(crate) struct Service {
     rollback: rollback::Manager,
     agents: Option<std::sync::Arc<agent::Manager>>,
     observations: watch::Registry,
+    git_observation: Option<std::sync::Arc<watch::Observation>>,
 }
 struct FileIndex {
     generation: u64,
@@ -120,6 +121,7 @@ impl Service {
             rollback: Default::default(),
             agents: None,
             observations: Default::default(),
+            git_observation: None,
         }
     }
     pub(crate) fn hello(&self, session: u64) -> Hello {
@@ -433,7 +435,9 @@ impl Service {
                 closed,
                 include_untracked,
                 changed,
-            } => git::status(
+            } => {
+                let excluded = closed.clone();
+                let reply = git::status(
                 &self.root,
                 known,
                 parent_open,
@@ -441,7 +445,14 @@ impl Service {
                 include_untracked,
                 changed,
                 &crate::background::CancellationToken::new(),
-            ),
+                )?;
+                if let Reply::GitStatus { discovery, .. } = &reply {
+                    let observation = self.observations.get(&self.root);
+                    observation.repositories(&self.root, discovery, parent_open, &excluded);
+                    self.git_observation = Some(observation);
+                }
+                Ok(reply)
+            },
             Command::GitSources {
                 file,
                 repository,

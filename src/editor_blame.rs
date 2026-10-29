@@ -46,6 +46,7 @@ pub(crate) struct View {
     pub close: Option<Rect>,
     pub copy: Option<Rect>,
     pub previous: Option<Rect>,
+    pub open_commit: Option<Rect>,
     pub open_file: Option<Rect>,
     pub revision_previous: Option<Rect>,
     pub working_file: Option<Rect>,
@@ -68,6 +69,7 @@ pub(crate) struct View {
 
 impl View {
     fn clear_details(&mut self) {
+        self.open_commit = None;
         self.close = None;
         self.copy = None;
         self.previous = None;
@@ -625,7 +627,7 @@ fn tooltip(f: &mut Frame, app: &mut App) {
                     commit.author,
                     commit.hash.chars().take(7).collect::<String>()
                 )),
-                Line::raw("Click for details, Compare, Open File and Copy Hash."),
+                Line::raw("Click for details, Open Commit, Compare, Open File and Copy Hash."),
             ],
             &app.colors,
         )
@@ -656,7 +658,7 @@ pub(crate) fn wrapped_message(message: &str, width: u16) -> Vec<Line<'static>> {
     rows
 }
 
-const DETAIL_ACTIONS: [&str; 3] = ["Compare", "Open File", "Copy Hash"];
+const DETAIL_ACTIONS: [&str; 4] = ["Open Commit", "Compare", "Open File", "Copy Hash"];
 
 pub(crate) fn commit_details_message(commit: &git_blame::Commit, width: u16) -> String {
     let author = if commit.email.is_empty() {
@@ -802,8 +804,9 @@ fn details(
             .render(button, &mut cells);
         let view = &mut app.editor_mut().unwrap().blame;
         match index {
-            0 => view.previous = hit,
-            1 => view.open_file = hit,
+            0 => view.open_commit = hit,
+            1 => view.previous = hit,
+            2 => view.open_file = hit,
             _ => view.copy = hit,
         }
     }
@@ -1073,6 +1076,31 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             view.detail_drag = Some(grab);
             if !on_thumb {
                 view.drag_details(mouse.row);
+            }
+            return true;
+        }
+        if editor.blame.open_commit.is_some_and(|area| area.contains(point)) {
+            let details = git_blame::cached(app, editor).and_then(|doc| {
+                let git_blame::Line::Committed(commit) = doc.lines.get(editor.blame.selected?)? else {
+                    return None;
+                };
+                let root = doc.revision.as_ref().map(|revision| revision.workdir.clone())
+                    .or_else(|| doc.path.parent().map(|parent| parent.to_owned()))?;
+                Some((root, crate::commit_details::CommitData {
+                    hash: commit.hash.clone(),
+                    message: commit.message.clone(),
+                    author: commit.author.clone(),
+                    email: commit.email.clone(),
+                    date: commit.committed_at.clone(),
+                    time_ago: commit.age.clone(),
+                    ..Default::default()
+                }))
+            });
+            if let Some((root, data)) = details {
+                let view = &mut app.editor_mut().unwrap().blame;
+                view.dismiss_details();
+                view.detail_mouse_down = false;
+                app.open_commit_details(root, data);
             }
             return true;
         }

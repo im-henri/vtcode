@@ -34,11 +34,12 @@ pub struct TermCell {
     pub dim: bool,
     pub italic: bool,
     pub strikethrough: bool,
+    pub inverted: bool,
 }
 
 impl Default for TermCell {
     fn default() -> Self {
-        Self { ch: ' ', fg: Color::Reset, bg: Color::Reset, bold: false, underline: false, dim: false, italic: false, strikethrough: false }
+        Self { ch: ' ', fg: Color::Reset, bg: Color::Reset, bold: false, underline: false, dim: false, italic: false, strikethrough: false, inverted: false }
     }
 }
 
@@ -180,6 +181,7 @@ impl TermGrid {
             self.cells[self.cursor_row][self.cursor_col] = TermCell {
                 ch: c, fg: self.fg, bg: self.bg, bold: self.bold, underline: self.underline,
                 dim: self.dim, italic: self.italic, strikethrough: self.strikethrough,
+                inverted: self.inverted,
             };
             self.cursor_col += 1;
             if self.cursor_col >= self.width {
@@ -341,22 +343,14 @@ impl TermGrid {
                 2 => self.dim = true,
                 3 => self.italic = true,
                 4 => self.underline = true,
-                7 => {
-                    if !self.inverted {
-                        std::mem::swap(&mut self.fg, &mut self.bg);
-                        self.inverted = true;
-                    }
-                }
+                // Keep logical SGR colors; invert after resolving the active
+                // theme's default foreground and background while painting.
+                7 => self.inverted = true,
                 9 => self.strikethrough = true,
                 22 => { self.bold = false; self.dim = false; }
                 23 => self.italic = false,
                 24 => self.underline = false,
-                27 => {
-                    if self.inverted {
-                        std::mem::swap(&mut self.fg, &mut self.bg);
-                        self.inverted = false;
-                    }
-                }
+                27 => self.inverted = false,
                 29 => self.strikethrough = false,
                 30 => self.fg = Color::Black,
                 31 => self.fg = Color::Red,

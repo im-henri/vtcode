@@ -55,23 +55,22 @@ fn untitled_names_update_rendering_and_mouse_targets_in_plain_and_grouped_tab_ba
 }
 
 #[test]
-fn untitled_names_are_consistent_in_open_editors_and_the_tab_switcher() {
+fn untitled_names_are_consistent_in_open_editors_and_the_tab_strip() {
     let mut app = App::test_new();
     app.tabs = ["one\nsecond line", "two\nother line"].into_iter()
         .map(|text| Tab::new_file(Editor::test_with_text(text))).collect();
-    app.tab_mru_order = vec![0, 1];
     app.show_open_editors = true;
     let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
     terminal.draw(|frame| {
         crate::ui_chrome::draw_explorer(frame, &mut app, Rect::new(0, 0, 60, 30));
     }).unwrap();
     let explorer = contents(terminal.backend().buffer());
-    terminal.draw(|frame| crate::ui_pickers::draw_tab_switcher(frame, &app)).unwrap();
-    let switcher = contents(terminal.backend().buffer());
+    terminal.draw(|frame| draw_tab_bar(frame, &app, Rect::new(0, 0, 110, 1))).unwrap();
+    let strip = contents(terminal.backend().buffer());
     for (index, expected) in ["one [NoFile]", "two [NoFile]"].into_iter().enumerate() {
         assert_eq!(tab_display_name(&app, index, &app.tabs[index]), expected);
         assert!(explorer.contains(expected), "Open Editors: {expected}");
-        assert!(switcher.contains(expected), "tab switcher: {expected}");
+        assert!(strip.contains(expected), "tab strip: {expected}");
     }
 }
 

@@ -13,11 +13,16 @@ pub(crate) mod changes;
 #[path = "app_git_refresh.rs"]
 pub(crate) mod refresh;
 
+#[cfg(test)]
+#[path = "app_git_untracked_directory_tests.rs"]
+mod untracked_directory_tests;
+
 pub(crate) struct SourceControlStatusSnapshot<P = String> {
     pub files: Vec<GitFileChange<P>>,
     pub workdir: Option<PathBuf>,
     pub repository_found: bool,
     pub branch: String,
+    pub error: Option<crate::git_trust::Failure>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -280,15 +285,23 @@ fn collect_source_control_status_impl<P: Ord>(
     include_untracked: bool,
 ) -> SourceControlStatusSnapshot<P> {
     if cancel.is_cancelled() {
-        return SourceControlStatusSnapshot { files: Vec::new(), workdir: None, repository_found: false, branch: String::new() };
+        return SourceControlStatusSnapshot { files: Vec::new(), workdir: None, repository_found: false, branch: String::new(), error: None };
     }
     let root = std::fs::canonicalize(&root).unwrap_or(root);
     let mut files = Vec::new();
     let mut workdir = None;
     let mut repository_found = false;
     let mut branch = String::new();
+    let mut error = None;
 
-    if let Ok(repo) = git2::Repository::discover(&root) {
+    {
+        let repo = match git2::Repository::discover(&root) {
+            Ok(repo) => repo,
+            Err(cause) => return SourceControlStatusSnapshot {
+                files, workdir, repository_found, branch,
+                error: crate::git_trust::Failure::opening(&root, &cause),
+            },
+        };
         repository_found = true;
         // Report discovery before traversing the worktree. Large repositories
         // can spend seconds here even though their Git directory was found.
@@ -297,33 +310,45 @@ fn collect_source_control_status_impl<P: Ord>(
             .workdir()
             .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
         if cancel.is_cancelled() {
-            return SourceControlStatusSnapshot { files, workdir, repository_found, branch };
+            return SourceControlStatusSnapshot { files, workdir, repository_found, branch, error };
         }
-        branch = repo.head().ok().and_then(|head| head.shorthand().map(str::to_owned)).unwrap_or_default();
+        match repo.head() {
+            Ok(head) => branch = head.shorthand().unwrap_or_default().to_owned(),
+            Err(cause) if matches!(cause.code(), git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch) => {}
+            Err(cause) => return SourceControlStatusSnapshot {
+                files, workdir, repository_found, branch,
+                error: Some(crate::git_trust::Failure::reading(&root, cause)),
+            },
+        }
 
-        // When requested, include every untracked descendant within the scope. Its compact
-        // untracked-directory form is not enough to decorate every collapsed
-        // Explorer ancestor reliably, and truncating the list makes the
-        // visible states depend on status iteration order.
+        // Let Git collapse only directories with no indexed descendants.
         let _ = ignore_formatter_working_copies(&repo);
         if let Some(changed) = changed.as_deref_mut() {
             // Use Git's policy, including case-sensitive Windows worktrees,
             // when merging cached paths after this read.
             changed.set_ignore_case(repo.config().and_then(|config| config.get_bool("core.ignorecase"))
                 .unwrap_or(cfg!(windows)));
+            if include_untracked { changed.expand_untracked_directories(&repo); }
         }
         let mut options = git2::StatusOptions::new();
         options
             .show(if changed.is_some() { git2::StatusShow::Workdir } else { git2::StatusShow::IndexAndWorkdir })
             .include_untracked(include_untracked)
-            .recurse_untracked_dirs(include_untracked)
+            .recurse_untracked_dirs(false)
             .renames_head_to_index(changed.is_none());
         if let Some(changed) = changed {
             options.disable_pathspec_match(true);
             for path in &changed.paths { options.pathspec(path); }
         }
 
-        if let Ok(statuses) = repo.statuses(Some(&mut options)) {
+        let statuses = match repo.statuses(Some(&mut options)) {
+            Ok(statuses) => Some(statuses),
+            Err(cause) => {
+                error = Some(crate::git_trust::Failure::reading(&root, cause));
+                None
+            }
+        };
+        if let Some(statuses) = statuses {
             for entry in statuses.iter() {
                 if cancel.is_cancelled() { break; }
                 let status = entry.status();
@@ -331,7 +356,7 @@ fn collect_source_control_status_impl<P: Ord>(
                     let path = entry.head_to_index().or_else(|| entry.index_to_workdir())
                         .and_then(|delta| delta.new_file().path().or_else(|| delta.old_file().path()).map(&format_path));
                     if let Some(path) = path {
-                        files.push(GitFileChange { path,
+                        files.push(GitFileChange { directory: false, path,
                             original_path: None, status: '!', staged: false });
                     }
                     continue;
@@ -356,7 +381,14 @@ fn collect_source_control_status_impl<P: Ord>(
                     let old_file = delta.old_file();
                     let new_file = delta.new_file();
                     let Some(path) = new_file.path().or_else(|| old_file.path()) else { continue; };
-                    files.push(GitFileChange {
+                    let directory = *marker == '?' && path.as_os_str().as_encoded_bytes().last()
+                        .is_some_and(|byte| *byte == b'/' || cfg!(windows) && *byte == b'\\');
+                    let normalized;
+                    let path = if directory {
+                        normalized = path.components().collect::<PathBuf>();
+                        normalized.as_path()
+                    } else { path };
+                    files.push(GitFileChange { directory,
                         path: format_path(path),
                         original_path: if *marker == 'R' {
                             old_file.path().map(&format_path)
@@ -376,15 +408,16 @@ fn collect_source_control_status_impl<P: Ord>(
         workdir,
         repository_found,
         branch,
+        error,
     }
 }
 
 impl App {
-    /// Discover the git repository for the current explorer root.
+    /// Discover the Git repository containing the requested path.
     /// On failure, sends a notification and returns `None`.
-    pub(crate) fn discover_repo(&mut self) -> Option<git2::Repository> {
+    pub(crate) fn discover_repo_at(&mut self, root: &Path) -> Option<git2::Repository> {
         if !self.source_control_enabled { return None; }
-        match git2::Repository::discover(self.source_control_root()) {
+        match git2::Repository::discover(root) {
             Ok(r) => Some(r),
             Err(e) => {
                 self.notify_error(format!("Git error: {e}"));
@@ -401,8 +434,20 @@ impl App {
             + Send
             + 'static,
     ) {
+        let root = self.source_control_root().to_owned();
+        self.run_git_action_at_async(root, worker_name, action, job);
+    }
+
+    pub(crate) fn run_git_action_at_async(
+        &mut self,
+        root: PathBuf,
+        worker_name: &'static str,
+        action: &'static str,
+        job: impl FnOnce(PathBuf) -> Result<crate::background::GitActionOutcome, String> + Send + 'static,
+    ) {
         if !self.source_control_enabled { return; }
-        if action != "initialize repository" && self.repositories.discovered && self.repositories.active.is_none()
+        if !matches!(action, "initialize repository" | "trust repository")
+            && self.repositories.discovered && self.repositories.active.is_none()
         {
             self.notify("Open a Git repository in Source Control first");
             return;
@@ -413,7 +458,6 @@ impl App {
         }
         self.bg_git_action_running = true;
         self.status_message = format!("Git {action}...");
-        let root = self.source_control_root().to_owned();
         let log = self.git_output();
         let operation = self.remote_workspace.is_none().then(||
             log.operation("native Git", action, &root.to_string_lossy()));
@@ -503,8 +547,10 @@ impl App {
             != crate::app::SourceControlRepositoryState::Available;
         let root = self.explorer.root.clone();
         let workspace_generation = self.workspace_generation;
-        let known = (self.repositories.discovered && !self.repositories.rescan).then(|| {
+        let known = (self.repositories.discovered && !self.repositories.rescan
+            && self.repositories.errors.is_empty()).then(|| {
             crate::git_repositories::Discovery {
+                errors: Vec::new(),
                 roots: self.repositories.entries.iter()
                     .filter(|repo| Some(&repo.root) != self.repositories.parent.as_ref())
                     .map(|repo| repo.root.clone()).collect(),
@@ -520,9 +566,18 @@ impl App {
         let sender = self.source_control_sender();
         let log = self.git_output();
         if let Some(remote) = self.remote_workspace.clone() {
+            let fallback = crate::git_repositories::Discovery {
+                roots: self.repositories.entries.iter()
+                    .filter(|repo| Some(&repo.root) != self.repositories.parent.as_ref())
+                    .map(|repo| repo.root.clone()).collect(),
+                parent: self.repositories.parent.clone(),
+                workspace: self.repositories.canonical_workspace.clone().unwrap_or_else(|| root.clone()),
+                errors: Vec::new(),
+            };
             let paths = paths.and_then(|paths| paths.iter().map(|path| remote.remote_path(path)).collect::<Result<Vec<_>,_>>().ok());
             let known = known.and_then(|known| {
                 Some(crate::remote::git::Discovery {
+                    errors: Vec::new(),
                     roots: known.roots.iter().map(|path| remote.remote_path(path)).collect::<Result<_,_>>().ok()?,
                     parent: known.parent.as_ref().map(|path| remote.remote_path(path)).transpose().ok()?,
                 })
@@ -531,7 +586,16 @@ impl App {
             self.background.read_for_file("remote-git-status", &root.clone(), false, move || {
                 match remote.git_snapshot(include_untracked, known, parent_open, closed, paths, sender.cancellation()) {
                     Ok((discovery, scans)) => { let _ = sender.send(crate::background::BackgroundResult::GitRepositories { root, workspace_generation, repository_generation, discovery, scans }); }
-                    Err(error) => { let _ = sender.send(crate::background::BackgroundResult::RemoteWorkspaceError { operation: "Git status", error: error.to_string() }); }
+                    Err(error) => {
+                        let mut discovery = fallback;
+                        discovery.errors.push(crate::git_trust::Failure {
+                            root: root.clone(), message: error.to_string(),
+                            kind: crate::git_trust::FailureKind::Workspace,
+                        });
+                        let _ = sender.send(crate::background::BackgroundResult::GitRepositories {
+                            root, workspace_generation, repository_generation, discovery, scans: Vec::new(),
+                        });
+                    }
                 }
             });
             return;
@@ -546,13 +610,26 @@ impl App {
                     });
                 }
             };
-            let exact = report_discovery.then(|| git2::Repository::open(&root).ok()
-                .filter(|repo| !repo.is_bare())
-                .and_then(|repo| repo.workdir().map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned()))))
-                .flatten();
+            let mut opening_error = None;
+            let exact = if report_discovery {
+                match git2::Repository::open(&root) {
+                    Ok(repo) => (!repo.is_bare()).then(|| repo.workdir()
+                        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned()))).flatten(),
+                    Err(error) => {
+                        if error.code() != git2::ErrorCode::NotFound {
+                            opening_error = crate::git_trust::Failure::opening(&root, &error);
+                        }
+                        None
+                    }
+                }
+            } else { None };
             let announced = exact.as_ref().is_some_and(|root| !closed.contains(root));
             if announced { announce(); }
-            let mut discovery = known.unwrap_or_else(|| crate::git_repositories::discover(&root, sender.cancellation()));
+            let mut discovery = if let Some(error) = opening_error {
+                crate::git_repositories::Discovery::failed(&root, error)
+            } else {
+                known.unwrap_or_else(|| crate::git_repositories::discover(&root, sender.cancellation()))
+            };
             // A previously missing workspace can gain its own .git between
             // refreshes, even when the watcher has not delivered that event yet.
             if let Some(workdir) = exact {
@@ -565,8 +642,13 @@ impl App {
             if !announced && !roots.is_empty() { announce(); }
             let scans = refresh::collect(&mut discovery, roots, paths, &root, sender.cancellation(), include_untracked);
             if !sender.is_cancelled() {
-                operation.completed(format!("{} repositories found; {} snapshots updated; {} status entries; untracked={include_untracked}",
-                    discovery.roots.len(), scans.len(), scans.iter().map(|scan| scan.files.len()).sum::<usize>()));
+                let result = if discovery.errors.is_empty() {
+                    Ok(format!("{} repositories found; {} snapshots updated; {} status entries; untracked={include_untracked}",
+                        discovery.roots.len(), scans.len(), scans.iter().map(|scan| scan.files.len()).sum::<usize>()))
+                } else {
+                    Err(discovery.errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>().join("\n"))
+                };
+                operation.result(&result, Clone::clone);
             }
             let _ = sender.send(crate::background::BackgroundResult::GitRepositories {
                 root, workspace_generation, repository_generation, discovery, scans,
@@ -736,12 +818,27 @@ impl App {
         self.queue_git_task("git-discard", "discard", crate::git_tasks::Task::Discard(changes));
     }
 
+    pub(crate) fn open_source_control_entry(&mut self, change: &GitFileChange) {
+        let path = self.workspace_file_path(&self.source_control_root().join(&change.path));
+        if change.directory {
+            if crate::native_paths::strip_prefix(&path, &self.explorer.root).is_none() {
+                self.notify("Directory is outside the current Explorer root");
+                return;
+            }
+            self.show_explorer = true;
+            self.sidebar_view = crate::app::SidebarView::Explorer;
+            self.active_pane = crate::app::ActivePane::Explorer;
+            if self.explorer.reveal_file_deferred(&path) { self.refresh_explorer_tree_async(); }
+        } else { self.open_file(&path); }
+    }
+
     pub(crate) fn open_source_control_diff(&mut self, idx: usize) {
         let change = match self.source_control_files.get(idx) {
             Some(c) => c.clone(),
             None => return,
         };
         let file_path = self.workspace_file_path(&self.source_control_root().join(&change.path));
+        if change.directory { self.open_source_control_entry(&change); return; }
         if change.status == '!' {
             self.open_file(&file_path);
             self.active_pane = crate::app::ActivePane::Editor;
@@ -1197,90 +1294,6 @@ impl App {
         args.push(rel_arg);
         let patch = Self::run_git_capture(&repo_root, &args)?;
         Ok((repo_root, patch))
-    }
-
-    pub(crate) fn load_hunk_peek(&mut self) -> Result<crate::ui_hunk_peek::HunkPeek, String> {
-        if self.hunk_popup_status == 'N' {
-            // Unsaved markers compare the live buffer with its saved snapshot.
-            // This path needs neither Git nor a disk read, including if the
-            // file was removed/changed externally after it was opened.
-            let editor = self.editor()
-                .filter(|editor| editor.file_path == self.hunk_popup_file)
-                .ok_or("The document is no longer open")?;
-            let saved = editor.saved_rope.as_ref().ok_or("Saved version is unavailable")?;
-            let mut peek = crate::ui_hunk_peek::HunkPeek::from_texts(
-                &saved.to_string(), &editor.rope.to_string(), self.hunk_popup_line, editor.tab_size,
-            )?;
-            peek.unsaved = Some(crate::ui_hunk_peek::UnsavedHunkSnapshot {
-                document: editor.navigation_id,
-                version: editor.content_version,
-                saved: saved.clone(),
-                current: editor.rope.clone(),
-            });
-            return Ok(peek);
-        }
-        let file = self.hunk_popup_file.clone().ok_or("No file selected")?;
-        let staged = self.hunk_popup_status == 'S';
-        let live = self.find_editor_mut_by_path(&file)
-            .filter(|editor| editor.modified).map(|editor| editor.rope.clone());
-        let (repo_root, patch_text) = if !staged && live.is_some() {
-            // The disk diff is obsolete when the editor has unsaved text.
-            (self.git_repo_root_and_rel_path(&file)?.0, String::new())
-        } else {
-            self.git_diff_patch_text(&file, staged)?
-        };
-        let repo = git2::Repository::open(&repo_root).map_err(|err| err.to_string())?;
-        let relative = repository_relative_path(&repo_root, &file)
-            .ok_or("File is outside the repository worktree")?;
-        if repo.status_file(&relative).map_err(|err| err.to_string())?.is_ignored() {
-            return Err("No changes found".to_string());
-        }
-        let (index, worktree) = self.read_index_and_worktree_text(&file, live.as_ref())?;
-        let tab_size = self.find_editor_mut_by_path(&file).map_or(4, |editor| editor.tab_size);
-        if !staged && (live.is_some() || (patch_text.is_empty() && !self.git_file_is_trackable(&file)?)) {
-            return crate::ui_hunk_peek::HunkPeek::from_texts(
-                &index, &worktree, self.hunk_popup_line, tab_size,
-            );
-        }
-        let patch = parse_git_file_patch(&patch_text).ok_or("No changes found")?;
-        let target = if staged { &index } else { &worktree };
-        // Compute the index/worktree correspondence once, rather than diffing
-        // the complete file again for every staged hunk's navigation anchor.
-        let equal_ranges: Vec<_> = if staged {
-            similar::TextDiff::from_lines(&index, &worktree)
-                .ops()
-                .iter()
-                .filter_map(|op| match *op {
-                    similar::DiffOp::Equal { old_index, new_index, len } =>
-                        Some((old_index, new_index, len)),
-                    _ => None,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let line = if staged {
-            equal_ranges.iter().find_map(|&(old, new, len)| {
-                (self.hunk_popup_line >= new && self.hunk_popup_line < new + len)
-                    .then(|| old + self.hunk_popup_line - new)
-            })
-                .unwrap_or(self.hunk_popup_line)
-        } else {
-            self.hunk_popup_line
-        };
-        let mut peek = crate::ui_hunk_peek::HunkPeek::for_line(&patch, target, line, tab_size)?;
-        for hunk in &mut peek.hunks {
-            if staged {
-                hunk.action_line = hunk.action_line.and_then(|line| {
-                    let range = equal_ranges.partition_point(|&(old, _, len)| old + len <= line);
-                    equal_ranges.get(range).and_then(|&(old, new, _)|
-                        (line >= old).then(|| new + line - old))
-                });
-            }
-        }
-        // Keep the exact clicked worktree line for the initially selected action.
-        peek.hunks[peek.selected].action_line = Some(self.hunk_popup_line);
-        Ok(peek)
     }
 
     /// Restore only the previewed saved-buffer hunk. Snapshot identity makes
@@ -1893,12 +1906,14 @@ impl App {
     }
 
     pub(crate) fn open_source_control_commit_details_file_diff(&mut self, file_idx: usize) {
+        if !self.source_control_enabled { return; }
         let Some(file) = self.commit_details.data.files.get(file_idx).cloned() else {
             return;
         };
         let rel_path_str = file.path;
         let commit_ref = self.commit_details.data.hash.clone();
-        let Some(repo) = self.discover_repo() else {
+        let root = self.commit_details_root().to_owned();
+        let Some(repo) = self.discover_repo_at(&root) else {
             return;
         };
         let obj = match repo.revparse_single(&commit_ref) {

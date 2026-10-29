@@ -345,12 +345,9 @@ fn keyboard_and_mouse_tab_switches_flush_edits_before_the_next_frame() {
                 );
             }
             1 => {
-                app.tab_switcher_active = true;
-                app.tab_mru_order = vec![1, 0];
-                app.tab_switcher_selected = 1;
                 crate::input_keyboard::handle_keyboard_event(
                     &mut app,
-                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                    KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
                 );
             }
             _ => {

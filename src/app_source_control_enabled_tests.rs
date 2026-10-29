@@ -55,7 +55,8 @@ fn disabled_startup_and_session_restore_do_not_schedule_git_work() {
     assert_no_git_jobs(&app);
     assert_eq!(app.source_control_repository_state, State::Disabled);
     assert!(app.source_control_cancel.is_cancelled());
-    assert!(app.discover_repo().is_none());
+    let root = app.source_control_root().to_owned();
+    assert!(app.discover_repo_at(&root).is_none());
 }
 
 #[test]
@@ -68,11 +69,12 @@ fn queued_and_late_results_cannot_revive_disabled_or_reenabled_state() {
         root: app.explorer.root.clone(), workspace_generation: app.workspace_generation,
         repository_generation: app.repositories.membership_generation,
         discovery: crate::git_repositories::Discovery {
+            errors: Vec::new(),
             workspace: app.explorer.root.clone(), roots: vec![app.explorer.root.clone()], parent: None,
         },
         scans: vec![crate::git_repositories::Scan {
             root: app.explorer.root.clone(), branch: String::new(),
-            files: vec![crate::app::GitFileChange { path: "obsolete.txt".into(), status: '?', staged: false, original_path: None }],
+            files: vec![crate::app::GitFileChange { directory: false, path: "obsolete.txt".into(), status: '?', staged: false, original_path: None }],
             worktree_paths: None, include_untracked: true,
         }],
     }).unwrap();
@@ -298,6 +300,7 @@ fn reenable_can_reload_an_interrupted_commit_diff() {
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_log_running);
     app.open_source_control_commit_details(0);
     app.wait_for_background(Duration::from_secs(5), |app| !app.commit_details.loading);
+    app.commit_details.review.collapsed.remove(&0);
     app.request_commit_diff();
     assert!(app.commit_details.diff_loading);
     app.set_source_control_enabled(false);

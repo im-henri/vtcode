@@ -1697,30 +1697,23 @@ mod tests {
     }
 
     #[test]
-    fn settings_in_open_editors_and_switcher_use_tool_icons_without_file_markers() {
+    fn settings_in_open_editors_use_tool_icons_without_file_markers() {
         let mut app = App::test_new();
         app.open_settings_tab();
         app.show_open_editors = true;
-        app.tab_mru_order = vec![0];
         let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
-        for switcher in [false, true] {
-            let draw = |frame: &mut Frame, app: &mut App| {
-                if switcher {
-                    crate::ui_pickers::draw_tab_switcher(frame, app);
-                } else {
-                    crate::ui_chrome::draw_explorer(frame, app, Rect::new(0, 0, 40, 24));
-                }
-            };
-            app.tabs[0].editor.modified = false;
-            app.tabs[0].editor.disk_unavailable = false;
-            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-            let clean = terminal.backend().buffer().clone();
-            assert!(clean.content.iter().any(|cell| cell.symbol() == "≡"));
-            app.tabs[0].editor.modified = true;
-            app.tabs[0].editor.disk_unavailable = true;
-            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-            assert_eq!(terminal.backend().buffer(), &clean);
-        }
+        let draw = |frame: &mut Frame, app: &mut App| {
+            crate::ui_chrome::draw_explorer(frame, app, Rect::new(0, 0, 40, 24));
+        };
+        app.tabs[0].editor.modified = false;
+        app.tabs[0].editor.disk_unavailable = false;
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let clean = terminal.backend().buffer().clone();
+        assert!(clean.content.iter().any(|cell| cell.symbol() == "≡"));
+        app.tabs[0].editor.modified = true;
+        app.tabs[0].editor.disk_unavailable = true;
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert_eq!(terminal.backend().buffer(), &clean);
     }
 
     #[test]

@@ -509,6 +509,7 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
                     Task::StageAll => "Git stage all",
                     Task::UnstageAll => "Git unstage all",
                     Task::Init => "Git initialize",
+                    Task::TrustRepository => "Git trust repository",
                     Task::Amend { .. } => "Git amend",
                     Task::Stash { .. } => "Git stash",
                     Task::StashPop => "Git stash pop",

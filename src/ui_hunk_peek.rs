@@ -7,10 +7,10 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph},
+    widgets::{Clear, Paragraph, Wrap},
 };
 use similar::DiffableStr;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{app::App, app_git_display::GitFilePatch};
 
@@ -319,7 +319,10 @@ pub(crate) fn peek_rect(app: &App, width: u16, height: u16) -> Rect {
     if editor.is_empty() {
         return Rect::new(editor.x.min(width), editor.y.min(height), 0, 0);
     }
-    let rows = app.hunk_peek.as_ref().map_or(1, |p| p.rows.len());
+    let rows = app.hunk_peek.as_ref().map_or_else(
+        || app.hunk_preview_feedback.as_ref().map_or(1, |feedback| if feedback.loading() { 3 } else { 4 }),
+        |peek| peek.rows.len(),
+    );
     let panel_height = (rows.saturating_add(3).min(18) as u16)
         .min((editor.height / 2).max(5))
         .min(editor.height);
@@ -333,7 +336,7 @@ pub(crate) fn peek_rect(app: &App, width: u16, height: u16) -> Rect {
 
 fn make_layout(app: &App, panel: Rect) -> PeekLayout {
     let Some(peek) = &app.hunk_peek else {
-        return PeekLayout::default();
+        return PeekLayout { panel, ..PeekLayout::default() };
     };
     let numbers = (peek.digits * 2 + 3).min(panel.width as usize) as u16;
     // Reserve the buttons on one row, including for one-line additions and
@@ -375,6 +378,7 @@ fn input_layout(app: &App) -> PeekLayout {
     app.hunk_peek
         .as_ref()
         .and_then(|p| p.layout)
+        .or_else(|| app.hunk_preview_feedback.as_ref()?.area.map(|panel| make_layout(app, panel)))
         .unwrap_or_else(|| make_layout(app, peek_rect(app, u16::MAX, u16::MAX)))
 }
 
@@ -502,19 +506,26 @@ fn drag_scrollbar(app: &mut App, layout: PeekLayout, col: u16, row: u16) {
 }
 
 fn buttons(app: &App) -> &'static [(&'static str, &'static str)] {
+    if let Some(feedback) = &app.hunk_preview_feedback {
+        return if feedback.loading() {
+            &[("×", "Close Preview")]
+        } else {
+            &[("Retry", "Retry Preview"), ("×", "Close Preview")]
+        };
+    }
     if app.hunk_popup_status == 'N' {
         &[
             ("−", "Revert Unsaved Hunk"),
             ("↓", "Next Change"),
             ("↑", "Previous Change"),
-            ("×", "Cancel"),
+            ("×", "Close Preview"),
         ]
     } else if app.hunk_popup_status == 'S' {
         &[
             ("↶", "Revert Hunk"),
             ("↓", "Next Change"),
             ("↑", "Previous Change"),
-            ("×", "Cancel"),
+            ("×", "Close Preview"),
         ]
     } else {
         &[
@@ -522,7 +533,7 @@ fn buttons(app: &App) -> &'static [(&'static str, &'static str)] {
             ("↶", "Discard Hunk"),
             ("↓", "Next Change"),
             ("↑", "Previous Change"),
-            ("×", "Cancel"),
+            ("×", "Close Preview"),
         ]
     }
 }
@@ -538,8 +549,22 @@ fn button_rect(area: Rect, index: usize, count: usize) -> Rect {
 }
 
 fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
-    let count = buttons(app).len();
-    (0..count).find(|&i| button_rect(area, i, count).contains((col, row).into()))
+    let actions = buttons(app);
+    (0..actions.len()).find(|&index| {
+        let button = if app.hunk_preview_feedback.is_some() {
+            feedback_button_rect(area, index, actions)
+        } else {
+            button_rect(area, index, actions.len())
+        };
+        button.contains((col, row).into())
+    })
+}
+
+fn feedback_button_rect(area: Rect, index: usize, actions: &[(&str, &str)]) -> Rect {
+    let trailing: u16 = actions[index + 1..].iter().map(|(label, _)| (label.width() + 2) as u16).sum();
+    let right = area.right().saturating_sub(trailing).max(area.x);
+    let x = right.saturating_sub((actions[index].0.width() + 2) as u16).max(area.x);
+    Rect::new(x, area.y.saturating_add(1), right - x, u16::from(area.height >= 4))
 }
 
 fn quick_actions(
@@ -595,9 +620,101 @@ fn hover_target(app: &App, layout: PeekLayout, col: u16, row: u16) -> Option<Hov
     }
 }
 
+fn draw_frame(f: &mut Frame, area: Rect, normal: Style, border: Color, pointer_x: u16) {
+    f.render_widget(Clear, area);
+    f.render_widget(Paragraph::new("").style(normal), area);
+    for y in [area.y, area.bottom() - 1] {
+        f.render_widget(
+            Paragraph::new("─".repeat(area.width as usize)).style(normal.fg(border)),
+            Rect::new(area.x, y, area.width, 1),
+        );
+    }
+    if area.height >= 3 {
+        f.render_widget(
+            Paragraph::new("▲").style(normal.fg(border)),
+            Rect::new(pointer_x.min(area.right() - 1), area.y, 1, 1),
+        );
+    }
+}
+
+fn preview_filename(path: Option<&std::path::Path>) -> std::borrow::Cow<'_, str> {
+    let Some(path) = path else { return "Untitled".into(); };
+    if let Some(name) = crate::remote::workspace::display_name(path) {
+        return name.into();
+    }
+    path.file_name().map(|name| name.to_string_lossy()).unwrap_or_else(|| "Untitled".into())
+}
+
+fn draw_feedback(f: &mut Frame, app: &mut App, area: Rect) {
+    let Some(feedback) = &app.hunk_preview_feedback else { return; };
+    let loading = feedback.loading();
+    let message = match &feedback.state {
+        crate::hunk_preview::FeedbackState::Loading(_) => {
+            if app.remote_workspace.is_some() {
+                "Loading changes from remote workspace…".to_string()
+            } else {
+                "Loading changes…".to_string()
+            }
+        }
+        crate::hunk_preview::FeedbackState::Failed(error) => format!("Unable to load change preview.\n{error}"),
+    };
+    let focused = feedback.focused_button;
+    let colors = app.colors;
+    let bg = colors.bg_editor;
+    let border = colors.ui.peek_border.border(bg).unwrap_or(bg);
+    let normal = Style::default().bg(bg).fg(colors.fg_text).remove_modifier(Modifier::DIM);
+    let pointer_x = app.code_area.map_or(area.x, |code| code.x);
+    draw_frame(f, area, normal, border, pointer_x);
+    if area.height < 4 {
+        f.render_widget(Paragraph::new(message).style(normal), area);
+    } else {
+        let actions = buttons(app);
+        let first = feedback_button_rect(area, 0, actions);
+        let filename = preview_filename(app.hunk_popup_file.as_deref());
+        let title = format!(" {filename}:{} · Change Preview", app.hunk_popup_line.saturating_add(1));
+        let (title_bg, title_fg, _) = colors.ui.peek_title_colors(bg);
+        let title_style = normal.bg(title_bg).fg(title_fg);
+        f.render_widget(
+            Paragraph::new(title).style(title_style.add_modifier(Modifier::BOLD)),
+            Rect::new(area.x, area.y + 1, first.x.saturating_sub(area.x), 1),
+        );
+        let hovered = button_at(app, area, app.mouse_col, app.mouse_row);
+        for (index, (icon, _)) in actions.iter().enumerate() {
+            let style = colors.ui.toolbar_style(title_fg, title_bg, hovered == Some(index),
+                focused == Some(index), false).remove_modifier(Modifier::DIM);
+            f.render_widget(
+                Paragraph::new(format!(" {icon} ")).style(style),
+                feedback_button_rect(area, index, actions),
+            );
+        }
+        f.render_widget(
+            Paragraph::new(message).style(normal).wrap(Wrap { trim: false }),
+            Rect::new(area.x + 1, area.y + 2, area.width.saturating_sub(2), area.height - 4),
+        );
+        let hint = hovered.or(focused).map_or_else(
+            || "Esc to close preview",
+            |index| if actions[index].1 == "Close Preview" { "Close Preview (Esc)" } else { "Retry Preview" },
+        );
+        f.render_widget(
+            Paragraph::new(format!(" {hint}")).style(normal.fg(colors.ui.readable_foreground(colors.fg_dim, bg, 4.5))),
+            Rect::new(area.x, area.bottom() - 2, area.width, 1),
+        );
+    }
+    if loading {
+        crate::ui_loading::draw_header(f, app, Rect::new(area.x, area.y, area.width, 1));
+    }
+}
+
 pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let area = peek_rect(app, f.area().width, f.area().height);
+    if let Some(feedback) = &mut app.hunk_preview_feedback {
+        feedback.area = Some(area);
+    }
     if area.is_empty() {
+        return;
+    }
+    if app.hunk_preview_feedback.is_some() {
+        draw_feedback(f, app, area);
         return;
     }
     let layout = make_layout(app, area);
@@ -655,35 +772,15 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         .bg(bg)
         .fg(colors.fg_text)
         .remove_modifier(Modifier::DIM);
-    f.render_widget(Clear, area);
-    f.render_widget(Paragraph::new("").style(normal), area);
-    for y in [area.y, area.bottom() - 1] {
-        f.render_widget(
-            Paragraph::new("─".repeat(area.width as usize)).style(normal.fg(border)),
-            Rect::new(area.x, y, area.width, 1),
-        );
-    }
+    let pointer_x = app.code_area.map_or(area.x, |code| code.x);
+    draw_frame(f, area, normal, border, pointer_x);
     if area.height < 3 {
         return;
     }
-    // A small pointer connects the gutter marker and the view-zone border.
-    let pointer_x = app
-        .code_area
-        .map_or(area.x, |code| code.x)
-        .min(area.right() - 1);
-    f.render_widget(
-        Paragraph::new("▲").style(normal.fg(border)),
-        Rect::new(pointer_x, area.y, 1, 1),
-    );
     let actions = buttons(app);
     let first = button_rect(area, 0, actions.len());
     let title_area = Rect::new(area.x, area.y + 1, first.x.saturating_sub(area.x), 1);
-    let filename = app
-        .hunk_popup_file
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_else(|| "Untitled".into());
+    let filename = preview_filename(app.hunk_popup_file.as_deref());
     let source = if app.hunk_popup_status == 'S' {
         "Index"
     } else if app.editor().is_some_and(|editor| editor.modified) {
@@ -934,7 +1031,8 @@ fn activate(app: &mut App, button: usize) {
                 }
             }
         }
-        "Cancel" => app.close_hunk_popup(),
+        "Close Preview" => app.close_hunk_popup(),
+        "Retry Preview" => app.retry_hunk_preview(),
         _ => {
             if app
                 .hunk_peek
@@ -982,19 +1080,25 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => app.close_hunk_popup(),
         KeyCode::Tab | KeyCode::BackTab => {
             let count = buttons(app).len();
-            if let Some(peek) = app.hunk_peek.as_mut() {
-                let backwards =
-                    key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-                peek.focused_button = Some(match peek.focused_button {
-                    Some(i) if backwards => (i + count - 1) % count,
-                    Some(i) => (i + 1) % count,
-                    None if backwards => count - 1,
-                    None => 0,
-                });
-            }
+            let backwards = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+            let focus = if let Some(feedback) = &mut app.hunk_preview_feedback {
+                &mut feedback.focused_button
+            } else if let Some(peek) = &mut app.hunk_peek {
+                &mut peek.focused_button
+            } else {
+                return;
+            };
+            *focus = Some(match *focus {
+                Some(i) if backwards => (i + count - 1) % count,
+                Some(i) => (i + 1) % count,
+                None if backwards => count - 1,
+                None => 0,
+            });
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
-            if let Some(i) = app.hunk_peek.as_ref().and_then(|p| p.focused_button) {
+            let focused = app.hunk_preview_feedback.as_ref().and_then(|feedback| feedback.focused_button)
+                .or_else(|| app.hunk_peek.as_ref().and_then(|peek| peek.focused_button));
+            if let Some(i) = focused {
                 activate(app, i);
             }
         }
@@ -1023,6 +1127,7 @@ pub(crate) fn click(app: &mut App, col: u16, row: u16, width: u16, height: u16) 
         .hunk_peek
         .as_ref()
         .and_then(|p| p.layout)
+        .or_else(|| app.hunk_preview_feedback.as_ref()?.area.map(|panel| make_layout(app, panel)))
         .unwrap_or_else(|| make_layout(app, peek_rect(app, width, height)));
     if scrollbar_down(app, layout, col, row) {
         return;
@@ -1049,6 +1154,13 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     match mouse.kind {
         MouseEventKind::Moved => {
             let hovered = hover_target(app, layout, mouse.column, mouse.row);
+            if app.hunk_preview_feedback.is_some() {
+                let hovered = button_at(app, layout.panel, mouse.column, mouse.row);
+                if let Some(feedback) = &mut app.hunk_preview_feedback {
+                    app.mouse_hover_changed |= feedback.hovered_button != hovered;
+                    feedback.hovered_button = hovered;
+                }
+            }
             if let Some(peek) = app.hunk_peek.as_mut() {
                 app.mouse_hover_changed |= peek.hovered != hovered;
                 peek.hovered = hovered;
@@ -1431,7 +1543,7 @@ mod tests {
             assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), "−");
         }
         assert_eq!(buttons(&app).iter().map(|(_, label)| *label).collect::<Vec<_>>(),
-            ["Revert Unsaved Hunk", "Next Change", "Previous Change", "Cancel"]);
+            ["Revert Unsaved Hunk", "Next Change", "Previous Change", "Close Preview"]);
         let next = button_rect(peek.layout.unwrap().panel, 1, 4);
         click(&mut app, next.x + 1, next.y, 110, 32);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);

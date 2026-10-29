@@ -314,7 +314,6 @@ impl App {
             self.search_selection_range = None;
         }
         self.confirm_close_active = false;
-        self.tab_switcher_active = false;
         self.tab_scroll_manual_anchor = None;
         self.ensure_active_tab_visible();
         self.reconcile_navigation();

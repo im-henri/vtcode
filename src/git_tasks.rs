@@ -15,6 +15,7 @@ pub(crate) enum Task<P = String> {
     StageAll,
     UnstageAll,
     Init,
+    TrustRepository,
     Amend {
         message: String,
     },
@@ -56,6 +57,7 @@ impl<P> Task<P> {
             Self::StageAll => Task::StageAll,
             Self::UnstageAll => Task::UnstageAll,
             Self::Init => Task::Init,
+            Self::TrustRepository => Task::TrustRepository,
             Self::Amend { message } => Task::Amend { message },
             Self::Stash {
                 stash_message,
@@ -246,6 +248,15 @@ pub(crate) fn execute<P: AsRef<Path>>(
                 ..Default::default()
             })
         }
+        Task::TrustRepository => {
+            crate::git_trust::trust_repository(root)?;
+            Ok(GitActionOutcome {
+                message: "Trusted Git repository".into(),
+                refresh_log: true,
+                refresh_line_status: true,
+                ..Default::default()
+            })
+        }
         Task::StageAll => {
             let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
             repo.add_ignore_rule(&format!("{}*/", crate::formatters::TEMP_DIR_PREFIX))
@@ -288,15 +299,27 @@ pub(crate) fn execute<P: AsRef<Path>>(
 }
 
 impl App {
+    pub(crate) fn trust_source_control_repository(&mut self) {
+        let Some(error) = self.repositories.failure()
+            .filter(|error| error.kind == crate::git_trust::FailureKind::Ownership).cloned()
+        else { return; };
+        self.queue_git_task_at(error.root, "git-trust", "trust repository", Task::TrustRepository);
+    }
+
     pub(crate) fn queue_git_task(
         &mut self,
         worker: &'static str,
         action: &'static str,
         task: Task,
     ) {
+        let root = self.source_control_root().to_owned();
+        self.queue_git_task_at(root, worker, action, task);
+    }
+
+    fn queue_git_task_at(&mut self, key: std::path::PathBuf, worker: &'static str, action: &'static str, task: Task) {
         self.git_output();
         let Some(remote) = self.remote_workspace.clone() else {
-            self.run_git_action_async(worker, action, move |root| execute(&root, task));
+            self.run_git_action_at_async(key, worker, action, move |root| execute(&root, task));
             return;
         };
         if !self.source_control_enabled {
@@ -306,14 +329,13 @@ impl App {
             self.notify("Another git operation is already running");
             return;
         }
-        if !matches!(task, Task::Init)
+        if !matches!(task, Task::Init | Task::TrustRepository)
             && self.repositories.discovered
             && self.repositories.active.is_none()
         {
             self.notify("Open a Git repository in Source Control first");
             return;
         }
-        let key = self.source_control_root().to_owned();
         let repo = match remote.remote_path(&key) {
             Ok(repo) => repo,
             Err(error) => {

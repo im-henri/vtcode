@@ -198,7 +198,7 @@ mod tests {
         [Group::Staged, Group::Unstaged, Group::Untracked]
             .into_iter()
             .flat_map(|group| {
-                (0..counts[group as usize - 1]).map(move |index| GitFileChange {
+                (0..counts[group as usize - 1]).map(move |index| GitFileChange { directory: false,
                     path: format!("file-{group:?}-{index}.rs"),
                     staged: group == Group::Staged,
                     status: if group == Group::Untracked { '?' } else { 'M' },

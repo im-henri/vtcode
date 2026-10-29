@@ -10,8 +10,47 @@ fn message<P: AsRef<Path>>(action: &str, changes: &[GitFileChange<P>]) -> String
     }
 }
 
+fn expand_directories<P: AsRef<Path>>(repo: &git2::Repository, changes: &[GitFileChange<P>]) -> Result<Vec<GitFileChange<PathBuf>>, String> {
+    let workdir = if changes.iter().any(|change| change.directory) {
+        super::ignore_formatter_working_copies(repo).map_err(|error| error.to_string())?;
+        Some(std::fs::canonicalize(repo.workdir().ok_or("Bare repository")?).map_err(|error| error.to_string())?)
+    } else { None };
+    let mut expanded = Vec::new();
+    let mut seen = BTreeSet::new();
+    for change in changes {
+        if !change.directory {
+            let change = GitFileChange {
+                path: change.path.as_ref().to_owned(),
+                original_path: change.original_path.as_ref().map(|path| path.as_ref().to_owned()),
+                status: change.status, staged: change.staged, directory: false,
+            };
+            if seen.insert(change.path.clone()) { expanded.push(change); }
+            continue;
+        }
+        let relative: PathBuf = change.path.as_ref().components().collect();
+        if relative.as_os_str().is_empty() || change.staged || change.status != '?' {
+            return Err("Invalid untracked directory".into());
+        }
+        worktree_path(workdir.as_ref().unwrap(), &relative)?;
+        let mut options = git2::StatusOptions::new();
+        options.show(git2::StatusShow::Workdir).include_untracked(true).recurse_untracked_dirs(true)
+            .disable_pathspec_match(true).pathspec(&relative);
+        let statuses = repo.statuses(Some(&mut options)).map_err(|error| error.to_string())?;
+        for entry in statuses.iter().filter(|entry| entry.status().contains(git2::Status::WT_NEW)) {
+            let Some(path) = entry.index_to_workdir().and_then(|delta| delta.new_file().path()) else { continue; };
+            let path: PathBuf = path.components().collect();
+            if path.starts_with(&relative) && seen.insert(path.clone()) {
+                expanded.push(GitFileChange { path, original_path: None, status: '?', staged: false, directory: false });
+            }
+        }
+    }
+    Ok(expanded)
+}
+
 pub(crate) fn stage<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>]) -> Result<GitActionOutcome, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
+    let expanded = expand_directories(&repo, changes)?;
+    let changes = expanded.as_slice();
     let mut index = repo.index().map_err(|error| error.to_string())?;
     for change in changes {
         let path = change.path.as_ref();
@@ -179,6 +218,16 @@ pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>])
             .ok_or("Bare repositories cannot discard files")?,
     )
     .map_err(|error| error.to_string())?;
+    let expanded = expand_directories(&repo, changes)?;
+    let mut cleanup = BTreeSet::new();
+    for directory in changes.iter().filter(|change| change.directory) {
+        for change in &expanded {
+            for parent in change.path.ancestors().skip(1).take_while(|path| path.starts_with(directory.path.as_ref())) {
+                cleanup.insert(parent.to_owned());
+            }
+        }
+    }
+    let changes = expanded.as_slice();
     let mut index = repo.index().map_err(|error| error.to_string())?;
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
     for change in changes {
@@ -198,7 +247,7 @@ pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>])
             if tracked == (change.status == '?') {
                 return Err(format!(
                     "{} changed staging state; refresh and try again",
-                    change.path.as_ref().display()
+                    change.path.display()
                 ));
             }
         }
@@ -230,6 +279,16 @@ pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>])
             if error.kind() != std::io::ErrorKind::NotFound {
                 return Err(format!("{}: {error}", path.display()));
             }
+        }
+    }
+    let mut cleanup: Vec<_> = cleanup.into_iter().collect();
+    cleanup.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for relative in cleanup {
+        if let Ok(path) = worktree_path(&workdir, &relative)
+            && std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+        {
+            // Only remove empty directories; ignored or newly staged files survive.
+            let _ = std::fs::remove_dir(path);
         }
     }
     Ok(GitActionOutcome {

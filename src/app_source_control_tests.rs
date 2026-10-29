@@ -7,7 +7,7 @@ use std::time::Duration;
 
 fn grouped_changes() -> Vec<GitFileChange> {
     [("staged.rs", true, 'M'), ("tracked.rs", false, 'M'), ("new.rs", false, '?')]
-        .into_iter().map(|(path, staged, status)| GitFileChange { path: path.into(), staged, status, original_path: None }).collect()
+        .into_iter().map(|(path, staged, status)| GitFileChange { directory: false, path: path.into(), staged, status, original_path: None }).collect()
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn filtered_keyboard_navigation_keeps_selected_rows_in_view_across_collapsed_gro
     app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
     app.sc_graph_collapsed = true;
     app.explorer_area = Some(Rect::new(0, 0, 40, 16));
-    app.source_control_files = Group::ALL.into_iter().flat_map(|group| (0..30).map(move |index| GitFileChange {
+    app.source_control_files = Group::ALL.into_iter().flat_map(|group| (0..30).map(move |index| GitFileChange { directory: false,
         path: format!("{group:?}-{index}.txt"), staged: group == Group::Staged,
         status: if group == Group::Merge { '!' } else if group == Group::Untracked { '?' } else { 'M' }, original_path: None,
     })).collect();
@@ -202,7 +202,7 @@ fn untracked_group_actions_only_target_untracked_files_and_confirm_discard() {
 
 #[test]
 fn selection_distinguishes_staged_and_unstaged_paths_across_refreshes() {
-    let change = |path: &str, staged| GitFileChange {
+    let change = |path: &str, staged| GitFileChange { directory: false,
         path: path.into(), staged, status: 'M', original_path: None,
     };
     let mut app = App::test_new();
@@ -226,7 +226,7 @@ fn selection_distinguishes_staged_and_unstaged_paths_across_refreshes() {
 fn benchmark_source_control_selection_lookup() {
     use std::{hint::black_box, time::Instant};
     let mut app = App::test_new();
-    app.source_control_files = (0..50_000).map(|index| GitFileChange {
+    app.source_control_files = (0..50_000).map(|index| GitFileChange { directory: false,
         path: format!("src/long/module/path/file-{index}.rs"),
         staged: index < 25_000, status: 'M', original_path: None,
     }).collect();
@@ -509,7 +509,7 @@ fn keyboard_selection_and_refresh_use_file_identity_and_staging_section() {
     let mut files = app.source_control_files.clone();
     files.insert(
         0,
-        GitFileChange {
+        GitFileChange { directory: false,
             path: "a.txt".into(),
             staged: true,
             status: 'M',
@@ -672,7 +672,7 @@ fn discard_request_cannot_follow_a_workspace_switch_or_delete_a_directory() {
     let nested = directory.path().join("nested");
     std::fs::create_dir(&nested).unwrap();
     std::fs::write(nested.join("keep.txt"), "keep\n").unwrap();
-    app.git_discard_changes(vec![GitFileChange {
+    app.git_discard_changes(vec![GitFileChange { directory: false,
         path: "nested".into(),
         original_path: None,
         status: '?',
@@ -724,7 +724,7 @@ fn mixed_selection_offers_both_stage_actions_and_deselecting_everything_is_safe(
 fn collapsed_sections_do_not_interfere_with_clicking_unstaged_files() {
     let (_directory, mut app) = fixture();
     let mut files: Vec<_> = (0..50)
-        .map(|i| GitFileChange {
+        .map(|i| GitFileChange { directory: false,
             path: format!("staged-{i}.txt"),
             original_path: None,
             staged: true,

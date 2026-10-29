@@ -135,6 +135,10 @@ impl Snapshot {
                 entry.git_status_summary.0 ^= super::GitStatusSummary::bit(GitStatus::Ignored);
                 entry.git_status = entry.git_status_summary.primary();
             }
+            if ignored {
+                entry.git_status_summary.0 &= !super::GitStatusSummary::bit(GitStatus::Untracked);
+                entry.git_status = entry.git_status_summary.primary();
+            }
         }
     }
 

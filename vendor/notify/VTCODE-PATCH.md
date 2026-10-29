@@ -29,6 +29,18 @@ The newer upstream EventKindMask API provides broader event filtering in notify
 the registration switch and event batching needed here, without changing other
 platforms' backends.
 
+Construction-only Config::with_follow_symlinks(false) keeps Linux recursive
+subscriptions on the actual directory tree. The default remains true. VTCode
+uses false so a workspace link cannot subscribe to unrelated trees or cycles.
+Git discovery supplies separate subscriptions for real Git metadata dependencies
+(including gitfiles and linked Git directories); open linked files retain their
+bounded metadata checks. No project directory names are excluded.
+
+Fatal poll/read errors report once and terminate the native loop; read errors
+previously retried without yielding. Interrupted reads retry normally. Control
+requests return errors after termination and Drop tolerates an already stopped
+loop. Fault-injection tests cover persistent read errors and interruption.
+
 `remote::watch` has Linux-native regression coverage for quiet reads followed by
 writes and renames, updates inside common project directory names, hot-file
 coalescing, path replacements, deletion, and new recursive directories. The

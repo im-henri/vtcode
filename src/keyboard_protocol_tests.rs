@@ -383,21 +383,20 @@ fn check_other_shortcut(key: KeyEvent) {
             app.tabs.push(Tab::new_file(Editor::test_with_text("two")));
             app.tabs
                 .push(Tab::new_file(Editor::test_with_text("three")));
-            app.tab_mru_order = vec![0, 1, 2];
+            app.tab_mru_order = vec![0, 2, 1];
+            let backwards = shift || key.code == KeyCode::BackTab;
             handle_keyboard_event(&mut app, key);
-            assert!(app.tab_switcher_active, "{key:?}");
+            assert_eq!(app.active_tab, if backwards { 2 } else { 1 }, "{key:?}");
             assert_eq!(
-                app.tab_switcher_selected,
-                if shift { 2 } else { 1 },
+                app.editor().unwrap().rope.to_string(),
+                if backwards { "three" } else { "two" },
                 "{key:?}"
             );
-            assert_eq!(app.editor().unwrap().rope.to_string(), "keep café");
+            assert!(!app.quick_open_active && !app.palette.active);
             handle_keyboard_event(&mut app, key);
-            let selected = if shift { 1 } else { 2 };
-            assert_eq!(app.tab_switcher_selected, selected);
-            handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-            assert!(!app.tab_switcher_active);
-            assert_eq!(app.active_tab, selected);
+            assert_eq!(app.active_tab, if backwards { 1 } else { 2 }, "{key:?}");
+            handle_keyboard_event(&mut app, key);
+            assert_eq!(app.active_tab, 0, "tab cycling wraps: {key:?}");
         }
         KeyCode::Enter if matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT) => {
             check_find_navigation(key);

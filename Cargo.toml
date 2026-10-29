@@ -17,6 +17,9 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 walkdir = "2"
 unicode-width = "0.2"
 unicode-segmentation = "1"
+icu_collator = "=2.1.1"
+icu_locale_core = "=2.1.1"
+sys-locale = "0.3.2"
 pulldown-cmark = { version = "0.13", default-features = false }
 wasmtime = "30"
 arboard = { version = "3", features = ["wayland-data-control"] }
@@ -95,6 +98,10 @@ opt-level = 3
 [profile.dev.package.unicode-segmentation]
 opt-level = 3
 
+# File collation is used by directory and streamed search-result sorting.
+[profile.dev.package.icu_collator]
+opt-level = 3
+
 [profile.test.package.regex]
 opt-level = 3
 
@@ -114,6 +121,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.test.package.unicode-segmentation]
+opt-level = 3
+
+[profile.test.package.icu_collator]
 opt-level = 3
 
 # Remote transfers exercise these native byte/rope kernels even when the

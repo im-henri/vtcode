@@ -275,7 +275,6 @@ fn obscured(app: &App) -> bool {
         || app.tab_context_active
         || app.explorer_context_active
         || app.sc_context_active
-        || app.tab_switcher_active
         || app.shortcuts_active
         || app.settings_active
         || app.hunk_popup_active

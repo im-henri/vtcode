@@ -82,6 +82,28 @@ impl WorktreePaths {
     }
 
     pub(crate) fn ignore_case(&self) -> bool { self.ignore_case }
+
+    pub(super) fn expand_untracked_directories(&mut self, repo: &git2::Repository) {
+        let Ok(index) = repo.index() else { return; };
+        let mut widened = Vec::with_capacity(self.paths.len());
+        for path in &self.paths {
+            let mut scope = path.clone();
+            for ancestor in path.ancestors().skip(1).take_while(|path| !path.as_os_str().is_empty()) {
+                #[cfg(windows)]
+                let prefix = ancestor.to_string_lossy().replace('\\', "/");
+                #[cfg(not(windows))]
+                let prefix = ancestor.to_string_lossy();
+                if index.get_path(ancestor, 0).is_some()
+                    || index.find_prefix(format!("{prefix}/")).is_ok()
+                { break; }
+                scope = ancestor.to_owned();
+            }
+            widened.push(scope);
+        }
+        let ignore_case = self.ignore_case;
+        *self = Self::new(widened);
+        self.set_ignore_case(ignore_case);
+    }
 }
 
 /// Keep staged entries and unrelated worktree rows, then merge ordered deltas
@@ -202,6 +224,11 @@ pub(crate) fn collect_with_paths<P: Ord>(
         if cancel.is_cancelled() {
             break;
         }
+        // Discovery already reported this failed open. Do not immediately try
+        // it again, or traverse the repository without a valid ignore context.
+        if discovery.errors.iter().any(|error| {
+            error.root == workdir && error.kind != crate::git_trust::FailureKind::Discovery
+        }) { continue; }
         let mut paths = if let Some(changed) = &changed {
             let mut prefixes = Vec::new();
             let mut full = false;
@@ -267,8 +294,13 @@ pub(crate) fn collect_with_paths<P: Ord>(
         if cancel.is_cancelled() {
             break;
         }
+        if let Some(error) = snapshot.error {
+            discovery.errors.push(error);
+            continue;
+        }
         if !snapshot.repository_found || snapshot.workdir.as_ref() != Some(&workdir) {
             discovery.roots.retain(|root| root != &workdir);
+            if discovery.parent.as_ref() == Some(&workdir) { discovery.parent = None; }
             continue;
         }
         scans.push(Scan {

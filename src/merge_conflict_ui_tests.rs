@@ -422,7 +422,7 @@ fn merge_conflict_staging_rejects_markers_preserves_index_and_stages_resolved_re
             } else {
                 crate::app_git::changes::stage(
                     directory.path(),
-                    &[GitFileChange {
+                    &[GitFileChange { directory: false,
                         path: "conflict.txt".to_string(),
                         status: '!',
                         staged: false,
@@ -699,7 +699,7 @@ fn merge_conflict_deleted_files_can_be_staged_as_resolved_deletions() {
         } else {
             crate::app_git::changes::stage(
                 directory.path(),
-                &[GitFileChange {
+                &[GitFileChange { directory: false,
                     path: "conflict.txt".to_string(),
                     status: '!',
                     staged: false,
@@ -815,7 +815,7 @@ fn merge_conflict_real_git_merge_resolves_saves_and_stages_from_both_views() {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), accepted);
         crate::app_git::changes::stage(
             directory.path(),
-            &[GitFileChange {
+            &[GitFileChange { directory: false,
                 path: "file.rs".to_string(),
                 status: '!',
                 staged: false,
@@ -1074,7 +1074,7 @@ fn merge_conflict_resolved_submodule_is_staged_without_reading_it_as_a_text_file
         } else {
             crate::app_git::changes::stage(
                 directory.path(),
-                &[GitFileChange {
+                &[GitFileChange { directory: false,
                     path: "conflict.txt".to_string(),
                     status: '!',
                     staged: false,
@@ -1107,7 +1107,7 @@ fn merge_conflict_file_replaced_by_a_directory_preserves_children_when_staging_a
         } else {
             crate::app_git::changes::stage(
                 directory.path(),
-                &[GitFileChange {
+                &[GitFileChange { directory: false,
                     path: "conflict.txt".to_string(),
                     status: '!',
                     staged: false,

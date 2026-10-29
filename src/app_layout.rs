@@ -64,7 +64,6 @@ impl App {
     /// Load group state from the groups vector into the active flat fields
     pub(crate) fn load_group(&mut self, idx: usize) {
         if idx < self.groups.len() {
-            self.tab_switcher_active = false;
             let g = &mut self.groups[idx];
             self.visible_highlight_key = g.visible_highlight_key.take();
             self.visible_highlight_cancel_token = g.visible_highlight_cancel_token.take();
@@ -370,7 +369,6 @@ impl App {
             self.active_tab = self.tabs.len() - 1;
         }
         self.tab_mru_order = merged_mru;
-        self.tab_switcher_active = false;
 
         self.groups.clear();
         self.active_group = 0;

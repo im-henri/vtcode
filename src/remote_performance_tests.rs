@@ -1171,7 +1171,8 @@ fn opened_parent_repository_refresh_falls_back_to_full_scope_for_relative_worktr
         )
         .unwrap();
     assert!(traffic.load(Ordering::Relaxed) > before);
-    assert_eq!(next[0].files.len(), 2);
+    assert_eq!(next[0].files.len(), 1);
+    assert!(next[0].files[0].directory);
 }
 
 #[cfg(windows)]
@@ -1222,6 +1223,7 @@ fn discovery(
     native: &crate::git_repositories::Discovery,
 ) -> git::Discovery {
     git::Discovery {
+        errors: Vec::new(),
         roots: native
             .roots
             .iter()

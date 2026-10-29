@@ -150,6 +150,7 @@ pub(crate) struct WorkbenchColors {
     pub workbench_foreground: ColorLayer,
     pub description_foreground: ColorLayer,
     pub editor_foreground: ColorLayer,
+    pub editor_selection_foreground: ColorLayer,
     pub ruler_foreground: ColorLayer,
     pub codelens_foreground: ColorLayer,
     pub inlay_colors: [ControlColors; 3],
@@ -165,6 +166,9 @@ pub(crate) struct WorkbenchColors {
     pub graph_lane_foreground: ColorLayer,
     pub graph_references: [ColorLayer; 2],
     pub graph_reference_foreground: ColorLayer,
+    pub chart_colors: [ColorLayer; 8],
+    pub problem_icons: [ColorLayer; 4],
+    pub diagnostic_foregrounds: [ColorLayer; 4],
     pub widget_background: ColorLayer,
     pub widget_foreground: ColorLayer,
     pub widget_border: ColorLayer,
@@ -650,6 +654,7 @@ impl WorkbenchColors {
             workbench_foreground,
             description_foreground: ColorLayer::resolve(colors, "descriptionForeground", ColorLayer::opaque(base.fg_dim)),
             editor_foreground: ColorLayer::resolve(colors, "editor.foreground", ColorLayer::opaque(base.fg_text)),
+            editor_selection_foreground: ColorLayer::resolve(colors, "editor.selectionForeground", ColorLayer::default()),
             ruler_foreground: ColorLayer::resolve(colors, "editorRuler.foreground", ColorLayer::opaque(match (light, high_contrast) {
                 (false, false) => Color::Rgb(90, 90, 90), (true, false) => Color::Rgb(211, 211, 211),
                 (false, true) => Color::Rgb(255, 255, 255), (true, true) => Color::Rgb(41, 41, 41),
@@ -685,6 +690,28 @@ impl WorkbenchColors {
                     ColorLayer::resolve(colors, "charts.purple", ColorLayer::opaque(base.fg_accent))),
             ],
             graph_reference_foreground: ColorLayer::resolve(colors, "scmGraph.historyItemHoverLabelForeground", ColorLayer::opaque(panel)),
+            chart_colors: [
+                ColorLayer::resolve(colors, "charts.green", ColorLayer::opaque(base.fg_success)),
+                ColorLayer::resolve(colors, "charts.blue", ColorLayer::opaque(base.fg_accent_blue)),
+                ColorLayer::resolve(colors, "charts.yellow", ColorLayer::opaque(base.fg_warning)),
+                ColorLayer::resolve(colors, "charts.purple", ColorLayer::opaque(base.fg_accent)),
+                ColorLayer::resolve(colors, "charts.red", ColorLayer::opaque(base.fg_error)),
+                ColorLayer::resolve(colors, "terminal.ansiCyan", ColorLayer::opaque(base.fg_info_label)),
+                ColorLayer::resolve(colors, "charts.orange", ColorLayer::opaque(base.fg_hack)),
+                ColorLayer::resolve(colors, "terminal.ansiBrightGreen", ColorLayer::opaque(base.fg_success)),
+            ],
+            problem_icons: [
+                ColorLayer::resolve(colors, "problemsErrorIcon.foreground", ColorLayer::opaque(base.fg_error)),
+                ColorLayer::resolve(colors, "problemsWarningIcon.foreground", ColorLayer::opaque(base.fg_warning)),
+                ColorLayer::resolve(colors, "problemsInfoIcon.foreground", ColorLayer::opaque(base.fg_info_label)),
+                ColorLayer::resolve(colors, "editorHint.foreground", ColorLayer::opaque(base.fg_dim)),
+            ],
+            diagnostic_foregrounds: [
+                ColorLayer::resolve(colors, "editorError.foreground", ColorLayer::opaque(base.fg_error)),
+                ColorLayer::resolve(colors, "editorWarning.foreground", ColorLayer::opaque(base.fg_warning)),
+                ColorLayer::resolve(colors, "editorInfo.foreground", ColorLayer::opaque(base.fg_info_label)),
+                ColorLayer::resolve(colors, "editorHint.foreground", ColorLayer::opaque(base.fg_dim)),
+            ],
             widget_background,
             widget_foreground,
             widget_border: widget_border_layer,
@@ -1745,6 +1772,31 @@ impl WorkbenchColors {
             other => other,
         }
     }
+
+    pub(crate) fn problem_icon_color(&self, severity: lsp_types::DiagnosticSeverity, surface: Color) -> Color {
+        let index = match severity {
+            lsp_types::DiagnosticSeverity::ERROR => 0,
+            lsp_types::DiagnosticSeverity::WARNING => 1,
+            lsp_types::DiagnosticSeverity::INFORMATION => 2,
+            _ => 3,
+        };
+        self.problem_icons[index].over(surface).unwrap_or_else(|| self.workbench_text_color(surface))
+    }
+
+    pub(crate) fn diagnostic_on(&self, severity: lsp_types::DiagnosticSeverity, surface: Color) -> Color {
+        let index = match severity {
+            lsp_types::DiagnosticSeverity::ERROR => 0,
+            lsp_types::DiagnosticSeverity::WARNING => 1,
+            lsp_types::DiagnosticSeverity::INFORMATION => 2,
+            _ => 3,
+        };
+        self.diagnostic_foregrounds[index].over(surface).unwrap_or_else(|| self.diagnostic(severity))
+    }
+
+    pub(crate) fn chart_color(&self, index: usize, surface: Color) -> Color {
+        self.chart_colors[index % self.chart_colors.len()].over(surface)
+            .unwrap_or_else(|| self.editor_text_color(surface))
+    }
 }
 /// VS Code terminal defaults (terminalColorRegistry.ts). Explicit theme ANSI
 /// values win; truecolor/256-color application output is preserved.
@@ -1771,6 +1823,7 @@ impl Default for WorkbenchColors {
             workbench_foreground: ColorLayer::default(),
             description_foreground: ColorLayer::default(),
             editor_foreground: ColorLayer::default(),
+            editor_selection_foreground: ColorLayer::default(),
             ruler_foreground: ColorLayer::default(),
             codelens_foreground: ColorLayer::default(),
             inlay_colors: [ControlColors::default(); 3],
@@ -1786,6 +1839,9 @@ impl Default for WorkbenchColors {
             graph_lane_foreground: ColorLayer::default(),
             graph_references: [ColorLayer::default(); 2],
             graph_reference_foreground: ColorLayer::default(),
+            chart_colors: [ColorLayer::default(); 8],
+            problem_icons: [ColorLayer::default(); 4],
+            diagnostic_foregrounds: [ColorLayer::default(); 4],
             widget_background: ColorLayer::default(),
             widget_foreground: ColorLayer::default(),
             widget_border: ColorLayer::default(),

@@ -340,7 +340,7 @@ fn source_control_header_and_file_actions_remain_readable() {
     let mut failures = Vec::new();
     app.source_control_files = [true, false]
         .into_iter()
-        .map(|staged| crate::app::GitFileChange {
+        .map(|staged| crate::app::GitFileChange { directory: false,
             path: "example.rs".into(),
             original_path: None,
             status: 'M',
@@ -423,7 +423,7 @@ fn source_control_review_app(theme: &ThemeFile) -> App {
     app.sc_graph_height = 8;
     app.source_control_files = [('M', "changed.rs"), ('D', "removed.rs"), ('?', "new.rs")]
         .into_iter()
-        .map(|(status, name)| crate::app::GitFileChange {
+        .map(|(status, name)| crate::app::GitFileChange { directory: false,
             path: format!("src/{name}"),
             original_path: None,
             status,
@@ -1987,7 +1987,7 @@ fn file_type_colors_stay_independent_of_color_themes_and_selection() {
         .collect();
     app.source_control_files = FILES
         .iter()
-        .map(|(name, _, _)| crate::app::GitFileChange {
+        .map(|(name, _, _)| crate::app::GitFileChange { directory: false,
             path: (*name).into(),
             original_path: None,
             status: 'M',
@@ -2092,14 +2092,6 @@ fn file_type_colors_stay_independent_of_color_themes_and_selection() {
                 1,
             );
 
-            terminal
-                .draw(|f| crate::ui_pickers::draw_tab_switcher(f, &app))
-                .unwrap();
-            assert_icons(
-                terminal.backend().buffer(),
-                &format!("{} tab switcher {focused}", theme.name),
-                1,
-            );
         }
     }
 }

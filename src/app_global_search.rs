@@ -95,6 +95,7 @@ impl App {
         if let Some(token) = self.search_cancel_token.take() { token.cancel(); }
         self.search_generation = self.search_generation.wrapping_add(1);
         self.global_search_results.clear();
+        self.global_search_results.set_remote(self.remote_workspace.clone());
         self.global_search_truncated = false;
         self.global_search_stopped = false;
         self.global_search_error = None;

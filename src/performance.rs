@@ -437,6 +437,8 @@ pub(crate) fn worker_label(name: &'static str) -> &'static str {
             "Comparing files"
         }
         "git-fetch" => "Fetching Git",
+        "git-trust" => "Trusting repository",
+        "hunk-preview" => "Loading change preview",
         "git-pull" => "Pulling Git",
         "git-push" => "Pushing Git",
         "workspace-replace" => "Replacing in workspace",

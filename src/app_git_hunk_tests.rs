@@ -1,5 +1,28 @@
 use super::*;
 
+#[test]
+fn hunk_preview_live_git_buffer_survives_an_external_file_deletion() {
+    let original = "a\nold\nz\n";
+    let live = "a\nunsaved\nz\n";
+    let (root, file, mut app) = make_git_app_with_file("peek-missing-live", original, "a\ndisk\nz\n");
+    let editor = app.editor_mut().unwrap();
+    editor.rope = ropey::Rope::from_str(live);
+    editor.modified = true;
+    editor.content_version += 1;
+    std::fs::remove_file(&file).unwrap();
+    app.open_hunk_popup(0, 0, file.clone(), 1, 'U');
+    app.wait_for_hunk_preview();
+    let peek = app.hunk_peek.as_ref().expect("Use the editor snapshot rather than reading the deleted file");
+    assert!(peek.remote.is_none());
+    assert!(peek.rows.iter().any(|row| row.kind == '-' && row.text == "old"));
+    assert!(peek.rows.iter().any(|row| row.kind == '+' && row.text == "unsaved"));
+    assert_eq!(app.editor().unwrap().rope.to_string(), live);
+    assert!(!file.exists());
+    assert_eq!(git_stdout(&root, &["show", ":file.txt"]), original);
+    app.close_hunk_popup();
+    close_fixture(app, root);
+}
+
 fn close_fixture(mut app: App, root: std::path::PathBuf) {
     // Git invalidations can still be reading this repository after the final
     // assertion. Windows cannot delete it while those workers hold files open.
@@ -148,6 +171,7 @@ fn stale_preview_never_stages_discards_or_unstages_a_replacement_hunk() {
             run_git(&root, &["add", "file.txt"]);
         }
         app.open_hunk_popup(0, 0, file.clone(), 0, if staged { 'S' } else { 'U' });
+        app.wait_for_hunk_preview();
         assert!(app.hunk_peek.is_some());
         std::fs::write(&file, "newer change\n").unwrap();
         if staged {
@@ -254,6 +278,7 @@ fn hunk_actions_use_literal_filenames_and_stable_patch_options() {
     config.set_bool("diff.noprefix", true).unwrap();
     config.set_i32("diff.interHunkContext", 20).unwrap();
     app.open_hunk_popup(0, 0, file.clone(), 1, 'U');
+    app.wait_for_hunk_preview();
     assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 2);
     app.execute_hunk_popup_action(0);
     assert_eq!(git_stdout(&root, &["show", ":file[1].txt"]), first_only);

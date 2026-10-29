@@ -409,18 +409,12 @@ fn output_workbench_shortcuts_restore_focus_without_waiting_for_a_repaint() {
 
 #[test]
 fn switching_editor_tabs_from_output_focuses_the_chosen_document() {
-    for switcher in [false, true] {
+    for code in [KeyCode::Tab, KeyCode::PageDown] {
         let mut app = fixture(2, false, false);
         app.tabs
             .push(Tab::new_file(Editor::test_with_text("second buffer")));
         app.show_output();
-        if switcher {
-            key(&mut app, KeyCode::Tab, KeyModifiers::CONTROL);
-            assert!(app.tab_switcher_active);
-            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-        } else {
-            key(&mut app, KeyCode::PageDown, KeyModifiers::CONTROL);
-        }
+        key(&mut app, code, KeyModifiers::CONTROL);
         assert_eq!(app.active_tab, 1);
         assert_eq!(app.active_pane, ActivePane::Editor);
         key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);

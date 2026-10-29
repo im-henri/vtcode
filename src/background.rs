@@ -358,7 +358,7 @@ pub enum BackgroundResult {
         result: Result<crate::remote::workspace::Workspace, String>,
     },
     RemoteTasks(Result<Vec<crate::app::TaskDefinition>,String>),
-    RemoteHunkPeek(crate::remote::hunk::PeekResult),
+    HunkPeek(crate::hunk_preview::PeekResult),
     RemoteDiskChecksFailed { paths: Vec<PathBuf> },
     RemoteDiskChecksDone(CancellationToken),
     RemoteFileValidated { generation: u64, path: PathBuf, document: u64,
@@ -368,7 +368,6 @@ pub enum BackgroundResult {
     RemoteLocationProgress { id: u64, completed: u64, total: u64 },
     WorkspaceResult { generation: u64, result: Box<BackgroundResult> },
     RemoteFileResult { checkpoint: Arc<crate::remote::Checkpoint>, result: Box<BackgroundResult> },
-    RemoteWorkspaceError { operation: &'static str, error: String },
     DeletionProgress(CancellationToken),
     /// A read-only Git job belongs to one enabled session. Cancelling that
     /// session also invalidates results already waiting in the UI queue.
@@ -809,7 +808,6 @@ impl QueuedTask {
         (self.task)();
     }
 }
-type FileWatcherMessage = Option<notify::Result<notify::Event>>;
 
 fn background_pool_size(available_parallelism: usize) -> usize {
     // Syntax, diff, wrap, and analysis jobs are deliberately CPU-bound. Leave
@@ -825,16 +823,16 @@ fn save_pool_size(available_parallelism: usize) -> usize {
 
 #[derive(Clone)]
 struct FileWatcherControl {
-    sender: mpsc::Sender<FileWatcherMessage>,
+    sender: mpsc::SyncSender<()>,
     stopped: Arc<AtomicBool>,
 }
 
 impl FileWatcherControl {
     fn stop(&self) {
         if !self.stopped.swap(true, Ordering::AcqRel) {
-            // `None` shares the watcher's event channel, so cancellation wakes
-            // an otherwise indefinitely blocked receiver immediately.
-            let _ = self.sender.send(None);
+            // Cancellation shares the bounded wake channel and never waits
+            // for space behind a filesystem event storm.
+            let _ = self.sender.try_send(());
         }
     }
 
@@ -1321,106 +1319,82 @@ impl BackgroundWorkers {
             control.stop();
         }
         let sender = self.sender.clone();
-        let (watcher_tx, watcher_rx) = std::sync::mpsc::channel::<FileWatcherMessage>();
+        let (watcher_tx, watcher_rx) = std::sync::mpsc::sync_channel(1);
         let control = FileWatcherControl {
             sender: watcher_tx.clone(),
             stopped: Arc::new(AtomicBool::new(false)),
         };
         let stopped = Arc::clone(&control.stopped);
         self.spawn_untracked("file-watcher", move || {
-            use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-            use std::time::Duration;
+            use notify::{Config, RecursiveMode, Watcher};
+            use std::time::{Duration, Instant};
+            use crate::workspace_watch::{Burst, NoiseFilter};
 
-            let event_tx = watcher_tx.clone();
-            let Ok(mut watcher) = RecommendedWatcher::new(
+            let pending = Arc::new(std::sync::Mutex::new(Burst::default()));
+            let callback_pending = pending.clone();
+            let callback_root = root.clone();
+            let coverage_root = root.clone();
+            let callback_stopped = stopped.clone();
+            let coverage_stopped = stopped.clone();
+            let watcher = crate::workspace_watch::native_watcher(
                 move |event| {
-                    let _ = event_tx.send(Some(event));
-                },
-                Config::default(),
-            ) else {
-                stopped.store(true, Ordering::Release);
-                let _ = sender.send(BackgroundResult::FileWatcherState {
-                    root: root.clone(),
-                    active: false,
-                });
-                return;
-            };
-            if watcher.watch(&root, RecursiveMode::Recursive).is_err() {
-                stopped.store(true, Ordering::Release);
-                let _ = sender.send(BackgroundResult::FileWatcherState {
-                    root: root.clone(),
-                    active: false,
-                });
-                return;
-            }
-            let _ = sender.send(BackgroundResult::FileWatcherState {
-                root: root.clone(),
-                active: true,
-            });
-
-            // Block until a native event or explicit stop arrives. The timed
-            // receive below exists only inside an active event burst, never
-            // while the workspace is idle.
-            let mut running = true;
-            while running {
-                match watcher_rx.recv() {
-                    Ok(Some(event)) => {
-                        let mut burst = WorkspaceEventBurst::default();
-                        burst.push(&root, event);
-                        if burst.is_empty() { continue; }
-                        // Drain any more events that arrived within 300ms
-                        let deadline = std::time::Instant::now() + Duration::from_millis(300);
-                        loop {
-                            let remaining =
-                                deadline.saturating_duration_since(std::time::Instant::now());
-                            if remaining.is_zero() {
-                                break;
-                            }
-                            match watcher_rx.recv_timeout(remaining) {
-                                Ok(Some(evt)) => burst.push(&root, evt),
-                                Ok(None) => {
-                                    running = false;
-                                    break;
-                                }
-                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-                                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                                    running = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if !running {
-                            break;
-                        }
-                        if burst.watcher_failed {
-                            // An errored backend may stop delivering changes.
-                            // Keep receiving events, but restore polling/expiry
-                            // rather than trusting snapshots indefinitely.
-                            let _ = sender.send(BackgroundResult::FileWatcherState {
-                                root: root.clone(), active: false,
-                            });
-                        }
-                        let paths = coalesce_workspace_event_paths(&root, burst.paths);
-                        if !paths.is_empty() || burst.git_metadata_changed || burst.rescan {
-                            let changes = paths.into_iter().map(inspect_workspace_path).collect();
-                            let _ = sender.send(BackgroundResult::FilesChanged {
-                                root: root.clone(),
-                                changes,
-                                structure_changed: burst.structure_changed,
-                                rescan: burst.rescan,
-                                git_metadata_changed: burst.git_metadata_changed || burst.rescan,
-                            });
-                            // Error OK: receiver dropped means no listener
-                        }
+                    if callback_stopped.load(Ordering::Acquire) { return; }
+                    let mut pending = callback_pending.lock().unwrap();
+                    let was_empty = pending.event.is_empty();
+                    pending.push(&callback_root, event);
+                    if was_empty && !pending.event.is_empty() {
+                        let _ = watcher_tx.try_send(());
                     }
-                    Ok(None) | Err(_) => break,
+                },
+                // Preserve desktop link coverage, but never subscribe to
+                // read-only opens merely to discard them in user space.
+                Config::default().with_open_events(false),
+                move |path| !coverage_stopped.load(Ordering::Acquire)
+                    && crate::workspace_watch::directory_is_relevant(&coverage_root, path, &[]),
+            );
+            let mut watcher = match watcher.and_then(|mut watcher| {
+                watcher.watch(&root, RecursiveMode::Recursive)?;
+                Ok(watcher)
+            }) {
+                Ok(watcher) => watcher,
+                Err(_) => {
+                    stopped.store(true, Ordering::Release);
+                    let _ = sender.send(BackgroundResult::FileWatcherState { root, active: false });
+                    return;
                 }
+            };
+            let _ = sender.send(BackgroundResult::FileWatcherState { root: root.clone(), active: true });
+            let mut noise = NoiseFilter::default();
+            // Only the first relevant event wakes this worker. Further events
+            // merge into bounded state while the fixed 300ms window elapses.
+            while watcher_rx.recv().is_ok() && !stopped.load(Ordering::Acquire) {
+                let deadline = Instant::now() + Duration::from_millis(300);
+                loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() { break; }
+                    match watcher_rx.recv_timeout(remaining) {
+                        Ok(()) if stopped.load(Ordering::Acquire) => break,
+                        Ok(()) => {},
+                        Err(mpsc::RecvTimeoutError::Timeout) => break,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                if stopped.load(Ordering::Acquire) { break; }
+                let burst = noise.filter(std::mem::take(&mut *pending.lock().unwrap()));
+                if burst.watcher_failed {
+                    let _ = sender.send(BackgroundResult::FileWatcherState { root: root.clone(), active: false });
+                }
+                if burst.is_empty() { continue; }
+                let changes = coalesce_workspace_event_paths(&root, burst.paths)
+                    .into_iter().map(inspect_workspace_path).collect();
+                if sender.send(BackgroundResult::FilesChanged {
+                    root: root.clone(), changes, structure_changed: burst.structure_changed,
+                    rescan: burst.rescan, git_metadata_changed: burst.git_metadata_changed || burst.rescan,
+                }).is_err() { break; }
             }
+            let _ = watcher.unwatch(&root);
             stopped.store(true, Ordering::Release);
-            let _ = sender.send(BackgroundResult::FileWatcherState {
-                root,
-                active: false,
-            });
+            let _ = sender.send(BackgroundResult::FileWatcherState { root, active: false });
         });
         self.file_watcher_control = Some(control);
     }
@@ -1451,6 +1425,11 @@ impl WorkspaceEventBurst {
     }
 
     pub(crate) fn push(&mut self, root: &std::path::Path, event: notify::Result<notify::Event>) {
+        self.push_observing_git(root, event, |_| {});
+    }
+
+    pub(crate) fn push_observing_git(&mut self, root: &std::path::Path, event: notify::Result<notify::Event>,
+        mut observe: impl FnMut(&std::path::Path)) {
         use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
         use notify::EventKind;
         let Ok(event) = event else {
@@ -1467,11 +1446,19 @@ impl WorkspaceEventBurst {
         };
         self.rescan |= event.paths.is_empty();
         for path in event.paths {
+            if path == root && matches!(event.kind,
+                EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))) {
+                // A surviving watcher object no longer guarantees coverage
+                // after its subscription root has been removed or moved.
+                self.rescan = true;
+                self.watcher_failed = true;
+            }
             if crate::formatters::is_temporary_path(&path) || crate::editor::is_save_temporary_path(&path) {
                 continue;
             }
             if is_git_metadata_event(root, &path) {
                 self.git_metadata_changed = true;
+                observe(&path);
                 if structural && path.file_name().is_some_and(|name| name == ".git") {
                     self.structure_changed = true;
                     self.paths.push(path);

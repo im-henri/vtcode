@@ -32,8 +32,11 @@ pub(super) fn reference_terminal_draw(
                     continue;
                 };
                 if let Some(term_cell) = cells.get(col) {
-                    let foreground = palette.terminal_color(term_cell.fg, true);
-                    let background = palette.terminal_color(term_cell.bg, false);
+                    let mut foreground = palette.terminal_color(term_cell.fg, true);
+                    let mut background = palette.terminal_color(term_cell.bg, false);
+                    if term_cell.inverted {
+                        std::mem::swap(&mut foreground, &mut background);
+                    }
                     let mut style = Style::default().fg(foreground).bg(background);
                     if term_cell.bold {
                         style = style.add_modifier(Modifier::BOLD);

@@ -61,6 +61,28 @@ pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifie
         }
         return;
     }
+    if app.source_control_repository_state == crate::app::SourceControlRepositoryState::Failed {
+        let count = app.repositories.recovery_buttons.len();
+        match code {
+            KeyCode::Tab | KeyCode::BackTab if count > 0 => {
+                let backwards = code == KeyCode::BackTab || modifiers.contains(KeyModifiers::SHIFT);
+                app.repositories.recovery_focus = Some(match app.repositories.recovery_focus {
+                    Some(index) if backwards => (index + count - 1) % count,
+                    Some(index) => (index + 1) % count,
+                    None if backwards => count - 1,
+                    None => 0,
+                });
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let action = app.repositories.recovery_focus
+                    .and_then(|index| app.repositories.recovery_buttons.get(index))
+                    .map_or(crate::git_trust::RecoveryAction::Retry, |(_, action)| *action);
+                action.run(app);
+            }
+            _ => {}
+        }
+        return;
+    }
     if app.repositories.discovered && !app.repositories.expanded {
         if matches!(code, KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Tab) { app.repositories.expanded = true; }
         return;
@@ -278,6 +300,8 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.repositories.parent_button = None;
     app.repositories.reopen_button = None;
     app.repositories.detail_area = None;
+    app.repositories.recovery_buttons.clear();
+    app.repositories.recovery_root = None;
     draw_sc_actions(f, app, content_area);
     match app.source_control_repository_state {
         crate::app::SourceControlRepositoryState::Disabled => {
@@ -292,11 +316,17 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
             draw_sc_repository_state(f, app, content_area, true);
             return;
         }
-        crate::app::SourceControlRepositoryState::Available => {}
+        crate::app::SourceControlRepositoryState::Available | crate::app::SourceControlRepositoryState::Failed => {}
     }
 
     let content_area = draw_repository_headers(f, app, content_area);
     app.repositories.detail_area = Some(content_area);
+    if app.source_control_repository_state == crate::app::SourceControlRepositoryState::Failed {
+        if app.repositories.expanded || app.repositories.open_count() == 0 {
+            draw_sc_repository_failure(f, app, content_area);
+        }
+        return;
+    }
     if content_area.is_empty() || (app.repositories.discovered && !app.repositories.expanded) { return; }
     let total_h = content_area.height;
     let (changes_h, graph_h) =
@@ -413,6 +443,56 @@ fn sc_initialize_button_area(area: Rect) -> Option<Rect> {
         width,
         1,
     ))
+}
+
+fn draw_sc_repository_failure(f: &mut Frame, app: &mut App, area: Rect) {
+    use crate::git_trust::{FailureKind, RecoveryAction};
+    if area.is_empty() { return; }
+    let Some(error) = app.repositories.failure().cloned() else { return; };
+    let ownership = error.kind == FailureKind::Ownership;
+    let busy = app.bg_git_status_running || app.bg_git_action_running || app.bg_git_remote_running;
+    let title = if busy { "Updating Git…" }
+        else if ownership { "Git repository requires trust" }
+        else { "Could not load Git repository" };
+    let bg = app.colors.bg_sidebar;
+    let normal = Style::default().bg(bg).fg(app.colors.ui.sidebar_text_color(bg));
+    f.render_widget(Paragraph::new(title).style(normal.add_modifier(Modifier::BOLD)).wrap(Wrap { trim: true }),
+        Rect::new(area.x + u16::from(area.width > 1), area.y, area.width.saturating_sub(2), area.height.min(2)));
+    let actions: &[(RecoveryAction, &str)] = if ownership {
+        &[(RecoveryAction::Trust, "Trust Repository"), (RecoveryAction::Retry, "Retry")]
+    } else { &[(RecoveryAction::Retry, "Retry")] };
+    let controls_top = area.bottom().saturating_sub(actions.len() as u16 * 2).max(area.y.saturating_add(3));
+    let path = app.remote_workspace.as_ref().and_then(|remote| remote.display_path(&error.root).ok())
+        .unwrap_or_else(|| {
+            let path = error.root.to_string_lossy();
+            #[cfg(windows)]
+            {
+                if let Some(tail) = path.strip_prefix(r"\\?\UNC\") { return format!(r"\\{tail}"); }
+                if let Some(tail) = path.strip_prefix(r"\\?\") { return tail.to_owned(); }
+            }
+            path.into_owned()
+        });
+    let detail = if ownership {
+        format!("{path}\n\nGit could not verify repository ownership.\n\nTrust adds this repository to Git's safe.directory setting.")
+    } else { format!("{path}\n\n{}", error.message) };
+    let body_top = area.y.saturating_add(2).min(area.bottom());
+    f.render_widget(Paragraph::new(detail).style(normal).wrap(Wrap { trim: false }),
+        Rect::new(area.x + u16::from(area.width > 1), body_top, area.width.saturating_sub(2),
+            controls_top.min(area.bottom()).saturating_sub(body_top)));
+    for (index, (action, label)) in actions.iter().enumerate() {
+        let row = controls_top.saturating_add(index as u16 * 2);
+        if row >= area.bottom() || label.width() > usize::from(area.width.saturating_sub(2)) { continue; }
+        let width = (label.width() as u16 + 2).min(area.width.saturating_sub(2));
+        let button = Rect::new(area.x + (area.width - width) / 2, row, width, 1);
+        let focused = app.repositories.recovery_focus == Some(app.repositories.recovery_buttons.len());
+        let style = crate::ui_widgets::action_button_style(&app.colors, bg,
+            app.repositories.recovery_buttons.is_empty(),
+            button.contains((app.mouse_col, app.mouse_row).into()) || focused, !busy);
+        f.render_widget(Paragraph::new(*label).alignment(Alignment::Center)
+            .style(if focused && !busy { style.add_modifier(Modifier::UNDERLINED) } else { style }), button);
+        app.repositories.recovery_buttons.push((button, *action));
+        app.repositories.recovery_root = Some(error.root.clone());
+    }
 }
 
 fn draw_sc_repository_state(f: &mut Frame, app: &mut App, area: Rect, missing: bool) {
@@ -780,7 +860,8 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("");
         let moved_path = file.original_path.as_ref().map(|old| format!("{old} → {}", file.path));
         let parent = moved_path.as_deref().unwrap_or(parent);
-        let (icon, icon_color) = file_icon_colored(file_name);
+        let (icon, icon_color) = if file.directory { ("📁", app.colors.ui.folder_icon_color(row_bg)) }
+            else { file_icon_colored(file_name) };
         // Build file row: [indent][icon][name]...[parent][actions][status]. Filename is
         // deliberately allocated before parent so narrow sidebars stay useful.
         fmt_buf.clear();
@@ -1513,7 +1594,7 @@ mod tests {
     #[test]
     fn moved_file_row_shows_rename_badge_and_both_paths() {
         let mut app = App::test_new();
-        app.source_control_files = vec![GitFileChange {
+        app.source_control_files = vec![GitFileChange { directory: false,
             path: "new/file.rs".into(),
             original_path: Some("old/file.rs".into()),
             status: 'R',
@@ -1538,13 +1619,13 @@ mod tests {
         let height = 14;
         let mut app = App::test_new();
         app.source_control_files = vec![
-            GitFileChange {
+            GitFileChange { directory: false,
                 original_path: None,
                 path: "staged.rs".to_string(),
                 status: 'M',
                 staged: true,
             },
-            GitFileChange {
+            GitFileChange { directory: false,
                 original_path: None,
                 path: "unstaged.rs".to_string(),
                 status: 'M',
@@ -1627,7 +1708,7 @@ mod tests {
         let height = 12;
         let mut app = App::test_new();
         app.source_control_files = (0..20)
-            .map(|index| GitFileChange {
+            .map(|index| GitFileChange { directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',
@@ -1671,7 +1752,7 @@ mod tests {
         let height = 12;
         let mut app = App::test_new();
         app.source_control_files = (0..2)
-            .map(|index| GitFileChange {
+            .map(|index| GitFileChange { directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',
@@ -1695,7 +1776,7 @@ mod tests {
     #[test]
     fn changes_scroll_limit_keeps_overflowing_list_bottom_filled() {
         let files = (0..10)
-            .map(|index| GitFileChange {
+            .map(|index| GitFileChange { directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',

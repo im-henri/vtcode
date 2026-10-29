@@ -803,7 +803,7 @@ fn render_diff_line<'a>(
             .as_ref()
             .or(cached.map(std::rc::Rc::as_ref))
             .unwrap();
-        return render_diff_highlighted_spans_reference(
+        let mut spans = render_diff_highlighted_spans_reference(
             highlighted,
             visible_width,
             horizontal_scroll,
@@ -812,6 +812,12 @@ fn render_diff_line<'a>(
             char_highlights,
             fg,
         );
+        // The reference uses an RGB-only TextMate carrier for plain rows.
+        // Restore the caller's foreground instead of imposing an RGB default.
+        if fallback.is_some() {
+            for span in &mut spans { span.style = span.style.fg(fg); }
+        }
+        return spans;
     }
     if let Some(cached) = cached {
         let index = diff_highlight_index(cached);
@@ -828,29 +834,27 @@ fn render_diff_line<'a>(
             );
         }
     }
-    // Keep the previous neutral TextMate fallback color, while borrowing just
-    // the visible source window instead of copying the complete logical line.
-    let content_fg = match fg {
-        Color::Rgb(..) => fg,
-        _ => Color::Rgb(212, 212, 212),
-    };
+    // Preserve the requested foreground, including indexed and named colors.
     let window = plain_window().trim_end_matches('\n');
-    let mut spans = render_plain_diff_window(
+    render_plain_diff_window(
         window,
         horizontal_scroll,
         visible_width,
         bg,
         bg_highlight,
         char_highlights,
-        content_fg,
-    );
-    if content_fg != fg
-        && window.chars().count() < visible_width
-        && let Some(padding) = spans.last_mut()
-    {
-        padding.style = padding.style.fg(fg);
+        fg,
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn theme_coverage_plain_diff_preserves_named_and_indexed_foregrounds() {
+    for foreground in [Color::Indexed(23), Color::White, Color::Reset, Color::Rgb(12,34,56)] {
+        let spans = render_diff_line(None, "abc", 3, || "abc", 6, 0, Color::Rgb(1,2,3), None, None, foreground);
+        assert_eq!(spans.iter().map(|span| span.content.as_ref()).collect::<String>(), "abc   ");
+        assert!(spans.iter().all(|span| span.style.fg == Some(foreground)), "{foreground:?}");
     }
-    spans
 }
 
 fn style_diff_spans(spans: &mut [Span<'_>], colors: &crate::app_theme::ThemeColors, kind: char, contrast: &mut crate::ui_colors::TextContrastCache) {

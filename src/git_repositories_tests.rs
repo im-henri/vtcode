@@ -736,6 +736,7 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
             workspace_generation: app.workspace_generation,
             repository_generation: generation,
             discovery: Discovery {
+                errors: Vec::new(),
                 roots: vec![fixture.root.clone(), fixture.nested.clone()],
                 parent: None,
                 workspace: fixture.root.clone(),
@@ -745,7 +746,7 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
                 branch: "obsolete".into(),
                 worktree_paths: None,
                 include_untracked: true,
-                files: vec![crate::app::GitFileChange {
+                files: vec![crate::app::GitFileChange { directory: false,
                     path: "ghost.txt".into(),
                     original_path: None,
                     status: 'M',
@@ -782,6 +783,7 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
             workspace_generation: app.workspace_generation,
             repository_generation: generation,
             discovery: Discovery {
+                errors: Vec::new(),
                 roots: vec![fixture.root.clone(), fixture.nested.clone()],
                 parent: None,
                 workspace: fixture.root.clone(),

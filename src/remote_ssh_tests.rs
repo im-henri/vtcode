@@ -56,6 +56,7 @@ fn windows_ssh_scoped_git_status_keeps_full_state_and_native_filename_identity()
     let cancel = crate::background::CancellationToken::new();
     let (initial, _) = workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
     let known = super::git::Discovery {
+        errors: Vec::new(),
         roots: initial.roots.iter().map(|root| workspace.remote_path(root).unwrap()).collect(),
         parent: None,
     };

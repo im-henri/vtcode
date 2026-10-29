@@ -587,7 +587,6 @@ impl App {
         self.tab_context_active = false;
         self.menu_open = false;
         self.menu_active = false;
-        self.tab_switcher_active = false;
         if let Some(selection) = location.selection {
             if let Some(editor) = self.editor_mut() {
                 selection.restore(editor);

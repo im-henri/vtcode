@@ -300,12 +300,13 @@ impl App {
     pub(crate) fn source_control_context_menu_items(&self) -> Vec<&'static str> {
         if let Some(target) = &self.sc_context_target {
             if self.sc_context_targets.len() > 1 {
-                let mut items = vec!["Open Diff", "Open File"];
+                let mut items = if target.directory { vec!["Reveal in Explorer"] } else { vec!["Open Diff", "Open File"] };
                 if self.sc_context_targets.iter().any(|file| !file.staged) { items.push("Stage Selected"); }
                 if self.sc_context_targets.iter().any(|file| file.staged) { items.push("Unstage Selected"); }
                 items.extend(["Discard Selected", "Cancel"]);
                 return items;
             }
+            if target.directory { return vec!["Reveal in Explorer", "Stage", "Discard", "Cancel"]; }
             vec![
                 "Open Diff",
                 "Open File",
@@ -326,30 +327,21 @@ impl App {
         line: usize,
         status: char,
     ) {
+        self.close_hunk_popup();
         self.hunk_popup_pos = (x, y);
         self.hunk_popup_selected = 0;
         self.hunk_popup_file = file.into();
         self.hunk_popup_line = line;
         self.hunk_popup_status = status;
-        self.hunk_popup_generation = self.hunk_popup_generation.wrapping_add(1);
-        if self.remote_workspace.is_some() && status != 'N' {
-            self.hunk_peek = None;
-            self.hunk_popup_active = true;
-            self.request_remote_hunk_peek();
-            return;
-        }
-        self.hunk_peek = match self.load_hunk_peek() {
-            Ok(peek) => Some(peek),
-            Err(error) => {
-                self.notify(&format!("Cannot preview changes: {error}"));
-                None
-            }
-        };
         self.hunk_popup_active = true;
+        self.request_hunk_preview();
     }
 
     pub(crate) fn close_hunk_popup(&mut self) {
         self.hunk_popup_generation = self.hunk_popup_generation.wrapping_add(1);
+        if let Some(feedback) = self.hunk_preview_feedback.take() {
+            feedback.cancel();
+        }
         self.hunk_peek = None;
         self.hunk_popup_active = false;
         self.hunk_popup_selected = 0;
@@ -359,17 +351,19 @@ impl App {
     }
 
     pub(crate) fn hunk_popup_items(&self) -> Vec<&'static str> {
-        if self.remote_workspace.is_some() && self.hunk_peek.is_none() { return vec!["Cancel"]; }
+        if let Some(feedback) = &self.hunk_preview_feedback {
+            return if feedback.loading() { vec!["Close Preview"] } else { vec!["Retry Preview", "Close Preview"] };
+        }
         match self.hunk_popup_status {
-            'N' if self.hunk_peek.is_some() => vec!["Revert Unsaved Hunk", "Cancel"],
-            'S' => vec!["Revert Hunk", "Cancel"],
-            'U' | 'A' | 'M' | 'D' | '?' => vec!["Stage Hunk", "Discard Hunk", "Cancel"],
-            _ => vec!["Cancel"],
+            'N' if self.hunk_peek.is_some() => vec!["Revert Unsaved Hunk", "Close Preview"],
+            'S' => vec!["Revert Hunk", "Close Preview"],
+            'U' | 'A' | 'M' | 'D' | '?' => vec!["Stage Hunk", "Discard Hunk", "Close Preview"],
+            _ => vec!["Close Preview"],
         }
     }
 
     pub(crate) fn hunk_popup_rect(&self, term_w: u16, term_h: u16) -> ratatui::layout::Rect {
-        if self.hunk_peek.is_some() {
+        if self.hunk_peek.is_some() || self.hunk_preview_feedback.is_some() {
             return crate::ui_hunk_peek::peek_rect(self, term_w, term_h);
         }
         let items = self.hunk_popup_items();
@@ -396,6 +390,14 @@ impl App {
                 return;
             }
         };
+        if action == "Close Preview" {
+            self.close_hunk_popup();
+            return;
+        }
+        if action == "Retry Preview" {
+            self.retry_hunk_preview();
+            return;
+        }
         if action == "Revert Unsaved Hunk" {
             match self.revert_unsaved_hunk() {
                 Ok(()) => self.notify("Reverted unsaved hunk"),
@@ -446,9 +448,9 @@ impl App {
         let mut targets = std::mem::take(&mut self.sc_context_targets);
         if targets.is_empty() { targets.extend(target.clone()); }
         match action {
-            "Open File" => {
+            "Open File" | "Reveal in Explorer" => {
                 if let Some(target) = target.as_ref() {
-                    self.open_file(&self.workspace_file_path(&self.source_control_root().join(&target.path)));
+                    self.open_source_control_entry(target);
                 }
             }
             "Open Diff" => {
@@ -684,7 +686,7 @@ mod tests {
     #[test]
     fn context_menu_items_unstaged_file() {
         let mut app = make_app();
-        app.sc_context_target = Some(GitFileChange {
+        app.sc_context_target = Some(GitFileChange { directory: false,
             original_path: None,
             path: "file.rs".to_string(),
             status: 'M',
@@ -697,7 +699,7 @@ mod tests {
     #[test]
     fn context_menu_items_staged_file() {
         let mut app = make_app();
-        app.sc_context_target = Some(GitFileChange {
+        app.sc_context_target = Some(GitFileChange { directory: false,
             original_path: None,
             path: "file.rs".to_string(),
             status: 'A',
@@ -713,7 +715,7 @@ mod tests {
     fn hunk_popup_items_staged_hunk() {
         let mut app = make_app();
         app.hunk_popup_status = 'S';
-        assert_eq!(app.hunk_popup_items(), vec!["Revert Hunk", "Cancel"]);
+        assert_eq!(app.hunk_popup_items(), vec!["Revert Hunk", "Close Preview"]);
     }
 
     #[test]
@@ -722,7 +724,7 @@ mod tests {
         app.hunk_popup_status = 'M';
         assert_eq!(
             app.hunk_popup_items(),
-            vec!["Stage Hunk", "Discard Hunk", "Cancel"]
+            vec!["Stage Hunk", "Discard Hunk", "Close Preview"]
         );
     }
 
@@ -732,7 +734,7 @@ mod tests {
         app.hunk_popup_status = '?';
         assert_eq!(
             app.hunk_popup_items(),
-            vec!["Stage Hunk", "Discard Hunk", "Cancel"]
+            vec!["Stage Hunk", "Discard Hunk", "Close Preview"]
         );
     }
 
@@ -740,7 +742,7 @@ mod tests {
     fn hunk_popup_items_unknown_status() {
         let mut app = make_app();
         app.hunk_popup_status = 'X';
-        assert_eq!(app.hunk_popup_items(), vec!["Cancel"]);
+        assert_eq!(app.hunk_popup_items(), vec!["Close Preview"]);
     }
 
     // --- hunk_popup_rect ---
@@ -799,7 +801,7 @@ mod tests {
     #[test]
     fn open_source_control_context_menu_sets_state() {
         let mut app = make_app();
-        let target = GitFileChange {
+        let target = GitFileChange { directory: false,
             original_path: None,
             path: "main.rs".to_string(),
             status: 'M',

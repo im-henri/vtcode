@@ -391,9 +391,7 @@ pub(crate) struct App {
     pub zen_mode: bool,
     pub zen_pre_state: Option<(bool, bool, bool, bool, bool, bool)>, // (explorer, minimap, panel, tab_bar, status_bar, activity_bar)
     pub(crate) navigation: crate::app_navigation::NavigationHistory,
-    // Ctrl+Tab switcher
-    pub tab_switcher_active: bool,
-    pub tab_switcher_selected: usize,
+    // Tab activation history
     pub tab_mru_order: Vec<usize>, // Tab indices in most-recently-used order
     // Settings panel (Ctrl+,)
     pub settings_active: bool,
@@ -699,6 +697,7 @@ pub(crate) struct App {
     pub hunk_popup_line: usize,
     pub hunk_popup_status: char,
     pub(crate) hunk_peek: Option<crate::ui_hunk_peek::HunkPeek>,
+    pub(crate) hunk_preview_feedback: Option<crate::hunk_preview::Feedback>,
     pub(crate) hunk_popup_generation: u64,
     pub sc_discard_confirm_active: bool,
     pub(crate) sc_discard_request: Option<crate::app_source_control::DiscardRequest>,
@@ -807,6 +806,7 @@ pub(crate) struct App {
     // Extensions
     pub extension_manager: crate::extensions::ExtensionManager,
     pub(crate) extension_pointer_capture: Option<crate::extension_views::PointerCapture>,
+    pub(crate) extension_pointer_click: Option<crate::extension_views::PointerClick>,
     pub extensions_selected: usize,
     pub extensions_scroll: usize,
     pub extensions_filter: String,
@@ -1376,8 +1376,6 @@ impl App {
             zen_mode: false,
             zen_pre_state: None,
             navigation: crate::app_navigation::NavigationHistory::default(),
-            tab_switcher_active: false,
-            tab_switcher_selected: 0,
             tab_mru_order: Vec::new(),
             settings_active: false,
             settings_selected: 0,
@@ -1651,6 +1649,7 @@ impl App {
             hunk_popup_line: 0,
             hunk_popup_status: ' ',
             hunk_peek: None,
+            hunk_preview_feedback: None,
             hunk_popup_generation: 0,
             sc_discard_confirm_active: false,
             sc_discard_request: None,
@@ -1735,6 +1734,7 @@ impl App {
             shutdown_anim_start: std::time::Instant::now(),
             extension_manager: crate::extensions::ExtensionManager::new(&browser_path),
             extension_pointer_capture: None,
+            extension_pointer_click: None,
             extensions_selected: 0,
             extensions_scroll: 0,
             extensions_filter: String::new(),
@@ -2043,11 +2043,6 @@ impl App {
                 crate::background::BackgroundResult::RemoteFileValidated { generation, path, document, baseline, result } => {
                     has_visual_changes |= self.finish_remote_file_validation(generation, path, document, baseline, result);
                 }
-                crate::background::BackgroundResult::RemoteWorkspaceError { operation, error } => {
-                    self.bg_git_status_running = false;
-                    self.notify_error(format!("Remote {operation}: {error}"));
-                    has_visual_changes = true;
-                }
                 crate::background::BackgroundResult::SourceControlRead { .. } => unreachable!("nested Git result"),
                 crate::background::BackgroundResult::RepositoryRead { .. } => unreachable!("nested repository result"),
                 crate::background::BackgroundResult::RemoteFileResult { .. } => unreachable!("nested remote file result"),
@@ -2191,8 +2186,8 @@ impl App {
                 crate::background::BackgroundResult::CommitDetails(result) => {
                     has_visual_changes |= self.apply_commit_details(result);
                 }
-                crate::background::BackgroundResult::RemoteHunkPeek(result) => {
-                    has_visual_changes |= self.apply_remote_hunk_peek(result);
+                crate::background::BackgroundResult::HunkPeek(result) => {
+                    has_visual_changes |= self.apply_hunk_preview(result);
                 }
                 crate::background::BackgroundResult::RemoteTasks(result) => {
                     match result {
@@ -2432,8 +2427,27 @@ impl App {
                             if results.len() > remaining {
                                 self.global_search_truncated = true;
                             }
+                            let selected = self.global_search_results.get(self.global_search_selected).cloned();
+                            let anchor = (self.global_search_scroll > 0).then(|| {
+                                self.global_search_results.row_at(self.global_search_scroll).map(|row| {
+                                    let (index, header) = match row {
+                                        crate::search_results::SearchRow::Header(index) => (index, true),
+                                        crate::search_results::SearchRow::Result(index) => (index, false),
+                                    };
+                                    (self.global_search_results[index].clone(), header)
+                                })
+                            }).flatten();
                             self.global_search_results
                                 .extend(results.into_iter().take(remaining));
+                            if let Some(index) = selected.as_ref().and_then(|result| self.global_search_results.index_of(result)) {
+                                self.global_search_selected = index;
+                            }
+                            if let Some((result, header)) = anchor
+                                && let Some(index) = self.global_search_results.index_of(&result)
+                                && let Some(row) = if header { self.global_search_results.header_row(index) }
+                                    else { self.global_search_results.result_row(index) } {
+                                self.global_search_scroll = row;
+                            }
                             self.ensure_global_search_selection_visible();
                         }
                         if self.global_search_truncated {
@@ -2629,210 +2643,12 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::FilesChanged {
-                    root,
-                    changes,
-                    structure_changed,
-                    rescan,
-                    git_metadata_changed,
+                    root, changes, structure_changed, rescan, git_metadata_changed,
                 } => {
-                    if root != self.explorer.root {
-                        continue;
-                    }
-                    self.completion_index_files_changed(&changes, rescan);
-                    if rescan || (structure_changed && changes.iter().any(|change| change.path.file_name().is_some_and(|name| name == ".git"))) {
-                        self.repositories.rescan = true;
-                    }
-                    let git_metadata_changed = self.source_control_enabled && (git_metadata_changed || rescan);
-                    let active_path = self.editor().and_then(|editor| editor.file_path.as_ref());
-                    let blame_inputs_changed = git_metadata_changed
-                        || active_path.is_some_and(|active_path| {
-                            changes.iter().any(|change| change.path == *active_path)
-                        });
-                    let extension_discovery_changed = rescan || changes.iter().any(|change| {
-                        self.extension_manager
-                            .path_may_affect_discovery(&change.path)
-                    });
-                    // A watcher burst can contain thousands of paths (especially while a
-                    // compiler is active). Refresh workspace-wide state only once per burst.
-                    let explorer_generation = self.explorer_refresh_generation;
-                    // Invalidate before scheduling: path changes and Git metadata
-                    // in the same burst intentionally share one tree rebuild.
-                    if git_metadata_changed {
-                        self.explorer.invalidate_git_decorations();
-                    }
-                    if rescan {
-                        self.explorer_hover.invalidate(None);
-                        self.explorer_hover_info_cache.clear();
-                        self.explorer_line_count_cache.clear();
-                        self.refresh_explorer_async();
-                        let paths: rustc_hash::FxHashSet<_> = self.tabs.iter()
-                            .chain(self.groups.iter().flat_map(|group| &group.tabs))
-                            .filter(|tab| tab.kind == TabKind::File)
-                            .filter_map(|tab| tab.editor.file_path.clone()).collect();
-                        if self.remote_workspace.is_some() {
-                            // Overflow means path-level events were lost. Check
-                            // bytes for open models; metadata alone can miss a
-                            // replacement which retained its size and mtime.
-                            for path in paths { self.queue_remote_file_change(path); }
-                        } else { self.queue_file_disk_checks(paths); }
-                    } else if !changes.is_empty() {
-                        self.refresh_explorer_changed_paths(
-                            changes.iter().map(|change| change.path.as_path()),
-                            structure_changed || changes.iter().any(|change| !change.exists),
-                        );
-                    }
-                    if git_metadata_changed && explorer_generation == self.explorer_refresh_generation {
-                        // Index, config and info/exclude changes also affect
-                        // ignored decorations, without changing directory lists.
-                        self.refresh_explorer_tree_async();
-                    }
-                    if git_metadata_changed {
-                        if rescan { self.refresh_source_control_async(); }
-                        else { self.refresh_source_control_git_changed_paths(changes.iter().map(|change| change.path.clone())); }
-                    } else {
-                        self.refresh_source_control_changed_paths(changes.iter().map(|change| change.path.clone()));
-                    }
-                    if git_metadata_changed {
-                        self.refresh_git_log_async();
-                        self.refresh_git_branch_async();
-                    }
-                    if blame_inputs_changed {
-                        self.blame_requested_path = None;
-                        self.blame_documents.retain(|_, document| document.revision.is_some());
-                    }
-
-                    // Process open editors for each relevant path without rebuilding the
-                    // Explorer or re-running Git status for every individual event.
-                    let process_tabs =
-                        |tabs: &mut Vec<crate::app::Tab>,
-                         reload_paths: &mut rustc_hash::FxHashSet<PathBuf>,
-                         changed_unsaved: &mut rustc_hash::FxHashSet<PathBuf>,
-                         change: &crate::background::WorkspacePathChange| {
-                            for tab in tabs.iter_mut() {
-                                tab.editor.refresh_document();
-                                if tab.editor.bg_loading || matches!(tab.kind, TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails) {
-                                    continue;
-                                }
-                                let matches_exact =
-                                    tab.editor.file_path.as_deref() == Some(change.path.as_path());
-
-                                if matches_exact {
-                                    tab.editor.disk_unavailable = false;
-                                    let changed =
-                                        match (tab.editor.last_disk_modified, change.modified) {
-                                            (Some(old), Some(new)) => new != old,
-                                            (None, Some(_)) => true,
-                                            _ => false,
-                                        } || change
-                                            .len
-                                            .is_some_and(|len| len != tab.editor.file_size);
-                                    if changed {
-                                        tab.editor.last_disk_modified = change.modified;
-                                        if let Some(len) = change.len { tab.editor.file_size = len; }
-                                        tab.editor.publish_document();
-                                        if tab.editor.modified { changed_unsaved.insert(change.path.clone()); }
-                                        else { reload_paths.insert(change.path.clone()); }
-                                    }
-                                }
-                            }
-                        };
-
-                    let structural_descendants: rustc_hash::FxHashSet<_> = if structure_changed && !rescan {
-                        let direct: rustc_hash::FxHashSet<_> = changes.iter().map(|change| change.path.as_path()).collect();
-                        let parents: rustc_hash::FxHashSet<_> = changes.iter().filter(|change| change.exists).map(|change| change.path.as_path()).collect();
-                        self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
-                            .filter_map(|tab| {
-                                if tab.kind != TabKind::File { return None; }
-                                tab.editor.refresh_document();
-                                let path = tab.editor.file_path.as_ref()?;
-                                (!direct.contains(path.as_path()) && path.ancestors().skip(1).any(|parent| parents.contains(parent)))
-                                    .then(|| path.clone())
-                            }).collect()
-                    } else { Default::default() };
-                    let mut deleted_names: Vec<String> = Vec::new();
-                    let mut changed_unsaved = rustc_hash::FxHashSet::default();
-                    let mut reload_paths = rustc_hash::FxHashSet::default();
-                    let mut compare_base_changed = false;
-                    for change in changes {
-                        if self.chat.rollback.defer_disk_change(&change) {
-                            if !self.chat.rollback.file_busy(&change.path) {
-                                self.queue_file_disk_checks(std::iter::once(change.path));
-                            }
-                            continue;
-                        }
-                        self.chat.rollback.note_workspace_change(&change.path);
-                        self.explorer_hover.invalidate(Some(&change.path));
-                        self.explorer_hover_info_cache.remove(&change.path);
-                        self.explorer_line_count_cache.remove(&change.path);
-                        compare_base_changed |=
-                            self.compare_base_path.as_ref() == Some(&change.path);
-                        self.lsp_manager
-                            .notify_did_change_watched_files(&change.path);
-                        if crate::remote::workspace::is_view_key(&change.path) && self.remote_workspace.is_some() {
-                            if change.exists || self.pending_file_saves.contains_key(&change.path) {
-                                self.queue_remote_file_change(change.path);
-                            } else {
-                                self.queue_file_disk_checks(std::iter::once(change.path));
-                            }
-                            continue;
-                        }
-                        if self.pending_file_saves.contains_key(&change.path) { continue; }
-                        if !change.exists {
-                            if self.close_deleted_file_tabs(&change.path, false) {
-                                has_visual_changes = true;
-                                deleted_names.push(
-                                    change
-                                        .path
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .into_owned(),
-                                );
-                            }
-                            continue;
-                        }
-                        process_tabs(&mut self.tabs, &mut reload_paths, &mut changed_unsaved, &change);
-                        for group in &mut self.groups {
-                            process_tabs(&mut group.tabs, &mut reload_paths, &mut changed_unsaved, &change);
-                        }
-                    }
-                    if compare_base_changed {
-                        self.compare_diff_base_revision = None;
-                        self.diff_refresh_generation = self.diff_refresh_generation.wrapping_add(1);
-                        self.bg_diff_refresh_running = false;
-                        self.refresh_compare_diff();
-                    }
-                    for path in reload_paths {
-                        self.queue_file_reload(path);
-                    }
-                    for path in structural_descendants {
-                        // A directory can be atomically replaced by another
-                        // tree (or a regular file) without child-level events.
-                        if crate::remote::workspace::is_view_key(&path) { self.queue_remote_file_change(path); }
-                        else { self.queue_file_disk_checks(std::iter::once(path)); }
-                    }
-                    for path in changed_unsaved {
-                        self.status_message = format!("{} changed on disk; your unsaved edits are preserved.", path.display());
-                        self.notify_warn(self.status_message.clone());
-                        has_visual_changes = true;
-                    }
-
-                    // Deduplicate notifications when a file is open in multiple groups.
-                    deleted_names.sort();
-                    deleted_names.dedup();
-                    if deleted_names.len() == 1 {
-                        self.notify_warn(format!("File deleted externally: {}", deleted_names[0]));
-                    } else if !deleted_names.is_empty() {
-                        self.notify_warn(format!(
-                            "{} files deleted externally",
-                            deleted_names.len()
-                        ));
-                    }
-                    if extension_discovery_changed {
-                        self.request_extension_scan();
-                    }
-                    self.refresh_git_line_status_async();
+                    has_visual_changes |= self.apply_workspace_file_changes(
+                        root, changes, structure_changed, rescan, git_metadata_changed);
                 }
+
                 crate::background::BackgroundResult::HighlightBatch(batch) => {
                     let file_path = batch.file_path.clone();
                     let content_version = batch.content_version;
@@ -4837,11 +4653,22 @@ impl App {
         modifiers: KeyModifiers,
         code: KeyCode,
     ) -> Option<&'static str> {
+        // Terminals can encode Shift+Tab either in the key code or modifiers.
+        // Normalize both events and bindings, including user-assigned shortcuts.
+        let normalize = |modifiers: KeyModifiers, code: KeyCode| {
+            if code == KeyCode::BackTab {
+                (modifiers | KeyModifiers::SHIFT, KeyCode::Tab)
+            } else {
+                (modifiers, code)
+            }
+        };
+        let (modifiers, code) = normalize(modifiers, code);
         for kb in &self.keybindings {
             if kb.code == KeyCode::Null {
                 continue;
             }
-            if kb.modifiers == modifiers && Self::keycode_matches_binding(kb.code, code) {
+            let (binding_modifiers, binding_code) = normalize(kb.modifiers, kb.code);
+            if binding_modifiers == modifiers && Self::keycode_matches_binding(binding_code, code) {
                 return Some(kb.id);
             }
         }
@@ -4851,8 +4678,7 @@ impl App {
         if modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT)
             && matches!(code, KeyCode::Char('s' | 'S')) { return None; }
         if modifiers.contains(KeyModifiers::SHIFT)
-            && (matches!(code, KeyCode::Char(c) if c.is_ascii_alphabetic())
-                || code == KeyCode::BackTab)
+            && matches!(code, KeyCode::Char(c) if c.is_ascii_alphabetic())
         {
             // Keep Ctrl+Shift+Z and Ctrl+Shift+V distinct so they aren't normalized.
             if modifiers.contains(KeyModifiers::CONTROL)
@@ -4866,8 +4692,9 @@ impl App {
                 if kb.code == KeyCode::Null {
                     continue;
                 }
-                if kb.modifiers == normalized_modifiers
-                    && Self::keycode_matches_binding(kb.code, code)
+                let (binding_modifiers, binding_code) = normalize(kb.modifiers, kb.code);
+                if binding_modifiers == normalized_modifiers
+                    && Self::keycode_matches_binding(binding_code, code)
                 {
                     return Some(kb.id);
                 }

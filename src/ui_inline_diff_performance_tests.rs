@@ -98,7 +98,7 @@ fn borrowed_plain_diff_fallback_matches_cached_miss_and_truncated_styles() {
     for source in ["α界e\u{301} text", "plain text", "text\r\n", "", "\n"] {
         let short = Rc::new(vec![(style(0), String::new())]);
         for cached in [None, Some(&short)] {
-            for fg in [Color::White, Color::Rgb(25, 45, 65)] {
+            for fg in [Color::White, Color::Indexed(23), Color::Reset, Color::Rgb(25, 45, 65)] {
                 for scroll in [0, 1, 3, 99] {
                     let width = 16;
                     let window: String = source.chars().skip(scroll).take(width).collect();

@@ -343,7 +343,6 @@ fn blocked(app: &App) -> bool {
         || app.explorer_context_active
         || app.sc_context_active
         || app.change_dir_active
-        || app.tab_switcher_active
         || app.desks.popup.mode.is_some()
         || crate::ui_quick_picker::active(app).is_some()
 }
@@ -812,10 +811,10 @@ pub(crate) fn key(app: &mut App, key: KeyEvent) -> bool {
                 | "acp_chat"
                 | "show_shortcuts"
                 | "toggle_menu_bar"
-                | "tab_switcher_next"
-                | "tab_switcher_prev"
                 | "next_tab"
                 | "prev_tab"
+                | "next_tab_page"
+                | "prev_tab_page"
         )
     ) || key.code == KeyCode::F(1)
         || (key.code == KeyCode::F(11) && key.modifiers.is_empty())

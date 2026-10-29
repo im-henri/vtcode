@@ -444,8 +444,8 @@ impl App {
             match id {
                 "save" | "new_file" | "close_tab" => "File",
                 "find" | "find_replace" | "find_next" | "find_prev" | "global_search" => "Search",
-                "go_to_line" | "go_to_definition" | "find_references" | "tab_switcher_next"
-                | "tab_switcher_prev" | "next_tab" | "prev_tab" => "Navigation",
+                "go_to_line" | "go_to_definition" | "find_references"
+                | "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page" => "Navigation",
                 "toggle_explorer" => "File Explorer",
                 "toggle_panel" | "toggle_menu_bar" | "show_shortcuts" => "View",
                 "toggle_terminal" => "Terminal",
@@ -496,8 +496,8 @@ impl App {
                     | "goto_last_edit"
                     | "next_tab"
                     | "prev_tab"
-                    | "tab_switcher_next"
-                    | "tab_switcher_prev"
+                    | "next_tab_page"
+                    | "prev_tab_page"
             ) {
                 "Navigation"
             } else if matches!(

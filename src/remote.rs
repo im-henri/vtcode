@@ -60,8 +60,8 @@ pub(crate) mod wire;
 #[path = "remote_workspace.rs"]
 pub(crate) mod workspace;
 
-// Folder browsing can enumerate filesystem roots on the headless machine.
-pub(crate) const VERSION: u32 = 23;
+// Repository access failures and repository-specific trust are part of Git snapshots/actions.
+pub(crate) const VERSION: u32 = 26;
 /// Per-message/queue memory budget, not a file size limit. Larger documents use
 /// remote_text's bounded pipeline instead of a document-sized JSON allocation.
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;

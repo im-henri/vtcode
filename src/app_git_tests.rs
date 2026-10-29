@@ -454,7 +454,7 @@ fn staging_both_sides_of_a_move_then_unstaging_preserves_worktree_and_other_stag
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
         !app.bg_git_action_running && app.source_control_files.iter().any(|f| f.path == "file.txt" && f.staged)
     });
-    let added = app.source_control_files.iter().position(|f| f.path == "nested/moved.txt" && !f.staged).unwrap();
+    let added = app.source_control_files.iter().position(|f| f.path == "nested" && f.directory && !f.staged).unwrap();
     app.git_stage_file(added);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
         !app.bg_git_action_running && app.source_control_files.iter().any(|f| f.status == 'R')
@@ -711,7 +711,8 @@ fn source_control_status_populates_distinct_collapsed_directory_summaries() {
     );
     assert!(
         status.files.iter().any(|change| {
-            Path::new(&change.path) == Path::new("docs/generated/new.txt")
+            Path::new(&change.path) == Path::new("docs")
+                && change.directory
                 && change.status == '?'
                 && !change.staged
         }),
@@ -719,12 +720,11 @@ fn source_control_status_populates_distinct_collapsed_directory_summaries() {
     );
 
     let mut explorer = FileExplorer::new(repo_dir.clone());
-    explorer.apply_git_status_changes(
-        status.workdir.as_deref(),
+    explorer.apply_git_repository_changes(
         status
             .files
             .iter()
-            .map(|change| (change.path.as_str(), change.status)),
+            .map(|change| (status.workdir.as_deref().unwrap(), change.path.as_str(), change.status, change.directory)),
     );
 
     let src = explorer
@@ -1057,13 +1057,13 @@ fn source_control_staged_and_unstaged_diffs_use_separate_revisions_and_tabs() {
     run_git(&repo_dir, &["add", "file.txt"]);
     std::fs::write(&path, worktree).unwrap();
     app.source_control_files = vec![
-        GitFileChange {
+        GitFileChange { directory: false,
             original_path: None,
             path: "file.txt".into(),
             status: 'M',
             staged: true,
         },
-        GitFileChange {
+        GitFileChange { directory: false,
             original_path: None,
             path: "file.txt".into(),
             status: 'M',
@@ -1220,7 +1220,7 @@ fn source_control_diff_and_file_tabs_preserve_independent_views() {
     let (repo_dir, file_path, mut app) = make_git_app_with_file(
         "separate-diff-tabs", "first\nold\nlast\n", "first\nnew\nlast\n",
     );
-    app.source_control_files = vec![GitFileChange {
+    app.source_control_files = vec![GitFileChange { directory: false,
         original_path: None,
         path: "file.txt".into(), status: 'M', staged: false,
     }];
@@ -1339,7 +1339,7 @@ fn source_control_diff_tabs_survive_multiple_files_and_split_rendering() {
 fn source_control_pending_diff_cannot_replace_normal_file_view() {
     use crate::app::{DiffMode, TabKind};
     let (repo_dir, path, mut app) = make_git_app_with_file("pending-diff-tab", "old\n", "new\n");
-    app.source_control_files = vec![GitFileChange { original_path: None, path: "file.txt".into(), status: 'M', staged: false }];
+    app.source_control_files = vec![GitFileChange { directory: false, original_path: None, path: "file.txt".into(), status: 'M', staged: false }];
     app.open_source_control_diff(0);
     app.open_file(&path);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.tabs[1].editor.bg_loading);
@@ -1375,7 +1375,7 @@ fn source_control_large_diff_waits_for_file_then_finishes_in_background() {
         make_git_app_with_file("async-large-diff", &initial, &updated);
     app.tabs.clear();
     app.active_tab = 0;
-    app.source_control_files = vec![GitFileChange {
+    app.source_control_files = vec![GitFileChange { directory: false,
         original_path: None,
         path: "file.txt".to_string(),
         status: 'M',
@@ -1437,7 +1437,7 @@ fn source_control_untracked_file_diff_uses_a_single_pane() {
     std::fs::write(&file_path, contents).expect("untracked file");
 
     let mut app = App::new(repo_dir.clone());
-    app.source_control_files = vec![GitFileChange {
+    app.source_control_files = vec![GitFileChange { directory: false,
         original_path: None,
         path: "new-file.txt".to_string(),
         status: '?',
@@ -1568,7 +1568,7 @@ fn source_control_deleted_file_diff_uses_an_empty_read_only_target() {
     std::fs::remove_file(&file_path).expect("delete tracked file");
 
     let mut app = App::new(repo_dir.clone());
-    app.source_control_files = vec![GitFileChange {
+    app.source_control_files = vec![GitFileChange { directory: false,
         original_path: None,
         path: "deleted-file.txt".to_string(),
         status: 'D',
@@ -1871,6 +1871,7 @@ fn hunk_peek_previews_and_stages_the_selected_change() {
         "peek-stage", "a\nb\nc\nd\ne\nf\ng\nh\ni\n", "a\nB\nc\nd\ne\nf\ng\nH\ni\n",
     );
     app.open_hunk_popup(0, 2, file_path.clone(), 7, 'M');
+    app.wait_for_hunk_preview();
     let peek = app.hunk_peek.as_ref().expect("loaded Git preview");
     assert_eq!(peek.selected, 1);
     assert_eq!(peek.hunks.len(), 2);
@@ -1904,6 +1905,7 @@ fn hunk_peek_gutter_buttons_act_on_the_clicked_hunk_and_preserve_other_changes()
         app.show_minimap = false;
         app.sticky_scroll = false;
         app.open_hunk_popup(10, 4, file.clone(), 1, if staged { 'S' } else { 'M' });
+        app.wait_for_hunk_preview();
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 0);
         let mut terminal = Terminal::new(TestBackend::new(120, 60)).unwrap();
         terminal.draw(|frame| {
@@ -1979,10 +1981,11 @@ fn hunk_peek_unsaved_gutter_click_uses_saved_snapshot_without_writing_the_file()
             kind: MouseEventKind::Down(MouseButton::Left), column: gutter.x,
             row: gutter.y + 1, modifiers: KeyModifiers::NONE,
         });
+        app.wait_for_hunk_preview();
         let peek = app.hunk_peek.as_ref().unwrap_or_else(|| panic!("{:?}", app.notification_history));
         assert!(peek.rows.iter().any(|row| row.kind == '-' && row.text == "\told_界();"));
         assert!(peek.rows.iter().any(|row| row.kind == '+' && row.text == "\tnew_界();"));
-        assert_eq!(app.hunk_popup_items(), ["Revert Unsaved Hunk", "Cancel"], "saved-buffer changes are not a Git patch");
+        assert_eq!(app.hunk_popup_items(), ["Revert Unsaved Hunk", "Close Preview"], "saved-buffer changes are not a Git patch");
         terminal.draw(|frame| {
             crate::ui_editor::draw_editor(frame, &mut app, area);
             crate::ui_hunk_peek::draw(frame, &mut app);
@@ -2013,6 +2016,7 @@ fn hunk_peek_unsaved_untitled_document_does_not_require_a_disk_file() {
     app.tabs = vec![Tab::new_file(editor)];
     app.active_tab = 0;
     app.open_hunk_popup(10, 4, None::<std::path::PathBuf>, 0, 'N');
+    app.wait_for_hunk_preview();
     let peek = app.hunk_peek.as_ref().expect("untitled preview");
     assert!(peek.rows.iter().any(|row| row.kind == '+' && row.text == "new document"));
     assert!(app.editor().unwrap().modified);
@@ -2032,6 +2036,7 @@ fn hunk_peek_unsaved_changes_compare_with_last_save_instead_of_git_index() {
     editor.rope = ropey::Rope::from_str("index\n");
     editor.modified = true;
     app.open_hunk_popup(10, 4, file.clone(), 0, 'N');
+    app.wait_for_hunk_preview();
     let peek = app.hunk_peek.as_ref().expect("unsaved preview despite no index difference");
     assert!(peek.rows.iter().any(|row| row.kind == '-' && row.text == "saved"));
     assert!(peek.rows.iter().any(|row| row.kind == '+' && row.text == "index"));
@@ -2053,6 +2058,7 @@ fn hunk_peek_git_preview_uses_live_buffer_and_keeps_unsaved_actions_protected() 
     editor.modified = true;
     for action in [0, 1] {
         app.open_hunk_popup(10, 4, file.clone(), 7, 'M');
+        app.wait_for_hunk_preview();
         let peek = app.hunk_peek.as_ref().expect("Git preview includes unsaved content");
         assert_eq!(peek.hunks.len(), 2, "CRLF does not mark every line as changed");
         assert_eq!(peek.selected, 1);
@@ -2079,6 +2085,7 @@ fn hunk_peek_staged_preview_maps_hunks_through_unsaved_crlf_insertions() {
     editor.rope = ropey::Rope::from_str(current);
     editor.modified = true;
     app.open_hunk_popup(10, 4, file.clone(), 8, 'S');
+    app.wait_for_hunk_preview();
     let peek = app.hunk_peek.as_ref().expect("staged preview after unsaved insertion");
     assert_eq!(peek.selected, 1);
     assert_eq!(peek.hunks[0].action_line, Some(2));
@@ -2118,6 +2125,8 @@ fn hunk_peek_opens_from_a_real_gutter_click_with_windows_paths() {
             modifiers: KeyModifiers::NONE,
         });
         assert!(app.hunk_popup_active);
+        assert!(app.hunk_preview_feedback.as_ref().is_some_and(crate::hunk_preview::Feedback::loading));
+        app.wait_for_hunk_preview();
         assert!(app.hunk_peek.is_some(), "Gutter click fell back to menu: {:?}", app.notification_history);
         terminal.draw(|f| {
             crate::ui_editor::draw_editor(f, &mut app, area);
@@ -2163,11 +2172,12 @@ fn hunk_peek_opens_and_stages_from_deleted_line_gutter_markers() {
             row: gutter.y + line as u16,
             modifiers: KeyModifiers::NONE,
         });
+        app.wait_for_hunk_preview();
         let peek = app.hunk_peek.as_ref().unwrap_or_else(|| {
             panic!("{label}: deletion click did not open preview: {:?}", app.notification_history)
         });
         assert!(peek.rows.iter().any(|row| row.kind == '-' && row.text == "removed"));
-        assert_eq!(app.hunk_popup_items(), ["Stage Hunk", "Discard Hunk", "Cancel"]);
+        assert_eq!(app.hunk_popup_items(), ["Stage Hunk", "Discard Hunk", "Close Preview"]);
         app.execute_hunk_popup_action(0);
         assert_eq!(git_stdout(&repo_dir, &["show", ":file.txt"]), updated, "{label}");
         drop(app);
@@ -2184,6 +2194,7 @@ fn hunk_peek_staged_preview_uses_index_after_worktree_line_shift() {
     std::fs::write(&file_path, "inserted\na\nb\nC\nd\ne\n").unwrap();
     app.tabs = vec![make_clean_file_tab(&file_path, "inserted\na\nb\nC\nd\ne\n")];
     app.open_hunk_popup(0, 4, file_path.clone(), 3, 'S');
+    app.wait_for_hunk_preview();
     let peek = app.hunk_peek.as_ref().expect("staged preview");
     assert!(peek.rows.iter().any(|r| r.kind == '+' && r.text == "C" && r.new_line == Some(3)));
     assert!(!peek.rows.iter().any(|r| r.text == "inserted"));

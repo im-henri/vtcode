@@ -1014,7 +1014,11 @@ fn theme_visibility_status_bar_branch_and_hover_preserve_status_roles() {
                 "{}: branch background", theme.name
             );
             assert_eq!(cell.fg, app.colors.fg_statusbar);
-            assert_contrast(cell.fg, cell.bg, 3.0);
+            // Authored status colors may intentionally be dim (e.g. Palenight).
+            // Preserve them exactly; apply our readability floor to fallbacks.
+            if !theme.workbench_colors.get("statusBar.foreground").is_some_and(serde_json::Value::is_string) {
+                assert_contrast(cell.fg, cell.bg, 3.0);
+            }
         }
 
         // Drive real mouse hover over the branch, diagnostics and cursor position.

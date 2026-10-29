@@ -1445,19 +1445,31 @@ impl LspManager {
         self.on_type_format_dirty = false;
     }
 
-    /// Notify all active LSP servers about watched file changes
-    pub(crate) fn notify_did_change_watched_files(&mut self, path: &Path) {
-        let uri = match Url::from_file_path(path) {
-            Ok(u) => u,
-            Err(_) => return,
-        };
-        let change = lsp_types::FileEvent {
-            uri,
-            typ: lsp_types::FileChangeType::CHANGED,
-        };
+    /// Send size-limited notifications for a coalesced filesystem burst.
+    pub(crate) fn notify_did_change_watched_files<'a>(&mut self, paths: impl IntoIterator<Item = &'a Path>) {
+        if !self.clients.iter().any(|client| client.initialized) { return; }
+        const MAX_BYTES: usize = 256 * 1024;
+        let mut changes = Vec::new();
+        let mut bytes = 0;
+        for path in paths {
+            let Ok(uri) = Url::from_file_path(path) else { continue; };
+            let size = uri.as_str().len() + 64;
+            if !changes.is_empty() && bytes + size > MAX_BYTES {
+                self.send_watched_file_changes(&changes);
+                changes.clear();
+                bytes = 0;
+            }
+            bytes += size;
+            changes.push(lsp_types::FileEvent { uri, typ: lsp_types::FileChangeType::CHANGED });
+        }
+        self.send_watched_file_changes(&changes);
+    }
+
+    fn send_watched_file_changes(&mut self, changes: &[lsp_types::FileEvent]) {
+        if changes.is_empty() { return; }
         for client in &mut self.clients {
             if client.initialized {
-                let _ = client.did_change_watched_files(std::slice::from_ref(&change));
+                let _ = client.did_change_watched_files(changes);
                 // Error OK: LSP notification is best-effort, server may be down
             }
         }

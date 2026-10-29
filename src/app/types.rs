@@ -1157,11 +1157,13 @@ pub struct GitFileChange<P = String> {
     pub original_path: Option<P>,
     pub status: char,   // 'M' modified, 'A' added, 'D' deleted, 'R' renamed/moved, '?' untracked
     pub staged: bool,
+    /// A collapsed untracked directory; index changes remain individual entries.
+    pub directory: bool,
 }
 
 impl<P> GitFileChange<P> {
     pub(crate) fn try_map_paths<Q, E>(self, mut convert: impl FnMut(P) -> Result<Q, E>) -> Result<GitFileChange<Q>, E> {
-        Ok(GitFileChange { path: convert(self.path)?, original_path: self.original_path.map(convert).transpose()?, status: self.status, staged: self.staged })
+        Ok(GitFileChange { path: convert(self.path)?, original_path: self.original_path.map(convert).transpose()?, status: self.status, staged: self.staged, directory: self.directory })
     }
 }
 impl<P: AsRef<Path>> GitFileChange<P> {
@@ -1177,6 +1179,7 @@ pub enum SourceControlRepositoryState {
     Loading,
     Available,
     Missing,
+    Failed,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -1345,10 +1348,10 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         make("format_document", "Format Document", KeyModifiers::SHIFT | KeyModifiers::ALT, KeyCode::Char('F')),
         make("toggle_problems", "Toggle Problems Panel", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('M')),
         make("show_shortcuts", "Show Keyboard Shortcuts", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('/')),
-        make("tab_switcher_next", "Tab Switcher Next", KeyModifiers::CONTROL, KeyCode::Tab),
-        make("tab_switcher_prev", "Tab Switcher Previous", KeyModifiers::CONTROL, KeyCode::BackTab),
-        make("next_tab", "Next Tab", KeyModifiers::CONTROL, KeyCode::PageDown),
-        make("prev_tab", "Previous Tab", KeyModifiers::CONTROL, KeyCode::PageUp),
+        make("next_tab", "Next Tab", KeyModifiers::CONTROL, KeyCode::Tab),
+        make("prev_tab", "Previous Tab", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Tab),
+        make("next_tab_page", "Next Tab", KeyModifiers::CONTROL, KeyCode::PageDown),
+        make("prev_tab_page", "Previous Tab", KeyModifiers::CONTROL, KeyCode::PageUp),
     ]
 }
 
