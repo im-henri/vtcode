@@ -1716,11 +1716,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let search_matches = &file_search.search_matches;
         let search_current = file_search.search_current;
         let cursor_word_owned: Option<std::sync::Arc<str>>;
-        let cursor_word: Option<&str> = if file_search.search_active {
-            None
-        } else if has_selection {
+        let cursor_word: Option<&str> = if has_selection {
             cursor_word_owned = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
             cursor_word_owned.as_deref()
+        } else if file_search.search_active {
+            None
         } else {
             // Use cached word_at_cursor to avoid recomputing every frame
             refresh_cursor_word(
@@ -2135,7 +2135,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             s = s.fg(color);
                         }
                     }
-                    if let Some(is_current) = search_runs.at(abs_col) {
+                    let search_match = search_runs.at(abs_col);
+                    if let Some(is_current) = search_match {
                         s = app.colors.ui.find_style(s, is_current, app.colors.bg_search_match);
                     }
                     // LSP document highlight (semantic symbol occurrences)
@@ -2145,6 +2146,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if occurrences
                         .as_mut()
                         .is_some_and(|cursor| cursor.contains(abs_col))
+                        && (!has_selection || search_match.is_none())
                     {
                         s = app.colors.ui.occurrence_style(
                             s,
@@ -2580,11 +2582,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let search_current = app.tabs[app.active_tab].file_search.search_current;
     // Word/selection occurrence highlighting
     let cursor_word_owned_nw: Option<std::sync::Arc<str>>;
-    let cursor_word: Option<&str> = if app.tabs[app.active_tab].file_search.search_active {
-        None
-    } else if has_selection {
+    let cursor_word: Option<&str> = if has_selection {
         cursor_word_owned_nw = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
         cursor_word_owned_nw.as_deref()
+    } else if app.tabs[app.active_tab].file_search.search_active {
+        None
     } else {
         // Use cached word_at_cursor to avoid recomputing every frame
         refresh_cursor_word(
@@ -2956,7 +2958,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if let Some(occurrences) = &mut occurrences {
                         let (word, boundary) = occurrences.run(col);
                         end = end.min(boundary);
-                        if word {
+                        if word && (!has_selection || search.is_none()) {
                             style = app.colors.ui.occurrence_style(style, app.colors.bg_word_highlight, has_selection);
                         }
                     }
@@ -3045,7 +3047,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         })
                     } else { None };
                     // Search match highlight
-                    if let Some(is_current) = search_runs.at(col) {
+                    let search_match = search_runs.at(col);
+                    if let Some(is_current) = search_match {
                         s = app.colors.ui.find_style(s, is_current, app.colors.bg_search_match);
                     }
                     // LSP document highlight (semantic symbol occurrences)
@@ -3056,6 +3059,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if occurrences
                         .as_mut()
                         .is_some_and(|cursor| cursor.contains(col))
+                        && (!has_selection || search_match.is_none())
                     {
                         s = app.colors.ui.occurrence_style(
                             s,
@@ -3763,6 +3767,64 @@ mod tests {
     use super::*;
     use crate::{app::Tab, editor::Editor};
     use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn selected_word_occurrences_remain_visible_alongside_find_matches() {
+        let occurrence_bg = Color::Rgb(20, 80, 40);
+        let find_bg = Color::Rgb(100, 60, 20);
+        let current_find_bg = Color::Rgb(140, 80, 30);
+        for word_wrap in [false, true] {
+            for word in ["alpha", "é界"] {
+                let source = format!("{word} needle beta\n{word} needle beta\n");
+                let mut editor = Editor::test_with_text(&source);
+                editor.word_wrap = word_wrap;
+                let mut app = App::test_new();
+                app.tabs = vec![Tab::new_file(editor)];
+                app.active_tab = 0;
+                app.active_pane = crate::app::ActivePane::Editor;
+                app.show_line_numbers = false;
+                app.show_minimap = false;
+                app.sticky_scroll = false;
+                app.cursor_visible = false;
+                app.colors.ui.preserve_theme_colors = true;
+                app.colors.ui.bg_selection_highlight = occurrence_bg;
+                app.colors.bg_search_match = find_bg;
+                app.colors.ui.bg_find_current = current_find_bg;
+                app.search_active = true;
+                app.search_query = "needle".into();
+                app.update_search();
+                let matches = app.search_matches.clone();
+                assert_eq!(matches.len(), 2);
+                let width = if word_wrap { 15 } else { 40 };
+                let mut terminal = Terminal::new(TestBackend::new(width, 10)).unwrap();
+                let word_len = word.chars().count();
+                for (selected, start) in [(word, 0), ("beta", word_len + 8)] {
+                    let editor = app.editor_mut().unwrap();
+                    editor.cursor_line = 0;
+                    editor.selection_anchor = Some((0, start));
+                    editor.cursor_col = start + selected.chars().count();
+                    terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+                    let buffer = terminal.backend().buffer();
+                    let cells_with_bg = |bg| buffer.content.iter().filter(|cell| cell.bg == bg).count();
+                    assert!(cells_with_bg(occurrence_bg) >= selected.chars().count(),
+                        "selected={selected}, wrap={word_wrap}: other occurrences must be highlighted");
+                    assert_eq!(cells_with_bg(find_bg), 6, "other Find match, wrap={word_wrap}");
+                    assert_eq!(cells_with_bg(current_find_bg), 6, "current Find match, wrap={word_wrap}");
+                    assert!(app.search_active);
+                    assert_eq!(app.search_matches, matches);
+                }
+                // Find navigation selects the current match itself. That
+                // selection must not recolor all remaining Find matches.
+                app.search_current = 0;
+                app.jump_to_current_match();
+                terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+                let buffer = terminal.backend().buffer();
+                assert_eq!(buffer.content.iter().filter(|cell| cell.bg == find_bg).count(), 6);
+                assert!(!buffer.content.iter().any(|cell| cell.bg == occurrence_bg));
+                assert_eq!(app.search_matches, matches);
+            }
+        }
+    }
 
     #[test]
     fn selection_occurrences_reject_long_text_before_copying_and_preserve_trim_rules() {

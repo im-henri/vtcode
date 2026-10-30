@@ -192,7 +192,7 @@ fn activate(app: &mut App, focus: Focus) {
 }
 
 fn active(app: &App) -> bool {
-    app.show_explorer && app.sidebar_view == SidebarView::Explorer
+    app.sidebar_is_visible() && app.sidebar_view == SidebarView::Explorer
 }
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {

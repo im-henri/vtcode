@@ -6,7 +6,8 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
-use crate::app::{ActivePane, App};
+use crate::app::App;
+use crate::text_input::TextInputId;
 use crate::ui_widgets::Tooltip;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,13 +164,14 @@ pub(crate) fn handle_click(app: &mut App, scope: SearchScope, col: u16, row: u16
         return true;
     }
     if scope == SearchScope::Workspace {
-        app.search_input_focused = false;
-        app.global_search_active = true;
-        app.active_pane = ActivePane::Explorer;
+        app.focus_text_input(TextInputId::GlobalSearch(app.search_focus_field));
     } else {
         app.focus_file_search_owner(button.owner);
-        app.search_input_focused = true;
-        app.active_pane = ActivePane::Editor;
+        app.focus_text_input(if app.search_focus_replace {
+            TextInputId::SearchReplace
+        } else {
+            TextInputId::SearchFind
+        });
     }
     activate(app, scope, button.control);
     true
@@ -195,11 +197,14 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
         | SearchControl::WholeWord
         | SearchControl::Regex
         | SearchControl::InSelection => {
-            match control {
-                SearchControl::MatchCase => app.search_case_sensitive = !app.search_case_sensitive,
-                SearchControl::WholeWord => app.search_whole_word = !app.search_whole_word,
-                SearchControl::Regex => app.search_regex = !app.search_regex,
-                SearchControl::InSelection => {
+            match (scope, control) {
+                (SearchScope::File, SearchControl::MatchCase) => app.search_case_sensitive = !app.search_case_sensitive,
+                (SearchScope::File, SearchControl::WholeWord) => app.search_whole_word = !app.search_whole_word,
+                (SearchScope::File, SearchControl::Regex) => app.search_regex = !app.search_regex,
+                (SearchScope::Workspace, SearchControl::MatchCase) => app.global_search_case_sensitive = !app.global_search_case_sensitive,
+                (SearchScope::Workspace, SearchControl::WholeWord) => app.global_search_whole_word = !app.global_search_whole_word,
+                (SearchScope::Workspace, SearchControl::Regex) => app.global_search_regex = !app.global_search_regex,
+                (SearchScope::File, SearchControl::InSelection) => {
                     app.search_in_selection = !app.search_in_selection;
                     app.search_selection_range = if app.search_in_selection {
                         app.editor().and_then(|editor| editor.selection_range())
@@ -207,21 +212,17 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
                         None
                     };
                 }
-                _ => {}
+                _ => return,
             }
-            if scope == SearchScope::File || app.search_active {
-                app.update_search();
-            }
-            if scope == SearchScope::Workspace
-                || (control != SearchControl::InSelection
-                    && app.show_explorer
-                    && app.sidebar_view == crate::app::SidebarView::Search
-                    && !app.global_search_query.is_empty())
-            {
-                app.update_global_search();
+            match scope {
+                SearchScope::File => app.update_search(),
+                SearchScope::Workspace => app.update_global_search(),
             }
         }
-        SearchControl::PreserveCase => app.search_preserve_case = !app.search_preserve_case,
+        SearchControl::PreserveCase => match scope {
+            SearchScope::File => app.search_preserve_case = !app.search_preserve_case,
+            SearchScope::Workspace => app.global_search_preserve_case = !app.global_search_preserve_case,
+        },
         SearchControl::Previous | SearchControl::Next => {
             app.search_focus_replace = false;
             crate::input::handle_search_key(

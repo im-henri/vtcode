@@ -127,6 +127,14 @@ impl App {
                 });
             }
             "toggle_explorer" | "toggle_sidebar" => self.toggle_explorer(),
+            "toggle_sidebar_auto_hide" => {
+                self.set_sidebar_auto_hide(!self.sidebar_auto_hide.enabled);
+                self.notify(if self.sidebar_auto_hide.enabled {
+                    "Sidebar auto-hide: On"
+                } else {
+                    "Sidebar auto-hide: Off"
+                });
+            }
             "toggle_minimap" => {
                 self.show_minimap = !self.show_minimap;
                 self.notify(if self.show_minimap {

@@ -1505,10 +1505,10 @@ impl App {
             options: Options {
                 query: self.global_search_query.clone(),
                 replacement: self.global_search_replace_query.clone(),
-                case_sensitive: self.search_case_sensitive,
-                regex: self.search_regex,
-                whole_word: self.search_whole_word,
-                preserve_case: self.search_preserve_case,
+                case_sensitive: self.global_search_case_sensitive,
+                regex: self.global_search_regex,
+                whole_word: self.global_search_whole_word,
+                preserve_case: self.global_search_preserve_case,
             },
             remote: self.remote_workspace.clone(),
         };

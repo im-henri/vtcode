@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 fn reference(editor: &Editor, level: usize) -> BTreeMap<usize, usize> {
     let mut folds = BTreeMap::new();
     for line in 0..editor.line_count() {
+        if folds.range(..line).next_back().is_some_and(|(_, &end)| line < end) { continue; }
         let indent = editor
             .rope
             .line(line)

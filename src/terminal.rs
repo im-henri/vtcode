@@ -120,6 +120,7 @@ pub struct TermGrid {
     pub title: Option<String>,
     // The latest OSC 52 write is applied by the workbench, not by log parsers.
     pub(crate) clipboard_update: Option<String>,
+    pub(crate) commands: crate::terminal_completion::Commands,
 }
 
 impl TermGrid {
@@ -161,6 +162,7 @@ impl TermGrid {
             alt_saved: None,
             title: None,
             clipboard_update: None,
+            commands: Default::default(),
         }
     }
 
@@ -800,15 +802,18 @@ impl vte::Perform for TermGrid {
             b'c' => {
                 let is_conpty = self.is_conpty;
                 let clipboard_update = self.clipboard_update.take();
+                let commands = self.commands;
                 *self = TermGrid::new(self.width, self.height);
                 self.is_conpty = is_conpty;
                 self.clipboard_update = clipboard_update;
+                self.commands = commands;
             }
             _ => {}
         }
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+        self.commands.osc(params);
         if let Some(text) = crate::clipboard::decode_osc52(params) {
             self.clipboard_update = Some(text);
         }
@@ -882,6 +887,7 @@ pub struct TerminalEmulator {
     last_size: (usize, usize),
     wake: crate::background::UiWake,
     remote: Option<(crate::remote::process::Reader, crate::remote::process::Killer)>,
+    _shell_integration: crate::terminal_shell::Integration,
 }
 
 impl TerminalEmulator {
@@ -938,6 +944,7 @@ impl TerminalEmulator {
             last_size: (width, height),
             wake: crate::background::UiWake::default(),
             remote: None,
+            _shell_integration: Default::default(),
         };
         terminal.process_while(|| true);
         terminal
@@ -953,6 +960,7 @@ impl TerminalEmulator {
             writer: Arc::new(Mutex::new(Some(Box::new(writer)))), _alive: Arc::new(AtomicBool::new(true)),
             _reader_thread: None, child_killer: None, exit_events, _wait_thread: None, master: None,
             last_size: (width, height), wake, remote: Some((reader, killer)),
+            _shell_integration: Default::default(),
         })
     }
 
@@ -1072,9 +1080,13 @@ impl TerminalEmulator {
         })?;
 
         let mut cmd = portable_pty::CommandBuilder::new(program);
+        // Completion hooks are optional; an unwritable temp directory must not
+        // prevent opening the user's ordinary shell and profile.
+        let integration = crate::terminal_shell::Integration::prepare(program, args).unwrap_or_default();
         for arg in args {
             cmd.arg(arg);
         }
+        integration.apply(&mut cmd);
         let launch_cwd = if cwd.is_dir() {
             cwd.to_path_buf()
         } else {
@@ -1144,6 +1156,7 @@ impl TerminalEmulator {
             _wait_thread: Some(wait_thread),
             master: Some(pair.master),
             remote: None,
+            _shell_integration: integration,
             last_size: (width, height),
             wake,
         })

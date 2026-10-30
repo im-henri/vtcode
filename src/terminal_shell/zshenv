@@ -1,0 +1,12 @@
+__vtcode_integration_dir=$ZDOTDIR
+if [[ $VTCODE_ZDOTDIR_SET == 1 ]]; then
+    ZDOTDIR=$VTCODE_ZDOTDIR
+else
+    unset ZDOTDIR
+fi
+if [[ -r ${ZDOTDIR:-$HOME}/.zshenv ]]; then
+    source "${ZDOTDIR:-$HOME}/.zshenv"
+fi
+__vtcode_original_zdotdir=${ZDOTDIR-}
+__vtcode_original_zdotdir_set=${+ZDOTDIR}
+if [[ -o rcs ]]; then ZDOTDIR=$__vtcode_integration_dir; fi

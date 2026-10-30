@@ -6,6 +6,16 @@ use std::time::Instant;
 #[cfg(test)]
 use std::time::Duration;
 
+#[derive(Default)]
+pub(crate) struct RenameTerminal {
+    pub target: Option<usize>,
+    pub context_target: Option<usize>,
+    pub query: String,
+    pub cursor: usize,
+    pub anchor: Option<usize>,
+    previous_focus: Option<(ActivePane, bool)>,
+}
+
 #[cfg(test)]
 const TERMINAL_PROCESS_BUDGET: Duration = Duration::from_millis(4);
 
@@ -17,7 +27,72 @@ mod responsiveness_tests;
 #[path = "app_terminal_creation_tests.rs"]
 mod creation_tests;
 
+#[cfg(test)]
+#[path = "app_terminal_rename_tests.rs"]
+mod rename_tests;
+
+#[cfg(test)]
+#[path = "app_terminal_completion_tests.rs"]
+mod completion_tests;
+
 impl App {
+    pub(crate) fn begin_terminal_rename(&mut self, index: usize) {
+        if !self.terminal_is_open(index) { return; }
+        let query = self.terminals[index].name.clone();
+        self.terminal_rename = RenameTerminal {
+            target: Some(index), cursor: query.len(),
+            anchor: (!query.is_empty()).then_some(0), query,
+            previous_focus: Some((self.active_pane, self.terminal_panel_focused)),
+            ..Default::default()
+        };
+        self.modal = Default::default();
+        self.focus_text_input(crate::text_input::TextInputId::TerminalRename);
+    }
+
+    pub(crate) fn rename_context_terminal(&mut self) {
+        if let Some(index) = self.terminal_rename.context_target.take() {
+            self.begin_terminal_rename(index);
+        }
+    }
+
+    pub(crate) fn confirm_terminal_rename(&mut self) {
+        let Some(index) = self.terminal_rename.target else { return; };
+        let name = self.terminal_rename.query.trim();
+        if name.is_empty() || name.chars().any(char::is_control) {
+            self.modal.error = Some("Enter a terminal name without control characters.".into());
+            return;
+        }
+        let Some(terminal) = self.terminals.get_mut(index) else {
+            self.cancel_terminal_rename();
+            return;
+        };
+        terminal.name = name.to_owned();
+        self.cancel_terminal_rename();
+        self.ensure_active_tab_visible();
+    }
+
+    pub(crate) fn cancel_terminal_rename(&mut self) {
+        self.terminal_rename.target = None;
+        if let Some((pane, terminal_focused)) = self.terminal_rename.previous_focus.take() {
+            self.active_pane = pane;
+            self.terminal_panel_focused = terminal_focused && self.show_terminal_sidebar
+                && self.terminal_is_open(self.active_terminal);
+        }
+    }
+
+    pub(crate) fn open_terminal_context_menu(&mut self, index: usize, col: u16, row: u16) {
+        if !self.terminal_is_open(index) { return; }
+        self.terminal_rename.context_target = Some(index);
+        self.context_menu_items = vec![crate::app::ContextMenuItem {
+            label: "Rename Terminal…".into(), shortcut: String::new(),
+            id: "rename_context_terminal", separator_after: false,
+        }];
+        self.context_menu_pos = (col, row);
+        self.context_menu_inner = None;
+        self.context_menu_selected = 0;
+        self.context_menu_active = true;
+    }
+
     /// Create a new terminal tab
     pub(crate) fn new_terminal_tab(&mut self) {
         self.new_terminal_tab_in(TerminalDock::Right);
@@ -116,6 +191,15 @@ impl App {
         if index >= self.terminals.len() {
             return;
         }
+        // Terminal processes can exit while a menu or rename form is open.
+        // Rebase both targets so a different session is never renamed.
+        let closing_rename_target = self.terminal_rename.target == Some(index);
+        for target in [&mut self.terminal_rename.target, &mut self.terminal_rename.context_target] {
+            if let Some(old) = *target {
+                *target = if old == index { None } else { Some(old - usize::from(old > index)) };
+            }
+        }
+        if closing_rename_target { self.cancel_terminal_rename(); }
         self.terminal_selection_drag = None;
         self.terminal_mouse_capture = None;
         self.terminal_clicks = Default::default();
@@ -196,6 +280,7 @@ impl App {
 
     pub(crate) fn process_terminals_until(&mut self, deadline: Instant, mut continue_processing: impl FnMut() -> bool) -> bool {
         let mut needs_redraw = false;
+        let focused = self.completion_focused_terminal_index();
         let mut processed_output = false;
         let mut exited = Vec::new();
         let count = self.terminals.len();
@@ -203,7 +288,8 @@ impl App {
             let index = self.next_terminal_to_process % count;
             self.next_terminal_to_process = (index + 1) % count;
             let mut clipboard_update = None;
-            if let Some(pty) = self.terminals[index].terminal_pty.as_mut() {
+            let terminal = &mut self.terminals[index];
+            if let Some(pty) = terminal.terminal_pty.as_mut() {
                 // Input can arrive while one terminal is being parsed. Check
                 // between parser quanta, not only when moving to another PTY.
                 if pty.process_while(|| Instant::now() < deadline && continue_processing()) {
@@ -217,6 +303,7 @@ impl App {
                     exited.push(index);
                 }
                 clipboard_update = pty.grid.clipboard_update.take();
+                needs_redraw |= terminal.completion.update(pty.grid.commands, focused == Some(index), Instant::now());
             }
             if let Some(text) = clipboard_update {
                 if let Err(error) = crate::clipboard::set_text(text) {
@@ -240,6 +327,32 @@ impl App {
             self.close_terminal_tab_at(index);
         }
         needs_redraw
+    }
+
+    pub(crate) fn acknowledge_focused_terminal_completion(&mut self) -> bool {
+        if let Some(index) = self.completion_focused_terminal_index() {
+            return self.terminals[index].completion.acknowledge();
+        }
+        false
+    }
+
+    fn completion_focused_terminal_index(&self) -> Option<usize> {
+        (self.terminal_has_focus && self.focused_text_input_id().is_none())
+            .then(|| self.focused_terminal_index()).flatten()
+    }
+
+    pub(crate) fn advance_terminal_completions(&mut self, now: Instant) -> bool {
+        let mut changed = self.acknowledge_focused_terminal_completion();
+        let animate = self.animation_settings.any_enabled();
+        for terminal in &mut self.terminals {
+            changed |= terminal.completion.advance(now, animate);
+        }
+        changed
+    }
+
+    pub(crate) fn next_terminal_completion_wait(&self, now: Instant) -> Option<std::time::Duration> {
+        self.terminals.iter().filter_map(|terminal|
+            terminal.completion.next_wait(now, self.animation_settings.any_enabled())).min()
     }
 
     /// Remove any editor-tab view attached to `index`. This is intentionally
@@ -380,6 +493,7 @@ impl App {
                     tab.name = format!("{}: {profile_name}", index + 1);
                 }
                 tab.terminal_launch_error = None;
+                tab.completion = Default::default();
                 tab.terminal_pty = Some(emu);
                 if let Some(command) = tab.pending_command.take() {
                     if let Some(pty) = &tab.terminal_pty {
@@ -403,6 +517,7 @@ impl App {
         if let Some(tab) = self.terminals.get_mut(index) {
             tab.terminal_launch_error = None;
             tab.terminal_pty = None;
+            tab.completion = Default::default();
         }
         self.ensure_terminal_pty_at(index, width, height);
     }

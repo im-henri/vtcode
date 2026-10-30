@@ -143,9 +143,9 @@ impl App {
         self.bg_global_search_running = false;
         if self.global_search_query.is_empty() { return; }
         let query = self.global_search_query.clone();
-        let case_sensitive = self.search_case_sensitive;
-        let whole_word = self.search_whole_word;
-        let is_regex = self.search_regex;
+        let case_sensitive = self.global_search_case_sensitive;
+        let whole_word = self.global_search_whole_word;
+        let is_regex = self.global_search_regex;
         let root = self.explorer.root.clone();
         let include = self.search_include_pattern.clone();
         let exclude = self.search_exclude_pattern.clone();
@@ -938,7 +938,7 @@ mod tests {
         let mut editor = crate::editor::Editor::test_with_text("猫 cat");
         editor.file_path = Some(root.path().join("open.txt"));
         app.tabs.push(crate::app::Tab::new_file(editor));
-        app.search_regex = true;
+        app.global_search_regex = true;
         app.global_search_query = r"\w+".into();
         app.update_global_search();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);

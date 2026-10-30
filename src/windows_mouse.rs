@@ -13,7 +13,6 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU8, Ordering};
 use crate::terminal_input_batch::Sender;
 
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
@@ -22,15 +21,18 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GA_ROOT, GetAncestor, GetClassNameW, GetForegroundWindow,
+    CallNextHookEx, DefWindowProcW, DispatchMessageW, GA_ROOT, GetAncestor, GetClassNameW, GetForegroundWindow,
     GetMessageW, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
-    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_MOUSE_LL, WM_LBUTTONDOWN,
+    TranslateMessage, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WindowFromPoint,
 };
 
 #[path = "windows_mouse_geometry.rs"]
 mod geometry;
+
+#[path = "windows_mouse_recovery.rs"]
+mod recovery;
 
 #[derive(Default)]
 pub(crate) struct MouseFocus {
@@ -99,6 +101,15 @@ impl MouseFocus {
 
     pub(crate) fn resized(&self) {
         self.geometry.invalidate();
+        self.reset_native_pointer();
+    }
+
+    pub(crate) fn focus_gained(&self) {
+        self.set_focused(true);
+        // A restored or rehosted Terminal pane may have a new UIA runtime ID.
+        // Only a focus report routed to this console authorizes rebinding;
+        // global UIA focus changes must keep rejecting other Terminal panes.
+        self.geometry.confirm_current_pane();
         self.reset_native_pointer();
     }
 
@@ -334,6 +345,22 @@ fn may_capture(enabled: bool, host: isize, foreground: isize) -> bool {
 }
 
 impl HookContext {
+    fn recovered(&mut self) {
+        // Releases may have been lost with the hook. End the old editor drag
+        // while retaining release suppression until the physical button is up.
+        if self.pointer.active {
+            for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+                if self.pointer.buttons & pointer_mask(button) != 0 {
+                    self.send_mouse(MouseEventKind::Up(button), self.pointer.position, KeyModifiers::NONE);
+                }
+            }
+            self.pointer.active = false;
+        }
+        self.wheel_remainder = [0; 2];
+        self.focus.reset_native_pointer();
+        self.focus.geometry.invalidate();
+    }
+
     fn send_mouse(
         &self,
         kind: MouseEventKind,
@@ -581,6 +608,7 @@ fn with_physical_coordinates<T>(read: impl FnOnce() -> T) -> T {
 
 unsafe extern "system" fn mouse_hook(code: i32, message: usize, data: isize) -> isize {
     if code >= 0 {
+        recovery::note_callback();
         // SAFETY: for a nonnegative WH_MOUSE_LL notification, Windows supplies
         // a valid MSLLHOOKSTRUCT for the lifetime of this callback.
         let event = unsafe { &*(data as *const MSLLHOOKSTRUCT) };
@@ -679,6 +707,7 @@ impl WindowsMouseInput {
                 let _id = ThreadId(hook_thread_id.clone());
                 setup();
                 if hook_stopping.load(Ordering::Acquire) { return; }
+                let _input_priority = crate::worker_priority::InputPriority::new(true);
                 CONTEXT.set(Some(HookContext {
                     sender,
                     wake,
@@ -695,26 +724,40 @@ impl WindowsMouseInput {
                     let mut message: MSG = std::mem::zeroed();
                     PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
                     *hook_thread_id.lock().unwrap_or_else(|error| error.into_inner()) = Some(GetCurrentThreadId());
-                    let hook = SetWindowsHookExW(
-                        WH_MOUSE_LL,
-                        Some(mouse_hook),
-                        GetModuleHandleW(std::ptr::null()),
-                        0,
-                    );
-                    if hook.is_null() {
-                        let _ = ready.send(Err(io::Error::last_os_error()));
-                        CONTEXT.set(None);
-                        return;
-                    }
+                    let activity = recovery::ActivityWindow::start().map_err(|error| {
+                        log_warn!("Windows Terminal mouse recovery unavailable: {error}");
+                        error
+                    }).ok();
+                    let mut hook = match recovery::Hook::install() {
+                        Ok(hook) => hook,
+                        Err(error) => {
+                            let _ = ready.send(Err(error));
+                            CONTEXT.set(None);
+                            return;
+                        }
+                    };
                     if ready.send(Ok(GetCurrentThreadId())).is_ok()
                         && !hook_stopping.load(Ordering::Acquire)
                     {
                         while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
+                            if activity.as_ref().is_some_and(|activity| activity.owns(&message)) {
+                                let foreground = GetForegroundWindow() as isize;
+                                let focused = CONTEXT.with_borrow(|context| context.as_ref().is_some_and(|context|
+                                    may_capture(true, context.focus.host.load(Ordering::Acquire), foreground)));
+                                if focused && hook.recover_if_stalled(std::time::Instant::now()) {
+                                    CONTEXT.with_borrow_mut(|context| {
+                                        if let Some(context) = context { context.recovered(); }
+                                    });
+                                }
+                                // WM_INPUT requires default processing to release
+                                // the native packet, including foreground input.
+                                DefWindowProcW(message.hwnd, message.message, message.wParam, message.lParam);
+                                continue;
+                            }
                             TranslateMessage(&message);
                             DispatchMessageW(&message);
                         }
                     }
-                    UnhookWindowsHookEx(hook);
                 }
                 CONTEXT.set(None);
             })?;
@@ -1660,6 +1703,43 @@ mod tests {
             KeyModifiers::NONE,
             grid
         ));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn recovering_mouse_input_ends_lost_drag_and_resets_partial_wheel_delta() {
+        let (mut context, receiver) = pointer_context();
+        let grid = Some(geometry::test_grid());
+        assert!(context.handle_pointer(
+            WM_LBUTTONDOWN, &native_event(55, 91, 0), 12, KeyModifiers::SHIFT, grid,
+        ));
+        assert_eq!(receive_mouse(&receiver).kind, MouseEventKind::Down(MouseButton::Left));
+        assert!(context.handle_pointer(
+            WM_MOUSEWHEEL, &native_event(55, 91, -60), 12, KeyModifiers::SHIFT, grid,
+        ));
+        assert!(receiver.try_recv().is_err());
+
+        context.recovered();
+        context.recovered();
+        assert_eq!(receive_mouse(&receiver).kind, MouseEventKind::Up(MouseButton::Left));
+        assert!(receiver.try_recv().is_err(), "cancel the lost gesture only once");
+        assert!(context.handle_pointer(
+            WM_LBUTTONUP, &native_event(55, 91, 0), 12, KeyModifiers::NONE, grid,
+        ));
+        assert!(receiver.try_recv().is_err(), "swallow the original captured release");
+
+        for tick in 0..2 {
+            assert!(context.handle_pointer(
+                WM_MOUSEWHEEL, &native_event(55, 91, -60), 12, KeyModifiers::SHIFT, grid,
+            ));
+            if tick == 0 {
+                assert!(receiver.try_recv().is_err(), "discard the pre-interruption half tick");
+            }
+        }
+        let wheel = receive_mouse(&receiver);
+        assert_eq!(wheel.kind, MouseEventKind::ScrollDown);
+        assert_eq!(wheel.modifiers, KeyModifiers::SHIFT);
+        assert_eq!((wheel.column, wheel.row), (3, 2));
         assert!(receiver.try_recv().is_err());
     }
 }

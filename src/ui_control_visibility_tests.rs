@@ -2944,7 +2944,7 @@ fn search_sidebar_text_and_matches_use_sidebar_and_find_roles() {
                 assert_eq!(
                     count.bg,
                     crate::theme_workbench::ColorLayer::rgba(102, 68, 153, 128)
-                        .over(app.colors.bg_sidebar)
+                        .over(buffer[(file_x, file_y)].bg)
                         .unwrap()
                 );
                 snapshot(buffer, "independent sidebar search roles");

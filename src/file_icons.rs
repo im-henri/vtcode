@@ -6,6 +6,69 @@
 //! renderers; product icons and surrounding text still use workbench colors.
 
 use ratatui::style::Color;
+use std::path::Path;
+
+/// Resolve explicit associations before built-in filename and extension icons.
+pub(crate) fn for_path(
+    path: &Path,
+    associations: &crate::file_associations::Associations,
+) -> (&'static str, Color) {
+    crate::file_associations::resolve(associations, path).map_or_else(
+        || for_name(&path.file_name().unwrap_or_default().to_string_lossy()),
+        |(_, language)| for_language(language),
+    )
+}
+
+/// Open documents also honor temporary language modes and historical filenames.
+pub(crate) fn for_editor(editor: &crate::editor::Editor) -> (&'static str, Color) {
+    if let Some(language) = editor.syntax_language_token() {
+        return for_language(language);
+    }
+    let name = editor
+        .syntax_file_path()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .unwrap_or_else(|| editor.file_name());
+    for_name(name)
+}
+
+/// Reuse the icon theme's glyph and color for the selected language. Languages
+/// without a themed icon use the neutral icon rather than the original type.
+pub(crate) fn for_language(language: &str) -> (&'static str, Color) {
+    let name = match crate::file_associations::language_id(language).as_str() {
+        "rust" => "file.rs",
+        "python" => "file.py",
+        "javascript" | "javascriptreact" | "jsx" => "file.js",
+        "typescript" | "typescriptreact" | "tsx" => "file.ts",
+        "html" => "file.html",
+        "css" | "scss" | "sass" | "less" => "file.css",
+        "json" | "jsonc" | "jsonwithcomments" | "json5" => "file.json",
+        "markdown" | "mdx" => "file.md",
+        "toml" | "toml(cargo)" | "yaml" | "ini" | "properties" | "editorconfig" => "file.toml",
+        "shell" | "shellscript" | "powershell" | "batch" | "batchfile" | "bat" | "fish" | "zsh" => {
+            "file.sh"
+        }
+        "go" => "file.go",
+        "c" | "objective-c" => "file.c",
+        "cpp" | "objective-cpp" => "file.cpp",
+        "assembly" | "asm" | "asmx86_64" | "mipsassembly" | "risc-v" | "riscv" => "file.asm",
+        "java" => "file.java",
+        "ruby" => "file.rb",
+        "php" => "file.php",
+        "swift" => "file.swift",
+        "kotlin" => "file.kt",
+        "xml" | "xsl" => "file.xml",
+        "sql" => "file.sql",
+        "dockerfile" | "docker" => "Dockerfile",
+        "makefile" | "make" => "Makefile",
+        "gitconfig" | "gitignore" | "ignore" => ".gitignore",
+        "env" | "dotenv" => ".env",
+        "csv" => "file.csv",
+        "webassembly" | "wasm" | "wat" => "file.wasm",
+        _ => "",
+    };
+    for_name(name)
+}
 
 pub(crate) fn for_name(name: &str) -> (&'static str, Color) {
     let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
@@ -103,7 +166,83 @@ pub(crate) fn for_name(name: &str) -> (&'static str, Color) {
 
 #[cfg(test)]
 mod tests {
-    use super::for_name;
+    use super::*;
+
+    #[test]
+    fn language_names_and_ids_share_the_file_icon_theme() {
+        for (language, filename) in [
+            ("Rust", "file.rs"),
+            ("C++", "file.cpp"),
+            ("cpp", "file.cpp"),
+            ("Python", "file.py"),
+            ("JavaScript (Babel)", "file.js"),
+            ("TypeScript React", "file.tsx"),
+            ("Shell Script (Bash)", "file.sh"),
+            ("Shell", "file.sh"),
+            ("Batch File", "file.bat"),
+            ("MIPS Assembly", "file.s"),
+            ("RISC-V", "file.s"),
+            ("JSON with Comments", "file.jsonc"),
+            ("Makefile", "Makefile"),
+            ("Dockerfile", "Dockerfile"),
+            ("Plain Text", "unknown"),
+            ("plaintext", "unknown"),
+            ("A language without a themed icon", "unknown"),
+        ] {
+            assert_eq!(for_language(language), for_name(filename), "{language}");
+            assert_eq!(
+                unicode_width::UnicodeWidthStr::width(for_language(language).0),
+                3,
+                "associations preserve tree and tab hit geometry"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_rules_replace_builtin_extensions_and_special_filename_icons() {
+        let associations = [
+            ("*.rs", "C++"),
+            ("*.custom", "Python"),
+            ("special.rs", "JavaScript"),
+            ("Dockerfile.*", "Rust"),
+            (".gitignore", "Plain Text"),
+        ]
+        .map(|(pattern, language)| (pattern.into(), language.into()))
+        .into_iter()
+        .collect();
+        for (filename, expected) in [
+            ("src/main.rs", "file.cpp"),
+            ("src/special.rs", "file.js"),
+            ("model.custom", "file.py"),
+            ("Dockerfile.rs", "file.rs"),
+            (".gitignore", "unknown"),
+            ("unmatched.py", "file.py"),
+            ("MAIN.RS", "file.rs"),
+        ] {
+            assert_eq!(
+                for_path(Path::new(filename), &associations),
+                for_name(expected),
+                "{filename}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsaved_documents_honor_associations_and_temporary_language_choices() {
+        let mut editor = crate::editor::Editor::test_with_text("// source");
+        editor.suggested_file_name = Some("model.rs".into());
+        editor
+            .language_associations
+            .insert("*.rs".into(), "C++".into());
+        assert_eq!(for_editor(&editor), for_name("file.cpp"));
+        editor.language_override = Some("Python".into());
+        assert_eq!(for_editor(&editor), for_name("file.py"));
+        editor.language_override = None;
+        editor.language_associations.clear();
+        assert_eq!(for_editor(&editor), for_name("file.rs"));
+        editor.language_override = Some("Plain Text".into());
+        assert_eq!(for_editor(&editor), for_name("unknown"));
+    }
 
     #[test]
     fn associations_are_case_insensitive_and_filename_matches_take_precedence() {

@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -25,13 +25,9 @@ const SCREENCAST_FADE_MS: u64 = 3000;
 /// Maximum width for the screencast toast panel.
 const SCREENCAST_MAX_WIDTH: usize = 50;
 
-pub(crate) fn file_icon(name: &str) -> &'static str {
-    crate::file_icons::for_name(name).0
-}
-
-pub(crate) fn tab_icon(kind: crate::app::TabKind, name: &str) -> &'static str {
-    match kind {
-        crate::app::TabKind::File | crate::app::TabKind::GitRevision => file_icon(name),
+pub(crate) fn tab_icon(tab: &crate::app::Tab) -> &'static str {
+    match tab.kind {
+        crate::app::TabKind::File | crate::app::TabKind::GitRevision => crate::file_icons::for_editor(&tab.editor).0,
         crate::app::TabKind::Diff(_) => "↔ ",
         crate::app::TabKind::CommitDetails => "◈ ",
         crate::app::TabKind::MarkdownPreview => "Md ",
@@ -41,11 +37,6 @@ pub(crate) fn tab_icon(kind: crate::app::TabKind, name: &str) -> &'static str {
         crate::app::TabKind::Terminal => ">_ ",
         crate::app::TabKind::Chat(_) => "◇ ",
     }
-}
-
-/// File icons have their own palette, separate from workbench color themes.
-pub(crate) fn file_icon_colored(name: &str) -> (&'static str, Color) {
-    crate::file_icons::for_name(name)
 }
 
 pub(crate) fn draw_confirm_close(f: &mut Frame, app: &mut App) {

@@ -8,7 +8,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
-use crate::ui_dialogs::{file_icon_colored, tab_icon};
+use crate::ui_dialogs::tab_icon;
 use crate::ui_widgets::{DropdownItem, DropdownMenu, themed_dropdown_colors};
 
 #[path = "tab_path_labels.rs"]
@@ -182,8 +182,8 @@ impl TabBarHits {
 }
 
 fn tab_label_width(app: &App, tab: &crate::app::Tab, display_name: &str) -> usize {
-    let icon = chat_tab_marker(app, tab.kind).map_or_else(
-        || tab_icon(tab.kind, tab.editor.file_name()), |(icon, _)| icon,
+    let icon = tab_marker(app, tab).map_or_else(
+        || tab_icon(tab), |(icon, _)| icon,
     );
     tab_label_width_with_icon(tab, display_name, icon)
 }
@@ -295,6 +295,31 @@ pub(crate) fn chat_tab_marker(app: &App, kind: crate::app::TabKind) -> Option<(&
     } else { ("◇ ", app.colors.fg_dim) })
 }
 
+fn tab_marker(app: &App, tab: &crate::app::Tab) -> Option<(&'static str, ratatui::style::Color)> {
+    if tab.kind != crate::app::TabKind::Terminal {
+        return chat_tab_marker(app, tab.kind);
+    }
+    let notice = &app.terminals.get(tab.terminal_idx?)?.completion;
+    notice.visible(std::time::Instant::now()).then_some((
+        // Match the usual ">_ " icon width so close targets never move.
+        "●  ", if notice.failed() { app.colors.fg_error } else { app.colors.fg_success },
+    ))
+}
+
+pub(crate) fn terminal_completion_background(
+    app: &App, index: Option<usize>, background: ratatui::style::Color, now: std::time::Instant,
+) -> ratatui::style::Color {
+    let Some(notice) = index.and_then(|index| app.terminals.get(index)).map(|terminal| &terminal.completion) else {
+        return background;
+    };
+    if notice.pulse(now, app.terminal_has_focus && app.animation_settings.any_enabled()) {
+        let accent = if notice.failed() { app.colors.fg_error } else { app.colors.fg_success };
+        crate::app_theme::lerp_color(background, accent, 0.22)
+    } else {
+        background
+    }
+}
+
 pub(crate) fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
     draw_tab_bar_at(f, app, area, std::time::Instant::now());
 }
@@ -403,6 +428,7 @@ pub(crate) fn draw_tab_bar_for_group(
         } else {
             app.colors.ui.bg_unfocused_tab_inactive
         };
+        let tab_bg = terminal_completion_background(app, tab.terminal_idx, tab_bg, now);
         let fg = app.colors.ui.readable_foreground(
             if focused {
                 if is_active {
@@ -439,8 +465,9 @@ pub(crate) fn draw_tab_bar_for_group(
                 .add_modifier(Modifier::UNDERLINED)
                 .underline_color(border);
         }
-        let icon = chat_tab_marker(app, tab.kind).map_or_else(
-            || tab_icon(tab.kind, tab.editor.file_name()),
+        let marker = tab_marker(app, tab);
+        let icon = marker.map_or_else(
+            || tab_icon(tab),
             |(icon, _)| icon,
         );
         let mut spans = vec![Span::styled(if tab.pinned { " 📌" } else { " " }, style)];
@@ -454,7 +481,9 @@ pub(crate) fn draw_tab_bar_for_group(
             tab.kind,
             crate::app::TabKind::File | crate::app::TabKind::GitRevision
         ) {
-            style.fg(file_icon_colored(tab.editor.file_name()).1)
+            style.fg(crate::file_icons::for_editor(&tab.editor).1)
+        } else if tab.kind == crate::app::TabKind::Terminal && let Some((_, color)) = marker {
+            style.fg(app.colors.ui.readable_foreground(color, tab_bg, 3.0))
         } else {
             style
         };
@@ -651,7 +680,6 @@ fn draw_tab_bar_labels(
     }
 
     for (visible_count, (i, tab)) in app.tabs.iter().enumerate().skip(scroll).enumerate() {
-        let name = tab.editor.file_name();
         let is_file_tab = matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision);
         let deleted_prefix =
             if is_file_tab && tab.editor.disk_unavailable {
@@ -659,8 +687,8 @@ fn draw_tab_bar_labels(
             } else {
                 ""
             };
-        let chat_marker = chat_tab_marker(app, tab.kind);
-        let icon = chat_marker.map_or_else(|| tab_icon(tab.kind, name), |(icon, _)| icon);
+        let chat_marker = tab_marker(app, tab);
+        let icon = chat_marker.map_or_else(|| tab_icon(tab), |(icon, _)| icon);
         let file_icon_color = chat_marker.map(|(_, color)| color);
         let show_close = !tab.pinned
             && (i == app.active_tab || app.hovered_tab == Some(i) || app.dragging_tab == Some(i));
@@ -696,6 +724,7 @@ fn draw_tab_bar_labels(
         }
 
         if used_width + 2 < available_width
+            && matches!(tab.kind, crate::app::TabKind::Chat(_))
             && chat_marker.is_some_and(|(icon, _)| icon.trim_end() == app.chat.activity.symbol()) {
             app.chat.activity.show();
         }
@@ -712,6 +741,8 @@ fn draw_tab_bar_labels(
         } else {
             (fg_dim, tab_inactive_bg)
         };
+
+        let bg = terminal_completion_background(app, tab.terminal_idx, bg, now);
 
         let fg = app.colors.ui.readable_foreground(fg, bg, 4.5);
         let mut text_style = if is_file_tab && tab.preview && !tab.pinned && !tab.has_unsaved_changes() {
@@ -734,7 +765,7 @@ fn draw_tab_bar_labels(
             let mod_color = app.colors.ui.readable_foreground(app.colors.fg_modified_indicator, bg, 3.0);
             spans.push(Span::styled("● ", Style::default().fg(mod_color).bg(bg)));
         }
-        let file_icon_color = if is_file_tab { Some(file_icon_colored(name).1) } else { file_icon_color };
+        let file_icon_color = if is_file_tab { Some(crate::file_icons::for_editor(&tab.editor).1) } else { file_icon_color };
         if is_file_tab && has_gradient {
             let offset = used_width + prefix.width() + modified_width;
             file_icon_areas.push(Rect::new(area.x.saturating_add(crate::helpers::len_as_u16(offset)),
@@ -1094,7 +1125,9 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
             ));
             x_pos += 3;
         }
-        let (icon, icon_color) = file_icon_colored(file_name);
+        let (icon, icon_color) = app.editor().map_or_else(
+            || crate::file_icons::for_name(file_name), crate::file_icons::for_editor,
+        );
         let mut icon_str = String::with_capacity(icon.len() + 1);
         icon_str.push_str(icon);
         icon_str.push(' ');

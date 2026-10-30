@@ -684,7 +684,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
 }
 
 pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
-    if !app.show_explorer || app.sidebar_view != SidebarView::Extensions {
+    if !app.sidebar_is_visible() || app.sidebar_view != SidebarView::Extensions {
         return;
     }
     let Some((action, area)) = app

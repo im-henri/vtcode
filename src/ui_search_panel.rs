@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, Paragraph},
 };
@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{ActivePane, App, GlobalSearchResult, SidebarView};
 use crate::text_input::TextInputId;
-use crate::ui_dialogs::file_icon_colored;
+use crate::theme_workbench::ColorLayer;
 use crate::ui_widgets::{InputField, VerticalScrollbar};
 use crate::ui_search_controls::{SearchControl, SearchScope, draw_button};
 
@@ -143,9 +143,9 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
     );
     draw_field(f, app, search_field_area, 0, "Search");
     let toggles = [
-        (SearchControl::MatchCase, "Aa", app.search_case_sensitive),
-        (SearchControl::WholeWord, "ab", app.search_whole_word),
-        (SearchControl::Regex, ".*", app.search_regex),
+        (SearchControl::MatchCase, "Aa", app.global_search_case_sensitive),
+        (SearchControl::WholeWord, "ab", app.global_search_whole_word),
+        (SearchControl::Regex, ".*", app.global_search_regex),
     ];
     for (area, (control, label, active)) in toggle_areas.into_iter().zip(toggles) {
         draw_button(f, app, SearchScope::Workspace, control, area, label, active, false);
@@ -170,7 +170,7 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         draw_field(f, app, field_area, 1, "Replace");
         let disabled = app.global_search_results.is_empty()
             || app.bg_global_search_running || app.bg_global_replace_running;
-        let preserve_case = app.search_preserve_case;
+        let preserve_case = app.global_search_preserve_case;
         draw_button(f, app, SearchScope::Workspace, SearchControl::PreserveCase,
             Rect::new(field_area.right(), replace_area.y, preserve_width, 1), "AB", preserve_case, false);
         draw_button(f, app, SearchScope::Workspace, SearchControl::ReplaceAll,
@@ -266,6 +266,12 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let bg = app.colors.bg_sidebar;
+    // A faint wash of the sidebar text color separates file headers on both
+    // light and dark themes without competing with selection or hover fills.
+    let header_bg = match app.colors.ui.sidebar_text_color(bg) {
+        Color::Rgb(r, g, b) => ColorLayer::rgba(r, g, b, 16).over(bg).unwrap_or(bg),
+        _ => bg,
+    };
     let active = app.active_pane == ActivePane::Explorer && app.sidebar_view == SidebarView::Search;
     let total_rows = app.global_search_results.row_count();
     let visible = area.height as usize;
@@ -297,7 +303,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 result_area.y + (visual_row - scroll) as u16, result_area.width, 1);
             let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
             let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                bg, false, active, hovered);
+                if hovered { bg } else { header_bg }, false, active, hovered);
             let row_bg = row_style.bg.unwrap_or(bg);
             let dim = app.colors.ui.description_color(row_bg);
             let collapsed = app.is_global_search_file_collapsed(&result.file_path);
@@ -313,14 +319,12 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                 .map(|p| p.to_string_lossy())
                 .unwrap_or_default();
             let count = app.global_search_results.file_matches(&result.file_path);
-            let (icon, icon_color) = file_icon_colored(name);
             items.push(
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         if collapsed { "▶ " } else { "▼ " },
                         Style::default().fg(dim),
                     ),
-                    Span::styled(icon, Style::default().fg(icon_color)),
                     Span::styled(name.to_string(), row_style),
                     Span::raw("  "),
                     Span::styled(

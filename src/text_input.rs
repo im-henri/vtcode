@@ -24,6 +24,7 @@ pub(crate) enum TextInputId {
     FolderSearch,
     FolderName,
     RenameSymbol,
+    TerminalRename,
     SettingsSearch,
     SettingsValue,
     AgentSetting(usize),
@@ -763,6 +764,11 @@ impl App {
                 &mut self.rename.symbol_cursor,
                 &mut self.rename.symbol_selection_anchor,
             ),
+            TextInputId::TerminalRename => (
+                &mut self.terminal_rename.query,
+                &mut self.terminal_rename.cursor,
+                &mut self.terminal_rename.anchor,
+            ),
             TextInputId::SettingsSearch => (
                 &mut self.settings_editor_search,
                 &mut self.settings_editor_search_cursor,
@@ -796,6 +802,7 @@ impl App {
             id,
             TextInputId::SaveAs
                 | TextInputId::RenameSymbol
+                | TextInputId::TerminalRename
                 | TextInputId::GotoLine
                 | TextInputId::CommandPalette
         ) {
@@ -926,13 +933,6 @@ impl App {
         if self.symbol_list_active {
             return Some(TextInputId::SymbolList);
         }
-        let sidebar_search_active =
-            self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search;
-        if self.global_search_active
-            && (!sidebar_search_active || self.active_pane == crate::app::ActivePane::Explorer)
-        {
-            return Some(TextInputId::GlobalSearch(self.search_focus_field));
-        }
         if self.task_picker_active {
             return Some(TextInputId::TaskPicker);
         }
@@ -948,13 +948,23 @@ impl App {
         if self.quick_open_active {
             return Some(TextInputId::QuickOpen);
         }
+        let sidebar_search_active =
+            self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search;
+        if self.global_search_active
+            && (!sidebar_search_active || self.active_pane == crate::app::ActivePane::Explorer)
+        {
+            return Some(TextInputId::GlobalSearch(self.search_focus_field));
+        }
         if self.show_explorer && self.sidebar_view == crate::app::SidebarView::Explorer
             && self.active_pane == crate::app::ActivePane::Explorer
             && self.explorer.find.open && self.explorer.find.focus == crate::explorer_find::Focus::Input
         {
             return Some(TextInputId::ExplorerFind);
         }
-        if self.file_search_visible() && self.search_input_focused {
+        if self.active_pane == crate::app::ActivePane::Editor
+            && self.file_search_visible() && self.search_input_focused
+            && !self.docked_terminal_has_focus()
+        {
             return Some(if self.search_focus_replace {
                 TextInputId::SearchReplace
             } else {
@@ -1014,6 +1024,7 @@ impl App {
                 TextInputId::TaskPicker => self.task_picker_active,
                 TextInputId::SaveAs => self.save_as_active,
                 TextInputId::RenameSymbol => self.rename.symbol_active,
+                TextInputId::TerminalRename => self.terminal_rename.target.is_some(),
                 TextInputId::SettingsSearch => self.settings_editor_active,
                 TextInputId::SettingsValue => self.settings_value_editing,
                 TextInputId::AgentSetting(_) => self.agent_settings.active && self.agent_settings.draft.is_some(),
@@ -1102,12 +1113,13 @@ impl App {
                 self.file_associations.error = None;
                 self.file_associations.reveal_focus = true;
             }
-            TextInputId::SaveAs | TextInputId::RenameSymbol => crate::ui_modal::field_changed(self),
+            TextInputId::SaveAs | TextInputId::RenameSymbol | TextInputId::TerminalRename => crate::ui_modal::field_changed(self),
             TextInputId::FolderSearch => self.filter_folder_browser(),
             TextInputId::FolderAddress | TextInputId::FolderName => self.folder_browser.error = None,
             TextInputId::QuickOpen => self.update_quick_open(),
             TextInputId::ExplorerFind => self.update_explorer_find(),
             TextInputId::GitBranch => {
+                self.git_branch_dialog.field_changed();
                 self.git_branch_picker_selected = 0;
                 self.git_branch_picker_scroll_offset = 0;
             }
@@ -1161,6 +1173,9 @@ impl App {
         modifiers: KeyModifiers,
         paste: Option<&str>,
     ) -> TextInputResult {
+        if id == TextInputId::GitBranch && !self.git_branch_dialog.accepts_text() {
+            return TextInputResult { consumed: true, changed: false };
+        }
         if id == TextInputId::Chat {
             let before = self.chat.input.clone();
             self.edit_chat_input(code, modifiers, paste);
@@ -1235,7 +1250,8 @@ impl App {
             | TextInputId::SymbolList
             | TextInputId::TaskPicker
             | TextInputId::SaveAs
-            | TextInputId::RenameSymbol => true,
+            | TextInputId::RenameSymbol
+            | TextInputId::TerminalRename => true,
             TextInputId::GlobalSearch(_) => {
                 !(self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search)
             }
@@ -1525,6 +1541,7 @@ mod tests {
         TextInputId::FolderSearch,
         TextInputId::FolderName,
         TextInputId::RenameSymbol,
+        TextInputId::TerminalRename,
         TextInputId::SettingsSearch,
         TextInputId::SettingsValue,
         TextInputId::AgentSetting(0),
@@ -1591,6 +1608,10 @@ mod tests {
             TextInputId::TaskPicker => app.task_picker_active = true,
             TextInputId::SaveAs => app.save_as_active = true,
             TextInputId::RenameSymbol => app.rename.symbol_active = true,
+            TextInputId::TerminalRename => {
+                app.new_terminal_tab();
+                app.begin_terminal_rename(app.active_terminal);
+            }
             TextInputId::SettingsSearch | TextInputId::SettingsValue => {
                 app.settings_editor_active = true;
                 app.settings_focus_categories = false;
@@ -1762,6 +1783,7 @@ mod tests {
                 TextInputId::RenameSymbol => {
                     crate::ui_dialogs::draw_rename_symbol_dialog(frame, app)
                 }
+                TextInputId::TerminalRename => crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::RenameTerminal),
                 TextInputId::SettingsSearch | TextInputId::SettingsValue => {
                     crate::ui_settings::draw_settings_editor(frame, app, area)
                 }

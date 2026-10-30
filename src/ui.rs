@@ -378,6 +378,7 @@ fn apply_area_gradient_reference(
 }
 
 pub(crate) fn draw(f: &mut Frame, app: &mut App) {
+    app.acknowledge_focused_terminal_completion();
     app.viewport_area = f.area();
     app.begin_copy_animation_frame(std::time::Instant::now());
     app.loading.begin_frame();
@@ -542,8 +543,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     };
 
     // Body: sidebar + editor section
+    app.sidebar_auto_hide.edge = (!workbench_area.is_empty()).then(|| Rect::new(
+        if app.sidebar_right { workbench_area.right() - 1 } else { middle_area.x },
+        workbench_area.y, 1, workbench_area.height,
+    ));
     let sidebar_width = responsive_sidebar_width(workbench_area.width, app.explorer_width);
-    if app.show_explorer && sidebar_width > 0 {
+    if app.sidebar_is_visible() && sidebar_width > 0 {
         let (sidebar_area, editor_area) = if app.sidebar_right {
             let body = Layout::default()
                 .direction(Direction::Horizontal)
@@ -685,7 +690,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_performance_details::draw_docked(f, app);
     crate::ui_file_deletion::draw(f, app);
 
-    if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search {
+    if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Search {
         crate::ui_search_controls::draw_tooltip(f, app, crate::ui_search_controls::SearchScope::Workspace);
     }
 
@@ -822,7 +827,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
 
     // Explorer hover tooltip (file size + modified date). Filesystem metadata
     // and line counting are worker-backed; rendering only consults snapshots.
-    if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer
+    if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Explorer
         && !app.explorer_context_active
     {
         if let Some((entry_path, entry_is_dir)) = app

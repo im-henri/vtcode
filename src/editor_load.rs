@@ -1,12 +1,17 @@
 //! Bounded text decoding for opens and external reloads.
 use super::FILE_READ_BUFFER_BYTES;
 use ropey::{Rope, RopeBuilder};
-use std::{io::{self, BufRead, Read}, path::Path};
+use std::{io::{self, BufRead, Read, Seek, SeekFrom}, path::Path};
 
 const HEADER_BYTES: usize = 8192;
+const PROBE_THRESHOLD: u64 = 1024 * 1024;
+
+#[cfg(test)]
+#[path = "editor_binary_detection_tests.rs"]
+mod binary_tests;
 
 pub(super) fn read_text_stream_cancellable(
-    file: impl Read, path: &Path, file_size: u64, cancel: &crate::background::CancellationToken,
+    file: impl Read + Seek, path: &Path, file_size: u64, cancel: &crate::background::CancellationToken,
 ) -> io::Result<(Rope, &'static str)> {
     struct Reader<'a, R> { file: R, cancel: &'a crate::background::CancellationToken }
     impl<R: Read> Read for Reader<'_, R> {
@@ -17,33 +22,102 @@ pub(super) fn read_text_stream_cancellable(
             self.file.read(bytes)
         }
     }
-    let result = read_text_stream(Reader { file, cancel }, path, file_size);
+    impl<R: Seek> Seek for Reader<'_, R> {
+        fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+            if self.cancel.is_cancelled() { return Err(io::Error::other("File open cancelled")); }
+            self.file.seek(position)
+        }
+    }
+    let result = read_text_file(Reader { file, cancel }, path, file_size);
     if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
     result
 }
 
-pub(super) fn read_text_stream(
-    mut file: impl Read, path: &Path, file_size: u64,
-) -> io::Result<(Rope, &'static str)> {
+fn read_header(file: &mut impl Read, file_size: u64) -> io::Result<Vec<u8>> {
     let mut header = Vec::with_capacity(file_size.min(HEADER_BYTES as u64) as usize);
     // A stale size must not hide a BOM or binary header in a file that grew.
     file.by_ref().take(HEADER_BYTES as u64).read_to_end(&mut header)?;
+    Ok(header)
+}
+
+fn utf16_header(header: &[u8]) -> bool {
+    header.starts_with(&[0xff, 0xfe]) || header.starts_with(&[0xfe, 0xff])
+}
+
+/// Read at most three small samples before allocating a large text model.
+/// The headless node calls this same loader, so binary bodies stay on the node.
+pub(super) fn read_text_file(
+    mut file: impl Read + Seek, path: &Path, file_size: u64,
+) -> io::Result<(Rope, &'static str)> {
+    let header = read_header(&mut file, file_size)?;
+    if !utf16_header(&header) {
+        if binary_sample(&header) { return Ok(binary_preview(path, file_size)); }
+        if header.len() == HEADER_BYTES && file_size >= PROBE_THRESHOLD {
+            let mut sample = Vec::with_capacity(HEADER_BYTES);
+            for offset in [file_size / 2 - HEADER_BYTES as u64 / 2, file_size - HEADER_BYTES as u64] {
+                file.seek(SeekFrom::Start(offset))?;
+                sample.clear();
+                file.by_ref().take(HEADER_BYTES as u64).read_to_end(&mut sample)?;
+                if binary_sample(&sample) { return Ok(binary_preview(path, file_size)); }
+            }
+            // Resume immediately after the already-read prefix. Text is decoded
+            // once, without copying or rereading the entire file for detection.
+            file.seek(SeekFrom::Start(header.len() as u64))?;
+        }
+    }
+    decode_stream(file, header, path, file_size)
+}
+
+#[cfg(test)]
+pub(super) fn read_text_stream(
+    mut file: impl Read, path: &Path, file_size: u64,
+) -> io::Result<(Rope, &'static str)> {
+    let header = read_header(&mut file, file_size)?;
+    decode_stream(file, header, path, file_size)
+}
+
+fn binary_preview(path: &Path, file_size: u64) -> (Rope, &'static str) {
+    let size_str = if file_size > 1024 * 1024 {
+        format!("{:.1} MB", file_size as f64 / (1024.0 * 1024.0))
+    } else if file_size > 1024 {
+        format!("{:.1} KB", file_size as f64 / 1024.0)
+    } else { format!("{file_size} bytes") };
+    (Rope::from_str(&format!(
+        "Binary file - cannot display\n\nFile: {}\nSize: {}\n\nThis file appears to be binary and cannot be edited as text.",
+        path.display(), size_str,
+    )), "Binary")
+}
+
+fn binary_sample(bytes: &[u8]) -> bool {
+    if memchr::memchr(0, bytes).is_some() { return true; }
+    // Keep ordinary log controls (tabs, newlines, form feeds, backspaces and
+    // ANSI escapes) and occasional malformed text bytes editable.
+    let controls = bytes.iter().filter(|&&byte| matches!(byte, 1..=6 | 14..=26 | 28..=31 | 127)).count();
+    if controls >= 8 && controls * 5 > bytes.len() { return true; }
+    let mut remaining = bytes;
+    let mut invalid = 0;
+    while let Err(error) = std::str::from_utf8(remaining) {
+        // A sample can end partway through a valid Unicode scalar.
+        let Some(count) = error.error_len() else { break; };
+        invalid += count;
+        if invalid >= 32 && invalid * 5 > bytes.len() * 4 { return true; }
+        remaining = &remaining[error.valid_up_to() + count..];
+    }
+    false
+}
+
+fn decode_stream(
+    file: impl Read, header: Vec<u8>, path: &Path, file_size: u64,
+) -> io::Result<(Rope, &'static str)> {
+    if !utf16_header(&header) && binary_sample(&header) {
+        return Ok(binary_preview(path, file_size));
+    }
     let (skip, encoding) = if header.starts_with(&[0xef, 0xbb, 0xbf]) {
         (3, "UTF-8 with BOM")
     } else if header.starts_with(&[0xff, 0xfe]) {
         (2, "UTF-16 LE")
     } else if header.starts_with(&[0xfe, 0xff]) {
         (2, "UTF-16 BE")
-    } else if header.contains(&0) {
-        let size_str = if file_size > 1024 * 1024 {
-            format!("{:.1} MB", file_size as f64 / (1024.0 * 1024.0))
-        } else if file_size > 1024 {
-            format!("{:.1} KB", file_size as f64 / 1024.0)
-        } else { format!("{file_size} bytes") };
-        return Ok((Rope::from_str(&format!(
-            "Binary file - cannot display\n\nFile: {}\nSize: {}\n\nThis file appears to be binary and cannot be edited as text.",
-            path.display(), size_str,
-        )), "Binary"));
     } else { (0, "UTF-8") };
     let utf16 = matches!(encoding, "UTF-16 LE" | "UTF-16 BE");
     if header.len() < HEADER_BYTES {
@@ -66,7 +140,9 @@ pub(super) fn read_text_stream(
         // of decoded text and reread the file. Valid blocks append directly
         // from this bounded buffer without Rope::from_reader's extra copy.
         let reader = header[skip..].chain(file);
-        let (rope, lossy) = read_utf8(io::BufReader::with_capacity(capacity, reader))?;
+        let Some((rope, lossy)) = read_utf8(io::BufReader::with_capacity(capacity, reader))? else {
+            return Ok(binary_preview(path, file_size));
+        };
         Ok((rope, if lossy && skip == 0 { "UTF-8 (lossy)" } else { encoding }))
     }
 }
@@ -80,7 +156,8 @@ fn read_retry(reader: &mut impl Read, bytes: &mut [u8]) -> io::Result<usize> {
     }
 }
 
-pub(super) fn read_utf8(mut reader: impl BufRead) -> io::Result<(Rope, bool)> {
+/// `None` means a binary block was found before the text stream ended.
+pub(super) fn read_utf8(mut reader: impl BufRead) -> io::Result<Option<(Rope, bool)>> {
     let mut decoder = Utf8Decoder {
         builder: RopeBuilder::new(), partial: [0; 4], pending: 0, lossy: false,
     };
@@ -93,11 +170,13 @@ pub(super) fn read_utf8(mut reader: impl BufRead) -> io::Result<(Rope, bool)> {
         };
         if bytes.is_empty() {
             if decoder.pending != 0 { decoder.builder.append("\u{fffd}"); decoder.lossy = true; }
-            return Ok((decoder.builder.finish(), decoder.lossy));
+            return Ok(Some((decoder.builder.finish(), decoder.lossy)));
         }
+        if memchr::memchr(0, bytes).is_some() { return Ok(None); }
         if decoder.pending == 0 && let Ok(text) = std::str::from_utf8(bytes) {
             decoder.builder.append(text);
         } else {
+            if binary_sample(bytes) { return Ok(None); }
             decoder.append_fragments(bytes);
         }
         let used = bytes.len();

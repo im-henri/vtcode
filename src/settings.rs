@@ -89,6 +89,8 @@ pub struct Settings {
     #[serde(rename = "workbench.colorCustomizations", skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub workbench_color_customizations: std::collections::BTreeMap<String, serde_json::Value>,
     pub show_explorer: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidebar_auto_hide: Option<bool>,
     pub show_open_editors: Option<bool>,
     pub show_minimap: Option<bool>,
     pub minimap_width: Option<u16>,
@@ -215,6 +217,10 @@ pub struct Settings {
     pub search_regex: Option<bool>,
     pub search_whole_word: Option<bool>,
     pub search_preserve_case: Option<bool>,
+    pub global_search_case_sensitive: Option<bool>,
+    pub global_search_regex: Option<bool>,
+    pub global_search_whole_word: Option<bool>,
+    pub global_search_preserve_case: Option<bool>,
     #[serde(rename = "search.searchOnTypeDebouncePeriod")]
     pub search_debounce_ms: Option<u64>,
     // Retained for settings-file compatibility. Workspace content search uses
@@ -385,6 +391,7 @@ impl Settings {
             theme: other.theme.clone().or_else(|| self.theme.clone()),
             workbench_color_customizations: crate::theme_customizations::merge(&self.workbench_color_customizations, &other.workbench_color_customizations),
             show_explorer: other.show_explorer.or(self.show_explorer),
+            sidebar_auto_hide: other.sidebar_auto_hide.or(self.sidebar_auto_hide),
             show_open_editors: other.show_open_editors.or(self.show_open_editors),
             show_minimap: other.show_minimap.or(self.show_minimap),
             minimap_width: other.minimap_width.or(self.minimap_width),
@@ -515,6 +522,10 @@ impl Settings {
             search_regex: other.search_regex.or(self.search_regex),
             search_whole_word: other.search_whole_word.or(self.search_whole_word),
             search_preserve_case: other.search_preserve_case.or(self.search_preserve_case),
+            global_search_case_sensitive: other.global_search_case_sensitive.or(self.global_search_case_sensitive),
+            global_search_regex: other.global_search_regex.or(self.global_search_regex),
+            global_search_whole_word: other.global_search_whole_word.or(self.global_search_whole_word),
+            global_search_preserve_case: other.global_search_preserve_case.or(self.global_search_preserve_case),
             search_debounce_ms: other.search_debounce_ms.or(self.search_debounce_ms),
             search_use_ignore_files: other.search_use_ignore_files.or(self.search_use_ignore_files),
             search_use_global_ignore_files: other.search_use_global_ignore_files.or(self.search_use_global_ignore_files),

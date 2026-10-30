@@ -243,7 +243,7 @@ fn remote_search_query_setup_defers_regex_compilation_until_the_search_worker_ru
         let _ = gate.recv();
     });
     started.recv_timeout(Duration::from_secs(5)).unwrap();
-    app.search_regex = true;
+    app.global_search_regex = true;
     app.global_search_query = "(".into();
     app.update_global_search();
     let deferred = app.bg_global_search_running && app.global_search_error.is_none();
@@ -424,7 +424,7 @@ fn benchmark_remote_search_query_setup_under_pending_work() {
         let _ = gate.recv();
     });
     started.recv_timeout(Duration::from_secs(5)).unwrap();
-    app.search_regex = true;
+    app.global_search_regex = true;
     let mut elapsed = Vec::new();
     for index in 0..24 {
         let query = if index % 2 == 0 {

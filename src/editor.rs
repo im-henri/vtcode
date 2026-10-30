@@ -196,7 +196,7 @@ pub(crate) fn decode_text_source(file: fs::File, metadata: fs::Metadata, path: &
     let last_disk_modified = metadata.modified().ok();
     let result = if let Some(cancel) = cancel {
         load::read_text_stream_cancellable(file, path, file_size, cancel)
-    } else { read_text_stream(file, path, file_size) };
+    } else { load::read_text_file(file, path, file_size) };
     if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err(io::ErrorKind::Interrupted.into()); }
     let (rope, encoding) = result?;
     Ok(LoadedTextFile { rope, encoding, file_size, last_disk_modified, remote_checkpoint: None })
@@ -218,6 +218,7 @@ pub(crate) fn rope_line_ending(rope: &Rope) -> &'static str {
 
 #[path = "editor_load.rs"]
 mod load;
+#[cfg(test)]
 use load::read_text_stream;
 
 /// Return a unique temporary path beside the target file. Keeping the original

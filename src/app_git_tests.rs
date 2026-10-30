@@ -14,6 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[path = "app_git_hunk_tests.rs"]
 mod hunk_edge_tests;
 
+#[path = "app_git_line_conflict_tests.rs"]
+mod line_conflict_tests;
+
 #[path = "app_unsaved_hunk_tests.rs"]
 mod unsaved_hunk_tests;
 
@@ -1692,16 +1695,17 @@ fn git_branch_picker_scroll_keeps_selected_row_visible() {
 }
 
 #[test]
-fn git_branch_picker_total_rows_includes_create_candidate() {
+fn git_branch_picker_keeps_creation_separate_from_search_results() {
     use ratatui::{Terminal, backend::TestBackend};
     let mut app = App::test_new();
     app.git_branch_picker_query = "feature/new-branch".to_string();
 
-    assert_eq!(app.git_branch_picker_total_rows(), 1);
+    assert_eq!(app.git_branch_picker_total_rows(), 0);
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal.draw(|frame| crate::ui_pickers::draw_git_branch_picker(frame, &mut app)).unwrap();
-    assert_eq!(app.quick_picker.rows.len(), 1);
-    assert_eq!(app.quick_picker.rows[0].1, 0);
+    assert!(app.quick_picker.rows.is_empty());
+    let rendered: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+    assert!(rendered.contains("New branch"));
 }
 
 #[test]

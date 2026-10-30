@@ -15,7 +15,6 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::app::App;
 use crate::explorer::{GitStatus, GitStatusSummary};
 use crate::text_input::TextInputId;
-use crate::ui_dialogs::file_icon_colored;
 use crate::ui_widgets::{DropdownItem, DropdownMenu, InputField, themed_dropdown_colors};
 use crate::ui_editor::draw_editor;
 use crate::ui_helpers::{
@@ -628,10 +627,11 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             } else {
                 ""
             };
-            let (icon, icon_color) = if tab.kind == crate::app::TabKind::File {
-                file_icon_colored(tab.editor.file_name())
+            let is_file = matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision);
+            let (icon, icon_color) = if is_file {
+                crate::file_icons::for_editor(&tab.editor)
             } else {
-                (crate::ui_dialogs::tab_icon(tab.kind, tab.editor.file_name()), app.colors.ui.fg_sidebar)
+                (crate::ui_dialogs::tab_icon(tab), app.colors.ui.fg_sidebar)
             };
             let modified = if tab.has_unsaved_changes() { "● " } else { "  " };
             let is_active = i == app.active_tab;
@@ -642,7 +642,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
                 sidebar_bg, is_active, explorer_focused, row_hovered);
             let bg = row_style.bg.unwrap_or(sidebar_bg);
-            let icon_color = if tab.kind == crate::app::TabKind::File {
+            let icon_color = if is_file {
                 icon_color
             } else {
                 let color = app.colors.ui.list_icon_color(icon_color, bg, is_active, explorer_focused);
@@ -821,7 +821,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             };
             let indent_len = 1 + entry.depth * 2;
             let indent = &indent_pool[..indent_len.min(indent_pool.len())];
-            let file_icon = (!entry.is_dir).then(|| file_icon_colored(&entry.name));
+            let file_icon = (!entry.is_dir).then(|| crate::file_icons::for_path(&entry.path, &app.language_associations));
             let icon = if entry.is_dir {
                 if app.explorer_expanding.contains(&entry.path) {
                     "◌ "
@@ -1727,7 +1727,7 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
             _ => continue,
         };
         let active = if index == 6 { app.settings_editor_active || app.settings_active }
-            else { app.show_explorer && app.activity_bar_selected == index };
+            else { app.sidebar_is_visible() && app.activity_bar_selected == index };
         let hovered = app.hovered_activity == Some(index);
         let cell_bg = if active { app.colors.ui.bg_activity_active.over(bg).unwrap_or(bg) } else { bg };
         let fg = app.colors.ui.readable_foreground(if active || hovered { app.colors.ui.fg_activity }

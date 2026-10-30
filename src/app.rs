@@ -105,6 +105,7 @@ pub(crate) struct App {
     /// Active divider being dragged: (path, child_index, direction, total_area_size)
     pub dragging_divider: Option<(Vec<usize>, usize, SplitDirection, u16)>,
     pub show_explorer: bool,
+    pub(crate) sidebar_auto_hide: crate::app_sidebar::AutoHide,
     pub show_activity_bar: bool,
     pub sidebar_view: SidebarView,
     pub show_open_editors: bool,
@@ -217,7 +218,7 @@ pub(crate) struct App {
     pub(crate) file_search_bars: Vec<crate::file_search::Bar>,
     pub(crate) bg_file_replace_running: bool,
     pub(crate) file_replace_generation: u64,
-    // Shared search preferences and workspace query history.
+    // In-file search preferences and query history.
     pub search_case_sensitive: bool,
     pub search_regex: bool,
     pub search_whole_word: bool,
@@ -238,6 +239,7 @@ pub(crate) struct App {
     pub git_branch_picker_items: Vec<GitBranchPickerItem>,
     pub git_branch_picker_selected: usize,
     pub git_branch_picker_scroll_offset: usize,
+    pub(crate) git_branch_dialog: crate::ui_git_branches::State,
     pub recent_files: Vec<PathBuf>,
     // Go to line (Ctrl+G)
     pub goto_line_active: bool,
@@ -327,6 +329,10 @@ pub(crate) struct App {
     pub save_as_selection_anchor: Option<usize>,
     // Global search (Ctrl+Shift+F)
     pub global_search_active: bool,
+    pub global_search_case_sensitive: bool,
+    pub global_search_regex: bool,
+    pub global_search_whole_word: bool,
+    pub global_search_preserve_case: bool,
     pub global_search_query: String,
     pub(crate) global_search_history: crate::search_history::History,
     pub(crate) global_search_replace_history: crate::search_history::History,
@@ -480,6 +486,7 @@ pub(crate) struct App {
     pub terminal_dock_drop_target: Option<TerminalDock>,
     pub terminals: Vec<TerminalTab>,
     pub active_terminal: usize,
+    pub(crate) terminal_rename: crate::app_terminal::RenameTerminal,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_clicks: crate::app_terminal_selection::TerminalClicks,
@@ -679,6 +686,7 @@ pub(crate) struct App {
     pub(crate) source_control_untracked_stage_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_untracked_discard_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_actions_area: Option<ratatui::layout::Rect>,
+    pub(crate) source_control_refresh_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_file_actions: Vec<crate::ui_source_control::FileActionRow>,
     /// Git status ordered merge, staged, unstaged, untracked, then path within each group.
     pub source_control_files: Vec<GitFileChange>,
@@ -1131,6 +1139,7 @@ impl App {
             split_layout_cache: Default::default(),
             dragging_divider: None,
             show_explorer: true,
+            sidebar_auto_hide: Default::default(),
             show_activity_bar: true,
             sidebar_view: SidebarView::Explorer,
             show_open_editors: true,
@@ -1241,6 +1250,7 @@ impl App {
             git_branch_picker_items: Vec::new(),
             git_branch_picker_selected: 0,
             git_branch_picker_scroll_offset: 0,
+            git_branch_dialog: Default::default(),
             recent_files: Vec::new(),
             goto_line_active: false,
             goto_line_query: String::new(),
@@ -1317,6 +1327,10 @@ impl App {
             save_as_cursor: 0,
             save_as_selection_anchor: None,
             global_search_active: false,
+            global_search_case_sensitive: false,
+            global_search_regex: false,
+            global_search_whole_word: false,
+            global_search_preserve_case: false,
             global_search_query: String::new(),
             global_search_history: Default::default(),
             global_search_replace_history: Default::default(),
@@ -1462,6 +1476,7 @@ impl App {
                 browser_path.clone(), TerminalDock::Right,
             )],
             active_terminal: 0,
+            terminal_rename: Default::default(),
             next_terminal_to_process: 0,
             terminal_surfaces: Vec::new(),
             terminal_clicks: Default::default(),
@@ -1632,6 +1647,7 @@ impl App {
             source_control_untracked_stage_area: None,
             source_control_untracked_discard_area: None,
             source_control_actions_area: None,
+            source_control_refresh_area: None,
             source_control_file_actions: Vec::new(),
             source_control_files: Vec::new(),
             source_control_selection: Default::default(),
@@ -2248,6 +2264,7 @@ impl App {
                                 self.sc_amend_mode = false;
                             }
                             if outcome.close_branch_picker {
+                                self.git_branch_dialog = Default::default();
                                 self.git_branch_picker_active = false;
                                 self.git_branch_picker_query.clear();
                                 self.git_branch_picker_cursor = 0;
@@ -2276,6 +2293,9 @@ impl App {
                             self.notify(outcome.message);
                         }
                         Err(error) => {
+                            if self.git_branch_dialog.pending {
+                                self.git_branch_dialog.failed(error.clone());
+                            }
                             // A failed action can still have updated the index,
                             // for example staging succeeded but committing failed.
                             self.refresh_source_control_async();
@@ -2300,7 +2320,7 @@ impl App {
                             self.git_branch_picker_scroll_offset = 0;
                         }
                         Err(error) => {
-                            self.git_branch_picker_active = false;
+                            self.git_branch_dialog.failed(error.clone());
                             self.notify_error(error);
                         }
                     }

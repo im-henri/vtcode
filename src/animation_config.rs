@@ -222,7 +222,8 @@ impl AnimationSettings {
             self.scope_disabled_languages.dedup();
         }
         if let Some(configs) = &settings.animation_scope_bubble_languages {
-            let rules = crate::scope_bubble_config::Rules::compile(configs);
+            let rules = crate::scope_bubble_config::Rules::compile(configs)
+                .with_automatic(self.scope_languages.automatic.clone());
             if rules != self.scope_languages { self.scope_languages = rules; }
         }
     }

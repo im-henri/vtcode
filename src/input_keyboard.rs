@@ -5,6 +5,7 @@ use crate::input;
 use crate::input_dialogs;
 use crate::input_keyboard_dialogs;
 use crate::input_pickers;
+use crate::text_input::TextInputId;
 
 #[cfg(test)]
 #[path = "tab_navigation_tests.rs"]
@@ -100,6 +101,12 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
     if crate::ui_quick_picker::active(app) == Some(crate::ui_quick_picker::Kind::OpenWith) {
         return input_keyboard_dialogs::handle_binary_open_prompt_key(app, key).unwrap_or(false);
+    }
+    if crate::ui_quick_picker::active(app) == Some(crate::ui_quick_picker::Kind::Branches) {
+        if key.kind != crossterm::event::KeyEventKind::Repeat || key.code != KeyCode::Enter {
+            input_pickers::handle_git_branch_picker_key(app, key.code, key.modifiers);
+        }
+        return false;
     }
     // A fullscreen terminal application owns its navigation shortcuts too.
     if !app.focused_terminal_is_fullscreen()
@@ -612,7 +619,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                             .map(|e| (e.cursor_line, e.cursor_col, e.scroll_offset));
                     }
                     app.search_active = true;
-                    app.search_input_focused = true;
+                    app.focus_text_input(TextInputId::SearchFind);
                     app.replace_mode = false;
                     app.search_focus_replace = false;
                     if let Some(ed) = app.editor() {
@@ -648,7 +655,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                         }
                     }
                     app.search_active = true;
-                    app.search_input_focused = true;
+                    app.focus_text_input(TextInputId::SearchFind);
                     app.replace_mode = true;
                     app.search_focus_replace = false;
                     app.search_cursor = app.search_query.len();
@@ -1237,7 +1244,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
 
     // Search mode input
-    if app.file_search_visible() && app.search_input_focused {
+    if matches!(app.focused_text_input_id(), Some(TextInputId::SearchFind | TextInputId::SearchReplace)) {
         input::handle_search_key(app, key.code, key.modifiers);
         return false;
     }
@@ -1248,10 +1255,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         return false;
     }
 
-    if app.git_branch_picker_active {
-        input_pickers::handle_git_branch_picker_key(app, key.code, key.modifiers);
-        return false;
-    }
 
     // Go to line mode
     if app.goto_line_active {
@@ -1260,11 +1263,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
 
     // Global search mode
-    let sidebar_search_active =
-        app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search;
-    if app.global_search_active
-        && (!sidebar_search_active || app.active_pane == ActivePane::Explorer)
-    {
+    if matches!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(_))) {
         input::handle_global_search_key(app, key.code, key.modifiers);
         return false;
     }
@@ -1648,7 +1647,7 @@ mod tests {
     fn ctrl_a_is_owned_by_focused_search_field_before_editor_keybindings() {
         let mut app = App::test_new();
         app.search_active = true;
-        app.search_input_focused = true;
+        app.focus_text_input(TextInputId::SearchFind);
         app.search_query = "needle".into();
         app.search_cursor = app.search_query.len();
         app.search_selection_anchor = None;

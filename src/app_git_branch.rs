@@ -77,6 +77,11 @@ impl App {
         if self.bg_git_branch_picker_running {
             return;
         }
+        if self.bg_git_action_running || self.bg_git_remote_running {
+            self.notify("Wait for the current Git operation to finish");
+            return;
+        }
+        self.git_branch_dialog = crate::ui_git_branches::State::for_repository(self.source_control_root().to_owned());
         self.git_branch_picker_items.clear();
         self.git_branch_picker_query.clear();
         self.git_branch_picker_cursor = 0;
@@ -84,6 +89,7 @@ impl App {
         self.git_branch_picker_selected = 0;
         self.git_branch_picker_scroll_offset = 0;
         self.git_branch_picker_active = true;
+        self.refresh_git_branch_async();
         self.bg_git_branch_picker_running = true;
         let root = self.source_control_root().to_owned();
         let sender = self.repository_sender();
@@ -111,7 +117,6 @@ impl App {
 
     pub(crate) fn git_branch_picker_total_rows(&self) -> usize {
         self.git_branch_picker_filtered_iter().count()
-            + usize::from(self.git_branch_picker_create_candidate().is_some())
     }
 
     pub(crate) fn git_branch_picker_visible_rows(&self) -> usize {
@@ -212,6 +217,8 @@ impl App {
 
 pub(crate) fn branches(root: &std::path::Path) -> Result<Vec<GitBranchPickerItem>, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
+    let current = repo.head().ok().filter(|head| head.is_branch())
+        .and_then(|head| head.shorthand().map(str::to_owned));
     let mut items = Vec::new();
     if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
         for branch in branches.flatten() {
@@ -242,11 +249,12 @@ pub(crate) fn branches(root: &std::path::Path) -> Result<Vec<GitBranchPickerItem
         }
     }
     items.sort_by(|left, right| {
+        let is_current = |item: &GitBranchPickerItem| matches!(item, GitBranchPickerItem::Local { name } if Some(name) == current.as_ref());
         let left_remote = matches!(left, GitBranchPickerItem::Remote { .. });
         let right_remote = matches!(right, GitBranchPickerItem::Remote { .. });
-        left_remote
+        is_current(right).cmp(&is_current(left)).then_with(|| left_remote
             .cmp(&right_remote)
-            .then_with(|| left.label().cmp(&right.label()))
+            .then_with(|| left.label().cmp(&right.label())))
     });
     Ok(items)
 }

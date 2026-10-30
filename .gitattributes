@@ -2,6 +2,8 @@
 *.rs text eol=lf
 *.py text eol=lf
 *.sh text eol=lf
+# Embedded shell hooks must also work on remote Unix hosts.
+src/terminal_shell/* text eol=lf
 Dockerfile text eol=lf
 *.toml text eol=lf
 *.yml text eol=lf

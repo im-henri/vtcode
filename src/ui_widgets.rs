@@ -628,10 +628,26 @@ pub(crate) fn draw_dialog_button(
     destructive: bool,
     enabled: bool,
 ) {
+    draw_dialog_button_with_hover(f, area, label, colors, primary, focused, false, destructive, enabled);
+}
+
+/// Keep pointer feedback independent of the action Enter will activate.
+pub(crate) fn draw_dialog_button_with_hover(
+    f: &mut Frame,
+    area: Rect,
+    label: &str,
+    colors: &crate::app_theme::ThemeColors,
+    primary: bool,
+    focused: bool,
+    hovered: bool,
+    destructive: bool,
+    enabled: bool,
+) {
     let focused = focused && enabled;
+    let hovered = hovered && enabled;
     let surface = f.buffer_mut().cell((area.x, area.y)).map(|cell| cell.bg)
         .filter(|color| *color != Color::Reset).unwrap_or(colors.ui.bg_widget);
-    let mut style = colors.ui.button_style(surface, primary, focused, enabled);
+    let mut style = colors.ui.button_style(surface, primary, focused || hovered, enabled);
     if destructive && enabled {
         style = style.fg(colors.ui.error_text_color(style.bg.unwrap()));
     }
@@ -641,7 +657,7 @@ pub(crate) fn draw_dialog_button(
             style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
         }
     }
-    draw_button_content(f, area, label, style, focused, false);
+    draw_button_content(f, area, label, style, focused || hovered, false);
 }
 
 // ---------------------------------------------------------------------------

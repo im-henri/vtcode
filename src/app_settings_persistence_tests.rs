@@ -243,6 +243,7 @@ fn preference_commands_save_both_toggle_directions_without_unrelated_overrides()
         ("toggle_cursor_blinking", "cursor_blinking"),
         ("toggle_indent_rainbow", "indent_rainbow"),
         ("toggle_sidebar_position", "sidebar_pos"),
+        ("toggle_sidebar_auto_hide", "sidebar_auto_hide"),
         ("toggle_inlay_hints", "inlay_hints"),
     ] {
         let (_dir, mut app) = fixture();
@@ -262,6 +263,56 @@ fn preference_commands_save_both_toggle_directions_without_unrelated_overrides()
         assert_eq!(saved(&app, SettingsScope::Global).tab_size, None);
         assert!(!app.settings_workspace_path.exists());
     }
+}
+
+#[test]
+fn sidebar_auto_hide_persists_scopes_without_saving_hover_visibility() {
+    let (directory, mut app) = fixture();
+    app.tabs.push(Tab::new_file(app.new_editor()));
+    app.active_pane = crate::app::ActivePane::Editor;
+    app.toggle_setting("sidebar_auto_hide");
+    assert!(app.sidebar_auto_hide.enabled);
+    assert_eq!(saved(&app, SettingsScope::Global).sidebar_auto_hide, Some(true));
+    assert_eq!(saved(&app, SettingsScope::Global).show_explorer, None);
+    let persisted = std::fs::read(&app.settings_global_path).unwrap();
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 35)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert!(app.explorer_area.is_none());
+    let edge = app.sidebar_auto_hide.edge.unwrap();
+    let moved = |column, row| crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Moved, column, row,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    };
+    crate::mouse::handle_mouse(&mut app, moved(edge.x, edge.y + 2));
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert!(app.explorer_area.is_some());
+    let code = app.code_area.unwrap();
+    crate::mouse::handle_mouse(&mut app, moved(code.right() - 2, code.y + 2));
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert!(app.explorer_area.is_none());
+    assert_eq!(app.current_settings().show_explorer, Some(true));
+    assert!(app.build_session().show_explorer);
+    app.flush_live_settings();
+    assert_eq!(std::fs::read(&app.settings_global_path).unwrap(), persisted);
+
+    let mut restarted = App::new(directory.path().to_owned());
+    restarted.active_pane = crate::app::ActivePane::Editor;
+    restarted.settings_global = saved(&app, SettingsScope::Global);
+    restarted.apply_effective_settings();
+    assert!(restarted.sidebar_auto_hide.enabled);
+    assert!(restarted.show_explorer);
+    assert!(!restarted.sidebar_is_visible(), "hover state is not restored after restarting");
+
+    app.settings_scope = SettingsScope::Workspace;
+    app.toggle_setting("sidebar_auto_hide");
+    assert_eq!(saved(&app, SettingsScope::Workspace).sidebar_auto_hide, Some(false));
+    assert!(!app.sidebar_auto_hide.enabled);
+    assert!(app.reset_setting_in_selected_scope("sidebar_auto_hide"));
+    assert!(app.sidebar_auto_hide.enabled, "reset inherits the user preference");
+    app.settings_scope = SettingsScope::Global;
+    assert!(app.reset_setting_in_selected_scope("sidebar_auto_hide"));
+    assert!(!app.sidebar_auto_hide.enabled, "default remains off");
 }
 
 #[test]
@@ -399,26 +450,30 @@ fn search_buttons_persist_and_survive_unrelated_settings_edits() {
         ] {
             crate::ui_search_controls::activate(&mut app, scope, control);
         }
-        let expected = (
-            app.search_case_sensitive,
-            app.search_whole_word,
-            app.search_regex,
-            app.search_preserve_case,
-        );
+        let expected_file = (true, true, true, true);
+        let expected_workspace = if scope == SearchScope::File {
+            (false, false, false, false)
+        } else {
+            (true, true, true, true)
+        };
         let global = saved(&app, SettingsScope::Global);
         assert_eq!(
             (
-                global.search_case_sensitive,
-                global.search_whole_word,
-                global.search_regex,
-                global.search_preserve_case
+                global.search_case_sensitive.unwrap_or(false),
+                global.search_whole_word.unwrap_or(false),
+                global.search_regex.unwrap_or(false),
+                global.search_preserve_case.unwrap_or(false)
             ),
+            expected_file
+        );
+        assert_eq!(
             (
-                Some(expected.0),
-                Some(expected.1),
-                Some(expected.2),
-                Some(expected.3)
-            )
+                global.global_search_case_sensitive.unwrap_or(false),
+                global.global_search_whole_word.unwrap_or(false),
+                global.global_search_regex.unwrap_or(false),
+                global.global_search_preserve_case.unwrap_or(false)
+            ),
+            expected_workspace
         );
         app.toggle_setting("minimap");
         assert_eq!(
@@ -428,9 +483,41 @@ fn search_buttons_persist_and_survive_unrelated_settings_edits() {
                 app.search_regex,
                 app.search_preserve_case
             ),
-            expected
+            expected_file
+        );
+        assert_eq!(
+            (
+                app.global_search_case_sensitive,
+                app.global_search_whole_word,
+                app.global_search_regex,
+                app.global_search_preserve_case
+            ),
+            expected_workspace
         );
     }
+}
+
+#[test]
+fn independent_search_preferences_reload_and_follow_settings_scopes() {
+    let (_dir, mut app) = fixture();
+    app.settings_scope = SettingsScope::Global;
+    app.toggle_setting("search_case_sensitive");
+    app.toggle_setting("search_preserve_case");
+    app.settings_scope = SettingsScope::Workspace;
+    app.toggle_setting("global_search_whole_word");
+    app.toggle_setting("global_search_regex");
+    let global = saved(&app, SettingsScope::Global);
+    let workspace = saved(&app, SettingsScope::Workspace);
+    assert_eq!(global.search_case_sensitive, Some(true));
+    assert_eq!(workspace.search_case_sensitive, None);
+    assert_eq!(global.global_search_whole_word, None);
+    assert_eq!(workspace.global_search_whole_word, Some(true));
+    let mut restored = App::test_new();
+    restored.apply_settings(&global.merge(&workspace));
+    assert!(restored.search_case_sensitive && restored.search_preserve_case);
+    assert!(!restored.search_whole_word && !restored.search_regex);
+    assert!(!restored.global_search_case_sensitive && !restored.global_search_preserve_case);
+    assert!(restored.global_search_whole_word && restored.global_search_regex);
 }
 
 #[test]

@@ -1199,6 +1199,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .checked_div(maximum)
             .unwrap_or(0);
         for row in 0..scrollbar.height as usize {
+            // The source renderer already painted Git/unsaved change markers.
+            // Keep them when adapting the thumb to virtual conflict/review rows.
+            if app.cached_overview_change_rows.row(row).status().is_some() {
+                continue;
+            }
             f.render_widget(
                 Paragraph::new(if (top..top + thumb).contains(&row) {
                     "┃"

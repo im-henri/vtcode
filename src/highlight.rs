@@ -821,7 +821,7 @@ fn reference_project_stale_spans(previous: &HighlightSpans, current: &str) -> Hi
     projected
 }
 
-fn select_syntax<'a>(
+pub(crate) fn select_syntax<'a>(
     syntax_set: &'a SyntaxRegistry,
     file_path: Option<&Path>,
     language: Option<&str>,
@@ -977,6 +977,7 @@ pub struct Highlighter {
     /// over this set without reparsing every shipped grammar.
     base_syntax_set: Arc<SyntaxRegistry>,
     syntax_set: Arc<SyntaxRegistry>,
+    scope_automatic: std::cell::OnceCell<Option<Arc<crate::scope_bubble_config::Automatic>>>,
     theme_set: Arc<ThemeSet>,
     documents: FxHashMap<PathBuf, DocumentCache>,
     /// Isolated diff rows are not a coherent document stream, so they use a
@@ -1071,6 +1072,7 @@ impl Highlighter {
         };
         Self {
             bootstrap,
+            scope_automatic: Default::default(),
             syntax_set: Arc::clone(&base_syntax_set),
             base_syntax_set,
             theme_set,
@@ -1129,6 +1131,7 @@ impl Highlighter {
     }
 
     pub(crate) fn install_syntax_assets(&mut self, loaded: LoadedSyntaxAssets) {
+        self.scope_automatic.take();
         self.bootstrap = false;
         self.installed_syntax_folder = loaded.installed_folder;
         self.base_syntax_set = loaded.base_syntax_set;
@@ -1164,6 +1167,11 @@ impl Highlighter {
         names.sort_by_key(|name| name.to_ascii_lowercase());
         names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
         names
+    }
+
+    pub(crate) fn scope_bubble_automatic(&self) -> Option<Arc<crate::scope_bubble_config::Automatic>> {
+        self.scope_automatic.get_or_init(||
+            crate::scope_bubble_config::Automatic::new(self.syntax_set.clone())).clone()
     }
 
     pub(crate) fn line_hash(line: &str) -> u64 {

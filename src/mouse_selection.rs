@@ -527,10 +527,21 @@ pub(crate) fn handle_middle_button_down(app: &mut App, col: u16, row: u16) {
 /// Handle right mouse button down events (context menus for tabs, source
 /// control, explorer, and editor).
 pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
+    if app.show_terminal_sidebar {
+        if let Some(index) = app.terminal_sidebar_tab_areas.iter()
+            .find(|(area, _)| area.contains((col, row).into())).map(|(_, index)| *index)
+        {
+            app.open_terminal_context_menu(index, col, row.saturating_add(1));
+            return;
+        }
+    }
     // Right-click on tab bar opens tab context menu
     if let Some(tab_area) = app.tab_bar_area {
         if tab_area.contains((col, row).into()) {
             if let Some(tab_idx) = crate::mouse::find_tab_at_col(app, col, tab_area) {
+                app.terminal_rename.context_target = app.tabs.get(tab_idx)
+                    .filter(|tab| tab.kind == crate::app::TabKind::Terminal)
+                    .and_then(|tab| tab.terminal_idx);
                 app.tab_context_active = true;
                 app.tab_context_pos = (col, row + 1);
                 app.tab_context_inner = None;

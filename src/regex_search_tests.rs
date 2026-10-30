@@ -445,8 +445,8 @@ fn regex_search_workspace_replacement_matches_open_and_closed_files() {
             let mut editor = crate::editor::Editor::new();
             editor.open_file(&open).unwrap();
             app.tabs.push(crate::app::Tab::new_file(editor));
-            app.search_regex = true;
-            app.search_case_sensitive = true;
+            app.global_search_regex = true;
+            app.global_search_case_sensitive = true;
             app.global_search_query = query.into();
             app.global_search_replace_query = replacement.into();
             app.update_global_search();

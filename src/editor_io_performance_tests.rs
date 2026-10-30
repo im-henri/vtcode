@@ -234,7 +234,7 @@ fn streamed_utf8_matches_lossy_reference_across_buffers_and_short_reads() {
                     requested: 0,
                 };
                 let (rope, lossy) =
-                    super::load::read_utf8(io::BufReader::with_capacity(8192, &mut input)).unwrap();
+                    super::load::read_utf8(io::BufReader::with_capacity(8192, &mut input)).unwrap().expect("text stream");
                 assert_eq!(rope, String::from_utf8_lossy(&bytes).as_ref());
                 assert!(lossy);
                 assert_eq!(input.consumed, bytes.len());

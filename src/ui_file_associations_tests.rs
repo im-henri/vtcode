@@ -427,12 +427,15 @@ fn association_scopes_inheritance_removal_and_open_groups_are_consistent() {
     app.save_file_association(SettingsScope::Workspace, "*.custom", Some("C++"))
         .unwrap();
     assert_eq!(app.editor().unwrap().language_name(), "C++");
+    assert_eq!(crate::file_icons::for_editor(app.editor().unwrap()), crate::file_icons::for_name("file.cpp"));
+    assert_eq!(crate::file_icons::for_editor(&app.groups.last().unwrap().tabs[0].editor), crate::file_icons::for_name("file.cpp"));
     app.open_file_associations();
     assert_eq!(app.file_associations.scope, SettingsScope::Workspace);
     activate(&mut app, Action::Rule(0));
     assert!(app.file_associations.can_remove());
     activate(&mut app, Action::Remove);
     assert_eq!(app.editor().unwrap().language_name(), "Python");
+    assert_eq!(crate::file_icons::for_editor(app.editor().unwrap()), crate::file_icons::for_name("file.py"));
     assert_eq!(
         app.groups.last().unwrap().tabs[0].editor.language_name(),
         "Python"
@@ -452,6 +455,7 @@ fn association_scopes_inheritance_removal_and_open_groups_are_consistent() {
     app.save_file_association(SettingsScope::Global, "*.custom", None)
         .unwrap();
     assert_eq!(app.editor().unwrap().language_name(), "Plain Text");
+    assert_eq!(crate::file_icons::for_editor(app.editor().unwrap()), crate::file_icons::for_name("unknown"));
 }
 
 #[test]
@@ -612,6 +616,7 @@ fn association_routes_language_services_and_did_open_language_id() {
     app.settings_global.lsp_servers = Some(vec![
         config("python", &["*.py"]),
         config("cpp", &["*.h", "*.cpp"]),
+        config("rust", &["*.rs"]),
     ]);
     app.apply_effective_settings();
     app.save_file_association(SettingsScope::Global, "*.custom", Some("Python"))
@@ -619,6 +624,8 @@ fn association_routes_language_services_and_did_open_language_id() {
     app.save_file_association(SettingsScope::Global, "special.h", Some("Python"))
         .unwrap();
     app.save_file_association(SettingsScope::Global, "*.module", Some("C++"))
+        .unwrap();
+    app.save_file_association(SettingsScope::Global, "*.rs", Some("C++"))
         .unwrap();
     let (mut python, python_server) = crate::lsp::LspClient::test_pair("python", &["*.py"]);
     let (mut clang, clang_server) = crate::lsp::LspClient::test_pair("cpp", &["*.h", "*.cpp"]);
@@ -629,6 +636,7 @@ fn association_routes_language_services_and_did_open_language_id() {
         ("model.custom", "python", 1),
         ("special.h", "python", 1),
         ("main.module", "cpp", 0),
+        ("main.rs", "cpp", 0),
     ] {
         let path = dir.path().join(name);
         assert!(app.lsp_manager.has_config_for_file(&path));
@@ -720,4 +728,105 @@ fn suggestions_and_associations_work_for_named_unsaved_buffers() {
         app.file_associations.suggestions,
         ["*.custom", "script.custom"]
     );
+}
+
+#[test]
+fn associations_update_icons_and_colors_across_file_views_and_restore_builtin_icons() {
+    use crate::app::{ActivePane, GitFileChange, SidebarView, SourceControlRepositoryState, TabKind};
+    use crate::explorer::{FileEntry, GitStatus};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+
+    fn matching_labels(buffer: &Buffer, name: &str, icon: &str, color: Color) -> usize {
+        let name: Vec<_> = name.chars().collect();
+        let icon: Vec<_> = icon.trim().chars().collect();
+        let mut count = 0;
+        for y in buffer.area.y..buffer.area.bottom() {
+            for x in buffer.area.x..buffer.area.right().saturating_sub(name.len() as u16) {
+                if !name.iter().enumerate().all(|(i, ch)| buffer[(x + i as u16, y)].symbol() == ch.to_string()) {
+                    continue;
+                }
+                if (x.saturating_sub(8)..x).any(|start| icon.iter().enumerate().all(|(i, ch)| {
+                    let cell = &buffer[(start + i as u16, y)];
+                    cell.symbol() == ch.to_string() && cell.fg == color
+                })) {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    for light in [false, true] {
+        let (directory, mut app) = fixture("associated.rs");
+        app.explorer.root = directory.path().to_owned();
+        app.active_pane = ActivePane::Editor;
+        app.mouse_col = u16::MAX;
+        app.mouse_row = u16::MAX;
+        app.show_explorer = true;
+        app.show_open_editors = true;
+        let path = app.tabs[0].editor.file_path.clone().unwrap();
+        app.explorer.entries = vec![FileEntry {
+            path: path.clone(), name: "associated.rs".into(), is_dir: false, depth: 0,
+            expanded: false, git_status: GitStatus::Unmodified, git_status_summary: Default::default(),
+        }];
+        app.quick_open_results = vec![path.clone()];
+        app.source_control_files = vec![GitFileChange {
+            directory: false, path: "associated.rs".into(), original_path: None, status: 'M', staged: false,
+        }];
+        app.source_control_repository_state = SourceControlRepositoryState::Available;
+        app.repositories.discovered = false;
+        let mut group = EditorGroup::new();
+        let mut editor = app.new_editor();
+        editor.file_path = Some(path);
+        group.tabs.push(Tab::new_file(editor));
+        app.groups = vec![EditorGroup::new(), group];
+        app.active_group = 0;
+
+        for (stage, language, reference) in [
+            ("builtin", None, "file.rs"),
+            ("associated", Some("C++"), "file.cpp"),
+            ("plain text", Some("Plain Text"), "unknown"),
+            ("removed", None, "file.rs"),
+        ] {
+            if stage != "builtin" {
+                app.save_file_association(SettingsScope::Global, "*.rs", language).unwrap();
+            }
+            if light { app.colors = crate::app_theme::EditorTheme::Light.colors(); }
+            assert_eq!(app.editor().unwrap().language_name(), language.unwrap_or("Rust"));
+            if language == Some("C++") {
+                assert_eq!(crate::formatters::language(app.editor().unwrap()), "cpp");
+                assert_eq!(app.editor().unwrap().syntax_language_token(), Some("C++"));
+            }
+            let (icon, color) = crate::file_icons::for_name(reference);
+            for surface in ["explorer", "tab", "inactive tab", "revision tab", "breadcrumb", "quick open", "source control"] {
+                let mut terminal = Terminal::new(TestBackend::new(160, 35)).unwrap();
+                terminal.draw(|frame| {
+                    let area = frame.area();
+                    let header = Rect { height: 1, ..area };
+                    match surface {
+                        "explorer" => {
+                            app.sidebar_view = SidebarView::Explorer;
+                            crate::ui_chrome::draw_explorer(frame, &mut app, area);
+                        }
+                        "tab" => crate::ui_chrome_tabs::draw_tab_bar(frame, &app, header),
+                        "inactive tab" => crate::ui_chrome_tabs::draw_tab_bar_for_group(frame, &app, header, 1, std::time::Instant::now()),
+                        "revision tab" => {
+                            app.tabs[0].kind = TabKind::GitRevision;
+                            crate::ui_chrome_tabs::draw_tab_bar(frame, &app, header);
+                            app.tabs[0].kind = TabKind::File;
+                        }
+                        "breadcrumb" => crate::ui_chrome_tabs::draw_breadcrumb(frame, &mut app, header),
+                        "quick open" => crate::ui_quick_picker::draw(frame, &mut app, crate::ui_quick_picker::Kind::Files),
+                        _ => {
+                            app.sidebar_view = SidebarView::SourceControl;
+                            crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area);
+                        }
+                    }
+                }).unwrap();
+                let expected = if surface == "explorer" { 2 } else { 1 };
+                let found = matching_labels(terminal.backend().buffer(), "associated.rs", icon, color);
+                assert!(found >= expected, "{stage}, {surface}, light={light}: expected {expected} labels with {icon:?} in {color:?}, found {found}");
+            }
+        }
+    }
 }

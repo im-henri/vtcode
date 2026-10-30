@@ -226,6 +226,7 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                     return Some(false);
                 }
                 match *cmd {
+                    "tab_rename_terminal" => app.rename_context_terminal(),
                     "tab_close" => {
                         app.close_tab(tab);
                     }

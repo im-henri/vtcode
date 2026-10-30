@@ -12,7 +12,6 @@ use crate::app::App;
 use crate::source_control_rows::Group;
 use crate::helpers::len_as_u16;
 use crate::text_input::{TextInputHitMap, TextInputId};
-use crate::ui_dialogs::file_icon_colored;
 use crate::ui_pickers::truncate_to_width;
 
 const SC_ACTIONS_LABEL: &str = " Actions ▾ ";
@@ -212,7 +211,11 @@ pub(crate) fn sc_actions_area(area: Rect) -> Option<Rect> {
 }
 
 fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
-    let Some(button) = sc_actions_area(area) else { return; };
+    let refresh_width = if app.source_control_enabled && area.width >= 2 {
+        if area.width >= 6 { 3 } else { 1 }
+    } else { 0 };
+    let controls = Rect::new(area.x, area.y, area.width.saturating_sub(refresh_width), area.height);
+    let Some(button) = sc_actions_area(controls) else { return; };
     let label = if button.width >= UnicodeWidthStr::width(SC_ACTIONS_LABEL) as u16 {
         SC_ACTIONS_LABEL
     } else if button.width >= 3 { " ⋮ " } else { "⋮" };
@@ -223,9 +226,16 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
         open || app.sc_visibility != Default::default())), button);
     app.source_control_actions_area = Some(button);
     if !app.source_control_enabled { return; }
+    if refresh_width > 0 {
+        let refresh = Rect::new(area.right() - refresh_width, area.y, refresh_width, 1);
+        f.render_widget(Paragraph::new(if refresh_width >= 3 { " ↻ " } else { "↻" })
+            .style(app.colors.ui.toolbar_layer_style(app.colors.ui.sidebar_foreground,
+                app.colors.bg_sidebar, refresh.contains((app.mouse_col, app.mouse_row).into()), false, false)), refresh);
+        app.source_control_refresh_area = Some(refresh);
+    }
     let closed = app.repositories.closed_roots().count();
     if closed == 0 { return; }
-    let available = area.right().saturating_sub(button.right().saturating_add(1));
+    let available = controls.right().saturating_sub(button.right().saturating_add(1));
     let full_label = format!(" Reopen ({closed}) ▾ ");
     let label = if full_label.width() <= usize::from(available) {
         full_label.as_str()
@@ -233,7 +243,7 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
         " Reopen ▾ "
     } else { return; }; // The Actions menu still exposes it on narrow sidebars.
     let width = label.width() as u16;
-    let reopen = Rect::new(area.right() - width, area.y, width, 1);
+    let reopen = Rect::new(controls.right() - width, area.y, width, 1);
     let open = app.context_menu_active
         && app.context_menu_items.first().is_some_and(|item| item.id == "git_reopen_repository");
     f.render_widget(Paragraph::new(label).style(app.colors.ui.toolbar_layer_style(
@@ -294,6 +304,7 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.source_control_untracked_stage_area = None;
     app.source_control_untracked_discard_area = None;
     app.source_control_actions_area = None;
+    app.source_control_refresh_area = None;
     app.source_control_file_actions.clear();
     app.repositories.headers.clear();
     app.repositories.closes.clear();
@@ -861,7 +872,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let moved_path = file.original_path.as_ref().map(|old| format!("{old} → {}", file.path));
         let parent = moved_path.as_deref().unwrap_or(parent);
         let (icon, icon_color) = if file.directory { ("📁", app.colors.ui.folder_icon_color(row_bg)) }
-            else { file_icon_colored(file_name) };
+            else { crate::file_icons::for_path(path, &app.language_associations) };
         // Build file row: [indent][icon][name]...[parent][actions][status]. Filename is
         // deliberately allocated before parent so narrow sidebars stay useful.
         fmt_buf.clear();
@@ -995,7 +1006,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
-    if !app.show_explorer || app.sidebar_view != crate::app::SidebarView::SourceControl
+    if !app.sidebar_is_visible() || app.sidebar_view != crate::app::SidebarView::SourceControl
         || app.sc_context_active || app.context_menu_active || app.menu_active || app.palette.active
         || crate::ui_modal::active(app).is_some() { return; }
     let point = (app.mouse_col, app.mouse_row).into();
@@ -1016,6 +1027,7 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
     }
     file_actions::draw_tooltip(f, app);
     for (area, label) in [
+        (app.source_control_refresh_area, "Refresh Source Control"),
         (app.source_control_toggle_area, if app.source_control_enabled { "Disable Source Control for this workspace" } else { "Enable Source Control for this workspace" }),
         (app.source_control_stage_all_area, "Stage All Unstaged Changes"),
         (app.source_control_unstage_all_area, "Unstage All Changes"),

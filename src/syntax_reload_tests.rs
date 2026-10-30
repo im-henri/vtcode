@@ -1,5 +1,6 @@
 use crate::app::{App, Tab};
 use crate::editor::Editor;
+use crate::animation_structural_scope::StructuralScopeRequest;
 use crate::highlight::Highlighter;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{backend::TestBackend, Terminal};
@@ -30,6 +31,34 @@ fn wait_loaded(app: &mut App) {
     app.wait_for_background(Duration::from_secs(5), |app| {
         !app.bg_syntax_asset_refresh_running
     });
+}
+
+#[test]
+fn custom_scope_defaults_update_open_documents_after_grammar_reload() {
+    let directory = tempfile::tempdir().unwrap();
+    let syntaxes = directory.path().join("syntaxes");
+    std::fs::create_dir_all(&syntaxes).unwrap();
+    let path = syntaxes.join("Example.tmLanguage.json");
+    std::fs::write(&path, include_bytes!("testdata/scope-bubble-custom.tmLanguage.json")).unwrap();
+    let mut app = test_app(directory.path());
+    app.tabs[0].editor = Editor::test_with_text("module {\n work();\n}\n");
+    app.tabs[0].editor.file_path = Some(directory.path().join("example.customscope"));
+    app.tabs[0].editor.cursor_line = 1;
+    assert!(StructuralScopeRequest::from_editor(app.editor().unwrap()).is_none());
+    app.request_syntax_assets_async();
+    wait_loaded(&mut app);
+    let before = StructuralScopeRequest::from_editor(app.editor().unwrap()).unwrap();
+    let automatic = app.highlighter.scope_bubble_automatic().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&automatic, &app.highlighter.scope_bubble_automatic().unwrap()));
+    let rules = app.editor().unwrap().scope_bubble_rules.clone();
+    app.apply_settings(&crate::settings::Settings::default());
+    assert!(std::sync::Arc::ptr_eq(&rules, &app.editor().unwrap().scope_bubble_rules), "unrelated settings retain scope caches");
+    assert!(before.matches(app.editor().unwrap()));
+    std::fs::remove_file(&path).unwrap();
+    app.request_syntax_assets_async();
+    wait_loaded(&mut app);
+    assert!(!before.matches(app.editor().unwrap()), "old grammar workers are rejected");
+    assert!(StructuralScopeRequest::from_editor(app.editor().unwrap()).is_none());
 }
 
 fn first_color(app: &mut App) -> Option<crate::textmate::Color> {

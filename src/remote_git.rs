@@ -63,6 +63,10 @@ pub(crate) struct Sources {
     pub repository: RemotePath,
     pub head: Option<std::sync::Arc<str>>,
     pub index: Option<std::sync::Arc<str>>,
+    // For an unmerged index, `index` holds the available conflict baseline.
+    // HEAD retains its actual contents for explicit comparisons.
+    #[serde(default)]
+    pub conflicted: bool,
     pub ignored: bool,
     pub staged: bool,
 }
@@ -129,11 +133,12 @@ pub(crate) fn sources(
         .is_ok_and(|status| status.is_ignored());
     let head =
         crate::app_git::head_file_content(&repo, &relative, staged).map_err(io::Error::other)?;
-    let index = crate::app_git::index_file_content(&repo, &relative).map_err(io::Error::other)?;
+    let (index, conflicted) = crate::app_git::line_diff_index_content(&repo, &relative).map_err(io::Error::other)?;
     Ok(Reply::GitSources(Sources {
         repository: from_native(&workdir, root)?,
         head,
         index,
+        conflicted,
         ignored,
         staged,
     }))

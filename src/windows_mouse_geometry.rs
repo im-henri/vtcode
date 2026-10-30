@@ -110,6 +110,7 @@ pub(super) struct Tracker {
     pane_valid: AtomicBool,
     grid: Mutex<Option<TextGrid>>,
     epoch: AtomicU64,
+    pane_generation: AtomicU64,
     pending: AtomicBool,
     sender: OnceLock<mpsc::SyncSender<bool>>,
 }
@@ -132,6 +133,11 @@ impl IUIAutomationFocusChangedEventHandler_Impl for FocusChanged_Impl {
 impl Tracker {
     pub(super) fn pin_current_pane(&self) {
         self.pin_pane.store(true, Ordering::Release);
+        self.invalidate();
+    }
+
+    pub(super) fn confirm_current_pane(&self) {
+        self.pane_generation.fetch_add(1, Ordering::AcqRel);
         self.invalidate();
     }
     pub(super) fn invalidate(&self) {
@@ -179,6 +185,32 @@ impl Tracker {
             return None;
         }
         Some(grid)
+    }
+}
+
+#[derive(Clone, Default)]
+struct PaneBinding {
+    host: isize,
+    generation: u64,
+    identity: Option<Vec<i32>>,
+}
+
+impl PaneBinding {
+    fn for_pane(&self, host: isize, generation: u64) -> Self {
+        if self.host == host && self.generation == generation {
+            self.clone()
+        } else {
+            Self { host, generation, identity: None }
+        }
+    }
+
+    fn accepts(&mut self, identity: Vec<i32>) -> bool {
+        if let Some(pinned) = &self.identity {
+            *pinned == identity
+        } else {
+            self.identity = Some(identity);
+            true
+        }
     }
 }
 
@@ -239,7 +271,7 @@ fn run(focus: Weak<super::MouseFocus>, receiver: mpsc::Receiver<bool>) {
                     && automation
                         .AddFocusChangedEventHandler(None, &handler)
                         .is_ok();
-                let mut owner = None;
+                let mut owner = PaneBinding::default();
                 while receiver.recv() == Ok(true) {
                     let Some(focus) = focus.upgrade() else { break };
                     let epoch = focus.geometry.epoch.load(Ordering::Acquire);
@@ -247,7 +279,9 @@ fn run(focus: Weak<super::MouseFocus>, receiver: mpsc::Receiver<bool>) {
                     // A provider can finish after a pane/size change. Commit
                     // identity together with valid geometry, never from a
                     // discarded or partially failed asynchronous read.
-                    let mut candidate_owner = owner.clone();
+                    let mut candidate_owner = owner.for_pane(
+                        host, focus.geometry.pane_generation.load(Ordering::Acquire),
+                    );
                     let grid = if host != 0 && super::foreground_terminal() == host {
                         read_grid(
                             &automation,
@@ -309,7 +343,7 @@ impl Drop for Rectangles {
 fn read_grid(
     automation: &IUIAutomation,
     host: isize,
-    owner: Option<&mut Option<Vec<i32>>>,
+    owner: Option<&mut PaneBinding>,
 ) -> Option<TextGrid> {
     // SAFETY: these read-only UIA calls run in an initialized COM apartment.
     unsafe {
@@ -321,9 +355,9 @@ fn read_grid(
             return None;
         }
         if let Some(owner) = owner {
-            // Bind native input capture's
-            // geometry to the original UIA pane, so switching to another pane
-            // in the same Terminal window can never redirect captured input.
+            // Keep capture bound to this pane until its own console reports
+            // focus again. Global UIA changes alone cannot redirect input to
+            // another pane in the same Terminal window.
             let ids = Rectangles(element.GetRuntimeId().ok()?);
             if ids.0.is_null() {
                 return None;
@@ -339,13 +373,7 @@ fn read_grid(
                 SafeArrayGetElement(ids.0, &index, (&mut value as *mut i32).cast()).ok()?;
                 identity.push(value);
             }
-            if let Some(pinned) = owner.as_ref() {
-                if pinned != &identity {
-                    return None;
-                }
-            } else {
-                *owner = Some(identity);
-            }
+            if !owner.accepts(identity) { return None; }
         }
         let pattern: IUIAutomationTextPattern =
             element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
@@ -399,6 +427,31 @@ pub(super) fn test_grid() -> TextGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recreated_pane_requires_its_own_console_focus_confirmation() {
+        let tracker = Tracker::default();
+        tracker.pin_current_pane();
+        let generation = || tracker.pane_generation.load(Ordering::Acquire);
+        let mut owner = PaneBinding::default().for_pane(12, generation());
+        assert!(owner.accepts(vec![1, 2, 3]));
+
+        // UIA announces other panes, popups and focus loss too. Those events
+        // invalidate geometry but must never let another pane take ownership.
+        tracker.invalidate();
+        let mut other_pane = owner.for_pane(12, generation());
+        assert!(!other_pane.accepts(vec![4, 5, 6]));
+        assert!(other_pane.accepts(vec![1, 2, 3]));
+
+        tracker.confirm_current_pane();
+        let mut restored = owner.for_pane(12, generation());
+        assert!(restored.accepts(vec![4, 5, 6]), "a recreated UIA provider must recover");
+        assert!(!restored.accepts(vec![7, 8, 9]), "the replacement remains pinned");
+
+        let mut rehosted = owner.for_pane(34, generation());
+        assert!(rehosted.accepts(vec![7, 8, 9]), "moving the pane to a new window can rebind");
+        assert!(!rehosted.accepts(vec![1, 2, 3]));
+    }
 
     #[test]
     fn native_reference_corrects_cell_offsets_without_hardcoded_terminal_padding() {

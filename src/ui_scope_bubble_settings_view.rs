@@ -32,7 +32,7 @@ fn rows(app: &App, width: u16) -> Vec<Row> {
         );
         rows.push(Row::Gap);
         if state.rules.is_empty() {
-            hint(&mut rows, "Using built-in language rules.");
+            hint(&mut rows, "Using automatic language rules.");
         } else {
             rows.push(Row::Header);
             rows.extend((0..state.rules.len()).map(Row::Rule));
@@ -47,7 +47,7 @@ fn rows(app: &App, width: u16) -> Vec<Row> {
         rows.extend([Row::Gap, Row::Control(Action::ChooseSyntax)]);
         hint(
             &mut rows,
-            "For a C-like custom language, choose C or C++. This controls scope parsing, including comments and strings; highlighting stays unchanged.",
+            "Automatic recognizes registered C-style grammars. Choose a style to override scope parsing, including comments, strings, and blocks.",
         );
         if state.draft.syntax != Syntax::Disabled {
             rows.push(Row::Gap);

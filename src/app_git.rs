@@ -167,6 +167,26 @@ pub(crate) fn index_file_content(
     blob_file_content(repo, index_file_id(repo, relative)?)
 }
 
+/// Conflict entries have stages 1/2/3 instead of a normal index snapshot.
+/// Compare line decorations against ours, or the ancestor/incoming version
+/// when ours was deleted. Missing stage 0 must not turn the whole file into
+/// an addition. Unmerged stages are not staged changes against HEAD.
+pub(crate) fn line_diff_index_content(
+    repo: &git2::Repository,
+    relative: &Path,
+) -> Result<(Option<std::sync::Arc<str>>, bool), String> {
+    let index = repo.index().map_err(|error| format!("Cannot read Git index: {error}"))?;
+    let normal = index.get_path(relative, 0);
+    let conflict = normal.is_none().then(|| {
+        [2, 1, 3].into_iter().find_map(|stage| index.get_path(relative, stage))
+    }).flatten();
+    let conflicted = conflict.is_some();
+    let id = normal.or(conflict)
+        .filter(|entry| entry.flags_extended & git2::IndexEntryExtendedFlag::INTENT_TO_ADD.bits() == 0)
+        .map(|entry| entry.id);
+    Ok((blob_file_content(repo, id)?, conflicted))
+}
+
 pub(crate) fn index_file_id(
     repo: &git2::Repository,
     relative: &Path,
@@ -1802,7 +1822,8 @@ impl App {
                     let index = sources.index.as_deref().unwrap_or_default().lines().collect::<Vec<_>>();
                     let saved = saved_snapshot.to_string();
                     let working = saved.lines().collect::<Vec<_>>();
-                    (compute_line_diff(&head, &index), compute_line_diff(&index, &working))
+                    let staged = if sources.conflicted { Vec::new() } else { compute_line_diff(&head, &index) };
+                    (staged, compute_line_diff(&index, &working))
                 });
                 let (staged, unstaged) = result.unwrap_or_default();
                 let status = crate::editor::PreparedGitLineStatus::from_diffs(line_count, &staged, &unstaged);
@@ -1827,20 +1848,10 @@ impl App {
                 }
                 if sender.is_cancelled() { return None; }
 
-                let head_content = (|| -> Option<String> {
-                    let head = repo.head().ok()?;
-                    let tree = head.peel_to_tree().ok()?;
-                    let entry = tree.get_path(&rel_path).ok()?;
-                    let blob = repo.find_blob(entry.id()).ok()?;
-                    Some(String::from_utf8_lossy(blob.content()).into_owned())
-                })();
-
-                let index_content = (|| -> Option<String> {
-                    let index = repo.index().ok()?;
-                    let entry = index.get_path(&rel_path, 0)?;
-                    let blob = repo.find_blob(entry.id).ok()?;
-                    Some(String::from_utf8_lossy(blob.content()).into_owned())
-                })();
+                let (index_content, conflicted) = line_diff_index_content(&repo, &rel_path).ok()?;
+                let head_content = if conflicted { None } else {
+                    head_file_content(&repo, &rel_path, false).ok()?
+                };
 
                 if sender.is_cancelled() { return None; }
                 let worktree_content = std::fs::read_to_string(&file_path).ok()?;
@@ -1852,7 +1863,7 @@ impl App {
                 let index_lines: Vec<&str> = index_text.lines().collect();
                 let worktree_lines: Vec<&str> = worktree_content.lines().collect();
 
-                let staged = compute_line_diff(&head_lines, &index_lines);
+                let staged = if conflicted { Vec::new() } else { compute_line_diff(&head_lines, &index_lines) };
                 let unstaged = compute_line_diff(&index_lines, &worktree_lines);
                 Some((staged, unstaged))
             })();

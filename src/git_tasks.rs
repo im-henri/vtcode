@@ -165,7 +165,9 @@ pub(crate) fn execute<P: AsRef<Path>>(
             let head_commit = repo
                 .head()
                 .and_then(|head| head.peel_to_commit())
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| if matches!(error.code(), git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound) {
+                    "Create an initial commit before creating another branch.".to_string()
+                } else { error.to_string() })?;
             repo.branch(&branch_name, &head_commit, false)
                 .map_err(|error| error.to_string())?;
             crate::app_git_branch::checkout_branch(&repo, &branch_name)?;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{GlobalSearchResult, SidebarView, Tab};
+use crate::app::{ActivePane, GlobalSearchResult, SidebarView, Tab};
 use crate::editor::Editor;
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend, style::Style};
@@ -179,6 +179,7 @@ fn regex_search_controls_switch_modes_and_show_invalid_pattern_errors() {
     assert!(app.search_error.is_none());
     assert!(!has_text(&terminal, "Invalid regex:"));
 
+    app.global_search_regex = true;
     app.global_search_query = "(?=a)".into();
     app.update_global_search();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
@@ -942,7 +943,7 @@ fn asynchronous_replace_result_applies_in_large_file_mode_and_rejects_stale_edit
 }
 
 #[test]
-fn option_shortcuts_keep_find_and_workspace_results_consistent() {
+fn option_shortcuts_only_refresh_the_focused_search() {
     let (workspace, mut app, _) = fixture();
     let path = workspace.path().join("case.txt");
     std::fs::write(&path, "foo Foo foobar").unwrap();
@@ -961,16 +962,267 @@ fn option_shortcuts_keep_find_and_workspace_results_consistent() {
 
     app.active_pane = ActivePane::Explorer;
     app.search_input_focused = false;
+    let file_generation = app.file_search_generation;
     for (option, matches) in [('c', 2), ('w', 1)] {
         key(&mut app, KeyCode::Char(option), KeyModifiers::ALT);
         app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
-        assert_eq!(app.search_matches.len(), matches);
+        assert_eq!(app.search_matches.len(), 3);
+        assert_eq!(app.file_search_generation, file_generation);
         assert_eq!(app.global_search_results.len(), matches);
     }
-    app.active_pane = ActivePane::Editor;
-    app.search_input_focused = true;
+    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    let workspace_generation = app.search_generation;
+    key(&mut app, KeyCode::Char('w'), KeyModifiers::ALT);
+    assert_eq!(app.search_matches.len(), 2);
     key(&mut app, KeyCode::Char('c'), KeyModifiers::ALT);
+    assert_eq!(app.search_matches.len(), 1);
+    assert_eq!(app.global_search_results.len(), 1);
+    assert_eq!(app.search_generation, workspace_generation);
+}
+
+#[test]
+fn opening_file_find_from_workspace_search_focuses_all_field_shortcuts() {
+    use crate::text_input::TextInputId;
+    for command in [false, true] {
+        for replace in [false, true] {
+            let (_workspace, mut app, _) = fixture();
+            app.global_search_query = "workspace".into();
+            app.global_search_field_cursors[0] = app.global_search_query.len();
+            app.search_query = "foo".into();
+            if command {
+                app.execute_palette_command(if replace { "find_replace" } else { "find" });
+            } else {
+                key(&mut app, KeyCode::Char(if replace { 'h' } else { 'f' }), KeyModifiers::CONTROL);
+            }
+            assert_eq!(app.active_pane, ActivePane::Editor);
+            assert_eq!(app.focused_text_input_id(), Some(TextInputId::SearchFind));
+            assert_eq!(app.replace_mode, replace);
+            key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+            assert_eq!(app.search_selection_anchor, Some(0));
+            assert_eq!(app.global_search_field_selection_anchors[0], None);
+            key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+            assert_eq!(app.search_query, "x");
+            assert_eq!(app.global_search_query, "workspace");
+            key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
+            assert_eq!(app.search_query, "foo");
+            assert_eq!(app.global_search_query, "workspace");
+            key(&mut app, KeyCode::Char('w'), KeyModifiers::ALT);
+            assert!(app.search_whole_word);
+            assert!(!app.global_search_whole_word);
+        }
+    }
+}
+
+fn search_options(app: &App, scope: SearchScope) -> [bool; 4] {
+    match scope {
+        SearchScope::File => [app.search_case_sensitive, app.search_whole_word,
+            app.search_regex, app.search_preserve_case],
+        SearchScope::Workspace => [app.global_search_case_sensitive, app.global_search_whole_word,
+            app.global_search_regex, app.global_search_preserve_case],
+    }
+}
+
+#[test]
+fn option_buttons_keep_file_and_workspace_preferences_independent() {
+    for scope in [SearchScope::File, SearchScope::Workspace] {
+        let (_workspace, mut app, mut terminal) = fixture();
+        app.search_active = true;
+        app.replace_mode = true;
+        draw(&mut app, &mut terminal);
+        for (index, label) in ["Aa", "ab", ".*", "AB"].into_iter().enumerate() {
+            click_label(&mut app, &mut terminal, scope, label);
+            let other = if scope == SearchScope::File { SearchScope::Workspace } else { SearchScope::File };
+            assert_eq!(search_options(&app, other), [false; 4]);
+            let expected = std::array::from_fn(|option| option <= index);
+            assert_eq!(search_options(&app, scope), expected);
+        }
+    }
+}
+
+#[test]
+fn escape_in_file_find_does_not_stop_workspace_search() {
+    let (_workspace, mut app, _) = fixture();
+    let cancel = crate::background::CancellationToken::new();
+    app.search_cancel_token = Some(cancel.clone());
+    app.bg_global_search_running = true;
+    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.search_active);
+    assert!(app.global_search_active);
+    assert!(app.bg_global_search_running);
+    assert!(!cancel.is_cancelled());
+}
+
+#[test]
+fn quick_open_owns_input_while_both_search_views_remain_visible() {
+    use crate::text_input::TextInputId;
+    let (_workspace, mut app, _) = fixture();
+    app.global_search_query = "workspace".into();
+    app.search_query = "foo".into();
+    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+    assert_eq!(app.focused_text_input_id(), Some(TextInputId::QuickOpen));
+    key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert_eq!(app.quick_open_query, "x");
+    assert_eq!(app.search_query, "foo");
+    assert_eq!(app.global_search_query, "workspace");
+}
+
+#[test]
+fn workspace_replacement_uses_its_own_matching_and_preserve_case_options() {
+    let (workspace, mut app, _) = fixture();
+    let open = workspace.path().join("open.txt");
+    let closed = workspace.path().join("closed.txt");
+    for path in [&open, &closed] {
+        std::fs::write(path, "foo FOO foobar").unwrap();
+    }
+    app.open_file(&open);
+    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.search_case_sensitive = true;
+    app.search_regex = true;
+    app.global_search_whole_word = true;
+    app.global_search_preserve_case = true;
+    app.global_search_query = "foo".into();
+    app.global_search_replace_query = "bar".into();
+    app.update_global_search();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+    assert_eq!(app.global_search_results.len(), 4);
+    app.replace_all_in_files();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.bg_global_replace_running && !app.bg_global_search_running
+    });
+    assert_eq!(app.editor().unwrap().rope.to_string(), "bar BAR foobar");
+    assert_eq!(std::fs::read_to_string(closed).unwrap(), "bar BAR foobar");
+}
+
+#[test]
+fn settings_changes_only_refresh_the_corresponding_search() {
+    let (workspace, mut app, _) = fixture();
+    let path = workspace.path().join("case.txt");
+    std::fs::write(&path, "foo Foo foobar").unwrap();
+    app.open_file(&path);
+    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.search_active = true;
+    app.search_query = "foo".into();
+    app.global_search_query = "foo".into();
+    app.update_search();
+    app.update_global_search();
+    app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+    app.toggle_setting("global_search_whole_word");
+    app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+    assert_eq!(app.global_search_results.len(), 2);
+    assert_eq!(app.search_matches.len(), 3);
+    let generation = app.search_generation;
+    app.toggle_setting("search_case_sensitive");
     assert_eq!(app.search_matches.len(), 2);
     assert_eq!(app.global_search_results.len(), 2);
+    assert_eq!(app.search_generation, generation);
+}
+
+#[test]
+fn docked_terminal_focus_prevents_visible_find_from_claiming_text_shortcuts() {
+    let (_workspace, mut app, _) = fixture();
+    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    app.show_terminal_sidebar = true;
+    app.terminal_panel_focused = true;
+    assert!(app.docked_terminal_has_focus());
+    assert_eq!(app.focused_text_input_id(), None);
+    assert!(app.file_search_visible());
+}
+
+fn scrolled_workspace_results(
+    sidebar_right: bool, replace_visible: bool, selected_file_expanded: bool,
+) -> (tempfile::TempDir, App, Terminal<TestBackend>) {
+    let (workspace, mut app, mut terminal) = fixture();
+    app.sidebar_right = sidebar_right;
+    app.global_search_replace_visible = replace_visible;
+    app.global_search_query = "foo".into();
+    app.global_search_results = (0..600).flat_map(|file| {
+        let path = workspace.path().join(format!("file-{file:04}.rs"));
+        (0..4).map(move |line| GlobalSearchResult {
+            file_path: path.clone(), line_num: line + 1,
+            line_text: format!("foo match {line}").into(), col_start: 0, col_end: 3,
+            context_before: None, context_after: None,
+        })
+    }).collect();
+    app.global_search_results.set_all_collapsed(true);
+    if selected_file_expanded {
+        let path = app.global_search_results[0].file_path.clone();
+        app.global_search_results.set_collapsed(&path, false);
+    }
+    app.global_search_selected = 0;
+    app.global_search_scroll = 320;
+    app.scroll_speed = 3;
+    draw(&mut app, &mut terminal);
+    let area = app.explorer_area.unwrap();
+    let row = crate::ui_search_panel::search_results_start_y(&app, area) + 2;
+    mouse(&mut app, MouseEventKind::ScrollDown, (area.x + 4, row));
+    draw(&mut app, &mut terminal);
+    assert!(app.global_search_scroll > 320);
+    assert_eq!(app.global_search_selected, 0, "wheel scrolling must leave selection alone");
+    (workspace, app, terminal)
+}
+
+#[test]
+fn workspace_search_expansion_preserves_viewport_with_selection_above_it() {
+    use crate::search_results::SearchRow;
+    for sidebar_right in [false, true] {
+        for replace_visible in [false, true] {
+            let (_workspace, mut app, mut terminal) = scrolled_workspace_results(sidebar_right, replace_visible, true);
+            let scroll = app.global_search_scroll;
+            let area = app.explorer_area.unwrap();
+            let start_y = crate::ui_search_panel::search_results_start_y(&app, area);
+            // Expand several different files while the selected match remains
+            // hundreds of rows above the viewport.
+            for _ in 0..3 {
+                let (row, index) = app.global_search_results.visible_rows(scroll + 3..scroll + 15)
+                    .find_map(|(row, hit)| match hit {
+                        SearchRow::Header(index) if app.is_global_search_file_collapsed(&app.global_search_results[index].file_path) => Some((row, index)),
+                        _ => None,
+                    }).unwrap();
+                let path = app.global_search_results[index].file_path.clone();
+                let screen_y = start_y + (row - scroll) as u16;
+                let point = (area.x + 4, screen_y);
+                mouse(&mut app, MouseEventKind::Down(MouseButton::Left), point);
+                mouse(&mut app, MouseEventKind::Up(MouseButton::Left), point);
+                draw(&mut app, &mut terminal);
+                assert!(!app.is_global_search_file_collapsed(&path));
+                assert_eq!(app.global_search_scroll, scroll, "expanding {path:?} must not reveal the old selection");
+                assert_eq!(app.global_search_selected, 0);
+                let label: String = (area.x..area.right())
+                    .map(|x| terminal.backend().buffer()[(x, screen_y)].symbol()).collect();
+                assert!(label.contains(path.file_name().unwrap().to_str().unwrap()), "the expanded header stays under the pointer: {label}");
+            }
+            app.global_search_active = true;
+            key(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
+            draw(&mut app, &mut terminal);
+            assert_eq!(app.global_search_selected, 1, "keyboard navigation must still move selection");
+            assert!(app.global_search_scroll < scroll, "keyboard navigation still reveals the chosen match");
+        }
+    }
+}
+
+#[test]
+fn workspace_search_collapsing_the_only_expanded_file_preserves_viewport() {
+    use crate::search_results::SearchRow;
+    for sidebar_right in [false, true] {
+        for replace_visible in [false, true] {
+            let (_workspace, mut app, mut terminal) = scrolled_workspace_results(sidebar_right, replace_visible, false);
+            let scroll = app.global_search_scroll;
+            let area = app.explorer_area.unwrap();
+            let start_y = crate::ui_search_panel::search_results_start_y(&app, area);
+            let row = scroll + 4;
+            let Some(SearchRow::Header(index)) = app.global_search_results.row_at(row) else { panic!("collapsed file header") };
+            let path = app.global_search_results[index].file_path.clone();
+            let point = (area.x + 4, start_y + 4);
+            for collapsed in [false, true, false, true] {
+                mouse(&mut app, MouseEventKind::Down(MouseButton::Left), point);
+                mouse(&mut app, MouseEventKind::Up(MouseButton::Left), point);
+                draw(&mut app, &mut terminal);
+                assert_eq!(app.is_global_search_file_collapsed(&path), collapsed);
+                assert_eq!(app.global_search_scroll, scroll, "toggling the last expanded file must not reset scrolling");
+            }
+        }
+    }
 }

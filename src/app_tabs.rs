@@ -1448,6 +1448,7 @@ impl App {
             self.source_control_scroll = 0;
             self.set_source_control_visibility(Default::default());
             self.source_control_actions_area = None;
+            self.source_control_refresh_area = None;
             self.source_control_input_mode = false;
             self.source_control_commit_msg.clear();
             self.source_control_commit_cursor = 0;

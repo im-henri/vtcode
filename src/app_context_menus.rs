@@ -13,6 +13,10 @@ impl App {
 
     pub(crate) fn tab_context_command_disabled(&self, command: &str) -> bool {
         match command {
+            "tab_rename_terminal" => self.tabs.get(self.tab_context_tab)
+                .filter(|tab| tab.kind == crate::app::TabKind::Terminal)
+                .and_then(|tab| tab.terminal_idx)
+                .is_none_or(|index| !self.terminal_is_open(index)),
             "tab_group_edit" | "tab_group_remove" => self.tabs.get(self.tab_context_tab).is_none_or(|t| self.tab_group(t).is_none()),
             "duplicate_tab" => !self.can_duplicate_tab(self.tab_context_tab),
             "tab_select_compare" => self.tab_compare_path(self.tab_context_tab).is_none(),

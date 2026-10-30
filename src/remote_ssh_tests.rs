@@ -1150,7 +1150,7 @@ fn windows_ssh_filtered_search_keeps_native_names_drafts_and_undo_responsive() {
     assert!(app.global_search_results.is_empty());
     app.search_exclude_pattern.clear();
     app.search_include_pattern = "100%real:λ.txt".into();
-    app.search_regex = true;
+    app.global_search_regex = true;
     let mut setup = Vec::new();
     for index in 0..24 {
         app.global_search_query = if index % 2 == 0 { "(".into() } else {

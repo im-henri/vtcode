@@ -59,7 +59,7 @@ impl Drop for State {
 
 fn target(app: &App) -> Option<(&Path, bool)> {
     if !app.terminal_has_focus
-        || !app.show_explorer
+        || !app.sidebar_is_visible()
         || app.sidebar_view != SidebarView::Explorer
         || app.change_dir_active
         || app.explorer_context_active

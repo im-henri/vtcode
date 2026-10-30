@@ -54,6 +54,7 @@ pub(crate) struct State {
     draft: Config,
     rules: Vec<(String, Config, bool)>,
     languages: Vec<String>,
+    automatic: Option<std::sync::Arc<config::Automatic>>,
     menu: Option<Action>,
     menu_index: usize,
     popup: Rect,
@@ -74,7 +75,9 @@ impl State {
     }
     fn syntax(&self) -> Syntax {
         if self.draft.syntax == Syntax::Automatic {
-            Syntax::for_language(&self.field.text).unwrap_or(Syntax::Automatic)
+            Syntax::for_language(&self.field.text)
+                .or_else(|| self.automatic.as_ref()?.for_language(&self.field.text))
+                .unwrap_or(Syntax::Automatic)
         } else {
             self.draft.syntax
         }
@@ -190,6 +193,7 @@ impl App {
                 SettingsScope::Global
             },
             languages: self.highlighter.syntax_names(),
+            automatic: self.highlighter.scope_bubble_automatic(),
             ..Default::default()
         };
         reload(self);

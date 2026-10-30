@@ -391,30 +391,34 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let mut x = area.x;
     let tab_right = area.x.saturating_add(area.width);
+    let now = std::time::Instant::now();
     for index in ordered {
         let remaining = tab_right.saturating_sub(x) as usize;
-        if remaining < 5 {
+        if remaining < 6 {
             break;
         }
-        let max_name = remaining.saturating_sub(4).clamp(1, 20);
+        let notice = &app.terminals[index].completion;
+        let notified = notice.visible(now);
+        // Keep a fixed two-cell prefix so completing/acknowledging a command
+        // never moves this tab's close button or its neighbours.
+        let max_name = remaining.saturating_sub(5).clamp(1, 20);
         let name = crate::ui_pickers::truncate_to_width(&app.terminals[index].name, max_name);
-        let label = format!(" {name} ");
-        let label_width = UnicodeWidthStr::width(label.as_str()) as u16;
+        let label_width = (name.width() + 3) as u16;
         let tab_area = Rect::new(x, area.y + 1, label_width, 1);
         let is_active = Some(index) == selected;
-        f.render_widget(
-            Paragraph::new(label).style(
-                {
-                    let mut style = app.colors.ui.toolbar_style(
-                        if is_active { app.colors.ui.fg_panel_title } else { app.colors.ui.fg_panel_inactive },
-                        app.colors.ui.bg_panel, app.hovered_terminal_tab == Some(index), false, false,
-                    );
-                    if is_active { style = style.add_modifier(Modifier::UNDERLINED).underline_color(app.colors.ui.border_terminal_tab); }
-                    style
-                },
-            ),
-            tab_area,
+        let background = crate::ui_chrome_tabs::terminal_completion_background(app, Some(index), app.colors.ui.bg_panel, now);
+        let mut style = app.colors.ui.toolbar_style(
+            if is_active { app.colors.ui.fg_panel_title } else { app.colors.ui.fg_panel_inactive },
+            background, app.hovered_terminal_tab == Some(index), false, false,
         );
+        if is_active { style = style.add_modifier(Modifier::UNDERLINED).underline_color(app.colors.ui.border_terminal_tab); }
+        let color = if notice.failed() { app.colors.fg_error } else { app.colors.fg_success };
+        let label = vec![
+            Span::styled(if notified { "● " } else { "  " },
+                style.fg(app.colors.ui.readable_foreground(color, background, 3.0))),
+            Span::styled(format!("{name} "), style),
+        ];
+        f.render_widget(Paragraph::new(Line::from(label)).style(style), tab_area);
         app.terminal_sidebar_tab_areas.push((tab_area, index));
         x = x.saturating_add(label_width);
 

@@ -95,6 +95,10 @@ workspace, including after restarting VTCode. Workspace search also keeps separa
 histories for replacement text and the include/exclude paths. Use **↑/↓** in the
 Find field or any workspace search field to recall history; **Alt+↑/↓** navigates
 workspace search results.
+
+In-file Find and workspace search remember separate Match Case, Whole Word,
+Regular Expression, and Preserve Case options. Search shortcuts apply to the
+focused search view; the two sets of preferences are also available in Settings.
 Each file tab keeps its own Find/Replace fields, matches, and widget width.
 Split editors display their Find bars inside their respective panes.
 While a workspace search is running, click **■** in the Search header or press
@@ -128,6 +132,23 @@ further narrow the results. Local and remote SSH workspaces use the same rules.
 Some terminals send the same byte for `Ctrl+H` and `Ctrl+Backspace`. VTCode
 prioritizes deletion when they cannot be distinguished; use **Edit → Replace**
 or the command palette instead. Extended key reporting keeps both shortcuts distinct.
+
+Rename terminal tabs by right-clicking a tab and choosing **Rename Terminal…**,
+or use **Terminal → Rename Terminal…** or the command palette. Names stay with
+the session when moving between the side panel and an editor tab.
+
+**View → Auto-hide Sidebar** hides the sidebar until you move the pointer to
+its edge or the Activity Bar. It stays open while you use sidebar fields or menus.
+This is off by default and can also be changed in **Settings → Workbench → Layout**
+with **Auto-hide Sidebar** (`sidebarAutoHide` in `settings.json`).
+
+**File Associations** also updates file icons throughout the Explorer, editor tabs,
+breadcrumbs, Quick Open, and Source Control. Explicit associations override built-in
+file types; for example, associating `*.rs` with C++ uses the C++ language and icon.
+
+Large files are sampled for binary data before text loading. In SSH mode these
+checks run on the remote node, which returns the binary-file notice when detected.
+Binary editor extensions, such as Hex Viewer, remain available through **Open With**.
 
 **Using VTCode over SSH?** For editing that stays local and responsive over a
 slow connection, launch

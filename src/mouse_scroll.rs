@@ -86,7 +86,7 @@ fn scroll_settings_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
 }
 
 fn scroll_repositories_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
-    if !app.show_explorer || app.sidebar_view != crate::app::SidebarView::SourceControl { return false; }
+    if !app.sidebar_is_visible() || app.sidebar_view != crate::app::SidebarView::SourceControl { return false; }
     if !app.repositories.headers.iter().any(|(area, _)| area.contains((col, row).into())) {
         return app.repositories.discovered && !app.repositories.expanded
             && app.explorer_area.is_some_and(|area| area.contains((col, row).into()));

@@ -99,7 +99,7 @@ impl App {
                 | "toggle_status_bar" | "toggle_tab_bar" | "toggle_menu_bar" | "toggle_relative_lines"
                 | "toggle_word_wrap" | "toggle_whitespace" | "toggle_cursor_style"
                 | "toggle_cursor_blinking" | "toggle_focus_mode" | "toggle_sidebar_position"
-                | "toggle_zen" | "toggle_maximized" | "toggle_explorer" | "toggle_sidebar"
+                | "toggle_zen" | "toggle_maximized" | "toggle_explorer" | "toggle_sidebar" | "toggle_sidebar_auto_hide"
                 | "toggle_panel" | "ruler_80" | "ruler_120" | "ruler_clear")
         {
             self.flush_live_settings();
@@ -448,20 +448,20 @@ impl App {
             }
             "source_control" => {
                 // Toggle source control sidebar
-                if self.sidebar_view == crate::app::SidebarView::SourceControl && self.show_explorer
+                if self.sidebar_view == crate::app::SidebarView::SourceControl && self.sidebar_is_visible()
                 {
                     self.show_explorer = false;
                 } else {
                     self.sidebar_view = crate::app::SidebarView::SourceControl;
-                    self.show_explorer = true;
                     self.activity_bar_selected = 2;
+                    self.reveal_sidebar();
                     self.refresh_source_control_async();
                     self.refresh_git_log_async();
                     self.source_control_input_mode = false;
                 }
             }
             "extensions" => {
-                if self.sidebar_view == crate::app::SidebarView::Extensions && self.show_explorer {
+                if self.sidebar_view == crate::app::SidebarView::Extensions && self.sidebar_is_visible() {
                     self.show_explorer = false;
                 } else {
                     self.open_extensions_sidebar();
@@ -496,6 +496,11 @@ impl App {
             "close_terminal" => {
                 self.close_terminal_tab();
             }
+            "rename_terminal" => {
+                let index = self.focused_terminal_index().unwrap_or(self.active_terminal);
+                self.begin_terminal_rename(index);
+            }
+            "rename_context_terminal" => self.rename_context_terminal(),
             "toggle_terminal" => {
                 self.toggle_terminal_sidebar();
             }
@@ -594,7 +599,7 @@ impl App {
                 self.search_cursor = self.search_query.len();
                 self.search_selection_anchor = (!self.search_query.is_empty()).then_some(0);
                 self.search_active = true;
-                self.search_input_focused = true;
+                self.focus_text_input(crate::text_input::TextInputId::SearchFind);
                 self.replace_mode = false;
                 self.search_focus_replace = false;
                 if !self.search_query.is_empty() {
@@ -620,7 +625,7 @@ impl App {
                 self.replace_cursor = self.replace_query.len();
                 self.replace_selection_anchor = None;
                 self.search_active = true;
-                self.search_input_focused = true;
+                self.focus_text_input(crate::text_input::TextInputId::SearchFind);
                 self.replace_mode = true;
                 self.search_focus_replace = false;
                 if !self.search_query.is_empty() {

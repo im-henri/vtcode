@@ -68,6 +68,7 @@ impl App {
             | "inlay_hints" | "code_lens" | "semantic_highlighting" | "sticky_scroll" | "sticky_scroll_max"
             | "scroll_past_end" | "focus_mode" | "word_count" | "screencast_mode" | "rulers"
             | "heading_search" | "search_case_sensitive" | "search_whole_word" | "search_regex"
+            | "global_search_case_sensitive" | "global_search_whole_word" | "global_search_regex" | "global_search_preserve_case"
             | "search_preserve_case" | "search_exclude" | "search_debounce_ms" | "max_global_search_results" | "scroll_speed" => 3,
             "files_exclude" | "heading_save" | "trim_trailing" | "final_newline" | "language_associations"
             | "large_file_threshold_mb" | "large_file_analysis_timeout_ms"
@@ -116,12 +117,13 @@ impl App {
             | "large_file_analysis_timeout_ms" => "number",
             "theme" | "sidebar_pos" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" => "dropdown",
             "use_tabs" | "word_wrap" | "read_only" | "quick_suggestions" | "hover_enabled" | "format_on_type" | "explorer"
-            | "show_open_editors" | "minimap" | "line_numbers" | "relative_lines" | "panel"
+            | "show_open_editors" | "sidebar_auto_hide" | "minimap" | "line_numbers" | "relative_lines" | "panel"
             | "zen" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens" | "sticky_scroll" | "focus_mode"
             | "word_count" | "trim_trailing" | "format_on_save" | "final_newline" | "scroll_past_end"
             | "indent_guides" | "activity_bar" | "breadcrumbs" | "status_bar" | "tab_bar" | "preview_tabs" | "mouse_back_forward" | "menu_bar"
             | "inlay_hints" | "code_lens" | "semantic_highlighting" | "screencast_mode"
             | "search_case_sensitive" | "search_whole_word" | "search_regex" | "search_preserve_case"
+            | "global_search_case_sensitive" | "global_search_whole_word" | "global_search_regex" | "global_search_preserve_case"
             | "cursor_blinking" => "checkbox",
             _ => "text",
         }
@@ -173,6 +175,7 @@ impl App {
             "format_on_type" => "formatOnType",
             "theme" => "theme",
             "explorer" => "showExplorer",
+            "sidebar_auto_hide" => "sidebarAutoHide",
             "show_open_editors" => "showOpenEditors",
             "minimap" => "showMinimap",
             "minimap_width" => "minimapWidth",
@@ -208,6 +211,10 @@ impl App {
             "search_whole_word" => "searchWholeWord",
             "search_regex" => "searchRegex",
             "search_preserve_case" => "searchPreserveCase",
+            "global_search_case_sensitive" => "globalSearchCaseSensitive",
+            "global_search_whole_word" => "globalSearchWholeWord",
+            "global_search_regex" => "globalSearchRegex",
+            "global_search_preserve_case" => "globalSearchPreserveCase",
             "search_debounce_ms" => "search.searchOnTypeDebouncePeriod",
             "files_exclude" => "files.exclude",
             "search_exclude" => "search.exclude",
@@ -472,6 +479,7 @@ impl App {
             "format_on_type" => "When Language Server is the chosen formatter, adjust text after supported trigger characters. New lines are never formatted by this setting. External tools run on Format Document or Format on Save.",
             "theme" => "Select the active color theme for the whole editor.",
             "explorer" => "Show or hide the left sidebar explorer.",
+            "sidebar_auto_hide" => "Automatically hide the sidebar when it is not in use. Move the pointer to its edge or the Activity Bar to reveal it. Keyboard focus and menus keep it open. Off by default.",
             "show_open_editors" => "Show the Open Editors section above the file tree.",
             "minimap" => "Show or hide the minimap preview in editor panes.",
             "minimap_width" => "Set the minimap width in characters.",
@@ -498,16 +506,20 @@ impl App {
             "max_global_search_results" => "Maximum number of Search view results before truncating the list.",
             "large_file_threshold_mb" => "File size in MiB above which syntax, language services, Git diff, wrapping, and whole-file analysis are paused. Editing, scrolling, saving, search, line numbers, and the bounded minimap remain available.",
             "large_file_analysis_timeout_ms" => "Maximum time automatic rich analysis may run before those features are paused for the current file.",
-            "search_case_sensitive" => "Use case-sensitive matching by default in editor and workspace searches.",
-            "search_whole_word" => "Match complete words by default in editor and workspace searches.",
-            "search_regex" => "Interpret search text as a regular expression by default.",
-            "search_preserve_case" => "Preserve the capitalization pattern of each match when replacing text.",
+            "search_case_sensitive" => "Use case-sensitive matching in in-file Find.",
+            "search_whole_word" => "Match complete words in in-file Find.",
+            "search_regex" => "Interpret in-file Find text as a regular expression.",
+            "search_preserve_case" => "Preserve the capitalization pattern of each match when replacing within a file.",
+            "global_search_case_sensitive" => "Use case-sensitive matching in workspace search.",
+            "global_search_whole_word" => "Match complete words in workspace search.",
+            "global_search_regex" => "Interpret workspace search text as a regular expression.",
+            "global_search_preserve_case" => "Preserve the capitalization pattern of each match when replacing across files.",
             "search_debounce_ms" => "Delay in milliseconds after typing in workspace search or its include/exclude fields before searching. Set to 0 to search immediately. Find within a file stays instant.",
             "rulers" => "Choose visible column rulers (for example 80 and 120).",
             "trim_trailing" => "Remove trailing whitespace when saving files.",
             "format_on_save" => "Run the selected formatter before saving. Choose a formatter the first time you format each language.",
             "formatters" => "Choose and remember a formatter for each language: Language Server, External Command, or Disabled. Independent of completion and diagnostics. Configure the executable and arguments here.",
-            "language_associations" => "Associate a filename or extension with a file type for syntax highlighting, language servers, and formatting. Supports *.py, *.d.ts, *.{c,h}, Dockerfile.*, and exact filenames. Exact filenames take priority. Save globally or for this workspace; remove a rule to restore the inherited or automatic type.",
+            "language_associations" => "Associate a filename or extension with a file type for file icons, syntax highlighting, language servers, and formatting. Supports *.py, *.d.ts, *.{c,h}, Dockerfile.*, and exact filenames. Exact filenames take priority over patterns; explicit associations override built-in file types. Save globally or for this workspace; remove a rule to restore the inherited or automatic type.",
             "final_newline" => "Ensure a newline exists at the end of saved files.",
             "indent_guides" => "Show vertical guides at indentation levels.",
             "breadcrumbs" => "Show breadcrumbs navigation above the editor.",
@@ -658,6 +670,7 @@ impl App {
                     let child = Self::settings_section_for_id(id).unwrap_or("");
                     let searchable_id = id.replace('_', " ");
                     crate::app::contains_ignore_case(label, query)
+                        || Self::setting_json_key(id).is_some_and(|key| crate::app::contains_ignore_case(key, query))
                         || crate::app::contains_ignore_case(Self::setting_description(id), query)
                         || crate::app::contains_ignore_case(&searchable_id, query)
                         || crate::app::contains_ignore_case(category, query)
@@ -788,6 +801,7 @@ impl App {
             ("── Appearance ──".into(), String::new(), "heading_appearance".into()),
             ("Color Theme".into(), theme_name.to_string(), "theme".into()),
             ("Show Explorer".into(), on_off(self.show_explorer), "explorer".into()),
+            ("Auto-hide Sidebar".into(), on_off(self.sidebar_auto_hide.enabled), "sidebar_auto_hide".into()),
             ("Show Open Editors".into(), on_off(self.show_open_editors), "show_open_editors".into()),
             ("Show Minimap".into(), on_off(self.show_minimap), "minimap".into()),
             ("Minimap Width".into(), self.minimap_width.to_string(), "minimap_width".into()),
@@ -823,10 +837,14 @@ impl App {
             ("Column Rulers".into(), rulers_str, "rulers".into()),
             // === Search ===
             ("── Search ──".into(), String::new(), "heading_search".into()),
-            ("Match Case".into(), on_off(self.search_case_sensitive), "search_case_sensitive".into()),
-            ("Match Whole Word".into(), on_off(self.search_whole_word), "search_whole_word".into()),
-            ("Use Regular Expression".into(), on_off(self.search_regex), "search_regex".into()),
-            ("Preserve Case on Replace".into(), on_off(self.search_preserve_case), "search_preserve_case".into()),
+            ("Find: Match Case".into(), on_off(self.search_case_sensitive), "search_case_sensitive".into()),
+            ("Find: Match Whole Word".into(), on_off(self.search_whole_word), "search_whole_word".into()),
+            ("Find: Use Regular Expression".into(), on_off(self.search_regex), "search_regex".into()),
+            ("Find: Preserve Case on Replace".into(), on_off(self.search_preserve_case), "search_preserve_case".into()),
+            ("Workspace Search: Match Case".into(), on_off(self.global_search_case_sensitive), "global_search_case_sensitive".into()),
+            ("Workspace Search: Match Whole Word".into(), on_off(self.global_search_whole_word), "global_search_whole_word".into()),
+            ("Workspace Search: Use Regular Expression".into(), on_off(self.global_search_regex), "global_search_regex".into()),
+            ("Workspace Search: Preserve Case on Replace".into(), on_off(self.global_search_preserve_case), "global_search_preserve_case".into()),
             ("Search: Debounce (ms)".into(), self.search_debounce_ms.to_string(), "search_debounce_ms".into()),
             ("Search: Exclude".into(), String::new(), "search_exclude".into()),
             ("Files: Exclude".into(), String::new(), "files_exclude".into()),
@@ -1323,6 +1341,8 @@ mod tests {
             "inlay_hints", "code_lens", "semantic_highlighting", "screencast_mode",
             "search_case_sensitive", "search_whole_word", "search_regex",
             "search_preserve_case", "cursor_surrounding_lines",
+            "global_search_case_sensitive", "global_search_whole_word", "global_search_regex",
+            "global_search_preserve_case",
         ];
         for id in expected {
             assert!(ids.contains(&id), "missing settings item {id}");

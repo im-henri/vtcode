@@ -154,6 +154,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     let Some(kind) = active(app) else {
         return false;
     };
+    if kind == Kind::Branches {
+        return crate::ui_git_branches::handle_mouse(app, mouse);
+    }
     if app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
         return true;
     }
@@ -295,7 +298,7 @@ fn items(app: &App, kind: Kind, range: std::ops::Range<usize>) -> Vec<Item> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
-                let (icon, color) = crate::ui_dialogs::file_icon_colored(&name);
+                let (icon, color) = crate::file_icons::for_path(path, &app.language_associations);
                 let relative = path.strip_prefix(&app.explorer.root).unwrap_or(path);
                 Item {
                     name,
@@ -352,13 +355,12 @@ fn items(app: &App, kind: Kind, range: std::ops::Range<usize>) -> Vec<Item> {
             })
             .collect(),
         Kind::Branches => {
-            let branch_count = app.git_branch_picker_filtered_iter().count();
-            let mut items: Vec<_> = app
+            app
                 .git_branch_picker_filtered_iter()
                 .skip(range.start)
                 .take(range.len())
                 .map(|branch| {
-                    let current = branch.target_branch_name() == app.cached_git_branch.trim()
+                    let current = Some(branch.target_branch_name()) == app.cached_git_branch.split_whitespace().next()
                         && branch.remote_ref().is_none();
                     Item {
                         name: branch
@@ -384,18 +386,7 @@ fn items(app: &App, kind: Kind, range: std::ops::Range<usize>) -> Vec<Item> {
                         },
                     }
                 })
-                .collect();
-            if let Some(name) = app.git_branch_picker_create_candidate()
-                .filter(|_| range.contains(&branch_count)) {
-                items.push(Item {
-                    name: format!("Create branch: {name}"),
-                    detail: "Create a new branch from the current revision".into(),
-                    badge: "New".into(),
-                    icon: "+".into(),
-                    color: app.colors.fg_success,
-                });
-            }
-            items
+                .collect()
         }
     }
 }
@@ -428,6 +419,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
     }
     app.quick_picker.rows.clear();
     app.text_input_regions.clear();
+    if kind == Kind::Branches {
+        crate::ui_git_branches::draw(f, app);
+        return;
+    }
     let count = item_count(app, kind);
     let selection = selected(app, kind).min(count.saturating_sub(1));
     let theme_preview = kind == Kind::Commands && app.palette.active
@@ -1011,7 +1006,8 @@ mod tests {
         app.git_branch_picker_query = "workspace".into();
         let count = item_count(&app, Kind::Branches);
         let last = items(&app, Kind::Branches, count - 1..count);
-        assert_eq!(last[0].name, "Create branch: workspace");
+        assert_eq!(count, 36, "creation is separate from branch results");
+        assert_eq!(last[0].name, "feature/workspace-35");
     }
 
     #[test]

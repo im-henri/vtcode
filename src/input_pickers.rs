@@ -44,63 +44,7 @@ pub(crate) fn handle_quick_open_key(app: &mut App, code: KeyCode, modifiers: Key
 }
 
 pub(crate) fn handle_git_branch_picker_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    match code {
-        KeyCode::Esc => {
-            app.git_branch_picker_active = false;
-            app.git_branch_picker_query.clear();
-            app.git_branch_picker_scroll_offset = 0;
-        }
-        KeyCode::Enter => {
-            let filtered = app.git_branch_picker_filtered_items();
-            let create_candidate = app.git_branch_picker_create_candidate();
-            let selected = app.git_branch_picker_selected;
-            app.git_branch_picker_active = false;
-            if let Some(item) = filtered.get(selected).cloned() {
-                app.checkout_git_branch_item(item);
-            } else if selected == filtered.len() {
-                if let Some(branch_name) = create_candidate {
-                    app.create_and_checkout_branch(&branch_name);
-                }
-            }
-        }
-        KeyCode::Up => {
-            if app.git_branch_picker_selected > 0 {
-                app.git_branch_picker_selected -= 1;
-            }
-            app.sync_git_branch_picker_scroll();
-        }
-        KeyCode::Down => {
-            let total = app.git_branch_picker_filtered_items().len()
-                + usize::from(app.git_branch_picker_create_candidate().is_some());
-            if app.git_branch_picker_selected + 1 < total {
-                app.git_branch_picker_selected += 1;
-            }
-            app.sync_git_branch_picker_scroll();
-        }
-        KeyCode::PageUp => {
-            app.git_branch_picker_selected = app.git_branch_picker_selected.saturating_sub(10);
-            app.sync_git_branch_picker_scroll();
-        }
-        KeyCode::PageDown => {
-            let total = app.git_branch_picker_filtered_items().len()
-                + usize::from(app.git_branch_picker_create_candidate().is_some());
-            let max = total.saturating_sub(1);
-            app.git_branch_picker_selected = (app.git_branch_picker_selected + 10).min(max);
-            app.sync_git_branch_picker_scroll();
-        }
-        _ => {
-            let result = app.edit_text_input(
-                TextInputId::GitBranch,
-                code,
-                modifiers,
-                None,
-            );
-            if result.changed {
-                app.git_branch_picker_selected = 0;
-                app.git_branch_picker_scroll_offset = 0;
-            }
-        }
-    }
+    crate::ui_git_branches::handle_key(app, code, modifiers);
 }
 
 pub(crate) fn handle_goto_line_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {

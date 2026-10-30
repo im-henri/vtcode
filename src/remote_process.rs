@@ -67,6 +67,7 @@ struct Running {
     input: Arc<(Mutex<InputQueue>, Condvar)>,
     flow: Credits,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
+    _shell_integration: crate::terminal_shell::Integration,
 }
 impl Drop for Running {
     fn drop(&mut self) {
@@ -177,6 +178,11 @@ impl Manager {
         if self.running.len() >= MAX_PROCESSES || self.running.contains_key(&id) {
             return Err(io::Error::other("Remote process limit or duplicate ID"));
         }
+        let integration = if terminal.is_some() {
+            crate::terminal_shell::Integration::prepare(program, args).unwrap_or_default()
+        } else {
+            Default::default()
+        };
         let (child, reader, writer, master): (
             Child,
             Box<dyn Read + Send>,
@@ -193,6 +199,7 @@ impl Manager {
                 .map_err(io::Error::other)?;
             let mut command = portable_pty::CommandBuilder::new(program);
             command.args(args);
+            integration.apply(&mut command);
             command.cwd(cwd);
             command.env("TERM", "xterm-256color");
             command.env("TERM_PROGRAM", "vtcode");
@@ -256,6 +263,7 @@ impl Manager {
             input,
             flow: flow.clone(),
             master,
+            _shell_integration: integration,
         };
         let input_child = child.clone();
         let input_output = self.output.clone();

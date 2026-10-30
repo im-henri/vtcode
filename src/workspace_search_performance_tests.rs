@@ -532,7 +532,7 @@ fn scoped_workspace_search_keeps_unsaved_and_ignored_models_locally_and_remotely
         app.remote_workspace = remote.clone();
         app.global_search_query = "CoreProper".into();
         app.search_include_pattern = "./cores/*/src/".into();
-        app.search_case_sensitive = false;
+        app.global_search_case_sensitive = false;
         let search = |app: &mut App| {
             app.update_global_search();
             app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);

@@ -139,6 +139,7 @@ impl App {
             PaletteCommand { name: "Terminal: New Terminal".into(), shortcut: "Ctrl+Shift+`".into(), id: Cow::Borrowed("new_terminal") },
             PaletteCommand { name: "Terminal: New Terminal in Editor Tab".into(), shortcut: String::new(), id: Cow::Borrowed("new_terminal_in_editor_tab") },
             PaletteCommand { name: "Terminal: Close Terminal".into(), shortcut: String::new(), id: Cow::Borrowed("close_terminal") },
+            PaletteCommand { name: "Terminal: Rename Terminal…".into(), shortcut: String::new(), id: Cow::Borrowed("rename_terminal") },
             PaletteCommand { name: "Terminal: Detach to Editor Tab".into(), shortcut: String::new(), id: Cow::Borrowed("detach_terminal_to_tab") },
             PaletteCommand { name: "Terminal: Move to Right Side".into(), shortcut: String::new(), id: Cow::Borrowed("move_terminal_to_right") },
             PaletteCommand { name: "Tasks: Run Task".into(), shortcut: String::new(), id: Cow::Borrowed("run_task") },
@@ -184,6 +185,7 @@ impl App {
             PaletteCommand { name: "View: Toggle Explorer".into(), shortcut: "Ctrl+B".into(), id: Cow::Borrowed("toggle_explorer") },
             PaletteCommand { name: "View: Collapse All in Explorer".into(), shortcut: String::new(), id: Cow::Borrowed("collapse_explorer") },
             PaletteCommand { name: "View: Toggle Sidebar Visibility".into(), shortcut: "Ctrl+B".into(), id: Cow::Borrowed("toggle_sidebar") },
+            PaletteCommand { name: "View: Toggle Sidebar Auto-hide".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_sidebar_auto_hide") },
             PaletteCommand { name: "Agent: Toggle Chat".into(), shortcut: "Ctrl+Shift+I".into(), id: Cow::Borrowed("acp_chat") },
             PaletteCommand { name: "Agent: Connect".into(), shortcut: String::new(), id: Cow::Borrowed("acp_connect") },
             PaletteCommand { name: "Agent: New Conversation".into(), shortcut: String::new(), id: Cow::Borrowed("acp_new") },
@@ -453,6 +455,7 @@ impl App {
                 ("Output", "", "show_output"),
                 ("Agent Chat", "Ctrl+Shift+I", "acp_chat"),
                 ("Toggle Sidebar", "", "toggle_sidebar"),
+                (if self.sidebar_auto_hide.enabled { "✓ Auto-hide Sidebar" } else { "Auto-hide Sidebar" }, "", "toggle_sidebar_auto_hide"),
                 ("Toggle Minimap", "", "toggle_minimap"),
                 ("Toggle Line Numbers", "", "toggle_line_numbers"),
                 ("Toggle Breadcrumbs", "", "toggle_breadcrumbs"),
@@ -489,6 +492,7 @@ impl App {
                 ("Toggle Right Terminal", "Ctrl+`", "toggle_terminal"),
                 ("New Terminal", "Ctrl+Shift+`", "new_terminal"),
                 ("New Terminal in Editor Tab", "", "new_terminal_in_editor_tab"),
+                ("Rename Terminal…", "", "rename_terminal"),
                 ("Move to Right Side", "", "move_terminal_to_right"),
                 ("Detach to Editor Tab", "", "detach_terminal_to_tab"),
             ],
@@ -570,7 +574,7 @@ impl App {
             "toggle_diff_layout" => !self.should_render_diff_for_active_editor(),
             // Terminal layout actions need an open session, not the empty
             // placeholder retained at startup and after the last close.
-            "move_terminal_to_right" => {
+            "move_terminal_to_right" | "rename_terminal" => {
                 !self.terminal_is_open(self.active_terminal)
             }
             "detach_terminal_to_tab" => {
@@ -588,6 +592,7 @@ impl App {
     pub(crate) fn tab_context_items() -> Vec<(&'static str, &'static str, &'static str)> {
         vec![
             ("Close", "tab_close", "Ctrl+W"),
+            ("Rename Terminal…", "tab_rename_terminal", ""),
             ("Close Others", "tab_close_others", ""),
             ("Close All", "tab_close_all", ""),
             ("Close Saved", "tab_close_saved", ""),

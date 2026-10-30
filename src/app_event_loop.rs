@@ -221,7 +221,7 @@ impl TerminalEventPump {
                     let running = crate::terminal_input_batch::forward(event, &sender, &wake, |event| {
                         let Some(focus) = &mouse_focus else { return false; };
                         match event {
-                            Ok(Event::FocusGained) => focus.set_focused(true),
+                            Ok(Event::FocusGained) => focus.focus_gained(),
                             Ok(Event::FocusLost) => focus.set_focused(false),
                             Ok(Event::Resize(..)) => focus.resized(),
                             Ok(Event::Key(_) | Event::Paste(_)) => focus.set_focused(true),
@@ -689,6 +689,7 @@ pub(crate) fn handle_mouse_input(
         || app.resizing_diff_split || app.resizing_sc_graph || app.chat.resizing;
     let mut mouse = if resizing_layout { pump.latest_split_drag(mouse) } else { mouse };
     let is_move = mouse.kind == MouseEventKind::Moved;
+    let sidebar_visible_before = app.sidebar_is_visible();
     let is_scroll = matches!(
         mouse.kind,
         MouseEventKind::ScrollUp
@@ -794,7 +795,8 @@ pub(crate) fn handle_mouse_input(
         // repaint only when its visible result (including caret blink) changed.
         return false;
     }
-    !is_move || modifiers_changed || (pos_changed && app.mouse_hover_changed)
+    !is_move || modifiers_changed || sidebar_visible_before != app.sidebar_is_visible()
+        || (pos_changed && app.mouse_hover_changed)
 }
 
 /// Duplicate terminal-cell samples still validate the layout through the
@@ -1800,6 +1802,27 @@ mod tests {
     }
 
     #[test]
+    fn terminal_completion_deadlines_finish_and_do_not_poll_in_the_background() {
+        let mut app = crate::app::App::test_new();
+        app.workspace_watcher_active = true;
+        app.idle_quiescent = true;
+        app.terminal_panel_focused = false;
+        app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, true);
+        let start = std::time::Instant::now();
+        let mut commands = crate::terminal_completion::Commands::default();
+        commands.osc(&[b"633", b"C"]);
+        commands.osc(&[b"633", b"D", b"0"]);
+        app.terminals[0].completion.update(commands, false, start);
+        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait <= Duration::from_millis(250)));
+        app.terminal_has_focus = false;
+        assert_eq!(next_event_wait(&app, false, false), None);
+        app.terminal_has_focus = true;
+        app.advance_terminal_completions(start + Duration::from_secs(2));
+        assert!(app.terminals[0].completion.unread);
+        assert_eq!(next_event_wait(&app, false, false), None, "the persistent dot must not keep a timer alive");
+    }
+
+    #[test]
     fn stable_workbench_has_no_periodic_poll_deadline() {
         let mut app = crate::app::App::test_new();
         app.workspace_watcher_active = true;
@@ -2742,6 +2765,9 @@ fn next_event_wait(
 
     if let Some(extension_wait) = next_visible_extension_tick_wait(app) { include(extension_wait); }
     if app.terminal_has_focus {
+        if let Some(wait) = app.next_terminal_completion_wait(std::time::Instant::now()) {
+            include(wait);
+        }
         if !app.idle_quiescent {
             include(remaining(
                 app.last_user_activity,
@@ -3397,6 +3423,11 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
         // Cosmetic ticks do not invalidate text/layout/provider caches. Keep
         // this separate from real changes through the draw decision below.
+        // Tab badges change chrome, so their finite pulse uses a normal frame
+        // rather than reusing a cached animation-only tab strip.
+        if app.terminal_has_focus && app.advance_terminal_completions(std::time::Instant::now()) {
+            needs_redraw = true;
+        }
         let cosmetic_allowed = app.terminal_has_focus
             && (needs_redraw
                 || !app.animation_settings.any_enabled()

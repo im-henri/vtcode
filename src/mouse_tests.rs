@@ -643,7 +643,7 @@ fn regex_toggle_click_does_not_start_sidebar_resize() {
         },
     );
 
-    assert!(app.search_regex);
+    assert!(app.global_search_regex);
     assert!(!app.resizing_explorer);
 }
 

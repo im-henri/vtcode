@@ -514,6 +514,7 @@ impl App {
                 "new_terminal"
                     | "new_terminal_in_editor_tab"
                     | "close_terminal"
+                    | "rename_terminal"
                     | "toggle_terminal"
                     | "detach_terminal_to_tab"
                     | "move_terminal_to_right"
@@ -588,7 +589,11 @@ impl App {
     }
 
     pub(crate) fn toggle_explorer(&mut self) {
-        self.show_explorer = !self.show_explorer;
+        if self.sidebar_is_visible() {
+            self.show_explorer = false;
+        } else {
+            self.reveal_sidebar();
+        }
         if !self.show_explorer && self.active_pane == ActivePane::Explorer {
             self.active_pane = ActivePane::Editor;
         }
@@ -736,8 +741,9 @@ impl App {
 
     pub(crate) fn toggle_global_search_file_collapsed(&mut self, path: &Path) {
         self.global_search_results.set_collapsed(path, !self.is_global_search_file_collapsed(path));
+        // Keep selection valid without revealing it: toggling a header must
+        // preserve the viewport even when selection is offscreen or hidden.
         self.ensure_global_search_selection_visible();
-        self.reveal_global_search_selection();
     }
 
     pub(crate) fn all_global_search_files_collapsed(&self) -> bool {
@@ -1427,9 +1433,19 @@ impl App {
 
     pub(crate) fn apply_loaded_syntax_assets(&mut self, loaded: crate::highlight::LoadedSyntaxAssets) {
         self.highlighter.install_syntax_assets(loaded);
+        self.refresh_scope_bubble_profiles();
         self.invalidate_visible_highlights();
         self.refresh_palette_commands();
         self.refresh_visible_highlights_async();
+    }
+
+    pub(crate) fn refresh_scope_bubble_profiles(&mut self) {
+        let rules = self.animation_settings.scope_languages
+            .with_automatic(self.highlighter.scope_bubble_automatic());
+        self.animation_settings.scope_languages = rules.clone();
+        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+            if tab.editor.scope_bubble_rules != rules { tab.editor.scope_bubble_rules = rules.clone(); }
+        }
     }
 
     /// Set the active theme by config_key. Returns true if the theme was found and applied.

@@ -2356,6 +2356,7 @@ pub(crate) struct TerminalTab {
     pub terminal_launch_error: Option<String>,
     pub pending_command: Option<String>,
     pub terminal_pty: Option<crate::terminal::TerminalEmulator>,
+    pub completion: crate::terminal_completion::Notice,
 }
 
 impl TerminalTab {
@@ -2372,6 +2373,7 @@ impl TerminalTab {
             terminal_launch_error: None,
             pending_command: None,
             terminal_pty: None,
+            completion: Default::default(),
         }
     }
 

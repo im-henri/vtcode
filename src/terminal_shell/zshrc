@@ -1,0 +1,24 @@
+if [[ $__vtcode_original_zdotdir_set == 1 ]]; then
+    ZDOTDIR=$__vtcode_original_zdotdir
+else
+    unset ZDOTDIR
+fi
+unset VTCODE_ZDOTDIR VTCODE_ZDOTDIR_SET
+if [[ -r ${ZDOTDIR:-$HOME}/.zshrc ]]; then
+    source "${ZDOTDIR:-$HOME}/.zshrc"
+fi
+__vtcode_running=0
+__vtcode_preexec() {
+    __vtcode_running=1
+    printf '\e]633;C\a'
+}
+__vtcode_precmd() {
+    local result=$?
+    if (( __vtcode_running )); then
+        __vtcode_running=0
+        printf '\e]633;D;%s\a' "$result"
+    fi
+}
+typeset -ga preexec_functions precmd_functions
+preexec_functions=(__vtcode_preexec "${preexec_functions[@]}")
+precmd_functions=(__vtcode_precmd "${precmd_functions[@]}")

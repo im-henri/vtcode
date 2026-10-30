@@ -67,6 +67,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     }
     app.record_navigation();
     handle_mouse_inner(app, mouse);
+    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
+        app.update_sidebar_auto_hide(mouse);
+    }
     app.mouse_hover_changed |= deletion_hover_changed;
     app.finish_navigation();
 }
@@ -120,7 +123,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             || [app.source_control_toggle_area, app.source_control_commit_area, app.source_control_amend_area,
             app.source_control_stage_all_area, app.source_control_unstage_all_area, app.source_control_discard_all_area,
             app.source_control_untracked_stage_area, app.source_control_untracked_discard_area,
-            app.source_control_actions_area, app.repositories.reopen_button]
+            app.source_control_actions_area, app.source_control_refresh_area, app.repositories.reopen_button]
             .into_iter()
             .flatten()
             .any(|area| area.contains((prev_mouse_col, prev_mouse_row).into())));
@@ -129,6 +132,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     // Track mouse position for hover effects during rendering
     app.mouse_row = row;
     app.mouse_col = col;
+    let sidebar_visibility_changed = mouse.kind == MouseEventKind::Moved
+        && app.update_sidebar_auto_hide(mouse);
     crate::ui_inline_blame::leave(app, col, row);
     let modifiers_changed = app.update_link_hover_modifiers(mouse.modifiers);
     if crate::ui_search_dialog::handle_search_bar_resize(app, mouse) { return; }
@@ -138,6 +143,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             && !area.contains((col, row).into())) {
         app.handle_active_extension_view_hover(col, row, (prev_mouse_col, prev_mouse_row), mouse.modifiers);
     }
+    if sidebar_visibility_changed { return; }
 
     // Alt+click is an edge-triggered cursor toggle. Some terminals emit a
     // left-drag event as part of an otherwise stationary click; never let the
@@ -816,7 +822,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         match icon_idx {
                             0 => {
                                 // Explorer: toggle sidebar or switch to explorer view
-                                if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer {
+                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Explorer {
                                     app.show_explorer = false;
                                 } else {
                                     app.show_explorer = true;
@@ -826,7 +832,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             1 => {
                                 // A visible Search sidebar may not own keyboard focus.
                                 // Refocus it before treating a repeated click as a toggle.
-                                if app.show_explorer
+                                if app.sidebar_is_visible()
                                     && app.sidebar_view == crate::app::SidebarView::Search
                                     && app.global_search_active
                                     && app.active_pane == ActivePane::Explorer
@@ -841,7 +847,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             }
                             2 => {
                                 // Source Control: toggle sidebar view
-                                if app.show_explorer && app.sidebar_view == crate::app::SidebarView::SourceControl {
+                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::SourceControl {
                                     app.show_explorer = false;
                                 } else {
                                     app.show_explorer = true;
@@ -852,7 +858,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             }
                             4 => {
                                 // Extensions: toggle sidebar view
-                                if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Extensions {
+                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Extensions {
                                     app.show_explorer = false;
                                 } else {
                                     app.open_extensions_sidebar();
@@ -860,7 +866,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             }
                             5 => {
                                 // Outline: toggle sidebar view
-                                if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Outline {
+                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Outline {
                                     app.show_explorer = false;
                                 } else {
                                     app.show_explorer = true;
@@ -869,6 +875,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                 }
                             }
                             _ => {}
+                        }
+                        if app.show_explorer {
+                            app.reveal_sidebar();
                         }
                     }
                     return;
@@ -1313,7 +1322,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         return;
                     }
                 }
-            } else if app.sidebar_view == crate::app::SidebarView::Settings {
+            } else if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Settings {
                 if let Some(settings_area) = app.settings_sidebar_area {
                     if col >= settings_area.x && col < settings_area.x + settings_area.width
                         && row >= settings_area.y && row < settings_area.y + settings_area.height
@@ -1360,8 +1369,14 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
             // Keep Source Control header actions ahead of the resize
             // seam, including a sidebar reduced to a single terminal cell.
-            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::SourceControl
+            if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::SourceControl
             {
+                if app.source_control_enabled && app.source_control_refresh_area.is_some_and(|area| area.contains((col, row).into())) {
+                    app.active_pane = ActivePane::Explorer;
+                    app.source_control_input_mode = false;
+                    app.execute_git_command("git_refresh");
+                    return;
+                }
                 if let Some(button) = app.repositories.reopen_button.filter(|area| area.contains((col, row).into())) {
                     app.active_pane = ActivePane::Explorer;
                     app.source_control_input_mode = false;

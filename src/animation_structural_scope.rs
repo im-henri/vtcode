@@ -34,6 +34,10 @@ mod preprocessor_tests;
 #[path = "scope_bubble_profile_tests.rs"]
 mod profile_tests;
 
+#[cfg(test)]
+#[path = "scope_bubble_custom_tests.rs"]
+mod custom_language_tests;
+
 // These budgets apply only to the immediate draw fallback, not worker analysis.
 const MAX_LINES: usize = 512;
 const MAX_CHARS: usize = 32 * 1024;

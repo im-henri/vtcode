@@ -1,0 +1,22 @@
+{
+  "name": "Scope Example",
+  "scopeName": "source.scope-example",
+  "fileTypes": ["customscope", "scopedef"],
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#strings"},
+    {"include": "#blocks"}
+  ],
+  "repository": {
+    "comments": {"patterns": [
+      {"name": "comment.line.double-slash.scope-example", "begin": "//", "end": "$"},
+      {"name": "comment.block.scope-example", "begin": "/\\*", "end": "\\*/"}
+    ]},
+    "strings": {"name": "string.quoted.double.scope-example", "begin": "\"", "end": "\"",
+      "patterns": [{"match": "\\\\.", "name": "constant.character.escape.scope-example"}]},
+    "blocks": {"name": "meta.block.scope-example", "begin": "\\{", "end": "\\}",
+      "beginCaptures": {"0": {"name": "punctuation.section.block.begin.scope-example"}},
+      "endCaptures": {"0": {"name": "punctuation.section.block.end.scope-example"}},
+      "patterns": [{"include": "$self"}]}
+  }
+}

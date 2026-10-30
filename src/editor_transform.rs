@@ -5,6 +5,10 @@ use ropey::Rope;
 use std::fs;
 use std::io;
 
+#[cfg(test)]
+#[path = "editor_folding_tests.rs"]
+mod folding_tests;
+
 const IMPORT_PREFIXES: [&str; 7] = [
     "use ",
     "import ",
@@ -26,12 +30,13 @@ enum LineTransform {
 #[derive(Default)]
 pub(crate) struct FoldHintCache {
     version: u64,
+    preprocessor: bool,
     source: Option<Rope>,
     dirty: Option<(usize, usize)>,
     hints: rustc_hash::FxHashMap<usize, (bool, usize)>,
-    // Only hints that skip blank lines need a dependency index. Adjacent
+    // Hints that skip blank lines or directives need a dependency index. Adjacent
     // hints can be invalidated directly without visiting cached offscreen rows.
-    blank_spans: std::collections::BTreeMap<usize, usize>,
+    skipped_spans: std::collections::BTreeMap<usize, usize>,
     #[cfg(test)]
     pub(crate) builds: usize,
     #[cfg(test)]
@@ -46,7 +51,7 @@ thread_local! {
 impl FoldHintCache {
     pub(crate) fn clear(&mut self) {
         self.hints.clear();
-        self.blank_spans.clear();
+        self.skipped_spans.clear();
         self.source = None;
         self.dirty = None;
     }
@@ -59,7 +64,7 @@ impl FoldHintCache {
         if self.hints.remove(&line)
             .is_some_and(|(_, through)| through > line.saturating_add(1))
         {
-            self.blank_spans.remove(&line);
+            self.skipped_spans.remove(&line);
         }
     }
 
@@ -69,7 +74,11 @@ impl FoldHintCache {
         }));
     }
 
-    fn synchronize(&mut self, rope: &Rope, version: u64) {
+    fn synchronize(&mut self, rope: &Rope, version: u64, preprocessor: bool) {
+        if self.preprocessor != preprocessor {
+            self.clear();
+            self.preprocessor = preprocessor;
+        }
         if self.version == version
             && self.source.as_ref().is_some_and(|old| old.is_instance(rope))
             && self.dirty.is_none()
@@ -84,12 +93,12 @@ impl FoldHintCache {
             let local = !REFERENCE_FOLD_INVALIDATION.get();
             #[cfg(not(test))]
             let local = true;
-            // An indentation hint depends on its own line and the next
-            // nonblank line. Edits in between can change that dependency.
+            // An indentation hint depends on its own line and the next source
+            // line after blank lines/directives. Edits can change that dependency.
             if local && !shifted && end.saturating_sub(start) <= 64 {
-                // Nonblank dependency spans do not overlap: each stops at the
-                // next nonblank row. At most one older span crosses this edit.
-                let crossing = self.blank_spans.range(..start).next_back()
+                // Source-line dependency spans do not overlap: skipped rows
+                // have no such hints. At most one older span crosses this edit.
+                let crossing = self.skipped_spans.range(..start).next_back()
                     .and_then(|(&line, &through)| (through >= start).then_some(line));
                 if let Some(line) = crossing {
                     self.remove_hint(line);
@@ -110,13 +119,13 @@ impl FoldHintCache {
                 self.hints.retain(|&line, &mut (_, through)| {
                     through < start || (!shifted && line > end)
                 });
-                self.blank_spans.retain(|&line, &mut through| {
+                self.skipped_spans.retain(|&line, &mut through| {
                     through < start || (!shifted && line > end)
                 });
             }
         } else {
             self.hints.clear();
-            self.blank_spans.clear();
+            self.skipped_spans.clear();
         }
         self.source = Some(rope.clone());
         self.version = version;
@@ -167,6 +176,38 @@ fn rope_line_region_marker(line: ropey::RopeSlice<'_>) -> Option<bool> {
     if chars_start_with(chars.clone(), "region") { Some(true) }
     else if chars_start_with(chars, "endregion") { Some(false) }
     else { None }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PreprocessorDirective {
+    If,
+    Branch,
+    End,
+    Other,
+}
+
+fn preprocessor_directive(line: ropey::RopeSlice<'_>) -> Option<PreprocessorDirective> {
+    let mut chars = line.chars().skip_while(|c| c.is_whitespace());
+    if chars.next() != Some('#') { return None; }
+    let word = chars.skip_while(|c| c.is_whitespace())
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_');
+    Some(if ["if", "ifdef", "ifndef"].iter().any(|name| word.clone().eq(name.chars())) {
+        PreprocessorDirective::If
+    } else if ["else", "elif", "elifdef", "elifndef"].iter().any(|name| word.clone().eq(name.chars())) {
+        PreprocessorDirective::Branch
+    } else if word.eq("endif".chars()) {
+        PreprocessorDirective::End
+    } else {
+        PreprocessorDirective::Other
+    })
+}
+
+fn preprocessor_continues(line: ropey::RopeSlice<'_>) -> bool {
+    line.chars_at(line.len_chars()).reversed().find(|c| !c.is_whitespace()) == Some('\\')
+}
+
+fn opens_brace(line: ropey::RopeSlice<'_>) -> bool {
+    line.chars().find(|c| !c.is_whitespace()) == Some('{')
 }
 
 /// Rebuild only chunks with changed separators, sharing the untouched ranges
@@ -700,6 +741,49 @@ impl Editor {
         false
     }
 
+    fn has_preprocessor_folds(&self) -> bool {
+        matches!(self.language_name(), "C" | "C++" | "C/C++ Header" | "C#"
+            | "Objective-C" | "Objective-C++" | "GLSL" | "HLSL")
+    }
+
+    fn lsp_fold_end_at(&self, start_line: usize) -> Option<usize> {
+        let first = self.lsp_folding_ranges.partition_point(|&(start, _)| start < start_line);
+        self.lsp_folding_ranges[first..].iter()
+            .take_while(|&&(start, _)| start == start_line)
+            .filter_map(|&(_, end)| (end > start_line && end < self.line_count()).then(|| end + 1))
+            .max()
+    }
+
+    fn preprocessor_fold_end(&self, start_line: usize, directive: PreprocessorDirective) -> Option<usize> {
+        if directive == PreprocessorDirective::End { return None; }
+        let mut continued = preprocessor_continues(self.rope.line(start_line));
+        if directive == PreprocessorDirective::Other {
+            if !continued { return None; }
+            for (offset, line) in self.rope.lines_at(start_line + 1).enumerate() {
+                if !preprocessor_continues(line) { return Some(start_line + offset + 2); }
+            }
+            return Some(self.line_count());
+        }
+        let mut depth = 0usize;
+        for (offset, line) in self.rope.lines_at(start_line + 1).enumerate() {
+            if continued {
+                continued = preprocessor_continues(line);
+                continue;
+            }
+            let Some(next) = preprocessor_directive(line) else { continue; };
+            continued = preprocessor_continues(line);
+            match next {
+                PreprocessorDirective::If => depth += 1,
+                PreprocessorDirective::End if depth > 0 => depth -= 1,
+                PreprocessorDirective::End => return Some(start_line + offset + 1),
+                PreprocessorDirective::Branch if depth == 0 && directive == PreprocessorDirective::Branch =>
+                    return Some(start_line + offset + 1),
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Find the end of a foldable region starting at the given line
     pub(crate) fn find_fold_end(&self, start_line: usize) -> Option<usize> {
         let total = self.line_count();
@@ -708,15 +792,7 @@ impl Editor {
         }
 
         // Check LSP folding ranges first
-        if let Ok(idx) = self
-            .lsp_folding_ranges
-            .binary_search_by_key(&start_line, |&(s, _)| s)
-        {
-            let (_, end) = self.lsp_folding_ranges[idx];
-            if end < total {
-                return Some(end + 1); // end is exclusive
-            }
-        }
+        if let Some(end) = self.lsp_fold_end_at(start_line) { return Some(end); }
 
         let start = self.rope.line(start_line);
 
@@ -738,18 +814,48 @@ impl Editor {
             return None; // unmatched region start
         }
 
+        let preprocessor = self.has_preprocessor_folds();
+        if preprocessor && let Some(directive) = preprocessor_directive(start) {
+            return self.preprocessor_fold_end(start_line, directive)
+                .filter(|&end| end > start_line + 1);
+        }
+
         // Indent-based folding
         // Lines with no content (only whitespace) are not foldable on their own
         let start_indent = start.chars().position(|c| !c.is_whitespace())?;
 
         let mut last_deeper = start_line;
+        let mut continued = false;
+        let mut conditional_depth = 0usize;
+        let mut first_code = true;
         for (offset, line) in self.rope.lines_at(start_line + 1).enumerate() {
+            let row = start_line + offset + 1;
+            // Directives are allowed at column zero inside any C-family
+            // scope. Their indentation cannot close the surrounding block.
+            let directive = preprocessor.then(|| preprocessor_directive(line)).flatten();
+            if preprocessor && (continued || directive.is_some()) {
+                if !continued {
+                    match directive {
+                        Some(PreprocessorDirective::If) => conditional_depth += 1,
+                        Some(PreprocessorDirective::End) if conditional_depth > 0 => conditional_depth -= 1,
+                        Some(PreprocessorDirective::End | PreprocessorDirective::Branch) if conditional_depth == 0 => break,
+                        _ => {}
+                    }
+                }
+                continued = preprocessor_continues(line);
+                if last_deeper > start_line && conditional_depth == 0 {
+                    last_deeper = row;
+                }
+                continue;
+            }
             let Some(indent) = line.chars().position(|c| !c.is_whitespace()) else {
                 // Blank lines are included in the fold
                 continue;
             };
-            if indent > start_indent {
-                last_deeper = start_line + offset + 1;
+            let brace = first_code && indent == start_indent && opens_brace(line);
+            first_code = false;
+            if indent > start_indent || brace {
+                last_deeper = row;
             } else {
                 break;
             }
@@ -770,47 +876,63 @@ impl Editor {
         }
 
         // Check LSP folding ranges
-        if self
-            .lsp_folding_ranges
-            .binary_search_by_key(&start_line, |&(s, _)| s)
-            .is_ok()
-        {
-            return true;
-        }
+        if self.lsp_fold_end_at(start_line).is_some() { return true; }
 
+        let preprocessor = self.has_preprocessor_folds();
         {
             let mut cache = self.fold_hint_cache.borrow_mut();
-            cache.synchronize(&self.rope, self.content_version);
+            cache.synchronize(&self.rope, self.content_version, preprocessor);
             if let Some(&(hint, _)) = cache.hints.get(&start_line) {
                 return hint;
             }
         }
-        let result = self.text_can_fold_line(start_line);
+        let result = self.text_can_fold_line(start_line, preprocessor);
         let mut cache = self.fold_hint_cache.borrow_mut();
         if cache.hints.len() >= 4_096 {
             cache.hints.clear();
-            cache.blank_spans.clear();
+            cache.skipped_spans.clear();
         }
         #[cfg(test)]
         { cache.builds += 1; }
         cache.hints.insert(start_line, result);
         if result.1 > start_line.saturating_add(1) {
-            cache.blank_spans.insert(start_line, result.1);
+            cache.skipped_spans.insert(start_line, result.1);
         }
         result.0
     }
 
-    fn text_can_fold_line(&self, start_line: usize) -> (bool, usize) {
+    fn text_can_fold_line(&self, start_line: usize, preprocessor: bool) -> (bool, usize) {
         let line = self.rope.line(start_line);
         if rope_line_region_marker(line) == Some(true) {
             return (true, start_line);
         }
+        if preprocessor && let Some(directive) = preprocessor_directive(line) {
+            return (matches!(directive, PreprocessorDirective::If | PreprocessorDirective::Branch)
+                || (directive == PreprocessorDirective::Other && preprocessor_continues(line)), start_line);
+        }
         let Some(start_indent) = line.chars().position(|c| !c.is_whitespace()) else {
             return (false, start_line);
         };
+        let mut continued = false;
+        let mut conditional_depth = 0usize;
         for (offset, line) in self.rope.lines_at(start_line + 1).enumerate() {
+            let directive = preprocessor.then(|| preprocessor_directive(line)).flatten();
+            if preprocessor && (continued || directive.is_some()) {
+                if !continued {
+                    match directive {
+                        Some(PreprocessorDirective::If) => conditional_depth += 1,
+                        Some(PreprocessorDirective::End) if conditional_depth > 0 => conditional_depth -= 1,
+                        Some(PreprocessorDirective::End | PreprocessorDirective::Branch) if conditional_depth == 0 =>
+                            return (false, start_line + 1 + offset),
+                        _ => {}
+                    }
+                }
+                continued = preprocessor_continues(line);
+                continue;
+            }
             if let Some(indent) = line.chars().position(|c| !c.is_whitespace()) {
-                return (indent > start_indent, start_line + 1 + offset);
+                return (indent > start_indent || (indent == start_indent && opens_brace(line)),
+                    start_line + 1 + offset);
             }
         }
         (false, self.line_count().saturating_sub(1))
@@ -872,7 +994,12 @@ impl Editor {
         self.fold_buttons.clear();
         self.folded_ranges.clear();
         let ts = self.tab_size.max(1);
+        let mut covered_until = 0;
         for (line, text) in self.rope.lines().enumerate() {
+            // Allman braces and outdented directives can share the selected
+            // level with an enclosing header. Hidden child starts must not
+            // shadow that outer interval in navigation and viewport lookups.
+            if line < covered_until { continue; }
             let indent = text
                 .chars()
                 .take_while(|c| *c == ' ')
@@ -882,6 +1009,7 @@ impl Editor {
             // their ends repeatedly walks code that we must visit again.
             if indent + 1 == level && let Some(end) = self.find_fold_end(line) {
                 self.folded_ranges.insert(line, end);
+                covered_until = end;
             }
         }
         self.cached_visible_line_count = None;

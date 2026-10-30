@@ -167,6 +167,7 @@ impl App {
         self.source_control_input_mode = false;
         self.source_control_toggle_area = None;
         self.source_control_actions_area = None;
+        self.source_control_refresh_area = None;
         self.repositories.reopen_button = None;
         self.source_control_initialize_area = None;
         self.source_control_selection = Default::default();

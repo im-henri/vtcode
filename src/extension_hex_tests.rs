@@ -38,6 +38,52 @@ fn remote_hex_wasm_keeps_edits_and_undo_local_and_saves_at_remote_node() {
     assert_eq!(std::fs::read(remote_dir.path().join("copy.bin")).unwrap(), std::fs::read(&file).unwrap());
 }
 
+#[test]
+fn large_remote_binary_can_open_as_information_or_in_hex_viewer_without_a_full_transfer() {
+    use std::io::Write;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let local = tempfile::tempdir().unwrap();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let path = remote_dir.path().join("large.bin");
+    let size = 32 * 1024 * 1024;
+    let mut file = std::fs::File::create(&path).unwrap();
+    file.set_len(size).unwrap();
+    file.write_all(&vec![b'x'; 32 * 1024]).unwrap();
+    drop(file);
+    let downloaded = Arc::new(AtomicUsize::new(0));
+    let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection_with_traffic(
+        remote_dir.path(), Arc::default(), Arc::default(), Arc::default(), downloaded.clone(),
+    ));
+    let key_path = workspace.target_key("large.bin").unwrap();
+    for hex in [false, true] {
+        let mut app = app(local.path());
+        app.remote_workspace = Some(workspace.clone());
+        app.open_file(&key_path);
+        app.wait_for_background(Duration::from_secs(15), |app| app.binary_open_prompt_active);
+        assert!(!app.binary_open_prompt_open_normally);
+        let command = app.binary_open_prompt_commands.iter().position(|command|
+            command.extension_id == "vtcode.hex-editor" && command.command_id == "hex.open")
+            .expect("Hex Viewer remains an available open option");
+        app.execute_binary_open_prompt_choice(if hex { command + 1 } else { 0 });
+        if hex {
+            drain(&mut app);
+            assert!(app.active_extension_view().is_some());
+            assert!(text(&app).contains("78 78 78"), "the viewer reads the actual binary bytes");
+        } else {
+            app.wait_for_background(Duration::from_secs(15), |app|
+                app.editor().is_some_and(|editor| !editor.bg_loading));
+            let editor = app.editor().unwrap();
+            assert_eq!(editor.encoding, "Binary");
+            assert_eq!(editor.file_size, size);
+            assert!(editor.read_only);
+            assert!(editor.rope.len_bytes() < 1024);
+            assert!(editor.rope.to_string().contains("Binary file - cannot display"));
+        }
+    }
+    assert!(downloaded.load(Ordering::Relaxed) < 1024 * 1024,
+        "neither the information tab nor Hex Viewer downloads the whole binary file");
+}
+
 fn app(root: &Path) -> App {
     let package = root.join("extensions/hex-editor");
     std::fs::create_dir_all(&package).unwrap();

@@ -730,8 +730,8 @@ mod tests {
         let outside = workspace.path().join("other.txt");
         std::fs::write(&outside, "needle\n").unwrap();
         let mut app = App::new(workspace.path().to_path_buf());
-        app.search_case_sensitive = true;
-        app.search_whole_word = true;
+        app.global_search_case_sensitive = true;
+        app.global_search_whole_word = true;
         app.search_exclude_pattern = "skip.txt".into();
         app.search_include_pattern = "./other.txt".into();
         app.global_search_query = "needle".into();

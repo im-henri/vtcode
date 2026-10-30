@@ -197,6 +197,7 @@ impl App {
             theme: Some(theme_name),
             workbench_color_customizations: self.settings_effective.workbench_color_customizations.clone(),
             show_explorer: Some(show_explorer),
+            sidebar_auto_hide: Some(self.sidebar_auto_hide.enabled),
             show_open_editors: Some(self.show_open_editors),
             show_minimap: Some(show_minimap),
             minimap_width: Some(self.minimap_width),
@@ -318,6 +319,10 @@ impl App {
             search_regex: Some(self.search_regex),
             search_whole_word: Some(self.search_whole_word),
             search_preserve_case: Some(self.search_preserve_case),
+            global_search_case_sensitive: Some(self.global_search_case_sensitive),
+            global_search_regex: Some(self.global_search_regex),
+            global_search_whole_word: Some(self.global_search_whole_word),
+            global_search_preserve_case: Some(self.global_search_preserve_case),
             search_debounce_ms: Some(self.search_debounce_ms),
             search_use_ignore_files: Some(self.settings_effective.search_use_ignore_files.unwrap_or(true)),
             search_use_global_ignore_files: Some(self.settings_effective.search_use_global_ignore_files.unwrap_or(false)),
@@ -363,10 +368,7 @@ impl App {
         }
         // Share compiled profiles across all views/desks. Preserve identity on
         // unrelated settings changes so cached scope analysis remains reusable.
-        let rules = self.animation_settings.scope_languages.clone();
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-            if tab.editor.scope_bubble_rules != rules { tab.editor.scope_bubble_rules = rules.clone(); }
-        }
+        self.refresh_scope_bubble_profiles();
         if let Some(detail) = &s.chat_output_detail {
             self.chat.output_detail = crate::app_acp::OutputDetail::parse(detail);
         }
@@ -495,6 +497,9 @@ impl App {
         }
         if let Some(v) = s.show_explorer {
             self.show_explorer = v;
+        }
+        if let Some(v) = s.sidebar_auto_hide {
+            self.set_sidebar_auto_hide(v);
         }
         if let Some(v) = s.show_open_editors {
             self.show_open_editors = v;
@@ -760,6 +765,18 @@ impl App {
         if let Some(v) = s.search_preserve_case {
             self.search_preserve_case = v;
         }
+        if let Some(v) = s.global_search_case_sensitive {
+            self.global_search_case_sensitive = v;
+        }
+        if let Some(v) = s.global_search_regex {
+            self.global_search_regex = v;
+        }
+        if let Some(v) = s.global_search_whole_word {
+            self.global_search_whole_word = v;
+        }
+        if let Some(v) = s.global_search_preserve_case {
+            self.global_search_preserve_case = v;
+        }
         if let Some(v) = s.search_debounce_ms {
             self.search_debounce_ms = v;
         }
@@ -860,6 +877,12 @@ impl App {
         effective.validate();
         let files_changed = effective.files_exclude != self.settings_effective.files_exclude;
         let search_changed = files_changed || effective.search_exclude != self.settings_effective.search_exclude;
+        let workspace_options_changed = effective.global_search_case_sensitive != self.settings_effective.global_search_case_sensitive
+            || effective.global_search_whole_word != self.settings_effective.global_search_whole_word
+            || effective.global_search_regex != self.settings_effective.global_search_regex;
+        let file_options_changed = effective.search_case_sensitive != self.settings_effective.search_case_sensitive
+            || effective.search_whole_word != self.settings_effective.search_whole_word
+            || effective.search_regex != self.settings_effective.search_regex;
         self.apply_resolved_settings(&effective);
         self.settings_effective = effective;
         if files_changed {
@@ -868,8 +891,11 @@ impl App {
         if search_changed {
             self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
             if self.quick_open_active { self.update_quick_open(); }
-            if !self.global_search_query.is_empty() { self.update_global_search(); }
         }
+        if (search_changed || workspace_options_changed) && !self.global_search_query.is_empty() {
+            self.update_global_search();
+        }
+        if file_options_changed && self.search_active { self.update_search(); }
         self.refresh_language_servers(false);
         self.preview_palette_theme();
     }
@@ -893,6 +919,7 @@ impl App {
             whitespace_mode, read_only, cursor_surrounding_lines, large_file_threshold_mb);
         self.animation_settings = crate::animation_config::AnimationSettings::default();
         self.copy_animation.enabled = settings.animation_copy.unwrap_or(true);
+        self.set_sidebar_auto_hide(settings.sidebar_auto_hide.unwrap_or(false));
         self.copy_animation.duration_ms = settings.animation_copy_duration_ms
             .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS);
         if !self.copy_animation.enabled { self.copy_animation.clear(); }

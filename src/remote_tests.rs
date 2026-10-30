@@ -2284,6 +2284,38 @@ fn remote_open_preserves_native_binary_and_lossy_text_detection() {
 }
 
 #[test]
+fn large_remote_binary_with_text_header_transfers_only_a_notice_and_still_supports_ranges() {
+    use std::io::{Seek, SeekFrom};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.bin");
+    let size = 32 * 1024 * 1024;
+    let mut file = std::fs::File::create(&path).unwrap();
+    file.set_len(size).unwrap();
+    file.write_all(&vec![b'x'; 32 * 1024]).unwrap();
+    file.seek(SeekFrom::End(-2)).unwrap();
+    file.write_all(&[0xca, 0xfe]).unwrap();
+    drop(file);
+    let downloaded = Arc::new(AtomicUsize::new(0));
+    let workspace = workspace::Workspace::new(connection_with_traffic(dir.path(),
+        Arc::default(), Arc::default(), Arc::default(), downloaded.clone()));
+    let key = workspace.target_key("large.bin").unwrap();
+    let loaded = workspace.load(&key).unwrap();
+    assert_eq!(loaded.encoding, "Binary");
+    assert_eq!(loaded.file_size, size);
+    assert!(loaded.rope.len_bytes() < 1024);
+    assert!(loaded.rope.to_string().contains("Binary file - cannot display"));
+    let reloaded = workspace.reload(&key, None).unwrap();
+    assert_eq!(reloaded.encoding, "Binary");
+    assert!(downloaded.load(Ordering::Relaxed) < 32 * 1024, "opening and reloading must not transfer the binary body");
+    let document = crate::extension_documents::BinaryDocument::open_remote(&key, &workspace).unwrap();
+    let mut tail = [0; 2];
+    document.read(size - 2, &mut tail).unwrap();
+    assert_eq!(tail, [0xca, 0xfe]);
+    assert!(downloaded.load(Ordering::Relaxed) < 256 * 1024, "custom editors fetch only the requested pages");
+    assert_eq!(std::fs::metadata(path).unwrap().len(), size);
+}
+
+#[test]
 fn remote_binary_piece_table_caches_reads_and_keeps_undo_across_saves() {
     use crate::extension_documents::BinaryDocument;
     let dir = tempfile::tempdir().unwrap();

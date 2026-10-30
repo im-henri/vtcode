@@ -31,6 +31,7 @@ pub(crate) enum Kind {
     ThemeDelete,
     SaveAs,
     Rename,
+    RenameTerminal,
     Goto,
     Close,
     Delete,
@@ -48,6 +49,7 @@ impl Kind {
             Self::ThemeInstall => Some(TextInputId::CommandPalette),
             Self::SaveAs => Some(TextInputId::SaveAs),
             Self::Rename => Some(TextInputId::RenameSymbol),
+            Self::RenameTerminal => Some(TextInputId::TerminalRename),
             Self::Goto => Some(TextInputId::GotoLine),
             _ => None,
         }
@@ -99,6 +101,8 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::SaveAs)
     } else if app.rename.symbol_active {
         Some(Kind::Rename)
+    } else if app.terminal_rename.target.is_some() {
+        Some(Kind::RenameTerminal)
     } else if app.goto_line_active {
         Some(Kind::Goto)
     } else if app.formatting.error.is_some() {
@@ -213,7 +217,7 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
             "Browse…",
             "Cancel",
         ],
-        Kind::Rename => vec!["Rename", "Cancel"],
+        Kind::Rename | Kind::RenameTerminal => vec!["Rename", "Cancel"],
         Kind::Goto => vec!["Go to line", "Cancel"],
         Kind::Close => vec!["Save & close", "Don't save", "Cancel"],
         Kind::Delete => vec!["Delete", "Cancel"],
@@ -256,6 +260,7 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::ThemeVsixLink => app.palette.theme_vsix_url = None,
         Kind::SaveAs => app.save_as_active = false,
         Kind::Rename => app.rename.symbol_active = false,
+        Kind::RenameTerminal => app.cancel_terminal_rename(),
         Kind::Goto => app.cancel_goto_line(),
         Kind::Close => app.confirm_close_active = false,
         Kind::Delete => app.execute_confirm_delete(false),
@@ -342,6 +347,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
                 app.execute_rename_symbol();
             }
         }
+        Kind::RenameTerminal => app.confirm_terminal_rename(),
         Kind::Goto => app.goto_line(),
         Kind::Close => crate::input_pickers::handle_confirm_close_key(
             app,
@@ -806,6 +812,14 @@ fn copy(app: &App, kind: Kind) -> Copy {
                 .into(),
             field: "New name",
         },
+        Kind::RenameTerminal => Copy {
+            title: "Rename Terminal",
+            message: "Choose a name for this terminal tab.".into(),
+            context: app.terminal_rename.target.and_then(|index| app.terminals.get(index))
+                .map(|terminal| vec![format!("Current name   {}", terminal.name)]).unwrap_or_default(),
+            help: String::new(),
+            field: "New name",
+        },
         Kind::Goto => Copy {
             title: "Go to Line",
             message: "Jump to a position in the current file.".into(),
@@ -1041,6 +1055,7 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::ThemeDelete) => draw(f, app, Kind::ThemeDelete),
         Some(Kind::SaveAs) => crate::ui_dialogs::draw_save_as_dialog(f, app),
         Some(Kind::Rename) => crate::ui_dialogs::draw_rename_symbol_dialog(f, app),
+        Some(Kind::RenameTerminal) => draw(f, app, Kind::RenameTerminal),
         Some(Kind::Goto) => crate::ui_search_dialog::draw_goto_line(f, app),
         Some(Kind::Close) => crate::ui_dialogs::draw_confirm_close(f, app),
         Some(Kind::Delete) => crate::ui_dialogs::draw_confirm_delete(f, app),
@@ -1286,6 +1301,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                 app.rename.symbol_cursor,
                 app.rename.symbol_selection_anchor,
             ),
+            TextInputId::TerminalRename => (
+                &app.terminal_rename.query,
+                app.terminal_rename.cursor,
+                app.terminal_rename.anchor,
+            ),
             _ => (
                 &app.goto_line_query,
                 app.goto_line_cursor,
@@ -1304,6 +1324,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                         else { "vscodethemes.com link or local path…" },
                     Kind::SaveAs => "e.g. src/main.rs",
                     Kind::Rename => "New symbol name",
+                    Kind::RenameTerminal => "Terminal name",
                     _ => "Enter a value",
                 },
             )
@@ -1558,6 +1579,10 @@ mod tests {
                 app.rename.symbol_new = "load_project".into();
                 app.rename.symbol_cursor = app.rename.symbol_new.len();
             }
+            Kind::RenameTerminal => {
+                app.new_terminal_tab();
+                app.begin_terminal_rename(app.active_terminal);
+            }
             Kind::Goto => app.open_goto_line(),
             Kind::Close => app.confirm_close_active = true,
             Kind::Delete => {
@@ -1811,6 +1836,7 @@ mod tests {
             Kind::ThemeDelete,
             Kind::SaveAs,
             Kind::Rename,
+            Kind::RenameTerminal,
             Kind::Goto,
             Kind::Close,
             Kind::Delete,
@@ -1893,6 +1919,7 @@ mod tests {
             Kind::ThemeDelete,
             Kind::SaveAs,
             Kind::Rename,
+            Kind::RenameTerminal,
             Kind::Goto,
             Kind::Close,
             Kind::Delete,

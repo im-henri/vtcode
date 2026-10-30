@@ -206,6 +206,7 @@ impl App {
             "explorer" => {
                 self.show_explorer = !self.show_explorer;
             }
+            "sidebar_auto_hide" => self.set_sidebar_auto_hide(!self.sidebar_auto_hide.enabled),
             "show_open_editors" => {
                 self.show_open_editors = !self.show_open_editors;
                 self.notify(if self.show_open_editors {
@@ -505,6 +506,18 @@ impl App {
             }
             "search_preserve_case" => {
                 self.search_preserve_case = !self.search_preserve_case;
+            }
+            "global_search_case_sensitive" => {
+                self.global_search_case_sensitive = !self.global_search_case_sensitive;
+            }
+            "global_search_whole_word" => {
+                self.global_search_whole_word = !self.global_search_whole_word;
+            }
+            "global_search_regex" => {
+                self.global_search_regex = !self.global_search_regex;
+            }
+            "global_search_preserve_case" => {
+                self.global_search_preserve_case = !self.global_search_preserve_case;
             }
             _ => {
                 // Headings are not interactive
@@ -1245,6 +1258,18 @@ mod tests {
         assert!(app.search_whole_word);
         assert!(app.search_regex);
         assert!(app.search_preserve_case);
+        assert!(!app.global_search_case_sensitive);
+        assert!(!app.global_search_whole_word);
+        assert!(!app.global_search_regex);
+        assert!(!app.global_search_preserve_case);
+        app.toggle_setting("global_search_case_sensitive");
+        app.toggle_setting("global_search_whole_word");
+        app.toggle_setting("global_search_regex");
+        app.toggle_setting("global_search_preserve_case");
+        assert!(app.global_search_case_sensitive);
+        assert!(app.global_search_whole_word);
+        assert!(app.global_search_regex);
+        assert!(app.global_search_preserve_case);
     }
 
     // --- toggle_setting: cycling values ---
