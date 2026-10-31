@@ -183,6 +183,7 @@ mod tests {
                 let mut args = vec![format!("HOME={}", home.path().to_string_lossy().replace('\\', "/")), bash.to_string_lossy().into_owned()];
                 args.extend(launch.args.iter().map(|arg| arg.to_string_lossy().into_owned()));
                 let mut terminal = TerminalEmulator::spawn_command_in_dir(env.to_str().unwrap(), &args, 100, 24, home.path()).unwrap();
+                terminal.profile_name = format!("Bash array={array}, legacy={legacy}");
                 wait_for(&mut terminal, |terminal| terminal.grid.cells.iter().any(|row| row.iter().map(|cell| cell.ch).collect::<String>().contains("VTCode_Ready>")));
                 assert_eq!(terminal.grid.commands.finished_count(), 0);
                 enter(&mut terminal, "");

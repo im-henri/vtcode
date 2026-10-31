@@ -2075,11 +2075,11 @@ fn file_type_colors_stay_independent_of_color_themes_and_selection() {
             terminal
                 .draw(|f| crate::ui_search_panel::draw_search_panel(f, &mut app, f.area()))
                 .unwrap();
-            assert_icons(
-                terminal.backend().buffer(),
-                &format!("{} search {focused}", theme.name),
-                1,
-            );
+            // Search headers put the filename directly after the disclosure
+            // marker; file-type icons remain on the other file surfaces.
+            for &(name, _, _) in FILES {
+                find_cell(terminal.backend().buffer(), &format!("▼ {name}"));
+            }
 
             terminal
                 .draw(|f| {
