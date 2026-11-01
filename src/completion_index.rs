@@ -1379,9 +1379,10 @@ struct Worker {
     remote_root_uri: Option<String>,
     shared: Arc<Shared>,
     files: BTreeMap<PathBuf, Arc<StoredRecord>>,
-    validation: VecDeque<PathBuf>,
+    validation: BTreeSet<PathBuf>,
     restore: Option<std::io::BufReader<std::fs::File>>,
     walk: Option<ignore::Walk>,
+    pending_walks: BTreeSet<PathBuf>,
     memory: usize,
     skipped: usize,
     discovered: usize,
@@ -1413,9 +1414,10 @@ impl Worker {
             remote_root_uri: None,
             shared,
             files: BTreeMap::new(),
-            validation: VecDeque::new(),
+            validation: BTreeSet::new(),
             restore: None,
             walk: None,
+            pending_walks: BTreeSet::new(),
             memory: 0,
             skipped: 0,
             discovered: 0,
@@ -1564,6 +1566,7 @@ impl Worker {
                 }
                 if !settings.enabled || !settings.project_wide {
                     self.walk = None;
+                    self.pending_walks.clear();
                 }
                 if reenable {
                     self.restore_cache(&settings);
@@ -1572,6 +1575,7 @@ impl Worker {
             }
             if cancelled {
                 self.walk = None;
+                self.pending_walks.clear();
                 self.validation.clear();
                 self.restore = None;
                 self.scans.clear();
@@ -1703,9 +1707,9 @@ impl Worker {
                         if !self.files.contains_key(&path) {
                             self.validation.extend(
                                 self.files
-                                    .keys()
-                                    .filter(|known| known.starts_with(&path))
-                                    .cloned(),
+                                    .range(path.clone()..)
+                                    .take_while(|(known, _)| known.starts_with(&path))
+                                    .map(|(known, _)| known.clone()),
                             );
                         }
                     }
@@ -1747,7 +1751,7 @@ impl Worker {
                     self.advance_scan(&settings);
                 }
                 true
-            } else if self.walk.is_some() {
+            } else if self.walk.is_some() || !self.pending_walks.is_empty() {
                 self.scan_step(&settings);
                 if !self.scans.is_empty() {
                     self.advance_scan(&settings);
@@ -1761,7 +1765,7 @@ impl Worker {
             }
             if worked {
                 self.publish(
-                    if self.walk.is_some() {
+                    if self.walk.is_some() || !self.pending_walks.is_empty() {
                         IndexPhase::Scanning
                     } else {
                         IndexPhase::Indexing
@@ -2006,7 +2010,7 @@ impl Worker {
     }
 
     fn validate_next(&mut self, settings: &IndexSettings) -> bool {
-        if let Some(path) = self.validation.pop_front() {
+        if let Some(path) = self.validation.pop_first() {
             self.publish(IndexPhase::Indexing, Some(path.clone()), false);
             self.index_disk(path, settings);
             return true;
@@ -2048,7 +2052,14 @@ impl Worker {
             return;
         }
         self.watch_rules = WatchRules::default();
-        let mut builder = ignore::WalkBuilder::new(&self.shared.root);
+        self.pending_walks.clear();
+        self.walk = Some(Self::disk_walk(&self.shared.root));
+        self.discovered = self.files.len();
+        self.skipped = 0;
+    }
+
+    fn disk_walk(root: &Path) -> ignore::Walk {
+        let mut builder = ignore::WalkBuilder::new(root);
         builder
             .hidden(true)
             .require_git(false)
@@ -2057,12 +2068,26 @@ impl Worker {
                 !entry.file_type().is_some_and(|kind| kind.is_dir())
                     || !excluded_directory(entry.file_name())
             });
-        self.walk = Some(builder.build());
-        self.discovered = self.files.len();
-        self.skipped = 0;
+        builder.build()
+    }
+
+    fn queue_directory_walk(&mut self, path: PathBuf) {
+        if excluded_directory(path.file_name().unwrap_or_default()) { return; }
+        if path.ancestors().any(|parent| self.pending_walks.contains(parent)) { return; }
+        self.pending_walks.retain(|pending| !pending.starts_with(&path));
+        if self.pending_walks.len() >= MAX_PENDING_FILES {
+            self.pending_walks.clear();
+            self.pending_walks.insert(self.shared.root.clone());
+        } else {
+            self.pending_walks.insert(path);
+        }
     }
 
     fn scan_step(&mut self, settings: &IndexSettings) {
+        if self.walk.is_none() && let Some(path) = self.pending_walks.pop_first() {
+            self.watch_rules = WatchRules::default();
+            self.walk = Some(Self::disk_walk(&path));
+        }
         let started = Instant::now();
         for _ in 0..32 {
             let Some(entry) = self.walk.as_mut().and_then(Iterator::next) else {
@@ -2135,6 +2160,13 @@ impl Worker {
             return;
         }
         let Some(stamp) = Stamp::read(&path) else {
+            if settings.project_wide && path.is_dir() {
+                // Large watcher bursts can invalidate a directory instead of
+                // retaining every child. Discover new files in that subtree,
+                // using the existing bounded scans and ignore policy.
+                self.queue_directory_walk(path);
+                return;
+            }
             self.remove(&path);
             return;
         };
@@ -2595,6 +2627,7 @@ impl Worker {
             + usize::from(self.oversized_after.is_some())
             + self.scans.len()
             + self.validation.len()
+            + self.pending_walks.len()
             + usize::from(self.restore.is_some());
         status.discovered_files = self.discovered.max(self.files.len());
         status.skipped_files = self.skipped;

@@ -779,6 +779,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // Menu dropdown overlay (must be on top of everything)
     if app.menu_active && app.menu_open {
         ui_chrome::draw_menu_dropdown(f, app);
+    } else {
+        app.menu_dropdown_inner = None;
+        app.menu_rendered = None;
+        app.menu_dropdown_scroll = 0;
     }
 
     // Tab context menu overlay

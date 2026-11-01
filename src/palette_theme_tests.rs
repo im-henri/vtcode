@@ -460,7 +460,7 @@ fn palette_theme_backdrop_does_not_change_other_picker_kinds() {
     let (_workspace, mut app) = fixture();
     open_themes(&mut app);
     for kind in [crate::ui_quick_picker::Kind::Files, crate::ui_quick_picker::Kind::Symbols,
-        crate::ui_quick_picker::Kind::Tasks, crate::ui_quick_picker::Kind::Branches,
+        crate::ui_quick_picker::Kind::Branches,
         crate::ui_quick_picker::Kind::OpenWith] {
         use ratatui::{Terminal, backend::TestBackend};
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();

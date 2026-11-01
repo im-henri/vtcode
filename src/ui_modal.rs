@@ -1433,8 +1433,8 @@ mod tests {
                 } else {
                     app.menu_active = true;
                     app.menu_open = true;
-                    app.menu_selected = 7;
-                    app.menu_item_selected = app.menu_items(7).iter()
+                    app.menu_selected = App::menu_labels().iter().position(|label| *label == "Help").unwrap();
+                    app.menu_item_selected = app.menu_items(app.menu_selected).iter()
                         .position(|(_, id)| *id == "about").unwrap();
                     terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
                     if route == 1 {

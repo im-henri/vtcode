@@ -535,14 +535,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.modifiers.contains(KeyModifiers::SHIFT)
-            && (key.code == KeyCode::Char('B') || key.code == KeyCode::Char('b'))
-        {
-            // Ctrl+Shift+B: rerun last task or open task picker
-            app.execute_palette_command("rerun_last_task");
-            return false;
-        }
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.modifiers.contains(KeyModifiers::SHIFT)
             && (key.code == KeyCode::Char('O') || key.code == KeyCode::Char('o'))
         {
             // Ctrl+Shift+O: go to symbol in file
@@ -974,11 +966,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             return true;
         }
         return false;
-    }
-
-    // Task picker
-    if let Some(quit) = input_dialogs::handle_task_picker_key(app, key) {
-        return quit;
     }
 
     if key.code == KeyCode::Esc && (app.vtcomplete_active

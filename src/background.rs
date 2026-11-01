@@ -223,6 +223,8 @@ pub struct WrapLayoutTarget {
 /// probing every path in a watcher burst itself.
 #[derive(Clone, Debug)]
 pub struct WorkspacePathChange {
+    /// True only for an existing directory, excluding directory symlinks.
+    pub is_dir: bool,
     /// Start of the metadata read, used to reject observations from an in-flight rollback.
     pub observed_at: std::time::Instant,
     pub path: PathBuf,
@@ -357,7 +359,6 @@ pub enum BackgroundResult {
         source: u64,
         result: Result<crate::remote::workspace::Workspace, String>,
     },
-    RemoteTasks(Result<Vec<crate::app::TaskDefinition>,String>),
     HunkPeek(crate::hunk_preview::PeekResult),
     RemoteDiskChecksFailed { paths: Vec<PathBuf> },
     RemoteDiskChecksDone(CancellationToken),
@@ -1441,7 +1442,9 @@ impl WorkspaceEventBurst {
         let structural = match event.kind {
             EventKind::Access(AccessKind::Close(AccessMode::Write)) => false,
             EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => return,
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => false,
+            // Windows reports FILE_ACTION_MODIFIED as Modify(Any). It changes
+            // contents/attributes, not names; creates/removes/renames are separate.
+            EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_)) => false,
             _ => true,
         };
         self.rescan |= event.paths.is_empty();
@@ -1499,7 +1502,12 @@ pub(crate) fn bounded_hover_line_count(
 /// disk checks share identical existence/mtime/length semantics.
 pub(crate) fn inspect_workspace_path(path: PathBuf) -> WorkspacePathChange {
     let observed_at = std::time::Instant::now();
-    let metadata = std::fs::metadata(&path);
+    let metadata = std::fs::symlink_metadata(&path);
+    let is_dir = metadata.as_ref().is_ok_and(|metadata| metadata.is_dir());
+    let metadata = match metadata {
+        Ok(metadata) if metadata.file_type().is_symlink() => std::fs::metadata(&path),
+        metadata => metadata,
+    };
     // Inaccessibility is not evidence of deletion. Missing-file observations
     // may close editors, so only confirmed absence is reported as missing.
     let exists = metadata.as_ref().map_or_else(
@@ -1513,6 +1521,7 @@ pub(crate) fn inspect_workspace_path(path: PathBuf) -> WorkspacePathChange {
     );
     let metadata = metadata.ok();
     WorkspacePathChange {
+        is_dir,
         observed_at,
         exists,
         modified: metadata
@@ -1640,6 +1649,7 @@ mod tests {
         let root = std::path::Path::new("workspace");
         let mut burst = WorkspaceEventBurst::default();
         for kind in [EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Modify(ModifyKind::Any),
             EventKind::Access(AccessKind::Close(AccessMode::Write))]
         {
             burst.push(root, Ok(notify::Event::new(kind).add_path(root.join("main.rs"))));

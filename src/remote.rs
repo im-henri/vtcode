@@ -485,7 +485,6 @@ pub(crate) enum Command {
         limit: u64,
     },
     Explorer(explorer::Query),
-    Tasks,
     HistoryStart {
         history: u64,
         repository: RemotePath,
@@ -705,7 +704,6 @@ pub(crate) enum Reply {
     BlameHistory(blame::History),
     BlameSnapshot(blame::Snapshot),
     Explorer(explorer::Tree),
-    Tasks(Vec<crate::app::TaskDefinition>),
     Files {
         version: u64,
         files: Option<Vec<RemotePath>>,

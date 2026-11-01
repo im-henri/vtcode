@@ -132,7 +132,7 @@ fn draw_palette(app: &mut App) -> Terminal<TestBackend> {
     terminal
 }
 
-fn snapshot(terminal: &Terminal<TestBackend>, name: &str) {
+pub(crate) fn snapshot(terminal: &Terminal<TestBackend>, name: &str) {
     let Some(directory) = std::env::var_os("VTCODE_THEME_SNAPSHOTS") else {
         return;
     };
@@ -734,7 +734,7 @@ fn theme_visibility_menu_enabled_selected_and_disabled_commands_are_distinct() {
         );
         assert_eq!(app.menu_item_selected, open);
         terminal
-            .draw(|frame| crate::ui_chrome::draw_menu_dropdown(frame, &app))
+            .draw(|frame| crate::ui_chrome::draw_menu_dropdown(frame, &mut app))
             .unwrap();
         if theme.name == "Syntax Cyber" {
             snapshot(&terminal, "syntax-cyber-file-menu");
@@ -766,7 +766,7 @@ fn theme_visibility_menu_enabled_selected_and_disabled_commands_are_distinct() {
             },
         );
         terminal
-            .draw(|frame| crate::ui_chrome::draw_menu_dropdown(frame, &app))
+            .draw(|frame| crate::ui_chrome::draw_menu_dropdown(frame, &mut app))
             .unwrap();
         assert_eq!(
             terminal.backend().buffer()[(x, 2 + save as u16)].style(),
@@ -795,7 +795,7 @@ fn theme_visibility_menu_enabled_selected_and_disabled_commands_are_distinct() {
         );
         assert_eq!(app.menu_item_selected, open);
         terminal
-            .draw(|frame| crate::ui_chrome::draw_menu_dropdown(frame, &app))
+            .draw(|frame| crate::ui_chrome::draw_menu_dropdown(frame, &mut app))
             .unwrap();
         let hovered = &terminal.backend().buffer()[(x, 2 + open as u16)];
         assert_eq!(hovered.fg, app.colors.ui.fg_menu_selected);

@@ -112,6 +112,40 @@ fn find_centers_matches_in_rendered_diff_rows() {
     }
 }
 
+#[test]
+fn find_and_cursor_moves_reveal_target_rows_after_a_large_removed_block() {
+    let base: String = std::iter::once("before\n".to_string())
+        .chain((0..100).map(|line| format!("old_{line};\n")))
+        .chain(std::iter::once("after\n".to_string())).collect();
+    let target: String = std::iter::once("before\n".to_string())
+        .chain((0..100).map(|line| format!("replacement_{line};\n")))
+        .chain(std::iter::once("after\n".to_string())).collect();
+    for compact in [false, true] {
+        let mut app = comparison(&base, &target, DiffMode::Inline, compact);
+        render(&mut app, 120, 20);
+        for line in [0, 40, 80] {
+            app.editor_mut().unwrap().clear_selection();
+            app.search_query = format!("replacement_{line};");
+            app.execute_palette_command("find");
+            let buffer = render(&mut app, 120, 20);
+            assert_eq!(app.editor().unwrap().cursor_line, line + 1);
+            let (x, y) = target_origin(&app, line + 1);
+            let code = app.code_area.unwrap();
+            assert_eq!(y, code.y + code.height / 2);
+            assert!(caret_cells(&app, &buffer).iter().any(|position| position.1 == y));
+            assert_eq!(buffer[(x, y)].symbol(), "r");
+        }
+        app.editor_mut().unwrap().set_cursor(0, 0);
+        render(&mut app, 120, 20);
+        app.editor_mut().unwrap().set_cursor(1, 0);
+        let buffer = render(&mut app, 120, 20);
+        assert_eq!(app.editor().unwrap().cursor_line, 1);
+        let (x, y) = target_origin(&app, 1);
+        assert_eq!(buffer[(x, y)].symbol(), "r");
+        assert!(caret_cells(&app, &buffer).iter().any(|position| position.1 == y));
+    }
+}
+
 fn caret_cells(app: &App, buffer: &Buffer) -> Vec<(u16, u16)> {
     let code = app.code_area.unwrap();
     buffer

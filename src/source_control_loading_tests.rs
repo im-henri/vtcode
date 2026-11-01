@@ -206,7 +206,7 @@ fn navigation_and_file_watcher_refreshes_do_not_flash_repository_detection() {
     for _ in 0..3 {
         app.background.sender.send(BackgroundResult::FilesChanged {
             root: app.explorer.root.clone(),
-            changes: vec![crate::background::WorkspacePathChange {
+            changes: vec![crate::background::WorkspacePathChange { is_dir: false,
                 observed_at: std::time::Instant::now(), path: path.clone(),
                 exists: true, modified: None, len: Some(5),
             }],

@@ -21,7 +21,6 @@ fn word_selection_keeps_terminal_identifiers_paths_and_unicode() {
         ("open https://example.com/a?b=c next", 18, "https://example.com/a?b=c"),
         ("café_界 next", 3, "café_界"),
         ("a(b)", 1, "("),
-        ("a   b", 2, "   "),
         ("x", 0, "x"),
     ] {
         let mut grid = TermGrid::new(80, 3);
@@ -108,6 +107,93 @@ fn blank_lines_survive_but_terminal_padding_is_not_copied() {
     feed(&mut grid, "one\r\n\r\ntwo");
     select(&mut grid, (0, 0), (2, 9));
     assert_eq!(grid.selected_text().as_deref(), Some("one\n\ntwo"));
+}
+
+#[test]
+fn selecting_past_a_command_trims_the_highlight_and_copied_text_in_both_directions() {
+    let mut grid = TermGrid::new(30, 3);
+    feed(&mut grid, "PS> echo hello   ");
+    for (start, end) in [((0, 4), (0, 29)), ((0, 29), (0, 4))] {
+        select(&mut grid, start, end);
+        assert_eq!(grid.selection_columns(0), 4..14);
+        assert_eq!(grid.selected_text().as_deref(), Some("echo hello"));
+        assert!(grid.selection_contains(0, 8), "spaces between selected words remain selected");
+        assert!(!grid.selection_contains(0, 14));
+        assert!(!grid.selection_contains(0, 29));
+    }
+}
+
+#[test]
+fn whitespace_only_drags_words_and_blank_lines_do_not_create_a_selection() {
+    let mut grid = TermGrid::new(20, 3);
+    feed(&mut grid, "aa    bb\r\n   \r\n    next");
+    for (start, end) in [((0, 2), (0, 5)), ((0, 8), (0, 19)), ((0, 12), (1, 19)), ((2, 0), (2, 3))] {
+        for (start, end) in [(start, end), (end, start)] {
+            select(&mut grid, start, end);
+            assert!(!grid.has_selection(), "{start:?}..{end:?}");
+            assert_eq!(grid.selected_text(), None);
+            assert!((0..3).all(|row| grid.selection_columns(row).is_empty()));
+        }
+    }
+    for word in [true, false] {
+        if word { grid.begin_word_selection(0, 3); }
+        else { grid.begin_line_selection(1, 1); }
+        assert!(!grid.has_selection());
+        assert_eq!(grid.selected_text(), None);
+        grid.finish_selection();
+        assert!(!grid.has_selection());
+    }
+    grid.begin_selection(2, 0);
+    grid.extend_selection(2, 3);
+    assert!(!grid.has_selection());
+    grid.extend_selection(2, 7);
+    assert!(grid.has_selection(), "dragging out of whitespace must still reach text");
+    assert_eq!(grid.selected_text().as_deref(), Some("    next"));
+    grid.extend_selection(2, 3);
+    assert!(!grid.has_selection(), "dragging back to only whitespace clears the visible selection");
+}
+
+#[test]
+fn multiline_selection_trims_each_row_but_keeps_indentation_and_empty_lines() {
+    let mut grid = TermGrid::new(24, 5);
+    feed(&mut grid, "first  \r\n  second \r\n\r\nlast    ");
+    for (start, end) in [((0, 1), (3, 23)), ((3, 23), (0, 1))] {
+        select(&mut grid, start, end);
+        assert_eq!(grid.selected_text().as_deref(), Some("irst\n  second\n\nlast"));
+        for (row, expected) in [1..5, 0..8, 0..0, 0..4, 0..0].into_iter().enumerate() {
+            assert_eq!(grid.selection_columns(row), expected, "row {row}");
+        }
+    }
+}
+
+#[test]
+fn trimmed_selections_keep_spaces_inside_soft_wrapped_commands() {
+    let mut grid = TermGrid::new(6, 3);
+    feed(&mut grid, "abc   def");
+    select(&mut grid, (0, 0), (1, 5));
+    assert_eq!(grid.selected_text().as_deref(), Some("abc   def"));
+    assert_eq!(grid.selection_columns(0), 0..6);
+    assert_eq!(grid.selection_columns(1), 0..3);
+    grid.begin_selection(0, 3);
+    grid.extend_selection(0, 5);
+    assert!(!grid.has_selection());
+    grid.extend_selection(1, 5);
+    assert_eq!(grid.selected_text().as_deref(), Some("   def"));
+    assert_eq!(grid.selection_columns(0), 3..6);
+}
+
+#[test]
+fn trimmed_selection_survives_scrollback_and_new_output() {
+    let mut grid = TermGrid::new(20, 2);
+    feed(&mut grid, "first   \r\nsecond  \r\nlast");
+    grid.scroll_view = 1;
+    select(&mut grid, (0, 1), (1, 19));
+    for output in ["", "\r\nmore"] {
+        feed(&mut grid, output);
+        assert_eq!(grid.selected_text().as_deref(), Some("irst\nsecond"));
+        assert_eq!(grid.selection_columns(0), 1..5);
+        assert_eq!(grid.selection_columns(1), 0..6);
+    }
 }
 
 #[test]

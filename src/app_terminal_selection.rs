@@ -1,5 +1,5 @@
 //! Mouse capture and clipboard routing for regular workbench terminals.
-use crate::app::{ActivePane, App, ContextMenuItem, TabKind};
+use crate::app::{ActivePane, App, TabKind};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
@@ -223,7 +223,11 @@ impl App {
         if surface.index >= self.terminals.len() {
             return false;
         }
-        if self.terminal_wants_mouse(mouse) && self.terminal_selection_drag.is_none() {
+        let selected = self.terminals[surface.index].terminal_pty.as_ref()
+            .is_some_and(|pty| pty.grid.has_selection());
+        // A local selection owns Copy even when the child requests mouse input.
+        let copy_selection = mouse.kind == MouseEventKind::Down(MouseButton::Right) && selected;
+        if self.terminal_wants_mouse(mouse) && self.terminal_selection_drag.is_none() && !copy_selection {
             if matches!(mouse.kind, MouseEventKind::Down(_)) {
                 self.focus_terminal_surface(surface);
                 self.terminal_mouse_capture = Some(surface);
@@ -249,24 +253,15 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 self.focus_terminal_surface(surface);
-                self.context_menu_items = vec![
-                    ContextMenuItem {
-                        label: "Copy".into(),
-                        shortcut: "Ctrl+Shift+C".into(),
-                        id: "copy",
-                        separator_after: false,
-                    },
-                    ContextMenuItem {
-                        label: "Paste".into(),
-                        shortcut: "Ctrl+Shift+V".into(),
-                        id: "paste",
-                        separator_after: false,
-                    },
-                ];
-                self.context_menu_pos = (mouse.column, mouse.row);
-                self.context_menu_inner = None;
-                self.context_menu_selected = 0;
-                self.context_menu_active = true;
+                if selected {
+                    if self.copy_terminal_selection(surface.index)
+                        && let Some(pty) = self.terminals[surface.index].terminal_pty.as_mut()
+                    {
+                        pty.grid.clear_selection();
+                    }
+                } else {
+                    self.paste_terminal_clipboard(surface.index);
+                }
                 true
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -283,15 +278,15 @@ impl App {
         }
     }
 
-    pub(crate) fn copy_terminal_selection(&mut self, index: usize) {
-        self.copy_terminal_selection_with(index, |text| crate::clipboard::set_text(text).is_ok());
+    pub(crate) fn copy_terminal_selection(&mut self, index: usize) -> bool {
+        self.copy_terminal_selection_with(index, |text| crate::clipboard::set_text(text).is_ok())
     }
 
     pub(crate) fn copy_terminal_selection_with(
         &mut self,
         index: usize,
         copy: impl FnOnce(&str) -> bool,
-    ) {
+    ) -> bool {
         let Some(text) = self
             .terminals
             .get(index)
@@ -299,13 +294,14 @@ impl App {
             .and_then(|pty| pty.grid.selected_text())
             .filter(|text| !text.is_empty())
         else {
-            return;
+            return false;
         };
         let copied = copy(&text);
         self.push_clipboard_history(&text);
         if !copied {
             self.notify("System clipboard unavailable — copied to clipboard history only");
         }
+        copied
     }
 
     pub(crate) fn paste_terminal_clipboard(&mut self, index: usize) {

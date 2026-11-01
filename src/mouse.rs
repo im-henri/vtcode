@@ -2,7 +2,6 @@ use crossterm::event;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use crate::app::{ActivePane, App, TerminalDock};
-use crate::helpers::len_as_u16;
 use unicode_width::UnicodeWidthStr;
 use crate::ui_chrome_tabs::TabBarHits;
 #[cfg(test)]
@@ -229,6 +228,15 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         if !crate::mouse_overlay::handle_overlay_mouse(app, mouse.kind, col, row) {
             crate::mouse_dialogs::handle_mouse_dialogs(app, &mouse, col, row);
         }
+        return;
+    }
+
+    // Wheel input belongs to the open menu, including in a clipped viewport.
+    if app.menu_active && app.menu_open
+        && matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+    {
+        let code = if mouse.kind == MouseEventKind::ScrollUp { KeyCode::Up } else { KeyCode::Down };
+        crate::input_dialogs::handle_menu_key(app, event::KeyEvent::new(code, KeyModifiers::NONE));
         return;
     }
 
@@ -774,14 +782,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // Click on menu dropdown item?
             if app.menu_active && app.menu_open {
                 let items = app.menu_items(app.menu_selected);
-                let menu_x = crate::ui_chrome::menu_dropdown_anchor_x(app);
-                let menu_y = if let Some(bar) = app.menu_bar_area { bar.y + 1 } else { 1 };
-                let max_w = items.iter().map(|(l, _)| UnicodeWidthStr::width(l.as_str())).max().unwrap_or(20) as u16 + 4;
-
-                if row > menu_y && row < menu_y + 1 + len_as_u16(items.len())
-                    && col >= menu_x && col < menu_x + max_w
-                {
-                    let item_idx = (row - menu_y - 1) as usize;
+                if let Some(item_idx) = app.menu_item_at(col, row) {
                     if let Some((label, cmd_id)) = items.get(item_idx) {
                         if *label != "─" && !app.is_menu_cmd_disabled(cmd_id) {
                             let cmd = cmd_id.to_string();
@@ -796,6 +797,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             }
                         }
                     }
+                    return;
+                }
+                if app.menu_dropdown_inner.is_some_and(|area| area.contains((col, row).into())) {
                     return;
                 }
                 // Click outside dropdown -> close menu

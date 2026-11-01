@@ -34,6 +34,7 @@ impl Worker {
                 .any(|target| same_index_file_path(target, path))
         };
         self.walk = None;
+        self.pending_walks.clear();
         self.scans.retain(|scan| !matches(&scan.path));
         if self
             .admission

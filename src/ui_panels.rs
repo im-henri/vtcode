@@ -614,7 +614,8 @@ mod tests {
     fn menus_and_palette_cannot_reopen_removed_panel_surfaces() {
         let app = App::test_new();
         assert!(App::build_command_list().iter().all(|command| command.id != "move_terminal_to_bottom"));
-        assert!(app.menu_items(6).iter().all(|(_, id)| *id != "move_terminal_to_bottom"));
+        let terminal_menu = App::menu_labels().iter().position(|label| *label == "Terminal").unwrap();
+        assert!(app.menu_items(terminal_menu).iter().all(|(_, id)| *id != "move_terminal_to_bottom"));
     }
 
     #[test]

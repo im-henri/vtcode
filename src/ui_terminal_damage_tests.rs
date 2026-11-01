@@ -88,6 +88,37 @@ fn terminal_idle_cursor_and_selection_changes_reuse_all_base_rows() {
 }
 
 #[test]
+fn terminal_selection_highlights_text_without_painting_trailing_padding() {
+    let mut palette = App::test_new().colors.ui;
+    palette.bg_terminal_selection = Color::Blue;
+    palette.fg_terminal_selection = Some(Color::White);
+    let mut pty = TerminalEmulator::test_with_output(16, 6, "one   \r\n  two  \r\n\r\nlast    ");
+    pty.grid.cursor_visible = false;
+    let area = Rect::new(2, 1, 16, 6);
+    let (plain, _) = render(&pty, &palette, area, true, false);
+    let initial_conversions = conversions(&pty);
+    for (start, end) in [((0, 0), (3, 15)), ((3, 15), (0, 0))] {
+        pty.grid.begin_selection(start.0, start.1);
+        pty.grid.extend_selection(end.0, end.1);
+        pty.grid.finish_selection();
+        let (selected, _) = render(&pty, &palette, area, true, false);
+        for (row, columns) in [0..3, 0..5, 0..0, 0..4, 0..0, 0..0].into_iter().enumerate() {
+            for column in 0..16 {
+                let at = (area.x + column as u16, area.y + row as u16);
+                if columns.contains(&column) { assert_eq!(selected[at].bg, Color::Blue); }
+                else { assert_eq!(selected[at], plain[at], "padding at {row}:{column} must keep its original style"); }
+            }
+        }
+        assert_eq!(pty.grid.selected_text().as_deref(), Some("one\n  two\n\nlast"));
+        compare(&pty, &palette, area, true);
+    }
+    pty.grid.begin_selection(0, 6);
+    pty.grid.extend_selection(0, 15);
+    assert_eq!(render(&pty, &palette, area, true, false).0, plain);
+    assert_eq!(conversions(&pty), initial_conversions, "selection must reuse the cached terminal text");
+}
+
+#[test]
 fn terminal_row_mutations_clone_and_movement_have_safe_damage_identities() {
     let mut grid = TermGrid::new(8, 4);
     let keys: Vec<_> = grid

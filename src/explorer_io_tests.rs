@@ -56,6 +56,75 @@ fn expanding_and_collapsing_only_reads_new_directories() {
 }
 
 #[test]
+fn compiler_style_burst_updates_closed_directory_without_rebuilding_the_explorer() {
+    use notify::{Event, EventKind, event::CreateKind};
+    let (temp, mut explorer) = workspace();
+    for name in ["alpha", "beta"] { explorer.expanded_dirs.insert(temp.path().join(name)); }
+    refresh(&mut explorer);
+    let output = temp.path().join("gamma");
+    let added = output.join("final.o");
+    std::fs::write(&added, "output").unwrap();
+    let reads = explorer.directory_cache.read_count();
+    let mut app = crate::app::App::test_new();
+    app.explorer = explorer;
+    app.workspace_watcher_active = true;
+    app.source_control_enabled = true;
+    // Keep the Git worker busy so its next requested scope can be inspected.
+    app.repositories.workspace = Some(temp.path().to_path_buf());
+    app.repositories.discovered = true;
+    app.repositories.rescan = false;
+    app.bg_git_status_running = true;
+    let generation = app.explorer_refresh_generation;
+    let started = std::time::Instant::now();
+    let mut burst = crate::workspace_watch::Burst::default();
+    for index in 0..50_000 {
+        burst.push(temp.path(), Ok(Event::new(EventKind::Create(CreateKind::File))
+            .add_path(output.join(format!("object-{index}.o")))));
+    }
+    let event = crate::workspace_watch::NoiseFilter::default().filter(burst);
+    assert!(!event.rescan);
+    assert_eq!(event.paths.as_slice(), std::slice::from_ref(&output));
+    let inspections = event.paths.len();
+    let changes = event.paths.into_iter().map(crate::background::inspect_workspace_path).collect();
+    app.apply_workspace_file_changes(temp.path().to_path_buf(), changes, event.structure_changed,
+        event.rescan, event.git_metadata_changed);
+    assert_eq!(app.explorer_refresh_generation, generation);
+    assert!(!app.bg_explorer_refresh_running && !app.bg_explorer_refresh_pending);
+    assert_eq!(app.explorer.directory_cache.read_count(), reads);
+    assert!(!app.repositories.rescan, "build output must not rediscover repositories");
+    assert_eq!(app.pending_git_status_paths.as_ref().unwrap().iter().collect::<Vec<_>>(), vec![&output]);
+    eprintln!("watcher stress: 50000 notifications, {inspections} directory inspection, 0 Explorer rebuilds, 0 directory reads, {:?}", started.elapsed());
+    // Invalidations remain useful: opening that folder reads its new contents.
+    app.explorer.expanded_dirs.insert(output);
+    refresh(&mut app.explorer);
+    assert!(app.explorer.entries.iter().any(|entry| entry.path == added));
+    assert_eq!(app.explorer.directory_cache.read_count(), reads + 2);
+}
+
+#[test]
+fn tree_refresh_scope_follows_expansion_sorting_and_recursive_search() {
+    let (temp, mut explorer) = workspace();
+    refresh(&mut explorer);
+    let folder = temp.path().join("alpha");
+    let child = folder.join("new.rs");
+    assert!(!explorer.changed_path_affects_tree(&child, Some(true)));
+    assert!(!explorer.changed_path_affects_tree(&folder, Some(true)));
+    assert!(explorer.changed_path_affects_tree(&folder, Some(false)), "deleting a displayed folder must update the root listing");
+    assert!(explorer.changed_path_affects_tree(&temp.path().join("new-folder"), Some(true)));
+    explorer.expanded_dirs.insert(folder.clone());
+    refresh(&mut explorer);
+    assert!(explorer.changed_path_affects_tree(&child, Some(true)));
+    explorer.expanded_dirs.clear();
+    refresh(&mut explorer);
+    explorer.sort_mode = ExplorerSortMode::Modified;
+    assert!(explorer.changed_path_affects_tree(&folder, Some(true)));
+    explorer.sort_mode = ExplorerSortMode::Name;
+    explorer.find.open = true;
+    explorer.find.query = "new.rs".into();
+    assert!(explorer.changed_path_affects_tree(&child, Some(true)));
+}
+
+#[test]
 fn repeated_filename_queries_reuse_the_workspace_scan() {
     let (_temp, mut explorer) = workspace();
     explorer.find.open = true;

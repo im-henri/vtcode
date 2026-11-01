@@ -3,6 +3,26 @@ use crate::app::{App, PaletteCommand, ContextMenuItem};
 
 const LANGUAGE_COMMAND_PREFIX: &str = "language_mode:";
 
+#[cfg(test)]
+#[path = "app_menu_navigation_tests.rs"]
+mod navigation_tests;
+
+pub(crate) struct MenuEntry {
+    pub label: String,
+    pub shortcut: String,
+    pub command: &'static str,
+}
+
+fn keybinding_id_for_command(command: &str) -> &str {
+    match command {
+        "goto_line" => "go_to_line",
+        "palette_menu" | "command_palette" => "palette",
+        "close_tab_menu" => "close_tab",
+        "toggle_sidebar" => "toggle_explorer",
+        other => other,
+    }
+}
+
 pub(crate) fn language_command_id(language: &str) -> String {
     format!("{LANGUAGE_COMMAND_PREFIX}{language}")
 }
@@ -140,14 +160,12 @@ impl App {
             PaletteCommand { name: "Terminal: New Terminal in Editor Tab".into(), shortcut: String::new(), id: Cow::Borrowed("new_terminal_in_editor_tab") },
             PaletteCommand { name: "Terminal: Close Terminal".into(), shortcut: String::new(), id: Cow::Borrowed("close_terminal") },
             PaletteCommand { name: "Terminal: Rename Terminal…".into(), shortcut: String::new(), id: Cow::Borrowed("rename_terminal") },
-            PaletteCommand { name: "Terminal: Detach to Editor Tab".into(), shortcut: String::new(), id: Cow::Borrowed("detach_terminal_to_tab") },
+            PaletteCommand { name: "Terminal: Move to Editor Tab".into(), shortcut: String::new(), id: Cow::Borrowed("detach_terminal_to_tab") },
             PaletteCommand { name: "Terminal: Move to Right Side".into(), shortcut: String::new(), id: Cow::Borrowed("move_terminal_to_right") },
-            PaletteCommand { name: "Tasks: Run Task".into(), shortcut: String::new(), id: Cow::Borrowed("run_task") },
-            PaletteCommand { name: "Tasks: Rerun Last Task".into(), shortcut: "Ctrl+Shift+B".into(), id: Cow::Borrowed("rerun_last_task") },
             PaletteCommand { name: "Help: Welcome".into(), shortcut: String::new(), id: Cow::Borrowed("show_welcome") },
             PaletteCommand { name: "Help: About".into(), shortcut: String::new(), id: Cow::Borrowed("about") },
-            PaletteCommand { name: "Edit: Toggle Comment".into(), shortcut: "Ctrl+/".into(), id: Cow::Borrowed("toggle_comment") },
-            PaletteCommand { name: "Edit: Toggle Block Comment".into(), shortcut: "Ctrl+Shift+/".into(), id: Cow::Borrowed("toggle_block_comment") },
+            PaletteCommand { name: "Edit: Toggle Line Comment".into(), shortcut: "Ctrl+/".into(), id: Cow::Borrowed("toggle_comment") },
+            PaletteCommand { name: "Edit: Toggle Block Comment".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_block_comment") },
             PaletteCommand { name: "Edit: Select to Matching Bracket".into(), shortcut: "Ctrl+Shift+\\".into(), id: Cow::Borrowed("select_to_bracket") },
             PaletteCommand { name: "Edit: Select Inside Brackets".into(), shortcut: String::new(), id: Cow::Borrowed("select_inside_brackets") },
             PaletteCommand { name: "Edit: Select Inside Quotes".into(), shortcut: String::new(), id: Cow::Borrowed("select_inside_quotes") },
@@ -158,7 +176,8 @@ impl App {
             PaletteCommand { name: "Search: Find Next".into(), shortcut: "F3".into(), id: Cow::Borrowed("find_next") },
             PaletteCommand { name: "Search: Find Previous".into(), shortcut: "Shift+F3".into(), id: Cow::Borrowed("find_prev") },
             PaletteCommand { name: "Search: Search in Files".into(), shortcut: "Alt+F".into(), id: Cow::Borrowed("global_search") },
-            PaletteCommand { name: "Search: Replace in Files".into(), shortcut: String::new(), id: Cow::Borrowed("replace_all_in_files") },
+            PaletteCommand { name: "Search: Replace in Files…".into(), shortcut: String::new(), id: Cow::Borrowed("global_replace") },
+            PaletteCommand { name: "Search: Replace All in Files".into(), shortcut: String::new(), id: Cow::Borrowed("replace_all_in_files") },
             PaletteCommand { name: "Go to Line".into(), shortcut: "Ctrl+G".into(), id: Cow::Borrowed("goto_line") },
             PaletteCommand { name: "Go to Symbol".into(), shortcut: "Ctrl+Shift+O".into(), id: Cow::Borrowed("goto_symbol") },
             PaletteCommand { name: "Go to Symbol in Workspace".into(), shortcut: "Ctrl+T".into(), id: Cow::Borrowed("goto_workspace_symbol") },
@@ -181,7 +200,8 @@ impl App {
             PaletteCommand { name: "Format Selection".into(), shortcut: "Ctrl+K Ctrl+F".into(), id: Cow::Borrowed("format_selection") },
             PaletteCommand { name: "Toggle On-Type Formatting".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_on_type_formatting") },
             PaletteCommand { name: "Quick Open File".into(), shortcut: "Ctrl+P".into(), id: Cow::Borrowed("quick_open") },
-            PaletteCommand { name: "Help: Keyboard Shortcuts".into(), shortcut: "Ctrl+?".into(), id: Cow::Borrowed("show_shortcuts") },
+            PaletteCommand { name: "Help: Keyboard Shortcut Reference".into(), shortcut: "Ctrl+Shift+/".into(), id: Cow::Borrowed("show_shortcuts") },
+            PaletteCommand { name: "View: Explorer".into(), shortcut: String::new(), id: Cow::Borrowed("show_explorer") },
             PaletteCommand { name: "View: Toggle Explorer".into(), shortcut: "Ctrl+B".into(), id: Cow::Borrowed("toggle_explorer") },
             PaletteCommand { name: "View: Collapse All in Explorer".into(), shortcut: String::new(), id: Cow::Borrowed("collapse_explorer") },
             PaletteCommand { name: "View: Toggle Sidebar Visibility".into(), shortcut: "Ctrl+B".into(), id: Cow::Borrowed("toggle_sidebar") },
@@ -207,6 +227,7 @@ impl App {
             PaletteCommand { name: "View: Clear All Rulers".into(), shortcut: String::new(), id: Cow::Borrowed("ruler_clear") },
             PaletteCommand { name: "View: Center Screen on Cursor".into(), shortcut: String::new(), id: Cow::Borrowed("center_screen") },
             PaletteCommand { name: "Preferences: Open Settings".into(), shortcut: "Ctrl+,".into(), id: Cow::Borrowed("settings") },
+            PaletteCommand { name: "Preferences: Keyboard Shortcuts".into(), shortcut: String::new(), id: Cow::Borrowed("keybindings") },
             PaletteCommand { name: "LSP: Configure Language Servers".into(), shortcut: String::new(), id: Cow::Borrowed("language_servers"),
             },
             PaletteCommand {
@@ -382,27 +403,30 @@ impl App {
     }
 
     pub(crate) fn menu_labels() -> &'static [&'static str] {
-        &["File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"]
+        &["File", "Edit", "Selection", "View", "Go", "Terminal", "Help"]
     }
 
-    pub(crate) fn menu_items(&self, menu_idx: usize) -> Vec<(String, &'static str)> {
-        // (label, default_shortcut, command_id)
+    pub(crate) fn menu_entries(&self, menu_idx: usize) -> Vec<MenuEntry> {
+        // (label, shortcut for commands without a configurable binding, command ID)
         let raw: Vec<(&str, &str, &str)> = match menu_idx {
             0 => vec![ // File
                 ("New File", "", "new_file"),
-                ("New Folder...", "", "new_folder"),
+                ("New Folder…", "", "new_folder"),
                 ("─", "", ""),
-                ("Open File...", "", "quick_open"),
-                ("Open Folder...", "", "change_dir"),
-                ("Open Recent", "", "open_recent_menu"),
+                ("Open File…", "Ctrl+P", "quick_open"),
+                ("Open Folder…", "", "change_dir"),
+                ("Open Recent…", "", "open_recent_menu"),
                 ("─", "", ""),
                 ("Save", "", "save"),
-                ("Save As...", "", "save_as"),
-                ("Save All", "", "save_all"),
+                ("Save As…", "Ctrl+Shift+S", "save_as"),
+                ("Save All", "Ctrl+K S", "save_all"),
                 ("Revert File", "", "revert_file"),
                 ("─", "", ""),
                 ("Close Tab", "", "close_tab_menu"),
                 ("Close All Tabs", "", "tab_close_all"),
+                ("─", "", ""),
+                ("Settings…", "Ctrl+,", "settings"),
+                ("Keyboard Shortcuts…", "", "keybindings"),
                 ("─", "", ""),
                 ("Exit", "", "quit_menu"),
             ],
@@ -413,126 +437,169 @@ impl App {
                 ("Cut", "", "cut"),
                 ("Copy", "", "copy"),
                 ("Paste", "", "paste"),
+                ("Delete Line", "", "delete_line"),
                 ("─", "", ""),
-                ("Find", "", "find"),
-                ("Replace", "", "find_replace"),
-                ("Find in Files", "", "global_search"),
+                ("Find…", "", "find"),
+                ("Replace…", "", "find_replace"),
+                ("Find in Files…", "", "global_search"),
+                ("Replace in Files…", "", "global_replace"),
                 ("─", "", ""),
-                ("Select All", "", "select_all"),
-                ("Toggle Comment", "", "toggle_comment"),
+                ("Toggle Line Comment", "", "toggle_comment"),
                 ("Toggle Block Comment", "", "toggle_block_comment"),
                 ("─", "", ""),
-                ("Move Line Up", "Alt+Up", "move_line_up"),
-                ("Move Line Down", "Alt+Down", "move_line_down"),
-                ("Duplicate Line", "", "duplicate_line"),
-                ("Delete Line", "", "delete_line"),
+                ("Rename Symbol…", "", "rename_symbol"),
+                ("Format Document", "", "format_document"),
             ],
             2 => vec![ // Selection
                 ("Select All", "", "select_all"),
                 ("Select Line", "", "select_line"),
                 ("─", "", ""),
-                ("Expand Selection", "Ctrl+Shift+Right", "expand_selection"),
-                ("Shrink Selection", "Ctrl+Shift+Left", "shrink_selection"),
+                ("Expand Selection", "Alt+Shift+Right", "expand_selection"),
+                ("Shrink Selection", "Alt+Shift+Left", "shrink_selection"),
                 ("Select Inside Brackets", "", "select_inside_brackets"),
                 ("Select Inside Quotes", "", "select_inside_quotes"),
                 ("─", "", ""),
                 ("Add Cursor Above", "Ctrl+Alt+Up", "add_cursor_above"),
                 ("Add Cursor Below", "Ctrl+Alt+Down", "add_cursor_below"),
-                ("Select Next Occurrence", "", "select_next_occurrence"),
+                ("Add Cursors to Line Ends", "Alt+Shift+I", "add_cursors_line_ends"),
+                ("Select Next Occurrence", "Ctrl+D", "select_next_occurrence"),
                 ("Select All Occurrences", "Ctrl+Shift+L", "select_all_occurrences"),
+                ("─", "", ""),
+                ("Move Line Up", "Alt+Up", "move_line_up"),
+                ("Move Line Down", "Alt+Down", "move_line_down"),
+                ("Duplicate Line Up", "Alt+Shift+Up", "duplicate_line_up"),
+                ("Duplicate Line Down", "", "duplicate_line"),
             ],
             3 => vec![ // View
-                ("Command Palette", "", "palette_menu"),
-                ("Reload Syntaxes", "", "reload_syntaxes"),
-                ("Install Syntax…", "", "install_syntax"),
+                ("Command Palette…", "", "palette_menu"),
                 ("─", "", ""),
-                ("Explorer", "", "toggle_explorer"),
+                ("Explorer", "", "show_explorer"),
                 ("Search", "", "global_search"),
                 ("Source Control", "", "source_control"),
+                ("Agent Chat", "", "acp_chat"),
                 ("Extensions", "", "extensions"),
                 ("─", "", ""),
-                ("Toggle Panel", "", "toggle_panel"),
+                ("Problems", "", "toggle_problems"),
                 ("Output", "", "show_output"),
-                ("Agent Chat", "Ctrl+Shift+I", "acp_chat"),
-                ("Toggle Sidebar", "", "toggle_sidebar"),
-                (if self.sidebar_auto_hide.enabled { "✓ Auto-hide Sidebar" } else { "Auto-hide Sidebar" }, "", "toggle_sidebar_auto_hide"),
-                ("Toggle Minimap", "", "toggle_minimap"),
-                ("Toggle Line Numbers", "", "toggle_line_numbers"),
-                ("Toggle Breadcrumbs", "", "toggle_breadcrumbs"),
-                ("Toggle Status Bar", "", "toggle_status_bar"),
-                ("Toggle Tab Bar", "", "toggle_tab_bar"),
-                ("Toggle Menu Bar", "", "toggle_menu_bar"),
-                ("Zen Mode", "", "toggle_zen"),
+                ("Notifications", "", "show_notifications"),
                 ("─", "", ""),
+                ("Split Editor Right", "Ctrl+\\", "split_editor"),
+                ("Split Editor Down", "", "split_editor_down"),
+                ("Sidebar", "", "toggle_sidebar"),
+                ("Auto-hide Sidebar", "", "toggle_sidebar_auto_hide"),
+                ("─", "", ""),
+                ("Minimap", "", "toggle_minimap"),
                 ("Word Wrap", "", "toggle_word_wrap"),
-                ("Settings", "Ctrl+,", "settings"),
+                ("Zen Mode", "F11", "toggle_zen"),
             ],
             4 => vec![ // Go
-                ("Go to File...", "", "quick_open"),
-                ("Go to Line...", "", "goto_line"),
-                ("Go to Symbol...", "Ctrl+Shift+O", "goto_symbol"),
+                ("Back", "", "navigate_back"),
+                ("Forward", "", "navigate_forward"),
+                ("Last Edit Location", "Ctrl+K, Ctrl+Q", "goto_last_edit"),
                 ("─", "", ""),
-                ("Go Back", "Alt+Left", "navigate_back"),
-                ("Go Forward", "Alt+Right", "navigate_forward"),
-                ("Go to Last Edit", "Ctrl+K, Ctrl+Q", "goto_last_edit"),
+                ("Go to File…", "Ctrl+P", "quick_open"),
+                ("Go to Line…", "", "goto_line"),
+                ("Go to Symbol in File…", "Ctrl+Shift+O", "goto_symbol"),
+                ("Go to Symbol in Workspace…", "Ctrl+T", "goto_workspace_symbol"),
                 ("─", "", ""),
-                ("Go to Bracket", "", "goto_bracket"),
+                ("Go to Definition", "", "go_to_definition"),
+                ("Go to Type Definition", "", "go_to_type_definition"),
+                ("Go to Implementation", "", "go_to_implementation"),
+                ("Find References", "", "find_references"),
                 ("─", "", ""),
-                ("Next Diagnostic", "", "next_diagnostic"),
-                ("Previous Diagnostic", "", "prev_diagnostic"),
+                ("Go to Matching Bracket", "", "goto_bracket"),
                 ("─", "", ""),
+                ("Next Problem", "", "next_diagnostic"),
+                ("Previous Problem", "", "prev_diagnostic"),
                 ("Next Change", "Alt+F5", "next_change"),
                 ("Previous Change", "Alt+Shift+F5", "prev_change"),
             ],
-            5 => vec![ // Run
-                ("Run Task...", "", "run_task"),
-                ("Rerun Last Task", "Ctrl+Shift+B", "rerun_last_task"),
-            ],
-            6 => vec![ // Terminal
-                ("Toggle Right Terminal", "Ctrl+`", "toggle_terminal"),
-                ("New Terminal", "Ctrl+Shift+`", "new_terminal"),
+            5 => vec![ // Terminal
+                ("New Terminal", "", "new_terminal"),
                 ("New Terminal in Editor Tab", "", "new_terminal_in_editor_tab"),
-                ("Rename Terminal…", "", "rename_terminal"),
-                ("Move to Right Side", "", "move_terminal_to_right"),
-                ("Detach to Editor Tab", "", "detach_terminal_to_tab"),
-            ],
-            7 => vec![ // Help
-                ("Welcome", "", "show_welcome"),
-                ("Keyboard Shortcuts", "", "show_shortcuts"),
                 ("─", "", ""),
-                ("About", "", "about"),
+                ("Rename Terminal…", "", "rename_terminal"),
+                ("Close Terminal", "", "close_terminal"),
+                ("─", "", ""),
+                (if self.show_terminal_sidebar { "Hide Right Terminal" } else { "Show Right Terminal" }, "", "toggle_terminal"),
+                ("Move to Right Side", "", "move_terminal_to_right"),
+                ("Move to Editor Tab", "", "detach_terminal_to_tab"),
+            ],
+            6 => vec![ // Help
+                ("Welcome", "", "show_welcome"),
+                ("Keyboard Shortcut Reference", "", "show_shortcuts"),
+                ("─", "", ""),
+                ("Performance and Activity", "", "performance"),
+                ("─", "", ""),
+                ("About VTCode", "", "about"),
             ],
             _ => vec![],
         };
 
-        raw.into_iter().map(|(label, default_sc, cmd_id)| {
-            if label == "─" || cmd_id.is_empty() {
-                return ("─".to_string(), "");
-            }
-            let shortcut = self.shortcut_for_command(cmd_id);
-            let shortcut = if shortcut.is_empty() && !default_sc.is_empty() {
-                default_sc.to_string()
-            } else {
-                shortcut
+        raw.into_iter().map(|(label, default_shortcut, command)| {
+            let checked = match command {
+                "toggle_sidebar" => Some(self.sidebar_is_visible()),
+                "toggle_sidebar_auto_hide" => Some(self.sidebar_auto_hide.enabled),
+                "toggle_minimap" => Some(self.show_minimap),
+                "toggle_word_wrap" => Some(self.editor().is_some_and(|editor| editor.word_wrap)),
+                "toggle_zen" => Some(self.zen_mode),
+                _ => None,
             };
-            if shortcut.is_empty() {
-                (label.to_string(), cmd_id)
+            let label = match checked {
+                Some(true) => format!("✓ {label}"),
+                Some(false) => format!("  {label}"),
+                None => label.to_owned(),
+            };
+            let binding = keybinding_id_for_command(command);
+            let shortcut = if self.keybindings.iter().any(|key| key.id == binding) {
+                self.shortcut_for_command(command)
             } else {
-                // Pad label to align shortcuts
-                let pad = 24usize.saturating_sub(label.len());
-                let spaces = " ".repeat(pad);
-                (format!("{label}{spaces}{shortcut}"), cmd_id)
+                default_shortcut.to_owned()
+            };
+            MenuEntry { label, shortcut, command }
+        }).collect()
+    }
+
+    pub(crate) fn menu_items(&self, menu_idx: usize) -> Vec<(String, &'static str)> {
+        let entries = self.menu_entries(menu_idx);
+        let label_width = entries.iter()
+            .map(|entry| unicode_width::UnicodeWidthStr::width(entry.label.as_str()))
+            .max().unwrap_or(0);
+        let shortcut_width = entries.iter()
+            .map(|entry| unicode_width::UnicodeWidthStr::width(entry.shortcut.as_str()))
+            .max().unwrap_or(0);
+        entries.into_iter().map(|MenuEntry { label, shortcut, command }| {
+            if shortcut.is_empty() {
+                (label, command)
+            } else {
+                let padding = label_width + shortcut_width + 2
+                    - unicode_width::UnicodeWidthStr::width(label.as_str())
+                    - unicode_width::UnicodeWidthStr::width(shortcut.as_str());
+                (format!("{label}{}{shortcut}", " ".repeat(padding)), command)
             }
         }).collect()
+    }
+
+    pub(crate) fn menu_item_at(&self, column: u16, row: u16) -> Option<usize> {
+        if self.menu_rendered != Some(self.menu_selected) { return None; }
+        let inner = self.menu_dropdown_inner.filter(|area| area.contains((column, row).into()))?;
+        let count = self.menu_entries(self.menu_selected).len();
+        let scrollbar = if count > usize::from(inner.height) {
+            2.min(inner.width.saturating_sub(1))
+        } else { 0 };
+        if column >= inner.right().saturating_sub(scrollbar) { return None; }
+        let index = self.menu_dropdown_scroll + usize::from(row - inner.y);
+        (index < count).then_some(index)
     }
 
     /// Check if a menu command should be disabled given current app state
     pub(crate) fn is_menu_cmd_disabled(&self, cmd_id: &str) -> bool {
         let output = crate::ui_logs::focused(self);
-        let has_editor = !output && self.editor().is_some();
+        let has_editor = !output && self.tabs.get(self.active_tab)
+            .is_some_and(|tab| tab.kind == crate::app::TabKind::File);
         let has_selection = !output && self.editor().is_some_and(|e| e.has_selection());
         let is_modified = has_editor && self.editor().is_some_and(|e| e.modified);
-        let is_read_only = output || has_editor && self.editor().is_some_and(|e| e.read_only)
+        let is_read_only = output || self.editor().is_some_and(|e| e.read_only)
             || self.diff_selection_owns_cursor();
         let has_file = has_editor && self.editor().is_some_and(|e| e.file_path.is_some());
         let has_tabs = !self.tabs.is_empty();
@@ -552,7 +619,10 @@ impl App {
             // File
             "save" => !has_editor || !is_modified || !has_file,
             "revert_file" => !has_editor || !is_modified || !has_file,
-            "save_as" | "save_all" => !has_editor,
+            "save_as" => !has_editor,
+            "save_all" => !self.tabs.iter()
+                .chain(self.groups.iter().flat_map(|group| group.tabs.iter()))
+                .any(crate::app::Tab::has_unsaved_changes),
             "close_tab_menu" | "tab_close_all" => !has_tabs,
             // Edit
             "undo" => !can_undo || is_read_only,
@@ -562,19 +632,26 @@ impl App {
                 !self.focused_terminal_has_selection()
             } else { !has_selection && !self.has_diff_selection() },
             "paste" => self.focused_terminal_index().is_none() && (!has_editor || is_read_only),
-            "delete_line" | "duplicate_line" | "move_line_up" | "move_line_down"
-            | "indent" | "outdent" | "toggle_comment" | "join_lines"
+            "delete_line" | "duplicate_line" | "duplicate_line_up" | "move_line_up" | "move_line_down"
+            | "indent" | "outdent" | "toggle_comment" | "toggle_block_comment" | "join_lines"
+            | "format_document" | "rename_symbol"
             | "transform_uppercase" | "transform_lowercase" | "transform_titlecase" => {
                 !has_editor || is_read_only
             }
             // Selection
-            "select_all" | "select_line" | "expand_selection" | "shrink_selection" => !has_editor,
-            "add_cursor_above" | "add_cursor_below" | "add_cursors_to_line_ends" => !has_editor,
+            "select_all" | "select_line" | "expand_selection" | "shrink_selection"
+            | "select_inside_brackets" | "select_inside_quotes"
+            | "select_next_occurrence" | "select_all_occurrences" => !has_editor,
+            "add_cursor_above" | "add_cursor_below" | "add_cursors_line_ends" => !has_editor,
             // View
             "toggle_diff_layout" => !self.should_render_diff_for_active_editor(),
+            "toggle_word_wrap" => !has_editor,
+            "split_editor" | "split_editor_down" => !has_tabs,
+            "find" => !has_editor && !output,
+            "find_replace" => !has_editor,
             // Terminal layout actions need an open session, not the empty
             // placeholder retained at startup and after the last close.
-            "move_terminal_to_right" | "rename_terminal" => {
+            "move_terminal_to_right" | "rename_terminal" | "close_terminal" => {
                 !self.terminal_is_open(self.active_terminal)
             }
             "detach_terminal_to_tab" => {
@@ -582,8 +659,9 @@ impl App {
                     || self.terminal_is_in_editor(self.active_terminal)
             }
             // Go
-            "go_to_line" | "go_to_definition" | "go_to_references" | "go_to_symbol"
-            | "go_to_bracket" | "next_change" | "prev_change"
+            "goto_line" | "goto_symbol" | "go_to_definition" | "go_to_type_definition"
+            | "go_to_implementation" | "find_references"
+            | "goto_bracket" | "next_diagnostic" | "prev_diagnostic" | "next_change" | "prev_change"
             | "next_diff_hunk" | "prev_diff_hunk" => !has_editor,
             _ => false,
         }
@@ -678,23 +756,11 @@ impl App {
     /// Returns an empty string if the command has no keybinding.
     pub(crate) fn shortcut_for_command(&self, cmd_id: &str) -> String {
         // Map command IDs that differ between palette/menu and keybinding system
-        let kb_id = match cmd_id {
-            "find" => "find",
-            "find_replace" => "find_replace",
-            "goto_line" => "go_to_line",
-            "palette_menu" | "command_palette" => "palette",
-            "close_tab_menu" => "close_tab",
-            "quit_menu" => return String::new(), // no keybinding for quit
-            other => other,
-        };
-        for kb in &self.keybindings {
-            if kb.id == kb_id {
-                let d = kb.display();
-                if d == "Unassigned" { return String::new(); }
-                return d;
-            }
-        }
-        String::new()
+        let kb_id = keybinding_id_for_command(cmd_id);
+        self.keybindings.iter()
+            .find(|key| key.id == kb_id && key.code != crossterm::event::KeyCode::Null)
+            .map(|key| key.display())
+            .unwrap_or_default()
     }
 
     /// Update shortcut hints in palette_commands and context_menu_items
@@ -708,30 +774,21 @@ impl App {
                 shortcut_map.entry(kb.id).or_insert(d);
             }
         }
-        // Helper to resolve command ID aliases
-        let resolve = |cmd_id: &str| -> String {
-            let kb_id = match cmd_id {
-                "find" => "find",
-                "find_replace" => "find_replace",
-                "goto_line" => "go_to_line",
-                "palette_menu" | "command_palette" => "palette",
-                "close_tab_menu" => "close_tab",
-                "quit_menu" => return String::new(),
-                other => other,
-            };
-            shortcut_map.get(kb_id).cloned().unwrap_or_default()
+        let configurable: std::collections::HashSet<_> = self.keybindings.iter().map(|key| key.id).collect();
+        // Preserve fixed shortcuts for commands without a configurable binding.
+        let resolve = |cmd_id: &str| -> Option<String> {
+            let kb_id = keybinding_id_for_command(cmd_id);
+            configurable.contains(kb_id).then(|| shortcut_map.get(kb_id).cloned().unwrap_or_default())
         };
         // Palette commands
         for cmd in &mut self.palette.commands {
-            let hint = resolve(&cmd.id);
-            if !hint.is_empty() || !cmd.shortcut.is_empty() {
+            if let Some(hint) = resolve(&cmd.id) {
                 cmd.shortcut = hint;
             }
         }
         // Context menu items
         for item in &mut self.context_menu_items {
-            let hint = resolve(item.id);
-            if !hint.is_empty() || !item.shortcut.is_empty() {
+            if let Some(hint) = resolve(item.id) {
                 item.shortcut = hint;
             }
         }
@@ -789,14 +846,14 @@ mod tests {
 
     #[test]
     fn hidden_terminal_sessions_can_still_be_moved() {
-        for state in ["running", "launch error", "pending task"] {
+        for state in ["running", "launch error", "unlaunched"] {
             let mut app = App::test_new();
             match state {
                 "running" => app.terminals[0].terminal_pty = Some(
                     crate::terminal::TerminalEmulator::test_with_output(40, 10, ""),
                 ),
                 "launch error" => app.terminals[0].terminal_launch_error = Some("spawn failed".into()),
-                _ => app.terminals[0].pending_command = Some("task".into()),
+                _ => app.new_terminal_tab(),
             }
             assert!(!app.show_terminal_sidebar && !app.show_panel);
             for command in ["move_terminal_to_right", "detach_terminal_to_tab"] {

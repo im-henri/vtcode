@@ -75,7 +75,6 @@ impl App {
             || self.quick_open_active
             || self.change_dir_active
             || self.symbol_list_active
-            || self.task_picker_active
             || self.git_branch_picker_active
             || self.menu_active
             || self.tab_context_active

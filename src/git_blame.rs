@@ -59,6 +59,10 @@ pub(crate) struct Revision {
 }
 
 impl Revision {
+    pub(crate) fn matches_commit_file(&self, commit: &Commit) -> bool {
+        self.hash == commit.hash && self.path == commit.path
+    }
+
     pub fn file_path(&self) -> PathBuf {
         self.workdir.join(&self.path)
     }
@@ -401,46 +405,89 @@ pub(crate) fn revision_for(
     }))
 }
 
-fn parent_revision(
+/// Skip unrelated commits and merges that retain a parent's file version,
+/// without reading file contents. Renames and mode changes count as changes.
+fn previous_file_revision(
     repo: &git2::Repository,
     revision: &Revision,
+    cancel: Option<&crate::background::CancellationToken>,
 ) -> Result<Option<Arc<Revision>>, String> {
-    let commit = repo
+    let mut commit = repo
         .find_commit(git2::Oid::from_str(&revision.hash).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    if commit.parent_count() == 0 {
-        return Ok(None);
-    }
-    let parent = commit.parent(0).map_err(
-        |_| "The parent revision is unavailable in this repository; its history may be shallow.",
-    )?;
-    let tree = commit.tree().map_err(|e| e.to_string())?;
-    let parent_tree = parent.tree().map_err(|e| e.to_string())?;
+    let mut tree = commit.tree().map_err(|e| e.to_string())?;
     let mut path = revision.path.clone();
-    match parent_tree.get_path(&path) {
-        Ok(_) => {}
-        Err(error) if error.code() == git2::ErrorCode::NotFound => {
-            let mut changes = repo
-                .diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)
-                .map_err(|e| e.to_string())?;
-            changes
-                .find_similar(Some(git2::DiffFindOptions::new().renames(true)))
-                .map_err(|e| e.to_string())?;
-            let old = changes
-                .deltas()
-                .find(|delta| {
-                    delta.new_file().path() == Some(&revision.path)
-                        && delta.status() == git2::Delta::Renamed
-                })
-                .and_then(|delta| delta.old_file().path().map(std::path::Path::to_path_buf));
-            let Some(old) = old else {
-                return Ok(None);
+    let entry = tree.get_path(&path).map_err(|e| e.to_string())?;
+    let mut state = (entry.id(), entry.filemode_raw());
+    drop(entry);
+    let mut earlier = false;
+    loop {
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err("Git blame cancelled".into()); }
+        if commit.parent_count() == 0 {
+            return if earlier { revision_for(repo, &commit, path, revision.working_file.clone()).map(Some) }
+                else { Ok(None) };
+        }
+        let mut matching_parent = None;
+        let mut file_parent = None;
+        let mut parent_has_file = false;
+        for index in 0..commit.parent_count() {
+            let parent = commit.parent(index).map_err(
+                |_| "The previous file change is unavailable in this repository; its history may be shallow.",
+            )?;
+            if parent.tree_id() == tree.id() {
+                matching_parent = Some((parent, None));
+                break;
+            }
+            let parent_tree = parent.tree().map_err(|e| e.to_string())?;
+            let parent_state = match parent_tree.get_path(&path) {
+                Ok(entry) => Some((entry.id(), entry.filemode_raw())),
+                Err(error) if error.code() == git2::ErrorCode::NotFound => None,
+                Err(error) => return Err(error.to_string()),
             };
+            if parent_state == Some(state) {
+                matching_parent = Some((parent, Some(parent_tree)));
+                break;
+            }
+            // A merge may introduce a branch's file to a first parent that
+            // never had it. Preserve that file's available branch history.
+            if index == 0 || (!parent_has_file && parent_state.is_some()) {
+                parent_has_file = parent_state.is_some();
+                file_parent = Some((parent, parent_tree, parent_state));
+            }
+        }
+        if let Some((parent, parent_tree)) = matching_parent {
+            commit = parent;
+            if let Some(parent_tree) = parent_tree { tree = parent_tree; }
+            earlier = true;
+            continue;
+        }
+        // This commit changed the file relative to every parent. Return it
+        // unless it is the starting revision whose predecessor was requested.
+        if earlier {
+            return revision_for(repo, &commit, path, revision.working_file.clone()).map(Some);
+        }
+        let (parent, parent_tree, parent_state) = file_parent.ok_or("The previous file revision is unavailable.")?;
+        if let Some(parent_state) = parent_state {
+            state = parent_state;
+        } else {
+            // Only a missing parent path needs rename detection. Ordinary
+            // unrelated changes need just one tree-entry lookup per commit.
+            let mut changes = repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)
+                .map_err(|e| e.to_string())?;
+            changes.find_similar(Some(git2::DiffFindOptions::new().renames(true)))
+                .map_err(|e| e.to_string())?;
+            let old = changes.deltas().find(|delta| delta.new_file().path() == Some(&path)
+                && delta.status() == git2::Delta::Renamed)
+                .and_then(|delta| delta.old_file().path().map(std::path::Path::to_path_buf));
+            let Some(old) = old else { return Ok(None); };
+            let entry = parent_tree.get_path(&old).map_err(|e| e.to_string())?;
+            state = (entry.id(), entry.filemode_raw());
             path = old;
         }
-        Err(error) => return Err(error.to_string()),
+        commit = parent;
+        tree = parent_tree;
+        earlier = true;
     }
-    revision_for(repo, &parent, path, revision.working_file.clone()).map(Some)
 }
 
 pub(crate) fn prepare_snapshot(
@@ -448,6 +495,16 @@ pub(crate) fn prepare_snapshot(
     line: usize,
     limit: u64,
 ) -> Result<Snapshot, String> {
+    prepare_snapshot_cancellable(revision, line, limit, None)
+}
+
+fn prepare_snapshot_cancellable(
+    revision: Arc<Revision>,
+    line: usize,
+    limit: u64,
+    cancel: Option<&crate::background::CancellationToken>,
+) -> Result<Snapshot, String> {
+    if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err("Git blame cancelled".into()); }
     let repo = git2::Repository::discover(&revision.workdir).map_err(|e| e.to_string())?;
     let commit = repo
         .find_commit(git2::Oid::from_str(&revision.hash).map_err(|e| e.to_string())?)
@@ -457,16 +514,18 @@ pub(crate) fn prepare_snapshot(
         .ok_or("The file is absent from this revision.")?;
     let rope = Rope::from_str(&text);
     let line = line.min(rope.len_lines().saturating_sub(1));
-    let document = Arc::new(prepare_at(
+    let document = Arc::new(prepare_cancellable(
         revision.file_path(),
         rope,
         None,
         Some(revision.clone()),
+        cancel,
     ));
-    let (previous_revision, previous_notice) = match parent_revision(&repo, &revision) {
+    let (previous_revision, previous_notice) = match previous_file_revision(&repo, &revision, cancel) {
         Ok(previous) => (previous, None),
         Err(notice) => (None, Some(notice)),
     };
+    if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err("Git blame cancelled".into()); }
     Ok(Snapshot {
         revision,
         previous_revision,
@@ -515,7 +574,7 @@ pub(crate) fn read_history_at(
         |revision| revision.working_file.clone(),
     );
     let revision = revision_for(&repo, &commit, info.path.clone(), working_file)?;
-    let previous_revision = parent_revision(&repo, &revision)?;
+    let previous_revision = previous_file_revision(&repo, &revision, None)?;
     let before = if let Some(previous) = &previous_revision {
         let parent = repo
             .find_commit(git2::Oid::from_str(&previous.hash).map_err(|e| e.to_string())?)
@@ -634,6 +693,9 @@ pub(crate) fn open_line_file(app: &mut App, line: usize) {
     let Some(Line::Committed(commit)) = document.lines.get(line) else {
         return;
     };
+    if document.revision.as_ref().is_some_and(|revision| revision.matches_commit_file(commit)) {
+        return;
+    }
     let commit = commit.clone();
     let path = document.path.clone();
     let source = document.revision.clone();
@@ -675,7 +737,7 @@ pub(crate) fn open_line_file(app: &mut App, line: usize) {
                 .as_ref()
                 .map_or(path, |revision| revision.working_file.clone());
             let revision = revision_for(&repo, &info, commit.path.clone(), working_file)?;
-            prepare_snapshot(revision, line, limit).map(|mut snapshot| {
+            prepare_snapshot_cancellable(revision, line, limit, Some(sender.cancellation())).map(|mut snapshot| {
                 snapshot.line = (git_row_to_line(&snapshot.document.rope, line)
                     + git_subrow(&source_rope, source_line))
                 .min(snapshot.document.rope.len_lines().saturating_sub(1));
@@ -710,7 +772,7 @@ pub(crate) fn open_revision(app: &mut App, revision: Arc<Revision>, map_source: 
         if sender.is_cancelled() { return; }
         let result = match remote {
             Some(remote) => remote.blame_snapshot(&revision,line,limit).map_err(|error| error.to_string()),
-            None => prepare_snapshot(revision,line,limit),
+            None => prepare_snapshot_cancellable(revision,line,limit,Some(sender.cancellation())),
         }.map(|mut snapshot| {
             if map_source {
                 snapshot.line = map_line(&source, &snapshot.document.rope, line);

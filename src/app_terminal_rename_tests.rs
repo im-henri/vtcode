@@ -57,8 +57,8 @@ fn terminal_rename_opens_from_palette_menu_and_both_tab_context_menus() {
                 app.active_terminal = 1;
                 app.menu_active = true;
                 app.menu_open = true;
-                app.menu_selected = 6;
-                app.menu_item_selected = app.menu_items(6).iter()
+                app.menu_selected = App::menu_labels().iter().position(|label| *label == "Terminal").unwrap();
+                app.menu_item_selected = app.menu_items(app.menu_selected).iter()
                     .position(|(_, id)| *id == "rename_terminal").unwrap();
                 key(&mut app, KeyCode::Enter);
             }
@@ -148,7 +148,6 @@ fn terminal_rename_targets_follow_earlier_closes_and_cancel_when_the_target_exit
 #[test]
 fn custom_terminal_names_survive_moves_between_editor_and_dock() {
     let mut app = fixture();
-    app.terminals[1].pending_command = Some("cargo test".into());
     app.begin_terminal_rename(1);
     app.terminal_rename.query = "Tests".into();
     key(&mut app, KeyCode::Enter);
@@ -156,7 +155,6 @@ fn custom_terminal_names_survive_moves_between_editor_and_dock() {
     assert!(draw(&mut app).backend().buffer().content.iter().map(|cell| cell.symbol()).collect::<String>().contains("Tests"));
     assert!(app.move_terminal_to_dock(1, TerminalDock::Right));
     assert_eq!(app.terminals[1].name, "Tests");
-    assert_eq!(app.terminals[1].pending_command.as_deref(), Some("cargo test"));
     assert!(app.terminals[1].terminal_pty.is_none());
 }
 

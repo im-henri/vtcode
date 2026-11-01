@@ -884,7 +884,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         Some(e) => (
             e.scroll_offset,
             e.cursor_line,
-            e.syntax_file_path().map(std::path::Path::to_path_buf),
+            Some(e.highlight_path().to_path_buf()),
             e.syntax_language_token().map(str::to_string),
         ),
         None => return,
@@ -1088,7 +1088,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             e.scroll_offset,
             e.cursor_line,
             e.horizontal_scroll,
-            e.syntax_file_path().map(std::path::Path::to_path_buf),
+            Some(e.highlight_path().to_path_buf()),
             e.syntax_language_token().map(str::to_string),
         ),
         None => return,
@@ -1440,12 +1440,16 @@ fn draw_inline_scrollbar(
         let matches: Vec<_> = params
             .search_matches
             .iter()
-            .map(|&(line, start, end)| (cache.inline_row_for_target_line(line), start, end))
+            .map(|&(line, start, end)| (
+                cache.inline_text_row_for_target_line(line).unwrap_or_else(|| cache.inline_row_for_target_line(line)), start, end,
+            ))
             .collect();
         let diagnostics: Vec<_> = params
             .diagnostic_lines
             .iter()
-            .map(|&(line, severity)| (cache.inline_row_for_target_line(line), severity))
+            .map(|&(line, severity)| (
+                cache.inline_text_row_for_target_line(line).unwrap_or_else(|| cache.inline_row_for_target_line(line)), severity,
+            ))
             .collect();
         crate::ui_editor_minimap::draw_scrollbar(
             f,
@@ -1458,7 +1462,7 @@ fn draw_inline_scrollbar(
         );
         return;
     }
-    draw_mapped_scrollbar(f, params, cache.inline_target_rows());
+    draw_mapped_scrollbar(f, params, cache.inline_target_text_rows());
 }
 
 pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1594,7 +1598,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                 .highlighted_fragment_by_hash_if_cached(
                     highlight_hash,
                     new_ln.or(old_ln).unwrap_or(cached_row.aligned_row),
-                    editor.syntax_file_path(),
+                    Some(editor.highlight_path()),
                     editor.syntax_language_token(),
                     &app.syntax_theme,
                 )
@@ -1745,7 +1749,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             change_rows: &app.diff_inline_scroll.change_rows,
             cursor_line: app
                 .diff_inline_scroll
-                .row_for_line(&diff_cache, editor.cursor_line),
+                .cursor_row_for_line(&diff_cache, editor.cursor_line),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
@@ -2504,7 +2508,7 @@ mod tests {
                         (row.right_line.unwrap(), row.right_highlight_hash())
                     };
                     app.highlighter.highlighted_fragment_by_hash_if_cached(
-                        hash, line, editor.syntax_file_path(),
+                        hash, line, Some(editor.highlight_path()),
                         editor.syntax_language_token(), &app.syntax_theme,
                     ).is_some()
                 })
@@ -2602,6 +2606,68 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn inline_diff_renders_a_rewritten_block_as_removals_then_additions() {
+        let base = "right_click() {\n    self.context_menu_items = vec![\n        ContextMenuItem {\n            label: \"Copy\".into(),\n            id: \"copy\",\n        },\n        ContextMenuItem {\n            label: \"Paste\".into(),\n            id: \"paste\",\n        },\n    ];\n    self.context_menu_active = true;\n    true\n}\n";
+        let target = "right_click() {\n    if selected {\n        if self.copy_terminal_selection(surface.index) {\n            pty.grid.clear_selection();\n        }\n    } else {\n        self.paste_terminal_clipboard(surface.index);\n    }\n    true\n}\n";
+        let expected = crate::app::compute_file_diff(base, target);
+        let mut app = app_with_diff(base, target);
+        app.diff_mode = DiffMode::Inline;
+        app.show_minimap = false;
+        app.cursor_visible = false;
+        let mut terminal = Terminal::new(TestBackend::new(120, expected.len() as u16 + 3)).unwrap();
+        draw_inline(&mut app, &mut terminal);
+        let code = app.code_area.unwrap();
+        let buffer = terminal.backend().buffer();
+        let (mut old_line, mut new_line) = (0, 0);
+        for (index, (kind, text)) in expected.iter().enumerate() {
+            let y = code.y + index as u16;
+            let old = if *kind == '+' { String::new() } else { old_line += 1; old_line.to_string() };
+            let new = if *kind == '-' { String::new() } else { new_line += 1; new_line.to_string() };
+            let expected = format!("{old:>4} {new:>4} {kind} {text}");
+            assert_eq!(buffer_row(buffer, y, 120).trim_end(), expected.trim_end());
+            let background = match kind {
+                '-' => app.colors.bg_diff_removed,
+                '+' => app.colors.bg_diff_added,
+                _ => app.colors.bg_editor,
+            };
+            assert_eq!(buffer[(code.right() - 1, y)].bg, background);
+        }
+    }
+
+    #[test]
+    fn inline_diff_highlights_both_blocks_across_the_replacement_boundary() {
+        let base: String = (0..250).map(|line| format!("let removed_{line} = {line};\n")).collect();
+        let target: String = (0..250).map(|line| format!("let added_{line} = {line};\n")).collect();
+        let mut app = app_with_diff(&base, &target);
+        app.editor_mut().unwrap().file_path = Some("example.rs".into());
+        app.diff_mode = DiffMode::Inline;
+        app.show_minimap = false;
+        app.cursor_visible = false;
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        draw_inline(&mut app, &mut terminal);
+        let mut scroll = std::mem::take(&mut app.diff_inline_scroll);
+        scroll.scroll(app.editor_mut().unwrap(), false, 247);
+        app.diff_inline_scroll = scroll;
+        draw_inline(&mut app, &mut terminal);
+        assert_eq!(app.diff_inline_scroll.row, 247);
+        assert_eq!(app.diff_render_cache.inline_rows[250].kind, '+');
+        wait_for_visible_inline_highlights(&mut app);
+        draw_inline(&mut app, &mut terminal);
+        let code = app.code_area.unwrap();
+        let buffer = terminal.backend().buffer();
+        for (row, offset, background) in [
+            (0, 18, app.colors.bg_diff_removed),
+            (3, 14, app.colors.bg_diff_added),
+        ] {
+            let keyword = &buffer[(code.x, code.y + row)];
+            let number = &buffer[(code.x + offset, code.y + row)];
+            assert_eq!(keyword.symbol(), "l");
+            assert_ne!(keyword.fg, number.fg, "both sides of the boundary need syntax colors");
+            assert_eq!(keyword.bg, background);
         }
     }
 

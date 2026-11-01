@@ -42,10 +42,6 @@ pub(crate) fn draw_symbol_list(f: &mut Frame, app: &mut App) {
     crate::ui_quick_picker::draw(f, app, crate::ui_quick_picker::Kind::Symbols);
 }
 
-pub(crate) fn draw_task_picker(f: &mut Frame, app: &mut App) {
-    crate::ui_quick_picker::draw(f, app, crate::ui_quick_picker::Kind::Tasks);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

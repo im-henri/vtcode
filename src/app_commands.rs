@@ -514,17 +514,6 @@ impl App {
                     self.detach_terminal_to_tab();
                 }
             }
-            "run_task" => {
-                self.open_task_picker();
-            }
-            "rerun_last_task" => {
-                if let Some(cmd) = self.last_task.clone() {
-                    self.run_task(&cmd, "Last Task");
-                } else {
-                    self.open_task_picker();
-                }
-            }
-
             "keybindings" => {
                 if self.tabs.get(self.active_tab).map(|t| t.kind)
                     == Some(TabKind::KeyboardShortcuts)
@@ -658,6 +647,12 @@ impl App {
                 ];
                 self.global_search_field_selection_anchors = [None; 4];
                 self.focus_global_search();
+            }
+            "global_replace" => {
+                self.focus_global_search();
+                self.global_search_replace_visible = true;
+                self.search_focus_field = 1;
+                self.focus_text_input(crate::text_input::TextInputId::GlobalSearch(1));
             }
             "replace_all_in_files" => {
                 self.replace_all_in_files();

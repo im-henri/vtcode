@@ -16,7 +16,6 @@ pub(crate) enum Kind {
     Commands,
     Files,
     Symbols,
-    Tasks,
     Branches,
 }
 
@@ -27,7 +26,6 @@ impl Kind {
             Self::Commands => Some(TextInputId::CommandPalette),
             Self::Files => Some(TextInputId::QuickOpen),
             Self::Symbols => Some(TextInputId::SymbolList),
-            Self::Tasks => Some(TextInputId::TaskPicker),
             Self::Branches => Some(TextInputId::GitBranch),
         }
     }
@@ -64,7 +62,6 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::Commands) => crate::ui_pickers::draw_command_palette(f, app),
         Some(Kind::Files) => crate::ui_search_dialog::draw_quick_open(f, app),
         Some(Kind::Symbols) => crate::ui_pickers::draw_symbol_list(f, app),
-        Some(Kind::Tasks) => crate::ui_pickers::draw_task_picker(f, app),
         Some(Kind::Branches) => crate::ui_pickers::draw_git_branch_picker(f, app),
         Some(Kind::OpenWith) => crate::ui_dialogs::draw_binary_open_prompt(f, app),
         None => {}
@@ -93,8 +90,6 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::Branches)
     } else if app.symbol_list_active {
         Some(Kind::Symbols)
-    } else if app.task_picker_active {
-        Some(Kind::Tasks)
     } else {
         None
     }
@@ -106,7 +101,6 @@ fn selected(app: &App, kind: Kind) -> usize {
         Kind::Commands => app.palette.selected,
         Kind::Files => app.quick_open_selected,
         Kind::Symbols => app.symbol_list_selected,
-        Kind::Tasks => app.task_picker_selected,
         Kind::Branches => app.git_branch_picker_selected,
     }
 }
@@ -120,7 +114,6 @@ fn select(app: &mut App, kind: Kind, index: usize) {
         }
         Kind::Files => app.quick_open_selected = index,
         Kind::Symbols => app.symbol_list_selected = index,
-        Kind::Tasks => app.task_picker_selected = index,
         Kind::Branches => app.git_branch_picker_selected = index,
     }
 }
@@ -140,12 +133,6 @@ fn dispatch(app: &mut App, kind: Kind, key: KeyCode) {
         Kind::Symbols => crate::input_pickers::handle_symbol_list_key(app, key, KeyModifiers::NONE),
         Kind::Branches => {
             crate::input_pickers::handle_git_branch_picker_key(app, key, KeyModifiers::NONE)
-        }
-        Kind::Tasks => {
-            crate::input_dialogs::handle_task_picker_key(
-                app,
-                KeyEvent::new(key, KeyModifiers::NONE),
-            );
         }
     }
 }
@@ -216,10 +203,6 @@ fn item_count(app: &App, kind: Kind) -> usize {
         Kind::Commands => app.palette.filtered.len(),
         Kind::Files => app.quick_open_results.len(),
         Kind::Symbols => app.symbol_list_filtered.len(),
-        Kind::Tasks => app.task_list.iter().filter(|task| {
-            app.task_picker_query.is_empty()
-                || crate::app::contains_ignore_case(&task.label, &app.task_picker_query)
-        }).count(),
         Kind::Branches => app.git_branch_picker_total_rows(),
     }
 }
@@ -335,23 +318,6 @@ fn items(app: &App, kind: Kind, range: std::ops::Range<usize>) -> Vec<Item> {
                     icon: icon.into(),
                     color: app.colors.ui.symbol_color(symbol.kind, app.colors.ui.bg_quick_input),
                 }
-            })
-            .collect(),
-        Kind::Tasks => app
-            .task_list
-            .iter()
-            .filter(|task| {
-                app.task_picker_query.is_empty()
-                    || crate::app::contains_ignore_case(&task.label, &app.task_picker_query)
-            })
-            .skip(range.start)
-            .take(range.len())
-            .map(|task| Item {
-                name: task.label.clone(),
-                detail: task.command.clone(),
-                badge: task.source.as_str().into(),
-                icon: "▶".into(),
-                color: app.colors.fg_success,
             })
             .collect(),
         Kind::Branches => {
@@ -478,15 +444,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             &app.symbol_list_query,
             app.symbol_list_cursor,
             app.symbol_list_selection_anchor,
-        ),
-        Kind::Tasks => (
-            "Run Task",
-            "Search available tasks…",
-            "AVAILABLE TASKS".into(),
-            TextInputId::TaskPicker,
-            &app.task_picker_query,
-            app.task_picker_cursor,
-            app.task_picker_selection_anchor,
         ),
         Kind::Branches => (
             "Git Branches",
@@ -813,10 +770,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                     "No recent files",
                     "Type a file name to search this workspace",
                 ),
-                Kind::Tasks => (
-                    "No tasks available",
-                    "Add a task configuration to this workspace",
-                ),
                 Kind::Symbols => (
                     "No symbols found",
                     "Open a source file with symbols to navigate",
@@ -894,7 +847,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{GitBranchPickerItem, PaletteCommand, SymbolItem, Tab, TaskDefinition};
+    use crate::app::{GitBranchPickerItem, PaletteCommand, SymbolItem, Tab};
     use ratatui::{backend::TestBackend, Terminal};
 
     fn example(kind: Kind) -> App {
@@ -922,11 +875,6 @@ mod tests {
                 file_name: Some("workspace.rs".into()),
                 file_path: None,
             });
-            app.task_list.push(TaskDefinition {
-                label: format!("检查 café workspace {i:02}"),
-                command: "cargo test --workspace".into(),
-                source: "cargo".into(),
-            });
             app.git_branch_picker_items
                 .push(GitBranchPickerItem::Local {
                     name: format!("feature/workspace-{i:02}"),
@@ -944,7 +892,6 @@ mod tests {
             Kind::Commands => app.palette.active = true,
             Kind::Files => app.quick_open_active = true,
             Kind::Symbols => app.symbol_list_active = true,
-            Kind::Tasks => app.task_picker_active = true,
             Kind::Branches => app.git_branch_picker_active = true,
         }
         app
@@ -993,7 +940,7 @@ mod tests {
 
     #[test]
     fn picker_viewport_rows_keep_full_result_indices_and_selected_details() {
-        for kind in [Kind::Commands, Kind::Files, Kind::Symbols, Kind::Tasks, Kind::Branches] {
+        for kind in [Kind::Commands, Kind::Files, Kind::Symbols, Kind::Branches] {
             let app = example(kind);
             let all = items(&app, kind, 0..item_count(&app, kind));
             let visible = items(&app, kind, 23..30);
@@ -1047,7 +994,7 @@ mod tests {
         use crate::ui_control_visibility_tests::{audit_themes, assert_readable, check_region};
         let mut failures = Vec::new();
         for theme in audit_themes() {
-            for kind in [Kind::OpenWith, Kind::Commands, Kind::Files, Kind::Symbols, Kind::Tasks, Kind::Branches] {
+            for kind in [Kind::OpenWith, Kind::Commands, Kind::Files, Kind::Symbols, Kind::Branches] {
                 let mut app = example(kind);
                 app.colors = theme.to_theme_colors();
                 for size in [(100, 30), (42, 14)] {
@@ -1079,7 +1026,6 @@ mod tests {
             Kind::Commands,
             Kind::Files,
             Kind::Symbols,
-            Kind::Tasks,
             Kind::Branches,
         ] {
             let mut app = example(kind);
@@ -1152,7 +1098,6 @@ mod tests {
             Kind::Commands,
             Kind::Files,
             Kind::Symbols,
-            Kind::Tasks,
             Kind::Branches,
         ] {
             let mut app = example(kind);
@@ -1204,14 +1149,12 @@ mod tests {
             Kind::Commands,
             Kind::Files,
             Kind::Symbols,
-            Kind::Tasks,
             Kind::Branches,
         ] {
             let mut app = example(kind);
             app.palette.filtered.clear();
             app.quick_open_results.clear();
             app.symbol_list_filtered.clear();
-            app.task_list.clear();
             app.git_branch_picker_items.clear();
             let terminal = render(&mut app, kind, 80, 24);
             assert!(app.quick_picker.rows.is_empty());

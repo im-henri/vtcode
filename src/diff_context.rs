@@ -277,7 +277,7 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
     let mapping = if scroll.aligned {
         app.diff_render_cache.aligned_target_rows()
     } else {
-        app.diff_render_cache.inline_target_rows()
+        app.diff_render_cache.inline_target_text_rows()
     };
     crate::ui_editor_minimap::draw_mapped_scrollbar(
         f,
@@ -290,7 +290,7 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
             diagnostic_lines: &app.cached_diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &scroll.change_rows,
-            cursor_line: scroll.row_for_line(&app.diff_render_cache, editor.cursor_line),
+            cursor_line: scroll.cursor_row_for_line(&app.diff_render_cache, editor.cursor_line),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,

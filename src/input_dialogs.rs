@@ -366,6 +366,16 @@ pub(crate) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<bool> {
                 }
             }
         }
+        KeyCode::Home | KeyCode::End => {
+            let items = app.menu_items(app.menu_selected);
+            let index = if key.code == KeyCode::Home {
+                items.iter().position(|(_, command)| !command.is_empty())
+            } else {
+                items.iter().rposition(|(_, command)| !command.is_empty())
+            };
+            if let Some(index) = index { app.menu_item_selected = index; }
+            app.menu_open = true;
+        }
         KeyCode::Enter => {
             if app.menu_open {
                 let items = app.menu_items(app.menu_selected);
@@ -400,68 +410,6 @@ pub(crate) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<bool> {
             }
         }
         _ => {}
-    }
-    Some(false)
-}
-
-/// Handle task picker dialog keyboard events.
-pub(crate) fn handle_task_picker_key(app: &mut App, key: KeyEvent) -> Option<bool> {
-    if !app.task_picker_active {
-        return None;
-    }
-    match key.code {
-        KeyCode::Esc => {
-            app.task_picker_active = false;
-        }
-        KeyCode::Enter => {
-            let filtered: Vec<usize> = if app.task_picker_query.is_empty() {
-                (0..app.task_list.len()).collect()
-            } else {
-                app.task_list
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, t)| {
-                        crate::app::contains_ignore_case(&t.label, &app.task_picker_query)
-                    })
-                    .map(|(i, _)| i)
-                    .collect()
-            };
-            if let Some(&task_idx) = filtered.get(app.task_picker_selected) {
-                let cmd = app.task_list[task_idx].command.clone();
-                let label = app.task_list[task_idx].label.clone();
-                app.task_picker_active = false;
-                app.run_task(&cmd, &label);
-            }
-        }
-        KeyCode::Up => {
-            if app.task_picker_selected > 0 {
-                app.task_picker_selected -= 1;
-            }
-        }
-        KeyCode::Down => {
-            let filtered_len = if app.task_picker_query.is_empty() {
-                app.task_list.len()
-            } else {
-                app.task_list
-                    .iter()
-                    .filter(|t| crate::app::contains_ignore_case(&t.label, &app.task_picker_query))
-                    .count()
-            };
-            if app.task_picker_selected + 1 < filtered_len {
-                app.task_picker_selected += 1;
-            }
-        }
-        _ => {
-            let result = app.edit_text_input(
-                TextInputId::TaskPicker,
-                key.code,
-                key.modifiers,
-                None,
-            );
-            if result.changed {
-                app.task_picker_selected = 0;
-            }
-        }
     }
     Some(false)
 }

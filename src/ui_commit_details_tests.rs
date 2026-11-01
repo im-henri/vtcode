@@ -403,6 +403,33 @@ fn commit_review_find_context_survives_neighbour_paints_and_closes_cleanly() {
 }
 
 #[test]
+fn commit_review_follows_target_cursor_after_a_large_inline_replacement() {
+    let base = format!("before\n{}after\n", (0..100).map(|line| format!("old_{line};\n")).collect::<String>());
+    let target = format!("before\n{}after\n", (0..100).map(|line| format!("replacement_{line};\n")).collect::<String>());
+    for compact in [false, true] {
+        let mut app = fixture();
+        app.commit_details.data.files.truncate(1);
+        set_diff(&mut app, &base, &target);
+        app.preferred_diff_mode = crate::app::DiffMode::Inline;
+        app.set_commit_diff_context(compact, 0);
+        app.commit_details.focus = Focus::Diff;
+        app.editor_mut().unwrap().set_cursor(0, 0);
+        let mut terminal = Terminal::new(TestBackend::new(90, 32)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        for line in [1, 40, 80, 1] {
+            app.editor_mut().unwrap().set_cursor(line, 0);
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+            let code = app.code_area.unwrap();
+            let row = app.diff_render_cache.inline_text_row_for_target_line(line).unwrap();
+            let first = app.diff_inline_scroll.row;
+            assert!(row >= first && row - first < code.height as usize,
+                "commit review must follow target text: compact={compact}, line={line}, row={row}, first={first}");
+            assert_eq!(terminal.backend().buffer()[(code.x, code.y + (row - first) as u16)].symbol(), "r");
+        }
+    }
+}
+
+#[test]
 fn ui_combinations_find_focus_does_not_block_commit_review_wheel_or_card_controls() {
     let mut app = review_fixture(6);
     app.search_active = true;

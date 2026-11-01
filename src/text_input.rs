@@ -18,7 +18,6 @@ pub(crate) enum TextInputId {
     GitBranch,
     CommandPalette,
     SymbolList,
-    TaskPicker,
     SaveAs,
     FolderAddress,
     FolderSearch,
@@ -749,11 +748,6 @@ impl App {
                 &mut self.symbol_list_cursor,
                 &mut self.symbol_list_selection_anchor,
             ),
-            TextInputId::TaskPicker => (
-                &mut self.task_picker_query,
-                &mut self.task_picker_cursor,
-                &mut self.task_picker_selection_anchor,
-            ),
             TextInputId::SaveAs => (
                 &mut self.save_as_query,
                 &mut self.save_as_cursor,
@@ -933,9 +927,6 @@ impl App {
         if self.symbol_list_active {
             return Some(TextInputId::SymbolList);
         }
-        if self.task_picker_active {
-            return Some(TextInputId::TaskPicker);
-        }
         if self.palette.active {
             return Some(TextInputId::CommandPalette);
         }
@@ -1021,7 +1012,6 @@ impl App {
                 TextInputId::GitBranch => self.git_branch_picker_active,
                 TextInputId::CommandPalette => self.palette.active,
                 TextInputId::SymbolList => self.symbol_list_active,
-                TextInputId::TaskPicker => self.task_picker_active,
                 TextInputId::SaveAs => self.save_as_active,
                 TextInputId::RenameSymbol => self.rename.symbol_active,
                 TextInputId::TerminalRename => self.terminal_rename.target.is_some(),
@@ -1143,7 +1133,6 @@ impl App {
                 }
             }
             TextInputId::SymbolList => self.update_symbol_filter(),
-            TextInputId::TaskPicker => self.task_picker_selected = 0,
             TextInputId::SearchFind => {
                 self.search_history.edited();
                 self.update_search();
@@ -1248,7 +1237,6 @@ impl App {
             | TextInputId::GitBranch
             | TextInputId::CommandPalette
             | TextInputId::SymbolList
-            | TextInputId::TaskPicker
             | TextInputId::SaveAs
             | TextInputId::RenameSymbol
             | TextInputId::TerminalRename => true,
@@ -1535,7 +1523,6 @@ mod tests {
         TextInputId::GitBranch,
         TextInputId::CommandPalette,
         TextInputId::SymbolList,
-        TextInputId::TaskPicker,
         TextInputId::SaveAs,
         TextInputId::FolderAddress,
         TextInputId::FolderSearch,
@@ -1605,7 +1592,6 @@ mod tests {
             TextInputId::GitBranch => app.git_branch_picker_active = true,
             TextInputId::CommandPalette => app.palette.active = true,
             TextInputId::SymbolList => app.symbol_list_active = true,
-            TextInputId::TaskPicker => app.task_picker_active = true,
             TextInputId::SaveAs => app.save_as_active = true,
             TextInputId::RenameSymbol => app.rename.symbol_active = true,
             TextInputId::TerminalRename => {
@@ -1778,7 +1764,6 @@ mod tests {
                 TextInputId::GitBranch => crate::ui_pickers::draw_git_branch_picker(frame, app),
                 TextInputId::CommandPalette => crate::ui_pickers::draw_command_palette(frame, app),
                 TextInputId::SymbolList => crate::ui_pickers::draw_symbol_list(frame, app),
-                TextInputId::TaskPicker => crate::ui_pickers::draw_task_picker(frame, app),
                 TextInputId::SaveAs => crate::ui_dialogs::draw_save_as_dialog(frame, app),
                 TextInputId::RenameSymbol => {
                     crate::ui_dialogs::draw_rename_symbol_dialog(frame, app)

@@ -734,6 +734,37 @@ fn changed_subdirectory_removes_deleted_contributions_and_unchanged_does_not_dup
 }
 
 #[test]
+fn directory_notifications_discover_new_sources_without_scanning_unrelated_files_or_overwriting_buffers() {
+    let (_temporary, root, cache) = fixture();
+    let folder = root.join("src");
+    std::fs::create_dir(&folder).unwrap();
+    let keep = folder.join("keep.custom");
+    let removed = folder.join("removed.custom");
+    let outside = root.join("outside.custom");
+    std::fs::write(&keep, "savedSubtreeIdentifier").unwrap();
+    std::fs::write(&removed, "removedSubtreeIdentifier").unwrap();
+    std::fs::write(&outside, "outsideInitialIdentifier").unwrap();
+    let index = CompletionIndex::new_for_test(root.clone(), cache);
+    index.configure(IndexSettings { project_wide: true, speed: IndexSpeed::Fast, ..Default::default() });
+    settle(&index, 3);
+    index.observe_buffer(keep.clone(), ropey::Rope::from_str("unsavedSubtreeIdentifier"), true);
+    wait(&index, |_| !index.query("unsavedSubtree", "").is_empty());
+    std::fs::write(&keep, "diskSubtreeIdentifier").unwrap();
+    std::fs::remove_file(&removed).unwrap();
+    std::fs::create_dir(folder.join("nested")).unwrap();
+    std::fs::write(folder.join("nested/added.custom"), "subtreeAddedIdentifier").unwrap();
+    std::fs::write(&outside, "outsideChangedIdentifier").unwrap();
+    index.changed(folder);
+    wait(&index, |status| status.phase == IndexPhase::Idle
+        && !index.query("subtreeAdded", "").is_empty() && index.query("removedSubtree", "").is_empty());
+    assert!(!index.query("unsavedSubtree", "").is_empty());
+    assert!(index.query("diskSubtree", "").is_empty());
+    assert!(!index.query("outsideInitial", "").is_empty());
+    assert!(index.query("outsideChanged", "").is_empty());
+    assert_eq!(index.status().indexed_files, 3);
+}
+
+#[test]
 fn queue_is_bounded_and_reports_backpressure_for_retry() {
     let (_temporary, root, cache) = fixture();
     let index = CompletionIndex::new_for_test(root.clone(), cache);

@@ -73,6 +73,17 @@ fn fixture(text: &str) -> (tempfile::TempDir, PathBuf, git2::Oid) {
     (root, path, id)
 }
 
+fn unrelated_commit(repository: &git2::Repository, index: usize) -> git2::Oid {
+    let parent = repository.head().ok().and_then(|head| head.peel_to_commit().ok());
+    let parent_tree = parent.as_ref().map(|parent| parent.tree().unwrap());
+    let mut builder = repository.treebuilder(parent_tree.as_ref()).unwrap();
+    builder.insert("unrelated.txt", repository.blob(format!("Unrelated change {index}\n").as_bytes()).unwrap(), 0o100644).unwrap();
+    let tree = repository.find_tree(builder.write().unwrap()).unwrap();
+    let signature = git2::Signature::new("Another Author", "other@example.com", &git2::Time::new(1_770_000_000, 0)).unwrap();
+    repository.commit(Some("HEAD"), &signature, &signature, "Change another file", &tree,
+        &parent.iter().collect::<Vec<_>>()).unwrap()
+}
+
 fn loaded_app(path: &Path, text: &str) -> App {
     let mut app = App::new(path.parent().unwrap().into());
     let mut editor = Editor::test_with_text(text);
@@ -1567,6 +1578,293 @@ fn blame_layout_keeps_syntax_colors_and_theme_roles_across_pane_sizes() {
 }
 
 #[test]
+fn blame_marks_the_current_revision_file_without_disabling_other_revisions() {
+    current_revision_file_action(false);
+}
+
+#[test]
+fn remote_blame_marks_the_current_revision_file_without_disabling_other_revisions() {
+    current_revision_file_action(true);
+}
+
+fn current_revision_file_action(remote_mode: bool) {
+    let (root, path, first) = fixture(SOURCE);
+    let repo = git2::Repository::open(root.path()).unwrap();
+    let text = SOURCE.replace("return sum;", "return sum + 1;");
+    let second = commit(&repo, &text, "Jamie Lee", "Correct the summation result");
+    std::fs::write(&path, &text).unwrap();
+    let remote = remote_mode.then(|| crate::remote::workspace::Workspace::new(
+        crate::remote::tests::connection(root.path(), Arc::default(), Arc::default()),
+    ));
+    let mut app = loaded_app(&path, &text);
+    if let Some(remote) = remote {
+        let path = remote.target_key("example.c").unwrap();
+        let editor = app.editor_mut().unwrap();
+        editor.file_path = Some(path.clone());
+        let document = remote.prepare_blame(path, editor.rope.clone(), None, &app.source_control_cancel);
+        app.blame_documents.insert(app.editor().unwrap().navigation_id, Arc::new(document));
+        app.remote_workspace = Some(remote);
+    }
+    app.editor_mut().unwrap().blame.enabled = true;
+    app.editor_mut().unwrap().blame.selected = Some(7);
+    let mut terminal = Terminal::new(TestBackend::new(110, 28)).unwrap();
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.open_file.unwrap();
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    app.wait_for_background(Duration::from_secs(10), |app| app.tabs[app.active_tab].kind == TabKind::GitRevision);
+    let current_tab = app.active_tab;
+    assert_eq!(app.editor().unwrap().blame.revision.as_ref().unwrap().hash, second.to_string());
+    app.editor_mut().unwrap().blame.selected = Some(7);
+    for width in [110, 44, 24] {
+        terminal = Terminal::new(TestBackend::new(width, 28)).unwrap();
+        render(&mut app, &mut terminal);
+        assert!(app.editor().unwrap().blame.open_file.is_none(), "current file must not have a clickable action");
+        let buffer = terminal.backend().buffer();
+        let label_text = if width == 24 { "Current" } else { "Current File" };
+        let position = buffer.content.windows(label_text.len()).position(|cells| cells.iter().zip(label_text.chars())
+            .all(|(cell, character)| cell.symbol().starts_with(character))).unwrap_or_else(|| {
+                panic!("width={width}, panel={:?}, selected={:?}: {}", app.editor().unwrap().blame.panel,
+                    app.editor().unwrap().blame.selected, output(&terminal));
+            });
+        let label = Rect::new(position as u16 % width, position as u16 / width, label_text.len() as u16, 1);
+        let copy = app.editor().unwrap().blame.copy.unwrap();
+        assert_ne!(buffer[(label.x, label.y)].fg, buffer[(copy.x, copy.y)].fg, "current file must use disabled styling");
+        let request = app.editor().unwrap().blame.history_request;
+        let cursor = app.editor().unwrap().cursor_line;
+        pointer(&mut app, label, MouseEventKind::Down(MouseButton::Left));
+        git_blame::open_line_file(&mut app, 7);
+        assert_eq!(app.active_tab, current_tab);
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.editor().unwrap().blame.history_request, request);
+        assert!(!app.editor().unwrap().blame.history_loading);
+        assert_eq!(app.editor().unwrap().cursor_line, cursor);
+        assert_eq!(app.editor().unwrap().blame.selected, Some(7));
+    }
+    // Other commits remain actionable from a revision tab.
+    terminal = Terminal::new(TestBackend::new(110, 28)).unwrap();
+    app.editor_mut().unwrap().blame.selected = Some(0);
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.open_file.unwrap();
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    app.wait_for_background(Duration::from_secs(10), |app| app.active_tab != current_tab);
+    assert_eq!(app.editor().unwrap().blame.revision.as_ref().unwrap().hash, first.to_string());
+    // An inactive revision tab can still be opened from the working file.
+    app.active_tab = 0;
+    app.sync_diff_tab();
+    app.editor_mut().unwrap().blame.selected = Some(7);
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.open_file.unwrap();
+    let tabs = app.tabs.len();
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    app.wait_for_background(Duration::from_secs(10), |app| app.active_tab == current_tab);
+    assert_eq!(app.tabs.len(), tabs);
+}
+
+#[test]
+fn blame_previous_change_skips_hundreds_of_unrelated_commits_and_detects_deletion_only_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(root.path()).unwrap();
+    unrelated_commit(&repo, 0);
+    let first = commit(&repo, SOURCE, "Alex Morgan", "Introduce the file");
+    for index in 1..=256 { unrelated_commit(&repo, index); }
+    let second_text = SOURCE.replace("    int sum = 0;\n", "");
+    let second = commit(&repo, &second_text, "Jamie Lee", "Remove a line");
+    for index in 257..=512 { unrelated_commit(&repo, index); }
+    let unchanged = repo.head().unwrap().peel_to_commit().unwrap();
+    let latest = second_text.replace("return sum;", "return sum + 1;");
+    let third = commit(&repo, &latest, "Taylor Green", "Correct the result");
+    let file = root.path().join("example.c");
+    let revision = |id| git_blame::revision_for(&repo, &repo.find_commit(id).unwrap(),
+        PathBuf::from("example.c"), file.clone()).unwrap();
+    let snapshot = git_blame::prepare_snapshot(revision(third), 0, 1024 * 1024).unwrap();
+    let previous = snapshot.previous_revision.unwrap();
+    assert_eq!(previous.hash, second.to_string());
+    assert_ne!(previous.hash, unchanged.id().to_string());
+    let snapshot = git_blame::prepare_snapshot(previous, 0, 1024 * 1024).unwrap();
+    assert_eq!(snapshot.document.rope, second_text);
+    let previous = snapshot.previous_revision.unwrap();
+    assert_eq!(previous.hash, first.to_string());
+    let initial = git_blame::prepare_snapshot(previous, 0, 1024 * 1024).unwrap();
+    assert!(initial.previous_revision.is_none());
+    assert!(initial.previous_notice.is_none(), "file creation ends its history even in an older repository");
+    let snapshot = git_blame::prepare_snapshot(revision(unchanged.id()), 0, 1024 * 1024).unwrap();
+    assert_eq!(snapshot.previous_revision.unwrap().hash, second.to_string());
+}
+
+#[test]
+fn blame_previous_changes_include_pure_renames_and_file_mode_changes() {
+    let (root, _, first) = fixture(SOURCE);
+    let repo = git2::Repository::open(root.path()).unwrap();
+    let change = |old: Option<&str>, text: &str, mode| {
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let tree = parent.tree().unwrap();
+        let mut builder = repo.treebuilder(Some(&tree)).unwrap();
+        if let Some(old) = old { builder.remove(old).unwrap(); }
+        builder.insert("renamed.c", repo.blob(text.as_bytes()).unwrap(), mode).unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let signature = git2::Signature::now("Jamie Lee", "author@example.com").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "Change the file", &tree, &[&parent]).unwrap()
+    };
+    let renamed = change(Some("example.c"), SOURCE, 0o100644);
+    for index in 0..8 { unrelated_commit(&repo, index); }
+    let mode = change(None, SOURCE, 0o100755);
+    for index in 8..16 { unrelated_commit(&repo, index); }
+    let latest = change(None, &SOURCE.replace("return sum;", "return sum + 1;"), 0o100755);
+    let working = root.path().join("renamed.c");
+    let revision = git_blame::revision_for(&repo, &repo.find_commit(latest).unwrap(),
+        PathBuf::from("renamed.c"), working.clone()).unwrap();
+    let mut snapshot = git_blame::prepare_snapshot(revision, 0, 1024 * 1024).unwrap();
+    for (id, path) in [(mode, "renamed.c"), (renamed, "renamed.c"), (first, "example.c")] {
+        let previous = snapshot.previous_revision.unwrap();
+        assert_eq!(previous.hash, id.to_string());
+        assert_eq!(previous.path, PathBuf::from(path));
+        assert_eq!(previous.working_file, working);
+        snapshot = git_blame::prepare_snapshot(previous, 0, 1024 * 1024).unwrap();
+    }
+    assert!(snapshot.previous_revision.is_none());
+}
+
+#[test]
+fn blame_previous_change_follows_the_parent_that_supplied_a_merged_file() {
+    for (existed_on_main, edited_during_merge) in [(false, false), (true, false), (false, true)] {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(root.path()).unwrap();
+        if existed_on_main { commit(&repo, SOURCE, "Alex Morgan", "Introduce the file"); }
+        else { unrelated_commit(&repo, 0); }
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        let main = repo.find_commit(unrelated_commit(&repo, 1)).unwrap();
+        let text = SOURCE.replace("return sum;", "return sum + 1;");
+        let blob = repo.blob(text.as_bytes()).unwrap();
+        let signature = git2::Signature::now("Jamie Lee", "author@example.com").unwrap();
+        let mut builder = repo.treebuilder(Some(&base.tree().unwrap())).unwrap();
+        builder.insert("example.c", blob, 0o100644).unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let feature = repo.find_commit(repo.commit(None, &signature, &signature, "Edit on a branch", &tree, &[&base]).unwrap()).unwrap();
+        let mut builder = repo.treebuilder(Some(&main.tree().unwrap())).unwrap();
+        let blob = if edited_during_merge { repo.blob(SOURCE.replace("return sum;", "return sum + 2;").as_bytes()).unwrap() } else { blob };
+        builder.insert("example.c", blob, 0o100644).unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let merged = repo.commit(Some("HEAD"), &signature, &signature, "Merge the feature", &tree, &[&main, &feature]).unwrap();
+        let latest = commit(&repo, &SOURCE.replace("return sum;", "return sum + 3;"), "Taylor Green", "Edit after merging");
+        for id in [latest, merged] {
+            let revision = git_blame::revision_for(&repo, &repo.find_commit(id).unwrap(),
+                PathBuf::from("example.c"), root.path().join("example.c")).unwrap();
+            let snapshot = git_blame::prepare_snapshot(revision, 0, 1024 * 1024).unwrap();
+            let previous = if edited_during_merge && id == latest { merged } else { feature.id() };
+            assert_eq!(snapshot.previous_revision.unwrap().hash, previous.to_string());
+        }
+    }
+}
+
+#[test]
+fn blame_revision_header_skips_unrelated_commits_and_opens_the_displayed_commit() {
+    revision_header_actions(false);
+}
+
+#[test]
+fn remote_blame_revision_header_skips_unrelated_commits_and_opens_the_displayed_commit() {
+    revision_header_actions(true);
+}
+
+fn revision_header_actions(remote_mode: bool) {
+    let (root, path, first) = fixture(SOURCE);
+    let repo = git2::Repository::open(root.path()).unwrap();
+    for index in 0..16 { unrelated_commit(&repo, index); }
+    let second_text = SOURCE.replace("return sum;", "return sum + 1;");
+    let second = commit(&repo, &second_text, "Jamie Lee", "Correct the result");
+    for index in 16..32 { unrelated_commit(&repo, index); }
+    let latest = SOURCE.replace("return sum;", "return sum + 2;");
+    let third = commit(&repo, &latest, "Taylor Green", "Revise the result\n\nFull details of this revision.");
+    std::fs::write(&path, &latest).unwrap();
+    let other = root.path().join("other");
+    let other_repo = git2::Repository::init(&other).unwrap();
+    commit(&other_repo, SOURCE, "Another Author", "An unrelated repository");
+    let remote = remote_mode.then(|| crate::remote::workspace::Workspace::new(
+        crate::remote::tests::connection(root.path(), Arc::default(), Arc::default()),
+    ));
+    let workspace = remote.as_ref().map_or_else(|| root.path().to_path_buf(), |remote| remote.view_root.clone());
+    let key = remote.as_ref().map_or_else(|| path.clone(), |remote| remote.target_key("example.c").unwrap());
+    let other = remote.as_ref().map_or(other, |remote| remote.target_key("other").unwrap());
+    let mut app = App::new_deferred(workspace.clone());
+    let mut editor = Editor::test_with_text(&latest);
+    editor.file_path = Some(key.clone());
+    editor.word_wrap = false;
+    let document = match &remote {
+        Some(remote) => remote.prepare_blame(key, editor.rope.clone(), None, &app.source_control_cancel),
+        None => git_blame::prepare(key, editor.rope.clone(), None),
+    };
+    app.blame_documents.insert(editor.navigation_id, Arc::new(document));
+    app.tabs = vec![Tab::new_file(editor)];
+    app.active_pane = ActivePane::Editor;
+    app.show_minimap = false;
+    app.sticky_scroll = false;
+    app.show_breadcrumbs = true;
+    app.mouse_col = u16::MAX;
+    app.mouse_row = u16::MAX;
+    app.remote_workspace = remote;
+    app.repositories.workspace = Some(workspace);
+    app.repositories.active = Some(other.clone());
+    app.repositories.discovered = true;
+    app.git_log.clear();
+    app.editor_mut().unwrap().blame.enabled = true;
+    app.editor_mut().unwrap().blame.selected = Some(7);
+    let mut terminal = Terminal::new(TestBackend::new(170, 32)).unwrap();
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.open_file.unwrap();
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    app.wait_for_background(Duration::from_secs(10), |app| app.tabs[app.active_tab].kind == TabKind::GitRevision);
+    let revision_tab = app.active_tab;
+    let revision = app.editor().unwrap().blame.revision.clone().unwrap();
+    assert_eq!(revision.hash, third.to_string());
+    assert_eq!(app.editor().unwrap().blame.previous_revision.as_ref().unwrap().hash, second.to_string());
+    // The caret points at an older line; the header must open the displayed
+    // revision's commit, not that line's original commit or the active repo.
+    app.editor_mut().unwrap().set_cursor(0, 0);
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.revision_commit.unwrap();
+    assert!(output(&terminal).contains("Open Commit"));
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    assert!(app.is_commit_details_tab());
+    app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.loading);
+    assert!(app.commit_details.error.is_none(), "{:?}", app.commit_details.error);
+    assert_eq!(app.commit_details.data.hash, third.to_string());
+    assert_eq!(app.commit_details.data.message, "Revise the result\n\nFull details of this revision.");
+    assert_eq!(app.commit_details_root(), revision.workdir);
+    assert_eq!(app.source_control_root(), other);
+    assert!(app.git_log.is_empty());
+    let generation = app.commit_details.generation;
+    app.commit_details.query = "example".into();
+    app.active_tab = revision_tab;
+    app.sync_diff_tab();
+    render(&mut app, &mut terminal);
+    let open = app.editor().unwrap().blame.revision_commit.unwrap();
+    pointer(&mut app, open, MouseEventKind::Down(MouseButton::Left));
+    assert_eq!(app.commit_details.generation, generation);
+    assert_eq!(app.commit_details.query, "example");
+    app.active_tab = revision_tab;
+    app.sync_diff_tab();
+    for hash in [second.to_string(), first.to_string()] {
+        render(&mut app, &mut terminal);
+        let previous = app.editor().unwrap().blame.revision_previous.unwrap();
+        pointer(&mut app, previous, MouseEventKind::Down(MouseButton::Left));
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.editor().unwrap().blame.revision.as_ref().is_some_and(|revision| revision.hash == hash)
+        });
+    }
+    assert!(app.editor().unwrap().blame.previous_revision.is_none());
+    render(&mut app, &mut terminal);
+    let request = app.editor().unwrap().blame.history_request;
+    let previous = app.editor().unwrap().blame.revision_previous.unwrap();
+    let tabs = app.tabs.len();
+    pointer(&mut app, previous, MouseEventKind::Down(MouseButton::Left));
+    assert_eq!(app.editor().unwrap().blame.history_request, request);
+    assert!(!app.editor().unwrap().blame.history_loading);
+    assert_eq!(app.tabs.len(), tabs);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), latest);
+    assert_eq!(repo.head().unwrap().target(), Some(third));
+}
+
+#[test]
 fn blame_files_walk_multiple_revisions_and_return_to_unsaved_work() {
     let (root, path, first) = fixture(SOURCE);
     let repo = git2::Repository::open(root.path()).unwrap();
@@ -1870,7 +2168,7 @@ fn blame_revision_highlights_are_isolated_from_the_working_file() {
         render(&mut app, &mut terminal);
         let bounds = terminal.backend().buffer().area;
         let view = &app.editor().unwrap().blame;
-        for control in [view.button, view.working_file, view.revision_previous]
+        for control in [view.button, view.working_file, view.revision_previous, view.revision_commit]
             .into_iter()
             .flatten()
         {
@@ -1882,6 +2180,7 @@ fn blame_revision_highlights_are_isolated_from_the_working_file() {
                 "history navigation must fit a narrow pane"
             );
         }
+        if width >= 65 { assert!(view.revision_commit.is_some()); }
     }
 }
 

@@ -36,7 +36,7 @@ pub(crate) use types::{
     GitBranchPickerItem, GitCommitInfo, GitCommitReference, GitFileChange, GlobalSearchResult, InlayHintDisplay, KeyBinding, NotifyLevel,
     PaletteCommand, PaletteState, PeekDefinition, RenameState, SidebarView,
     SourceControlRepositoryState, SplitDirection, SplitNode, SymbolItem, Tab, TabDropZone, TabKind,
-    TaskDefinition, TerminalDock, TerminalTab, TypeHierarchyMode, WhitespaceMode,
+    TerminalDock, TerminalTab, TypeHierarchyMode, WhitespaceMode,
 };
 pub(crate) use types::{contains_ignore_case, fuzzy_match, fuzzy_match_indices, fuzzy_match_score};
 
@@ -492,13 +492,6 @@ pub(crate) struct App {
     pub(crate) terminal_clicks: crate::app_terminal_selection::TerminalClicks,
     pub(crate) terminal_selection_drag: Option<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_mouse_capture: Option<crate::app_terminal_selection::TerminalSurface>,
-    pub task_list: Vec<TaskDefinition>,
-    pub last_task: Option<String>,
-    pub task_picker_active: bool,
-    pub task_picker_selected: usize,
-    pub task_picker_query: String,
-    pub task_picker_cursor: usize,
-    pub task_picker_selection_anchor: Option<usize>,
     pub markdown_preview: bool,
     pub hovered_tab: Option<usize>,
     pub hovered_tab_close_btn: bool,
@@ -747,6 +740,9 @@ pub(crate) struct App {
     pub menu_selected: usize,      // which top-level menu is selected
     pub menu_open: bool,           // dropdown is open
     pub menu_item_selected: usize, // which item in dropdown
+    pub(crate) menu_dropdown_inner: Option<ratatui::layout::Rect>,
+    pub(crate) menu_dropdown_scroll: usize,
+    pub(crate) menu_rendered: Option<usize>,
     // Activity bar
     pub activity_bar_selected: usize, // 0=Explorer, 1=Search, 2=SourceControl, 4=Extensions, 5=Outline, usize::MAX=None
     pub activity_bar_area: Option<ratatui::layout::Rect>,
@@ -1482,13 +1478,6 @@ impl App {
             terminal_clicks: Default::default(),
             terminal_selection_drag: None,
             terminal_mouse_capture: None,
-            task_list: Vec::new(),
-            last_task: None,
-            task_picker_active: false,
-            task_picker_selected: 0,
-            task_picker_query: String::new(),
-            task_picker_cursor: 0,
-            task_picker_selection_anchor: None,
             markdown_preview: false,
             hovered_tab: None,
             hovered_tab_close_btn: false,
@@ -1702,6 +1691,9 @@ impl App {
             menu_selected: 0,
             menu_open: false,
             menu_item_selected: 0,
+            menu_dropdown_inner: None,
+            menu_dropdown_scroll: 0,
+            menu_rendered: None,
             activity_bar_selected: 0,
             activity_bar_area: None,
             menu_bar_area: None,
@@ -2205,13 +2197,6 @@ impl App {
                 crate::background::BackgroundResult::HunkPeek(result) => {
                     has_visual_changes |= self.apply_hunk_preview(result);
                 }
-                crate::background::BackgroundResult::RemoteTasks(result) => {
-                    match result {
-                        Ok(tasks) => { self.task_list = tasks; self.status_message = if self.task_list.is_empty() { "No remote project tasks found".into() } else { String::new() }; }
-                        Err(error) => self.notify_error(format!("Cannot load remote tasks: {error}")),
-                    }
-                    has_visual_changes = true;
-                }
                 crate::background::BackgroundResult::CommitDiff(result) => {
                     has_visual_changes |= self.apply_commit_diff(result);
                 }
@@ -2683,7 +2668,7 @@ impl App {
                             .document_state_converged(&file_path, content_version)
                     {
                         for tab in &mut self.tabs {
-                            if tab.editor.syntax_file_path() == Some(file_path.as_path())
+                            if tab.editor.highlight_path() == file_path.as_path()
                                 && tab.editor.content_version == content_version
                             {
                                 tab.editor.syntax_dirty_from = None;
@@ -2692,7 +2677,7 @@ impl App {
                         }
                         for group in &mut self.groups {
                             for tab in &mut group.tabs {
-                                if tab.editor.syntax_file_path() == Some(file_path.as_path())
+                                if tab.editor.highlight_path() == file_path.as_path()
                                     && tab.editor.content_version == content_version
                                 {
                                     tab.editor.syntax_dirty_from = None;
@@ -4218,16 +4203,36 @@ impl App {
     pub(crate) fn refresh_explorer_changed_paths<'a>(
         &mut self, paths: impl IntoIterator<Item = &'a Path>, structural: bool,
     ) {
+        self.refresh_explorer_changed_path_states(paths.into_iter().map(|path| (path, None)), structural);
+    }
+
+    pub(crate) fn refresh_explorer_changed_path_states<'a>(
+        &mut self, paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>, structural: bool,
+    ) {
         if let Some(remote) = &self.remote_workspace { remote.invalidate_directories(); }
         let mut ignore_rules_changed = false;
-        self.explorer.invalidate_directory_paths(paths.into_iter().inspect(|path| {
+        let mut visible_change = false;
+        let mut kind_changes = Vec::new();
+        let mut missing_ancestors = Vec::new();
+        let explorer = &self.explorer;
+        self.explorer.invalidate_directory_paths(paths.into_iter().map(|(path, is_dir)| {
             ignore_rules_changed |= path.file_name().is_some_and(|name| name == ".gitignore");
+            visible_change |= explorer.changed_path_affects_tree(path, is_dir);
+            if !structural && explorer.changed_path_kind(path, is_dir) { kind_changes.push(path); }
+            if structural && let Some(ancestor) = explorer.changed_path_listing(path) { missing_ancestors.push(ancestor); }
+            path
         }), structural);
+        let kind_changed = !kind_changes.is_empty();
+        if kind_changed { self.explorer.invalidate_directory_paths(kind_changes, true); }
+        if !missing_ancestors.is_empty() {
+            self.explorer.invalidate_directory_paths(missing_ancestors.iter().map(PathBuf::as_path), true);
+        }
+        let structural = structural || kind_changed;
         if structural {
             self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
         }
-        if structural || (self.source_control_enabled && ignore_rules_changed) || matches!(self.explorer.sort_mode,
-            crate::explorer::ExplorerSortMode::Size | crate::explorer::ExplorerSortMode::Modified)
+        if (self.source_control_enabled && ignore_rules_changed) || (visible_change && (structural || matches!(self.explorer.sort_mode,
+            crate::explorer::ExplorerSortMode::Size | crate::explorer::ExplorerSortMode::Modified)))
         {
             self.refresh_explorer_tree_async();
         }
@@ -4847,6 +4852,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn watcher_refresh_preserves_explorer_scroll_and_selection_during_coalesced_updates() {
+        let workspace = tempfile::tempdir().unwrap();
+        for index in 0..100 {
+            std::fs::write(workspace.path().join(format!("file-{index:03}.rs")), "source").unwrap();
+        }
+        let mut app = App::test_new();
+        app.source_control_enabled = false;
+        app.explorer = FileExplorer::new(workspace.path().to_path_buf());
+        app.explorer.visible_height = 10;
+        app.explorer.scroll_down(40);
+        let selected = app.explorer.entries[app.explorer.selected].path.clone();
+        let generation = app.explorer_refresh_generation;
+        let (canonical_root, entries, matches) = FileExplorer::build_refresh_entries(app.explorer.refresh_request());
+        app.bg_explorer_refresh_running = true;
+        app.explorer_refresh_active_generation = Some(generation);
+        let added = workspace.path().join("added.rs");
+        std::fs::write(&added, "new").unwrap();
+        app.background.sender.send(crate::background::BackgroundResult::FilesChanged {
+            root: workspace.path().to_path_buf(),
+            changes: vec![crate::background::WorkspacePathChange { is_dir: false,
+                observed_at: std::time::Instant::now(), path: added.clone(), exists: true, modified: None, len: None,
+            }],
+            structure_changed: true, rescan: false, git_metadata_changed: false,
+        }).unwrap();
+        app.poll_background_results();
+        assert!(app.bg_explorer_refresh_pending);
+        // Keep browsing while the old request and a newer watcher update are pending.
+        app.explorer.scroll_down(15);
+        let offset = app.explorer.scroll_offset;
+        let visible: Vec<_> = app.explorer.viewport_indices(10).into_iter()
+            .map(|index| app.explorer.entries[index].path.clone()).collect();
+        app.background.sender.send(crate::background::BackgroundResult::ExplorerRefreshed {
+            generation, canonical_root, entries, matches,
+        }).unwrap();
+        app.poll_background_results();
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            !app.bg_explorer_refresh_running && !app.bg_explorer_refresh_pending
+        });
+        assert!(app.explorer.entries.iter().any(|entry| entry.path == added));
+        assert_eq!(app.explorer.scroll_offset, offset + 1);
+        assert_eq!(app.explorer.entries[app.explorer.selected].path, selected);
+        assert_eq!(app.explorer.viewport_indices(10).into_iter()
+            .map(|index| app.explorer.entries[index].path.clone()).collect::<Vec<_>>(), visible);
+    }
+
+    #[test]
     fn content_events_preserve_filename_indexes_and_name_sorted_trees() {
         let mut app = App::test_new();
         app.bg_explorer_refresh_running = true;
@@ -4912,7 +4963,7 @@ mod tests {
         app.bg_explorer_refresh_running = true;
         let generation = app.explorer_refresh_generation;
         app.background.sender.send(crate::background::BackgroundResult::FilesChanged {
-            root: root.into(), changes: vec![crate::background::WorkspacePathChange {
+            root: root.into(), changes: vec![crate::background::WorkspacePathChange { is_dir: false,
                 observed_at: std::time::Instant::now(), path, exists: true, modified: None, len: None,
             }], structure_changed: true, rescan: false, git_metadata_changed: true,
         }).unwrap();
@@ -5211,7 +5262,7 @@ mod tests {
         app.background
             .sender
             .send(crate::background::BackgroundResult::FileDiskState(
-                crate::background::WorkspacePathChange {
+                crate::background::WorkspacePathChange { is_dir: false,
                     observed_at: std::time::Instant::now(),
                     path,
                     exists: false,
@@ -5241,7 +5292,7 @@ mod tests {
             app.background
                 .sender
                 .send(crate::background::BackgroundResult::FileDiskState(
-                    crate::background::WorkspacePathChange {
+                    crate::background::WorkspacePathChange { is_dir: false,
                         observed_at: std::time::Instant::now(),
                         path: path.clone(),
                         exists: false,
@@ -5278,7 +5329,7 @@ mod tests {
         app.background
             .sender
             .send(crate::background::BackgroundResult::FileDiskState(
-                crate::background::WorkspacePathChange {
+                crate::background::WorkspacePathChange { is_dir: false,
                     observed_at: std::time::Instant::now(),
                     path: path.clone(),
                     exists: true,

@@ -162,11 +162,7 @@ fn syntax_command_is_discoverable_and_rejects_links_from_keyboard_and_mouse() {
         app.execute_palette_command("install_syntax");
         assert!(app.palette.install_syntax_mode);
         assert!(!app.palette.install_theme_mode && !app.palette.install_extension_mode);
-        assert!(
-            app.menu_items(3)
-                .iter()
-                .any(|(_, command)| *command == "install_syntax")
-        );
+        assert!(app.menu_items(3).iter().all(|(_, command)| *command != "install_syntax"));
         app.paste_into_focused_text_input("https://example.org/Example.tmLanguage.json");
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal

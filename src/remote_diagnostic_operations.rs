@@ -593,7 +593,6 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             Some(("Prepare file context", format!("{} files", files.len())))
         }
         Command::Rollback(_) => Some(("Agent checkpoint", String::new())),
-        Command::Tasks => Some(("Read tasks", String::new())),
         Command::Watch => Some(("Watch workspace", String::new())),
         Command::Shutdown => Some(("Stop remote service", String::new())),
         // Never record input or per-chunk/per-frame/polling traffic. Failures

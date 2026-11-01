@@ -407,6 +407,73 @@ impl FileExplorer {
         self.ignore_cache.invalidate_paths(affected);
     }
 
+    fn event_path<'a>(&self, path: &'a Path) -> std::borrow::Cow<'a, Path> {
+        if self.canonical_root != self.root && let Ok(relative) = path.strip_prefix(&self.canonical_root) {
+            return std::borrow::Cow::Owned(self.root.join(relative));
+        }
+        std::borrow::Cow::Borrowed(path)
+    }
+
+    /// Generic metadata notifications can replace a directory with a file.
+    pub(crate) fn changed_path_kind(&self, path: &Path, is_dir: Option<bool>) -> bool {
+        let Some(is_dir) = is_dir else { return false; };
+        let normalized = self.event_path(path);
+        let path = normalized.as_ref();
+        self.path_indices.get(&Self::path_key(path)).and_then(|&index| self.entries.get(index))
+            .is_some_and(|entry| entry.path == path && entry.is_dir != is_dir)
+    }
+
+    /// Watch all project paths, but rebuild only listings the tree can display.
+    /// Recursive filename searches own a wider scope than collapsed folders.
+    pub(crate) fn changed_path_affects_tree(&self, path: &Path, is_dir: Option<bool>) -> bool {
+        if self.find.open && !self.find.query.is_empty()
+            || self.parent_indices.len() != self.entries.len() { return true; }
+        let normalized = self.event_path(path);
+        let path = normalized.as_ref();
+        if self.root.starts_with(path) { return true; }
+        // Missing paths are normal here. Interactive lookup's linear fallback
+        // would turn a burst of new files into paths × tree rows work.
+        if let Some(&index) = self.path_indices.get(&Self::path_key(path)) {
+            let Some(entry) = self.entries.get(index).filter(|entry| entry.path == path) else { return true; };
+            return !(is_dir == Some(true) && entry.is_dir && !entry.expanded
+                && matches!(self.sort_mode, ExplorerSortMode::Name | ExplorerSortMode::Type));
+        }
+        for parent in path.ancestors().skip(1) {
+            let visible = if parent == self.root { true }
+            else if let Some(&index) = self.path_indices.get(&Self::path_key(parent)) {
+                match self.entries.get(index).filter(|entry| entry.path == parent) {
+                    Some(entry) if entry.is_dir => entry.expanded,
+                    _ => true,
+                }
+            } else { continue; };
+            if !visible { return false; }
+            // Conditional sibling rules may require IO. Defer those to the
+            // worker; unconditional exclusions can suppress invisible changes.
+            return !path.ancestors().take_while(|ancestor| *ancestor != parent).any(|ancestor| {
+                self.exclude_rules.excludes_with(&crate::search_paths::Candidate::new(ancestor), &self.root, |_| false)
+            });
+        }
+        false
+    }
+
+    /// A file-only notification can introduce missing ancestor directories.
+    pub(crate) fn changed_path_listing(&self, path: &Path) -> Option<PathBuf> {
+        let normalized = self.event_path(path);
+        let path = normalized.as_ref();
+        let mut child = path;
+        for parent in path.ancestors().skip(1) {
+            if parent == self.root { return (child != path).then(|| child.to_path_buf()); }
+            if let Some(&index) = self.path_indices.get(&Self::path_key(parent))
+                && let Some(entry) = self.entries.get(index).filter(|entry| entry.path == parent)
+            {
+                if !entry.is_dir { return Some(parent.to_path_buf()); }
+                return (child != path).then(|| child.to_path_buf());
+            }
+            child = parent;
+        }
+        None
+    }
+
     pub(crate) fn set_directory_watcher_active(&self, active: bool) {
         self.directory_cache.set_watched(active);
         self.ignore_cache.set_watched(active);
@@ -421,6 +488,9 @@ impl FileExplorer {
         let selected_path = self
             .entries
             .get(self.selected)
+            .map(|entry| entry.path.clone());
+        let scroll_anchor = self.entries.get(self.scroll_offset)
+            .filter(|_| self.scroll_offset > 0)
             .map(|entry| entry.path.clone());
         self.canonical_root = canonical_root;
         self.find.results = matches;
@@ -442,10 +512,20 @@ impl FileExplorer {
         self.selected = revealed
             .or_else(|| selected_path.as_ref().and_then(|path| self.find_visible_selection(path)))
             .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
-        if std::mem::take(&mut self.find.select_first) {
+        let select_first_match = std::mem::take(&mut self.find.select_first);
+        if select_first_match {
             self.select_find_match(false, true);
         }
-        self.ensure_selection_visible();
+        if revealed.is_some() || select_first_match {
+            self.ensure_selection_visible();
+        } else {
+            // Background updates must not follow an offscreen selection. Keep
+            // the current top entry stable when rows change above the viewport.
+            self.scroll_offset = scroll_anchor.as_deref()
+                .and_then(|path| self.find_path(path))
+                .unwrap_or(self.scroll_offset)
+                .min(self.entries.len().saturating_sub(self.visible_height.max(1)));
+        }
         if self.center_reveal_pending {
             self.center_selection();
         }
@@ -1797,6 +1877,66 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn background_refresh_preserves_manual_scroll_with_an_offscreen_selection() {
+        for selected in [0, 5, 45, 90] {
+            let mut explorer = wide_explorer(100);
+            explorer.visible_height = 9;
+            explorer.selected = selected;
+            explorer.scroll_down(40);
+            let selected_path = explorer.entries[selected].path.clone();
+            let visible: Vec<_> = explorer.viewport_indices(9).into_iter()
+                .map(|index| explorer.entries[index].path.clone()).collect();
+            explorer.apply_refresh_entries(explorer.root.clone(), explorer.entries.clone(), Default::default());
+            assert_eq!(explorer.scroll_offset, 40, "selection at {selected} must not move the viewport");
+            assert_eq!(explorer.entries[explorer.selected].path, selected_path);
+            assert_eq!(explorer.viewport_indices(9).into_iter()
+                .map(|index| explorer.entries[index].path.clone()).collect::<Vec<_>>(), visible);
+        }
+    }
+
+    #[test]
+    fn background_refresh_anchors_visible_files_when_rows_change_above_them() {
+        let mut explorer = wide_explorer(100);
+        explorer.visible_height = 9;
+        explorer.selected = 45;
+        explorer.scroll_down(40);
+        let selected_path = explorer.entries[explorer.selected].path.clone();
+        let visible: Vec<_> = explorer.viewport_indices(9).into_iter()
+            .map(|index| explorer.entries[index].path.clone()).collect();
+        for inserting in [true, false] {
+            let mut entries = explorer.entries.clone();
+            if inserting { entries.insert(1, file_entry("/project/wide/added.rs", "added.rs", 1)); }
+            else { entries.remove(1); }
+            explorer.apply_refresh_entries(explorer.root.clone(), entries, Default::default());
+            assert_eq!(explorer.scroll_offset, if inserting { 41 } else { 40 });
+            assert_eq!(explorer.entries[explorer.selected].path, selected_path);
+            assert_eq!(explorer.viewport_indices(9).into_iter()
+                .map(|index| explorer.entries[index].path.clone()).collect::<Vec<_>>(), visible);
+        }
+    }
+
+    #[test]
+    fn background_refresh_falls_back_and_clamps_when_visible_files_are_removed() {
+        let mut explorer = wide_explorer(100);
+        explorer.visible_height = 9;
+        explorer.scroll_down(40);
+        let next = explorer.entries[41].path.clone();
+        let mut entries = explorer.entries.clone();
+        entries.remove(40);
+        explorer.apply_refresh_entries(explorer.root.clone(), entries, Default::default());
+        assert_eq!(explorer.scroll_offset, 40);
+        assert_eq!(explorer.entries[explorer.scroll_offset].path, next);
+        let mut entries = explorer.entries.clone();
+        entries.truncate(20);
+        explorer.apply_refresh_entries(explorer.root.clone(), entries, Default::default());
+        assert_eq!(explorer.scroll_offset, 11, "a shorter tree should stay on its last page");
+        explorer.apply_refresh_entries(explorer.root.clone(), Vec::new(), Default::default());
+        assert_eq!(explorer.scroll_offset, 0);
+        assert_eq!(explorer.selected, 0);
+        assert!(explorer.viewport_indices(9).is_empty());
     }
 
     #[test]

@@ -573,6 +573,7 @@ pub(crate) struct DiffRenderCache {
     target_content_lines: usize,
     aligned_target_rows: Vec<usize>,
     inline_target_rows: Vec<usize>,
+    inline_target_text_rows: Vec<usize>,
     selectable_rows: [Vec<usize>; 3],
     overview_rows: [[Vec<usize>; 2]; 2],
 }
@@ -595,6 +596,7 @@ impl Default for DiffRenderCache {
             target_content_lines: 0,
             aligned_target_rows: vec![0],
             inline_target_rows: vec![0],
+            inline_target_text_rows: vec![0],
             selectable_rows: Default::default(),
             overview_rows: Default::default(),
         }
@@ -708,31 +710,7 @@ impl DiffRenderCache {
             }
         }
 
-        let mut inline_rows = Vec::with_capacity(rows.len());
-        for (aligned_row, row) in rows.iter().enumerate() {
-            match (row.left_line, row.right_line) {
-                (Some(_), Some(_)) if row.left_kind == ' ' && row.right_kind == ' ' => {
-                    inline_rows.push(CachedInlineDiffRow {
-                        aligned_row,
-                        kind: ' ',
-                    });
-                }
-                (left_line, right_line) => {
-                    if left_line.is_some() {
-                        inline_rows.push(CachedInlineDiffRow {
-                            aligned_row,
-                            kind: '-',
-                        });
-                    }
-                    if right_line.is_some() {
-                        inline_rows.push(CachedInlineDiffRow {
-                            aligned_row,
-                            kind: '+',
-                        });
-                    }
-                }
-            }
-        }
+        let inline_rows = Self::index_inline_rows(&rows);
 
         let mut inline_target_rows = vec![0; max_right_line];
         let mut removed_start = None;
@@ -752,6 +730,7 @@ impl DiffRenderCache {
                 inline_target_rows[line] = removed_start.take().unwrap_or(inline_row);
             }
         }
+        let inline_target_text_rows = Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
 
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
@@ -771,6 +750,7 @@ impl DiffRenderCache {
             target_content_lines,
             aligned_target_rows,
             inline_target_rows,
+            inline_target_text_rows,
             selectable_rows,
             overview_rows,
         }
@@ -794,6 +774,19 @@ impl DiffRenderCache {
             .unwrap_or(0)
     }
 
+    /// The actual target text row, excluding preceding deletions in its scroll anchor.
+    pub(crate) fn inline_text_row_for_target_line(&self, target_line: usize) -> Option<usize> {
+        let row = *self.inline_target_text_rows.get(target_line)?;
+        let entry = self.inline_rows.get(row)?;
+        (entry.kind != '-' && self.rows[entry.aligned_row].right_line == Some(target_line)).then_some(row)
+    }
+
+    /// Overview markers follow target text, with hidden lines at their context marker.
+    pub(crate) fn inline_target_text_rows(&self) -> &[usize] {
+        &self.inline_target_text_rows
+    }
+
+    #[cfg(test)]
     pub(crate) fn inline_target_rows(&self) -> &[usize] {
         &self.inline_target_rows
     }
@@ -816,6 +809,49 @@ impl DiffRenderCache {
         self.aligned_target_rows
             .partition_point(|target_row| *target_row <= row)
             .saturating_sub(1)
+    }
+
+    /// Inline replacements show the complete removed block before its additions.
+    /// Their aligned row references therefore need not be in display order.
+    fn index_inline_rows(rows: &[AlignedDiffRow]) -> Vec<CachedInlineDiffRow> {
+        let context = |row: &AlignedDiffRow| {
+            row.hidden_lines > 0 || row.left_kind == ' ' && row.right_kind == ' '
+        };
+        let mut inline = Vec::with_capacity(rows.len());
+        let mut start = 0;
+        while start < rows.len() {
+            if context(&rows[start]) {
+                inline.push(CachedInlineDiffRow { aligned_row: start, kind: ' ' });
+                start += 1;
+                continue;
+            }
+            let mut end = start + 1;
+            while end < rows.len() && !context(&rows[end]) { end += 1; }
+            for kind in ['-', '+'] {
+                for (index, row) in rows[start..end].iter().enumerate() {
+                    let line = if kind == '-' { row.left_line } else { row.right_line };
+                    if line.is_some() {
+                        inline.push(CachedInlineDiffRow { aligned_row: start + index, kind });
+                    }
+                }
+            }
+            start = end;
+        }
+        inline
+    }
+
+    fn index_inline_target_text_rows(
+        rows: &[AlignedDiffRow],
+        inline: &[CachedInlineDiffRow],
+        scroll_rows: &[usize],
+    ) -> Vec<usize> {
+        let mut result = scroll_rows.to_vec();
+        for (index, entry) in inline.iter().enumerate().filter(|(_, entry)| entry.kind != '-') {
+            if let Some(line) = rows[entry.aligned_row].right_line {
+                result[line] = index;
+            }
+        }
+        result
     }
 
     fn index_selectable_rows(
@@ -951,15 +987,7 @@ impl DiffRenderCache {
             gap.hidden_lines = count;
             rows.push(gap);
         }
-        let mut inline_rows = Vec::new();
-        for (aligned_row, row) in rows.iter().enumerate() {
-            if row.hidden_lines > 0 || row.left_kind == ' ' && row.right_kind == ' ' {
-                inline_rows.push(CachedInlineDiffRow { aligned_row, kind: ' ' });
-            } else {
-                if row.left_line.is_some() { inline_rows.push(CachedInlineDiffRow { aligned_row, kind: '-' }); }
-                if row.right_line.is_some() { inline_rows.push(CachedInlineDiffRow { aligned_row, kind: '+' }); }
-            }
-        }
+        let inline_rows = Self::index_inline_rows(&rows);
         let last_target = self.aligned_target_rows.len().saturating_sub(1);
         let targets = |lines: Vec<Option<usize>>| {
             let mut next = last_target;
@@ -981,6 +1009,8 @@ impl DiffRenderCache {
                 row
             }).collect()
         };
+        let inline_target_rows: Vec<usize> = map_targets(&inline_row_targets);
+        let inline_target_text_rows = Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
         let max_left_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
             .map(|row| UnicodeWidthStr::width(row.left_text.as_str())).max().unwrap_or(0);
         let max_inline_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
@@ -992,7 +1022,8 @@ impl DiffRenderCache {
             context_lines: Some(context),
             visible_target_lines: rows.iter().filter_map(|row| row.right_line).collect(),
             aligned_target_rows: map_targets(&aligned_row_targets),
-            inline_target_rows: map_targets(&inline_row_targets),
+            inline_target_rows,
+            inline_target_text_rows,
             aligned_row_targets,
             inline_row_targets,
             rows,
@@ -1322,7 +1353,8 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         make("go_to_line", "Go to Line", KeyModifiers::CONTROL, KeyCode::Char('g')),
         make("navigate_back", "Go Back", KeyModifiers::ALT, KeyCode::Left),
         make("navigate_forward", "Go Forward", KeyModifiers::ALT, KeyCode::Right),
-        make("duplicate_line", "Duplicate Line", KeyModifiers::CONTROL, KeyCode::Char('d')),
+        make("duplicate_line", "Duplicate Line Down", KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Down),
+        make("select_next_occurrence", "Select Next Occurrence", KeyModifiers::CONTROL, KeyCode::Char('d')),
         make("palette", "Command Palette", KeyModifiers::empty(), KeyCode::F(1)),
         make("palette", "Command Palette", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('P')),
         make("source_control", "Source Control", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('G')),
@@ -1911,13 +1943,6 @@ pub enum TypeHierarchyMode {
     Subtypes,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct TaskDefinition {
-    pub label: String,
-    pub command: String,
-    pub source: String, // "vscode", "cargo", "npm", "make", etc.
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2265,6 +2290,52 @@ mod tests {
     }
 
     #[test]
+    fn inline_replacements_group_removed_and_added_blocks_with_exact_source_mappings() {
+        for (removed, added) in [(3, 3), (7, 2), (2, 7), (0, 4), (4, 0)] {
+            let base = format!("before\n{}after\n", (0..removed).map(|n| format!("old_{n}\n")).collect::<String>());
+            let target = format!("before\n{}after\n", (0..added).map(|n| format!("replacement_{n}\n")).collect::<String>());
+            let full = DiffRenderCache::new(&compute_file_diff(&base, &target));
+            for cache in [full.clone(), full.with_context(0), full.with_context(1)] {
+                let kinds: String = cache.inline_rows.iter().map(|row| row.kind).collect();
+                assert_eq!(kinds, format!(" {}{} ", "-".repeat(removed), "+".repeat(added)));
+                let removed_lines: Vec<_> = cache.inline_rows.iter().filter(|row| row.kind == '-')
+                    .map(|entry| cache.rows[entry.aligned_row].left_line.unwrap()).collect();
+                assert_eq!(removed_lines, (1..removed + 1).collect::<Vec<_>>());
+                let added_lines: Vec<_> = cache.inline_rows.iter().filter(|row| row.kind == '+')
+                    .map(|entry| cache.rows[entry.aligned_row].right_line.unwrap()).collect();
+                assert_eq!(added_lines, (1..added + 1).collect::<Vec<_>>());
+                for line in 0..added + 2 {
+                    let actual = cache.inline_rows.iter().position(|entry| {
+                        entry.kind != '-' && cache.rows[entry.aligned_row].right_line == Some(line)
+                    });
+                    assert_eq!(cache.inline_text_row_for_target_line(line), actual);
+                    if let Some(row) = actual {
+                        assert_eq!(cache.target_line_for_inline_row(row), line);
+                    }
+                }
+                assert!(cache.inline_target_rows().windows(2).all(|rows| rows[0] <= rows[1]));
+                assert!(cache.inline_target_text_rows().windows(2).all(|rows| rows[0] <= rows[1]));
+                if added > 0 {
+                    assert!(cache.inline_row_for_target_line(1) <= 1, "the scroll anchor must include the removed block or its leading context marker");
+                    assert_eq!(cache.inline_text_row_for_target_line(1), Some(removed + 1));
+                    assert_eq!(cache.inline_target_text_rows()[1], removed + 1, "overview markers must follow target text");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inline_replacements_keep_separate_blocks_around_unchanged_lines() {
+        let cache = DiffRenderCache::new(&compute_file_diff(
+            "before\nold_a\nold_b\nmiddle\nold_c\nold_d\nafter\n",
+            "before\nnew_a\nnew_b\nmiddle\nnew_c\nnew_d\nafter\n",
+        ));
+        for cache in [cache.clone(), cache.with_context(0), cache.with_context(1)] {
+            assert_eq!(cache.inline_rows.iter().map(|row| row.kind).collect::<String>(), " --++ --++ ");
+        }
+    }
+
+    #[test]
     fn diff_render_cache_navigates_target_hunks() {
         let diff = vec![
             (' ', "zero".to_string()),
@@ -2354,7 +2425,6 @@ pub(crate) struct TerminalTab {
     pub is_placeholder: bool,
     pub terminal_cwd: PathBuf,
     pub terminal_launch_error: Option<String>,
-    pub pending_command: Option<String>,
     pub terminal_pty: Option<crate::terminal::TerminalEmulator>,
     pub completion: crate::terminal_completion::Notice,
 }
@@ -2371,7 +2441,6 @@ impl TerminalTab {
             is_placeholder: false,
             terminal_cwd: cwd,
             terminal_launch_error: None,
-            pending_command: None,
             terminal_pty: None,
             completion: Default::default(),
         }

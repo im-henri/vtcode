@@ -69,6 +69,17 @@ impl InlineDiffScroll {
         }
     }
 
+    pub(crate) fn cursor_row_for_line(&self, cache: &DiffRenderCache, line: usize) -> usize {
+        if !self.aligned && self.terminal_empty_line != Some(line) {
+            // Scroll anchors include removed blocks; caret visibility follows
+            // the target text after those blocks.
+            cache.inline_text_row_for_target_line(line)
+                .unwrap_or_else(|| self.row_for_line(cache, line))
+        } else {
+            self.row_for_line(cache, line)
+        }
+    }
+
     pub fn max_row(&self) -> usize {
         self.row_count()
             .saturating_sub(self.text_area.height.max(1) as usize)
@@ -119,7 +130,7 @@ impl InlineDiffScroll {
             .cursor_line
             .is_some_and(|line| line != editor.cursor_line)
         {
-            let cursor = self.row_for_line(&cache, editor.cursor_line);
+            let cursor = self.cursor_row_for_line(&cache, editor.cursor_line);
             if cursor < self.row {
                 self.row = cursor;
             } else if cursor >= self.row + self.text_area.height as usize {
@@ -167,16 +178,7 @@ impl InlineDiffScroll {
     }
 
     pub(crate) fn center_cursor(&mut self, editor: &mut Editor) {
-        let cursor = if !self.aligned && self.terminal_empty_line != Some(editor.cursor_line) {
-            // Inline scroll anchors include preceding deletions. Center the
-            // actual matching text, using the ordered display-row index.
-            let aligned = self.cache.aligned_row_for_target_line(editor.cursor_line);
-            self.cache.inline_rows.partition_point(|entry| {
-                entry.aligned_row < aligned || entry.aligned_row == aligned && entry.kind == '-'
-            })
-        } else {
-            self.row_for_line(&self.cache, editor.cursor_line)
-        };
+        let cursor = self.cursor_row_for_line(&self.cache, editor.cursor_line);
         self.row = cursor
             .saturating_sub(self.text_area.height as usize / 2)
             .min(self.max_row());

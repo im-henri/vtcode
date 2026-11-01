@@ -18,7 +18,7 @@ Built in Rust for Windows and Linux. Under active development.
 - **Format:** choose LSP or an external command per language, with format-on-save support.
 - **Git:** stage, unstage, or discard multiple files; commit, branch, stash, fetch, pull, and push. Source Control's **Show untracked files** choice is saved immediately as a User preference, follows an existing Workspace override, and also updates the change-count badge and Explorer decorations. Configure either scope in **Settings → Source Control → Show Untracked Files**. Review inline or side-by-side diffs, blame, and commit history; hover inline blame for commit details and the full message. **Disable** in Source Control pauses Git integration for the workspace; **Settings → Source Control → Enable Source Control** also supports a User-wide default.
 - **Repositories:** nested Git projects appear separately in Source Control, with independent changes and commit messages. Repositories above the opened folder require **Open Repository** before their changes are included. Click a repository header to select or collapse it, use **×** to close it, and **Actions → Open Repository…** to reopen a project. Repository visibility is remembered per workspace.
-- **Terminals and previews:** multiple terminals and runnable tasks; Markdown preview with tables, math, Mermaid diagrams, and Ctrl+Click links.
+- **Terminals and previews:** multiple terminals; Markdown preview with tables, math, Mermaid diagrams, and Ctrl+Click links.
 - **Agent chat:** connect Agent Client Protocol (ACP) agents, resume conversations, review changes, and respond to permission requests inside the editor.
 - **Customize:** user/workspace settings, keybindings, VS Code color themes, optional animations, and [Wasm extensions](extension-api/README.md) for commands, views, and custom editors.
 
@@ -137,6 +137,10 @@ Rename terminal tabs by right-clicking a tab and choosing **Rename Terminal…**
 or use **Terminal → Rename Terminal…** or the command palette. Names stay with
 the session when moving between the side panel and an editor tab.
 
+In terminal output, right-click a selection to copy it and clear the selection;
+right-click without a selection to paste. Mouse-aware terminal applications receive
+their own mouse events; hold **Shift** to use local selection and clipboard actions.
+
 **View → Auto-hide Sidebar** hides the sidebar until you move the pointer to
 its edge or the Activity Bar. It stays open while you use sidebar fields or menus.
 This is off by default and can also be changed in **Settings → Workbench → Layout**
@@ -209,6 +213,13 @@ File mode starts with `{file}` as an argument, includes unsaved edits, and appli
 formatting as one undoable change; it writes the original file only on Save.
 
 ## Customization and tools
+
+Open **File → Settings…** for preferences or **File → Keyboard Shortcuts…** to
+edit bindings. **Help → Keyboard Shortcut Reference** shows the quick reference.
+**View** groups workspace views, panels, editor splits, and common display options;
+additional appearance controls are in Settings and the command palette.
+Syntax installation and reload are available through **Preferences: Install Syntax
+from File** and **Developer: Reload Syntaxes** in the command palette.
 
 - **Settings:** use **User** for defaults and **Workspace** for project overrides; edit through the UI or JSON.
 - **File types:** click the status bar language → **Configure File Associations…**, or open **Settings → Files → File Associations**. Map extensions (`*.h`) or filenames (`Jenkinsfile`) to a language globally or per workspace; edit or remove rules in the same dialog. Applies to highlighting, LSP, and formatter selection.

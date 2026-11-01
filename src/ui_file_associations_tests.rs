@@ -825,7 +825,12 @@ fn associations_update_icons_and_colors_across_file_views_and_restore_builtin_ic
                 }).unwrap();
                 let expected = if surface == "explorer" { 2 } else { 1 };
                 let found = matching_labels(terminal.backend().buffer(), "associated.rs", icon, color);
-                assert!(found >= expected, "{stage}, {surface}, light={light}: expected {expected} labels with {icon:?} in {color:?}, found {found}");
+                if reference == "unknown" && matches!(surface, "tab" | "inactive tab" | "revision tab") {
+                    assert_eq!(found, 0, "{stage}, {surface}: tabs omit the placeholder icon");
+                    assert!(terminal.backend().buffer().content.iter().all(|cell| cell.symbol() != "·"));
+                } else {
+                    assert!(found >= expected, "{stage}, {surface}, light={light}: expected {expected} labels with {icon:?} in {color:?}, found {found}");
+                }
             }
         }
     }

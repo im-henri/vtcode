@@ -26,7 +26,7 @@ fn private_git_storage_is_pruned_without_excluding_project_directory_names() {
 }
 
 #[test]
-fn shared_event_batch_keeps_hot_files_bounded_and_overflows_without_losing_invalidation() {
+fn shared_event_batch_keeps_hot_files_bounded_and_compacts_large_subtrees() {
     let root = Path::new("workspace");
     let mut burst = Burst::default();
     for _ in 0..100_000 {
@@ -41,9 +41,69 @@ fn shared_event_batch_keeps_hot_files_bounded_and_overflows_without_losing_inval
         burst.push(root, Ok(Event::new(EventKind::Create(notify::event::CreateKind::File))
             .add_path(root.join(format!("files/{index}")))));
     }
-    assert!(burst.event.rescan && burst.event.structure_changed);
-    assert!(burst.event.paths.is_empty() && burst.paths.is_empty());
-    assert!(burst.metadata.is_empty() && burst.data.is_empty() && burst.git_paths.is_empty());
+    assert!(!burst.event.rescan && burst.event.structure_changed);
+    assert_eq!(burst.event.paths, [root.join("build/source.rs"), root.join("files")]);
+    assert_eq!(burst.paths.len(), 2);
+    assert_eq!(burst.data.len(), 1);
+    assert!(burst.metadata.is_empty() && burst.git_paths.is_empty());
+}
+
+#[test]
+fn compiler_output_bursts_keep_source_and_git_changes_exact_with_bounded_state() {
+    let root = Path::new("workspace");
+    let source = root.join("src/main.rs");
+    let ignore = root.join("target/debug/deps/.gitignore");
+    let mut burst = Burst::default();
+    burst.push(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(source.clone())));
+    for index in 0..50_000 {
+        burst.push(root, Ok(Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(root.join(format!("target/debug/deps/object-{index}.o")))));
+    }
+    burst.push(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(ignore.clone())));
+    burst.push(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(root.join(".git/index"))));
+    assert!(!burst.event.rescan);
+    assert!(burst.event.structure_changed && burst.event.git_metadata_changed);
+    assert_eq!(burst.paths.len(), 3);
+    assert!(burst.paths.contains(&source));
+    assert!(burst.paths.contains(&ignore));
+    assert!(burst.paths.contains(&root.join("target/debug/deps")));
+    assert!(burst.metadata.len() + burst.data.len() <= 4);
+    assert_eq!(burst.git_paths.len(), 1);
+    assert_eq!(burst.subtrees.len(), 1);
+}
+
+#[test]
+fn dispersed_output_directories_compact_without_swallowing_an_isolated_source_edit() {
+    let root = Path::new("workspace");
+    let mut burst = Burst::default();
+    let source = root.join("main.rs");
+    burst.push(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(source.clone())));
+    for index in 0..20_000 {
+        burst.push(root, Ok(Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(root.join(format!("build/unit-{index}/object.o")))));
+    }
+    assert!(!burst.event.rescan);
+    assert_eq!(burst.paths.len(), 2);
+    assert!(burst.paths.contains(&source));
+    assert!(burst.paths.contains(&root.join("build")));
+    burst.push(root, Err(notify::Error::generic("watcher lost coverage")));
+    assert!(burst.event.rescan && burst.event.watcher_failed);
+    assert!(burst.paths.is_empty() && burst.subtrees.is_empty());
+}
+
+#[test]
+fn large_single_native_events_and_repository_topology_changes_are_not_lost() {
+    let root = Path::new("workspace");
+    let mut burst = Burst::default();
+    let mut event = Event::new(EventKind::Create(notify::event::CreateKind::File));
+    for index in 0..5_000 { event.paths.push(root.join(format!("output/item-{index}.o"))); }
+    event.paths.push(root.join("nested/.git"));
+    burst.push(root, Ok(event));
+    assert!(!burst.event.rescan);
+    assert!(burst.event.git_metadata_changed && burst.event.structure_changed);
+    assert_eq!(burst.paths.len(), 2);
+    assert!(burst.paths.contains(&root.join("output")));
+    assert!(burst.paths.contains(&root.join("nested/.git")));
 }
 
 #[test]

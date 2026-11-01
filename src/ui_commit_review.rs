@@ -324,7 +324,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
                 .aligned_row_for_target_line(editor.cursor_line)
         } else {
             app.diff_render_cache
-                .inline_row_for_target_line(editor.cursor_line)
+                .inline_text_row_for_target_line(editor.cursor_line)
+                .unwrap_or_else(|| app.diff_render_cache.inline_row_for_target_line(editor.cursor_line))
         };
         let start: usize = filtered
             .iter()

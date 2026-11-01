@@ -16,7 +16,7 @@ fn loaded(path: &Path) -> Tab {
 }
 
 fn missing(path: &Path) -> WorkspacePathChange {
-    WorkspacePathChange {
+    WorkspacePathChange { is_dir: false,
         path: path.into(),
         observed_at: Instant::now(),
         exists: false,

@@ -396,14 +396,10 @@ impl DiffSelection {
                 column: 0,
             });
         }
-        let aligned = cache.aligned_row_for_target_line(line);
         let row = if domain == Domain::Target {
-            aligned
+            cache.aligned_row_for_target_line(line)
         } else {
-            let first = cache
-                .inline_rows
-                .partition_point(|entry| entry.aligned_row < aligned);
-            first + usize::from(cache.inline_rows.get(first)?.kind == '-')
+            cache.inline_text_row_for_target_line(line)?
         };
         let text = self.line(cache, domain, row)?;
         (!text.original && text.source == Some(line)).then_some(Position {
@@ -1395,6 +1391,25 @@ mod tests {
                 state.line(&cache, Domain::Target, index).is_some(),
                 row.right_line.is_some()
             );
+        }
+    }
+
+    #[test]
+    fn grouped_inline_replacements_map_native_cursor_and_selection_to_target_text() {
+        let full = DiffRenderCache::new(&crate::app::compute_file_diff(
+            "before\nold_a\nold_b\nold_c\nafter\n",
+            "before\nnew_a\nnew_b\nafter\n",
+        ));
+        let state = DiffSelection::default();
+        for cache in [full.clone(), full.with_context(0), full.with_context(1)] {
+            for line in 1..=2 {
+                let position = state.source_position(&cache, Domain::Inline, line, 3).unwrap();
+                let selected = state.line(&cache, Domain::Inline, position.row).unwrap();
+                assert_eq!(selected.source, Some(line));
+                assert!(!selected.original);
+                assert_eq!(position.column, 3);
+                assert_eq!(selected.text, if line == 1 { "new_a" } else { "new_b" });
+            }
         }
     }
 

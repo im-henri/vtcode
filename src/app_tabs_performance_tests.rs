@@ -75,7 +75,12 @@ fn original_width(app: &App, tab: &Tab) -> usize {
     };
     1 + if tab.pinned { 4 } else { 0 }
         + if tab.has_unsaved_changes() { 2 } else { 0 }
-        + if matches!(
+        + if matches!(tab.kind, TabKind::File | TabKind::GitRevision)
+            && crate::file_icons::for_editor(&tab.editor).0 == "·  "
+        {
+            // Placeholder file icons no longer occupy space in tabs.
+            0
+        } else if matches!(
             tab.kind,
             TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
         ) {

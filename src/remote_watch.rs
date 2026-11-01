@@ -79,9 +79,12 @@ impl Registry {
 pub(crate) struct State {
     pub path: RemotePath,
     pub exists: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_dir: bool,
     pub modified: Option<std::time::SystemTime>,
     pub size: Option<u64>,
 }
+fn is_false(value: &bool) -> bool { !value }
 impl State {
     pub(crate) fn read(root: &Path, path: RemotePath) -> io::Result<Self> {
         let native = path.resolve(root)?;
@@ -89,12 +92,14 @@ impl State {
         Ok(Self {
             path,
             exists: state.exists,
+            is_dir: state.is_dir,
             modified: state.modified,
             size: state.len,
         })
     }
     fn local(self, workspace: &workspace::Workspace) -> crate::background::WorkspacePathChange {
         crate::background::WorkspacePathChange {
+            is_dir: self.is_dir,
             observed_at: std::time::Instant::now(),
             path: workspace.view_key(&self.path),
             exists: self.exists,
@@ -455,6 +460,26 @@ impl workspace::Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_hints_round_trip_without_changing_file_or_legacy_payloads() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("folder");
+        let file = root.path().join("file.txt");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(&file, "text").unwrap();
+        for (path, is_dir) in [(directory, true), (file, false)] {
+            let state = State::read(root.path(), git::from_native(&path, root.path()).unwrap()).unwrap();
+            assert_eq!(state.is_dir, is_dir);
+            let mut json = serde_json::to_value(&state).unwrap();
+            assert_eq!(json.get("is_dir").is_some(), is_dir);
+            let decoded: State = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(decoded.is_dir, is_dir);
+            json.as_object_mut().unwrap().remove("is_dir");
+            let legacy: State = serde_json::from_value(json).unwrap();
+            assert!(!legacy.is_dir, "unknown file kinds must conservatively refresh existing folders");
+        }
+    }
     use notify::{
         Event, EventKind,
         event::{DataChange, ModifyKind},

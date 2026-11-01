@@ -351,7 +351,7 @@ fn external_save_resolution_cannot_recreate_a_file_recovered_to_untitled_after_d
     finish_saves(&mut app);
     assert!(app.save_conflict.is_some());
     fs::remove_file(&path).unwrap();
-    send(&mut app, BackgroundResult::FileDiskState(WorkspacePathChange {
+    send(&mut app, BackgroundResult::FileDiskState(WorkspacePathChange { is_dir: false,
         path: path.clone(), observed_at: Instant::now(), exists: false, modified: None, len: None,
     }));
     assert!(app.editor().unwrap().file_path.is_none());
@@ -591,7 +591,7 @@ fn external_save_watcher_preserves_unsaved_edits_and_warns_once_for_backward_tim
         app.duplicate_tab(0);
         app.create_split_group(1);
         fs::write(&path, "external\n").unwrap();
-        let change = WorkspacePathChange {
+        let change = WorkspacePathChange { is_dir: false,
             path: path.clone(),
             observed_at: Instant::now(),
             exists: true,
@@ -721,7 +721,7 @@ fn external_save_clean_editor_still_reloads_external_changes() {
     let metadata = fs::metadata(&path).unwrap();
     send(
         &mut app,
-        BackgroundResult::FileDiskState(WorkspacePathChange {
+        BackgroundResult::FileDiskState(WorkspacePathChange { is_dir: false,
             path: path.clone(),
             observed_at: Instant::now(),
             exists: true,

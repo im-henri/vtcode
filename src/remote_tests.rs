@@ -1267,14 +1267,6 @@ fn remote_explorer_batches_expanded_folders_and_preserves_native_sort_filter_and
             .iter()
             .all(|entry| entry.git_status != crate::explorer::GitStatus::Ignored)
     );
-    let Reply::Tasks(tasks) = workspace.client.call(Command::Tasks).unwrap() else {
-        panic!()
-    };
-    assert!(
-        tasks
-            .iter()
-            .any(|task| task.command == "cargo test" && task.source == "cargo")
-    );
     workspace.client.call(Command::Shutdown).unwrap();
 }
 

@@ -185,20 +185,11 @@ pub(crate) fn handle_mouse_dialogs(
                     }
                 }
             }
-            // Hover over dropdown items
-            let labels = App::menu_labels();
-            let items = app.menu_items(app.menu_selected);
-            let menu_x = 3u16 + labels.iter().take(app.menu_selected).map(|l| UnicodeWidthStr::width(*l) as u16 + 2).sum::<u16>();
-            let menu_y = if let Some(bar) = app.menu_bar_area { bar.y + 1 } else { 1 };
-            let max_w = items.iter().map(|(l, _)| UnicodeWidthStr::width(l.as_str())).max().unwrap_or(20) as u16 + 4;
-            if row > menu_y && row < menu_y + 1 + len_as_u16(items.len())
-                && col >= menu_x && col < menu_x + max_w
-            {
-                let idx = (row - menu_y - 1) as usize;
-                if let Some((label, _)) = items.get(idx) {
-                    if label != "─" {
-                        app.menu_item_selected = idx;
-                    }
+            // Rendering owns the clamped popup and its visible row offset.
+            if let Some(index) = app.menu_item_at(col, row) {
+                let items = app.menu_items(app.menu_selected);
+                if items[index].0 != "─" {
+                    app.menu_item_selected = index;
                 }
             }
             return true;

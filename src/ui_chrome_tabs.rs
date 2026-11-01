@@ -8,7 +8,6 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
-use crate::ui_dialogs::tab_icon;
 use crate::ui_widgets::{DropdownItem, DropdownMenu, themed_dropdown_colors};
 
 #[path = "tab_path_labels.rs"]
@@ -22,6 +21,14 @@ pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, sc
 
 /// Width of each tab-bar scroll indicator ("◂ " / " ▸").
 const TAB_SCROLL_INDICATOR_WIDTH: usize = 2;
+
+/// Tabs omit the generic file placeholder and its padding; other views keep it.
+pub(crate) fn tab_icon(tab: &crate::app::Tab) -> &'static str {
+    match crate::ui_dialogs::tab_icon(tab) {
+        "·  " => "",
+        icon => icon,
+    }
+}
 
 fn active_editor_is_markdown(app: &App) -> bool {
     app.editor().is_some_and(|editor| editor.is_markdown())
@@ -766,7 +773,7 @@ fn draw_tab_bar_labels(
             spans.push(Span::styled("● ", Style::default().fg(mod_color).bg(bg)));
         }
         let file_icon_color = if is_file_tab { Some(crate::file_icons::for_editor(&tab.editor).1) } else { file_icon_color };
-        if is_file_tab && has_gradient {
+        if is_file_tab && has_gradient && !icon.is_empty() {
             let offset = used_width + prefix.width() + modified_width;
             file_icon_areas.push(Rect::new(area.x.saturating_add(crate::helpers::len_as_u16(offset)),
                 area.y, crate::helpers::len_as_u16(icon.width()), 1).intersection(area));

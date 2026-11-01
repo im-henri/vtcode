@@ -289,29 +289,157 @@ fn drag_outside_terminal_stays_captured_and_clamps_to_its_grid() {
 }
 
 #[test]
-fn right_click_offers_terminal_copy_and_paste_and_failed_copy_keeps_text() {
+fn failed_terminal_copy_keeps_selection_and_remembers_text_in_history() {
     let mut app = fixture();
     let grid = &mut app.terminals[0].terminal_pty.as_mut().unwrap().grid;
     grid.begin_selection(0, 0);
     grid.extend_selection(0, 4);
-    app.handle_terminal_selection_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 3, 4));
-    assert!(app.context_menu_active);
-    assert_eq!(
-        app.context_menu_items
-            .iter()
-            .map(|item| item.id)
-            .collect::<Vec<_>>(),
-        vec!["copy", "paste"]
-    );
     assert!(!app.is_menu_cmd_disabled("copy"));
     assert!(!app.is_menu_cmd_disabled("paste"));
     assert!(app.is_menu_cmd_disabled("cut"));
-    app.copy_terminal_selection_with(0, |_| false);
+    assert!(!app.copy_terminal_selection_with(0, |_| false));
     assert_eq!(
         app.clipboard_history.back().map(String::as_str),
         Some("hello")
     );
     assert!(app.focused_terminal_has_selection());
+}
+
+#[test]
+fn right_click_copies_clears_selection_then_pastes_once_in_dock_and_editor() {
+    for detached in [false, true] {
+        for bracketed in [false, true] {
+            let _clipboard = crate::clipboard::test_terminal_clipboard();
+            crate::clipboard::set_text("previous clipboard").unwrap();
+            let mut app = fixture();
+            if detached {
+                assert!(app.detach_terminal_to_group(0, app.active_group));
+                app.terminal_surfaces[0].group = Some(app.active_group);
+            }
+            let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
+            let input = pty.test_capture_input();
+            pty.grid.bracketed_paste = bracketed;
+            pty.grid.begin_selection(0, 0);
+            pty.grid.extend_selection(0, 4);
+            pty.grid.finish_selection();
+
+            for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+                crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
+            }
+            assert_eq!(crate::clipboard::get_text().unwrap(), "hello");
+            assert!(!app.focused_terminal_has_selection());
+            assert!(!app.context_menu_active);
+            assert!(input.lock().unwrap().is_empty(), "copy must not paste on button release");
+            assert_eq!(app.clipboard_history.back().map(String::as_str), Some("hello"));
+
+            for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+                crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
+            }
+            let expected: &[u8] = if bracketed { b"\x1b[200~hello\x1b[201~" } else { b"hello" };
+            assert_eq!(input.lock().unwrap().as_slice(), expected);
+            assert_eq!(app.focused_terminal_index(), Some(0));
+            assert_eq!(app.terminal_panel_focused, !detached);
+            assert!(!app.context_menu_active);
+            assert!(app.tabs.iter().all(|tab| !tab.editor.modified));
+        }
+    }
+}
+
+#[test]
+fn terminal_mouse_drags_trim_padding_and_whitespace_only_drags_leave_right_click_as_paste() {
+    for detached in [false, true] {
+        for whitespace_only in [false, true] {
+            let _clipboard = crate::clipboard::test_terminal_clipboard();
+            crate::clipboard::set_text("previous clipboard").unwrap();
+            let mut app = fixture();
+            if detached {
+                assert!(app.detach_terminal_to_group(0, app.active_group));
+                app.terminal_surfaces[0].group = Some(app.active_group);
+            }
+            let input = app.terminals[0].terminal_pty.as_mut().unwrap().test_capture_input();
+            for (kind, column) in [
+                (MouseEventKind::Down(MouseButton::Left), if whitespace_only { 12 } else { 2 }),
+                (MouseEventKind::Drag(MouseButton::Left), 21),
+                (MouseEventKind::Up(MouseButton::Left), 21),
+            ] {
+                crate::mouse::handle_mouse(&mut app, mouse(kind, column, 4));
+            }
+            assert_eq!(app.focused_terminal_has_selection(), !whitespace_only);
+            let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
+            assert_eq!(grid.selection_columns(0), if whitespace_only { 0..0 } else { 0..5 });
+            if whitespace_only {
+                assert!(!app.copy_terminal_selection_with(0, |_| panic!("blank text must not reach the clipboard")));
+            }
+            for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+                crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
+            }
+            if whitespace_only {
+                assert_eq!(input.lock().unwrap().as_slice(), b"previous clipboard");
+                assert_eq!(crate::clipboard::get_text().unwrap(), "previous clipboard");
+                assert!(app.clipboard_history.is_empty());
+            } else {
+                assert!(input.lock().unwrap().is_empty());
+                assert_eq!(crate::clipboard::get_text().unwrap(), "hello");
+            }
+            assert!(!app.focused_terminal_has_selection());
+        }
+    }
+}
+
+#[test]
+fn right_click_without_selection_pastes_into_clicked_terminal_not_the_selected_one() {
+    for detached in [false, true] {
+        let _clipboard = crate::clipboard::test_terminal_clipboard();
+        crate::clipboard::set_text("héllo\nworld").unwrap();
+        let mut app = fixture();
+        let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
+        let other_input = pty.test_capture_input();
+        pty.grid.begin_word_selection(0, 0);
+        app.terminals.push(TerminalTab::new("Other terminal".into(), app.explorer.root.clone()));
+        let mut pty = TerminalEmulator::test_with_output(20, 3, "other");
+        let input = pty.test_capture_input();
+        app.terminals[1].terminal_pty = Some(pty);
+        if detached { assert!(app.detach_terminal_to_group(1, app.active_group)); }
+        app.terminal_surfaces.push(TerminalSurface {
+            index: 1, area: Rect::new(25, 4, 20, 3), group: detached.then_some(app.active_group),
+        });
+        app.active_terminal = 0;
+        app.show_terminal_sidebar = true;
+        app.terminal_panel_focused = true;
+
+        for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+            crate::mouse::handle_mouse(&mut app, mouse(kind, 26, 4));
+        }
+        assert_eq!(input.lock().unwrap().as_slice(), "héllo\nworld".as_bytes());
+        assert!(other_input.lock().unwrap().is_empty());
+        assert!(app.terminals[0].terminal_pty.as_ref().unwrap().grid.has_selection());
+        assert_eq!(app.focused_terminal_index(), Some(1));
+        assert_eq!(crate::clipboard::get_text().unwrap(), "héllo\nworld");
+        assert!(app.clipboard_history.is_empty());
+        assert!(!app.context_menu_active);
+    }
+}
+
+#[test]
+fn a_local_selection_copies_before_child_mouse_reporting_and_shift_right_click_pastes() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let mut app = fixture();
+    let mut pty = TerminalEmulator::test_with_output(20, 3, "\x1b[?1003;1006hhello");
+    let input = pty.test_capture_input();
+    pty.grid.begin_word_selection(0, 0);
+    app.terminals[0].terminal_pty = Some(pty);
+    for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+        crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
+    }
+    assert_eq!(crate::clipboard::get_text().unwrap(), "hello");
+    assert!(!app.focused_terminal_has_selection());
+    assert!(input.lock().unwrap().is_empty());
+    assert!(app.terminal_mouse_capture.is_none());
+    for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+        crate::mouse::handle_mouse(&mut app, MouseEvent { modifiers: KeyModifiers::SHIFT, ..mouse(kind, 3, 4) });
+    }
+    assert_eq!(input.lock().unwrap().as_slice(), b"hello");
+    assert!(!app.context_menu_active);
 }
 
 #[test]

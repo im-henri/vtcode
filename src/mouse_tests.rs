@@ -24,7 +24,7 @@ fn terminal_layout_menu_items_are_disabled_without_an_open_terminal() {
                     app.toggle_terminal_sidebar();
                     app.close_terminal_tab();
                 }
-                app.menu_selected = 6;
+                app.menu_selected = App::menu_labels().iter().position(|label| *label == "Terminal").unwrap();
                 app.menu_active = true;
                 app.menu_open = true;
                 let items = app.menu_items(app.menu_selected);
@@ -100,26 +100,28 @@ fn new_terminal_menu_click_takes_priority_over_settings_search() {
             click(&mut app, menu);
             assert!(app.menu_active && app.menu_open);
             terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-            let action = label_at(terminal.backend().buffer(), "New Terminal", 1..10);
-            assert!(app.text_input_area(TextInputId::SettingsSearch).unwrap().contains(action.into()),
+            let label = "New Terminal in Editor Tab";
+            let (column, row) = label_at(terminal.backend().buffer(), label, 1..10);
+            let search = app.text_input_area(TextInputId::SettingsSearch).unwrap();
+            let action = (column.max(search.x), row);
+            assert!(action.0 < column + label.len() as u16 && search.contains(action.into()),
                 "exercise a menu item directly above the Settings search field");
             click(&mut app, action);
             assert_eq!(app.terminals.len(), 1, "opening the first terminal reuses the empty slot");
             assert!(!app.menu_active && !app.menu_open);
-            assert!(app.show_terminal_sidebar && app.terminal_sidebar_revealed);
-            assert!(app.docked_terminal_has_focus());
-            assert_eq!(app.tabs[app.active_tab].kind, TabKind::Settings);
+            assert_eq!(app.focused_terminal_index(), Some(app.active_terminal));
+            assert_eq!(app.tabs[app.active_tab].kind, TabKind::Terminal);
             assert_eq!(app.settings_editor_search_cursor, 1);
             assert_eq!(app.settings_editor_search_selection_anchor, Some(4));
             assert!(app.text_input_drag.is_none());
 
-            // Verify the resulting dock and keyboard routing without launching
+            // Verify the resulting editor terminal and keyboard routing without launching
             // the user's shell or executing any command on the host.
             let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
             let input = pty.test_capture_input();
             app.terminals[app.active_terminal].terminal_pty = Some(pty);
             terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-            assert!(app.terminal_sidebar_area.is_some_and(|area| area.width > 3));
+            assert!(app.terminal_is_in_editor(app.active_terminal));
             crate::input_keyboard::handle_keyboard_event(&mut app,
                 event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
             assert_eq!(&*input.lock().unwrap(), b"x");

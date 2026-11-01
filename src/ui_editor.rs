@@ -938,7 +938,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let cursor_line = editor.cursor_line;
     let cursor_col = editor.cursor_col;
     let selection = editor.selection_range();
-    let file_path = editor.syntax_file_path().map(std::path::Path::to_path_buf);
+    let file_path = Some(editor.highlight_path().to_path_buf());
     let syntax_language = editor.syntax_language_token().map(str::to_string);
     let content_version = editor.content_version;
     let show_cursor = (app.cursor_visible
@@ -1546,7 +1546,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let cursor_col = editor.cursor_col;
     let h_scroll = editor.horizontal_scroll;
     let visible_lines = code_area.height as usize;
-    let file_path = editor.syntax_file_path().map(std::path::Path::to_path_buf);
+    let file_path = Some(editor.highlight_path().to_path_buf());
     let syntax_language = editor.syntax_language_token().map(str::to_string);
     let tab_size = editor.tab_size;
 

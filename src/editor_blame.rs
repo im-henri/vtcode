@@ -49,6 +49,7 @@ pub(crate) struct View {
     pub open_commit: Option<Rect>,
     pub open_file: Option<Rect>,
     pub revision_previous: Option<Rect>,
+    pub revision_commit: Option<Rect>,
     pub working_file: Option<Rect>,
     pub diff_previous: Option<Rect>,
     pub diff_committed: Option<Rect>,
@@ -106,6 +107,7 @@ impl View {
         [
             self.button,
             self.revision_previous,
+            self.revision_commit,
             self.working_file,
             self.diff_previous,
             self.diff_committed,
@@ -119,6 +121,7 @@ impl View {
         for control in [
             &mut self.button,
             &mut self.revision_previous,
+            &mut self.revision_commit,
             &mut self.working_file,
             &mut self.diff_previous,
             &mut self.diff_committed,
@@ -188,9 +191,9 @@ pub(crate) fn inline_layout(app: &App, source: Rect) -> Option<InlineDetails> {
     }
     let (_, message, committed) = detail_text(app, width.saturating_sub(5))?;
     let action_height = if committed {
-        detail_actions(width.saturating_sub(4))
+        detail_actions(app, width.saturating_sub(4))
             .last()
-            .map_or(0, |area| area.y + 1)
+            .map_or(0, |action| action.area.y + 1)
     } else {
         0
     };
@@ -239,6 +242,7 @@ pub(crate) fn header(f: &mut Frame, app: &mut App, mut area: Rect) -> Rect {
     if let Some(editor) = app.editor_mut() {
         editor.blame.button = None;
         editor.blame.revision_previous = None;
+        editor.blame.revision_commit = None;
         editor.blame.working_file = None;
         editor.blame.diff_previous = None;
         editor.blame.diff_committed = None;
@@ -302,9 +306,13 @@ pub(crate) fn header(f: &mut Frame, app: &mut App, mut area: Rect) -> Rect {
             app.editor_mut().unwrap().blame.working_file = Some(working);
         }
         if area.width >= 26 {
-            let has_parent = app.editor().unwrap().blame.previous_revision.is_some();
-            let previous = header_action(f, app, &mut area, " Previous ‹ ", has_parent);
+            let has_previous = app.editor().unwrap().blame.previous_revision.is_some();
+            let previous = header_action(f, app, &mut area, " Previous ‹ ", has_previous);
             app.editor_mut().unwrap().blame.revision_previous = Some(previous);
+        }
+        if area.width >= 27 {
+            let commit = header_action(f, app, &mut area, " Open Commit ", true);
+            app.editor_mut().unwrap().blame.revision_commit = Some(commit);
         }
         if area.width >= 43 {
             let label = format!(" {} · {} ", revision.short_hash(), revision.date);
@@ -537,11 +545,13 @@ fn tooltip(f: &mut Frame, app: &mut App) {
     {
         Some(editor.blame.previous_notice.clone().unwrap_or_else(|| {
             if editor.blame.previous_revision.is_some() {
-                "Open the previous file version with its own line history.".into()
+                "Open the previous commit that changed this file, skipping unrelated commits.".into()
             } else {
-                "This file has no earlier version.".into()
+                "This file has no earlier committed changes.".into()
             }
         }))
+    } else if editor.blame.revision_commit.is_some_and(|area| area.contains(point)) {
+        Some("Open this file revision's commit in Commit details.".into())
     } else if editor
         .blame
         .working_file
@@ -658,7 +668,11 @@ pub(crate) fn wrapped_message(message: &str, width: u16) -> Vec<Line<'static>> {
     rows
 }
 
-const DETAIL_ACTIONS: [&str; 4] = ["Open Commit", "Compare", "Open File", "Copy Hash"];
+struct DetailAction {
+    area: Rect,
+    label: &'static str,
+    enabled: bool,
+}
 
 pub(crate) fn commit_details_message(commit: &git_blame::Commit, width: u16) -> String {
     let author = if commit.email.is_empty() {
@@ -688,19 +702,29 @@ pub(crate) fn commit_details_message(commit: &git_blame::Commit, width: u16) -> 
 }
 
 /// Keep all actions available in a narrow pane by wrapping the action row.
-fn detail_actions(width: u16) -> Vec<Rect> {
+fn detail_actions(app: &App, width: u16) -> Vec<DetailAction> {
     if width == 0 {
         return Vec::new();
     }
+    let current_file = app.editor().and_then(|editor| {
+        let document = git_blame::cached(app, editor)?;
+        let git_blame::Line::Committed(commit) = document.lines.get(editor.blame.selected?)? else { return None; };
+        document.revision.as_ref().map(|revision| revision.matches_commit_file(commit))
+    }).unwrap_or(false);
     let mut areas = Vec::new();
     let (mut x, mut y) = (0, 0);
-    for label in DETAIL_ACTIONS {
+    for (label, enabled) in [
+        ("Open Commit", true),
+        ("Compare", true),
+        (if current_file { "Current File" } else { "Open File" }, !current_file),
+        ("Copy Hash", true),
+    ] {
         let size = (label.width() as u16 + 2).min(width);
         if x > 0 && x + size > width {
             x = 0;
             y += 1;
         }
-        areas.push(Rect::new(x, y, size, 1));
+        areas.push(DetailAction { area: Rect::new(x, y, size, 1), label, enabled });
         x += size + 1;
     }
     areas
@@ -773,21 +797,22 @@ fn details(
         ))
         .render(close, &mut cells);
     let actions = if committed {
-        detail_actions(width.saturating_sub(4))
+        detail_actions(app, width.saturating_sub(4))
     } else {
         Vec::new()
     };
-    let action_height = actions.last().map_or(0, |area| area.y + 1);
+    let action_height = actions.last().map_or(0, |action| action.area.y + 1);
     let separator = u16::from(committed);
-    for (index, relative) in actions.iter().enumerate() {
+    for (index, action) in actions.iter().enumerate() {
+        let relative = action.area;
         let button = Rect::new(
             inner.x + 1 + relative.x,
             inner.y + relative.y,
             relative.width,
             1,
         );
-        let hit = inline_rect(button, visible.x, origin_y, visible);
-        let label = DETAIL_ACTIONS[index];
+        let hit = inline_rect(button, visible.x, origin_y, visible).filter(|_| action.enabled);
+        let label = action.label;
         let text = if button.width as usize >= label.width() + 2 {
             format!(" {label} ")
         } else {
@@ -799,7 +824,7 @@ fn details(
                 background,
                 false,
                 hit.is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into())),
-                true,
+                action.enabled,
             ))
             .render(button, &mut cells);
         let view = &mut app.editor_mut().unwrap().blame;
@@ -999,6 +1024,15 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         {
             if let Some(revision) = editor.blame.previous_revision.clone() {
                 git_blame::open_revision(app, revision, true);
+            }
+        } else if editor.blame.revision_commit.is_some_and(|area| area.contains(point)) {
+            if let Some(revision) = editor.blame.revision.clone() {
+                app.open_commit_details(revision.workdir.clone(), crate::commit_details::CommitData {
+                    hash: revision.hash.clone(),
+                    message: revision.summary.clone(),
+                    date: revision.date.clone(),
+                    ..Default::default()
+                });
             }
         } else if editor
             .blame

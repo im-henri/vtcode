@@ -48,15 +48,18 @@ pub(crate) fn native_watcher(
     }
 }
 
-/// Repeated notifications for one hot file are one change, not an overflow
-/// requiring a workspace rescan. Once overflowed, retain flags, not stat work.
+const MAX_BURST_PATHS: usize = 1024;
+
+/// Retain exact file changes while small. Large output bursts invalidate their
+/// affected directories, without turning a busy build into lost watch coverage.
 #[derive(Default)]
 pub(crate) struct Burst {
     pub(crate) event: crate::background::WorkspaceEventBurst,
-    pub(crate) paths: std::collections::HashSet<PathBuf>,
-    metadata: std::collections::HashSet<PathBuf>,
-    data: std::collections::HashSet<PathBuf>,
-    git_paths: std::collections::HashSet<PathBuf>,
+    pub(crate) paths: rustc_hash::FxHashSet<PathBuf>,
+    metadata: rustc_hash::FxHashSet<PathBuf>,
+    data: rustc_hash::FxHashSet<PathBuf>,
+    git_paths: rustc_hash::FxHashSet<PathBuf>,
+    subtrees: rustc_hash::FxHashSet<PathBuf>,
 }
 impl Burst {
     pub(crate) fn push_with_dependencies(&mut self, root: &Path, event: notify::Result<notify::Event>, dependencies: &[PathBuf]) {
@@ -89,7 +92,7 @@ impl Burst {
         });
         // Consuming a Git-only event is not a native event with no paths;
         // the latter signals lost coverage and requires a rescan.
-        if had_paths && self.git_paths.len() <= 1024
+        if had_paths && !self.event.rescan && self.git_paths.len() <= MAX_BURST_PATHS
             && event.as_ref().is_ok_and(|event| event.paths.is_empty() && !event.need_rescan()) { return; }
         self.push(root, event);
     }
@@ -105,33 +108,89 @@ impl Burst {
             if metadata && !data.contains(path) { meta.insert(path.to_owned()); }
             else if !metadata { data.insert(path.to_owned()); meta.remove(path); }
         });
-        for path in &self.event.paths[index..] {
-            if metadata && !self.data.contains(path) { self.metadata.insert(path.clone()); }
-            else if !metadata { self.data.insert(path.clone()); self.metadata.remove(path); }
-        }
-        self.event.rescan |= self.git_paths.len() > 1024;
+        self.event.rescan |= self.git_paths.len() > MAX_BURST_PATHS;
         if self.event.rescan {
-            self.event.paths.clear();
-            self.paths.clear();
-            self.metadata.clear();
-            self.data.clear();
-            self.git_paths.clear();
+            self.clear_paths();
             return;
         }
         while index < self.event.paths.len() {
             let path = &self.event.paths[index];
+            if !Self::exact_invalidation(path)
+                && path.ancestors().any(|ancestor| self.subtrees.contains(ancestor))
+            {
+                self.event.paths.swap_remove(index);
+                continue;
+            }
+            if metadata && !self.data.contains(path) { self.metadata.insert(path.clone()); }
+            else if !metadata { self.data.insert(path.clone()); self.metadata.remove(path); }
             if self.paths.contains(path) {
                 self.event.paths.swap_remove(index);
-            } else if self.paths.len() == 1024 {
-                self.event.rescan = true;
-                self.event.paths.clear();
-                self.paths.clear();
-                break;
             } else {
                 self.paths.insert(path.clone());
                 index += 1;
             }
+            if self.paths.len() > MAX_BURST_PATHS {
+                self.compact_paths(root);
+                break;
+            }
         }
+    }
+
+    fn clear_paths(&mut self) {
+        self.event.paths.clear();
+        self.paths.clear();
+        self.metadata.clear();
+        self.data.clear();
+        self.git_paths.clear();
+        self.subtrees.clear();
+    }
+
+    fn exact_invalidation(path: &Path) -> bool {
+        path.file_name().is_some_and(|name| matches!(name.to_str(),
+            Some(".git" | ".gitignore" | ".gitattributes" | ".gitmodules")))
+    }
+
+    fn compact_paths(&mut self, root: &Path) {
+        // First combine siblings. If changes span thousands of output folders,
+        // combine those by workspace subtree. Isolated source edits stay exact.
+        for top_level in [false, true] {
+            let mut groups = rustc_hash::FxHashMap::<PathBuf, usize>::default();
+            for path in &self.event.paths {
+                if Self::exact_invalidation(path) { continue; }
+                let Ok(relative) = path.strip_prefix(root) else { continue; };
+                let parent = if top_level {
+                    relative.components().next().map(|part| root.join(part.as_os_str()))
+                } else { path.parent().filter(|parent| *parent != root).map(Path::to_path_buf) };
+                if let Some(parent) = parent.filter(|parent| parent.starts_with(root) && parent != root) {
+                    *groups.entry(parent).or_default() += 1;
+                }
+            }
+            let combined: Vec<_> = groups.into_iter().filter_map(|(path, count)| (count > 1).then_some(path)).collect();
+            self.subtrees.extend(combined.iter().cloned());
+            self.event.paths.retain(|path| Self::exact_invalidation(path)
+                || !path.ancestors().any(|ancestor| self.subtrees.contains(ancestor)));
+            self.event.paths.extend(self.subtrees.iter().filter(|path| {
+                !path.ancestors().skip(1).any(|ancestor| self.subtrees.contains(ancestor))
+            }).cloned());
+            self.event.paths.sort_unstable();
+            self.event.paths.dedup();
+            if self.event.paths.len() <= MAX_BURST_PATHS { break; }
+        }
+        if self.event.paths.len() > MAX_BURST_PATHS {
+            // Changes spread across the entire root, or genuine lost events,
+            // still require conservative workspace-wide recovery.
+            self.event.rescan = true;
+            self.clear_paths();
+            return;
+        }
+        self.event.structure_changed = true;
+        self.paths = self.event.paths.iter().cloned().collect();
+        self.subtrees.retain(|path| self.paths.contains(path));
+        // Isolated paths in a large native event may not have reached the
+        // deduplication loop yet. Forward them conservatively as data changes.
+        self.metadata.retain(|path| self.git_paths.contains(path));
+        self.data.retain(|path| self.git_paths.contains(path));
+        self.data.extend(self.paths.iter().filter(|path| !self.subtrees.contains(*path)).cloned());
     }
 }
 

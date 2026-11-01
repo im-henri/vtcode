@@ -93,7 +93,7 @@ fn new_terminal_in_editor_tab_uses_focused_split_and_preserves_dock_session() {
     let other = app.groups[0].tabs.len();
     app.open_settings_tab();
     app.execute_palette_command("new_terminal");
-    app.terminals[0].pending_command = Some("existing command".into());
+    app.terminals[0].name = "Existing session".into();
     assert!(app.docked_terminal_has_focus());
 
     app.execute_palette_command("new_terminal_in_editor_tab");
@@ -101,7 +101,7 @@ fn new_terminal_in_editor_tab_uses_focused_split_and_preserves_dock_session() {
     assert_eq!(app.active_group, group);
     assert_eq!(app.groups[0].tabs.len(), other);
     assert_eq!(app.terminals.len(), 2);
-    assert_eq!(app.terminals[0].pending_command.as_deref(), Some("existing command"));
+    assert_eq!(app.terminals[0].name, "Existing session");
     assert_eq!(app.tabs[app.active_tab].kind, TabKind::Terminal);
     assert_eq!(app.tabs[app.active_tab].terminal_idx, Some(1));
     assert_eq!(app.focused_terminal_index(), Some(1));
@@ -110,7 +110,7 @@ fn new_terminal_in_editor_tab_uses_focused_split_and_preserves_dock_session() {
     app.close_terminal_tab();
     assert_eq!(app.terminals.len(), 1);
     assert!(app.tabs.iter().all(|tab| tab.kind != TabKind::Terminal));
-    assert_eq!(app.terminals[0].pending_command.as_deref(), Some("existing command"));
+    assert_eq!(app.terminals[0].name, "Existing session");
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn disabled_detach_menu_action_does_not_select_or_send_mouse_to_editor_terminal(
         click(&mut app, label_at(terminal.backend().buffer(), "Terminal", 0..1));
         terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
         assert!(app.is_menu_cmd_disabled("detach_terminal_to_tab"));
-        click(&mut app, label_at(terminal.backend().buffer(), "Detach to Editor Tab", 1..12));
+        click(&mut app, label_at(terminal.backend().buffer(), "Move to Editor Tab", 1..12));
         assert!(app.menu_active && app.menu_open);
         assert!(app.terminal_mouse_capture.is_none());
         assert!(app.terminal_selection_drag.is_none());

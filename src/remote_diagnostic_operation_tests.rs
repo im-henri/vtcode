@@ -164,6 +164,7 @@ fn filesystem_notifications_store_bounded_metadata_without_file_contents_or_path
     trace.workspace_changes(&remote::watch::Batch {
         root_uri: "file:///project\nforged-event".into(),
         states: vec![remote::watch::State {
+            is_dir: false,
             path: path("PRIVATE-file-name"), exists: true, modified: None, size: Some(123),
         }],
         structural: true, git: true, rescan: false, active: Some(true),

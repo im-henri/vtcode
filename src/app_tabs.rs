@@ -451,9 +451,7 @@ impl App {
             }
             return;
         }
-        let Some(file_path) = editor.syntax_file_path() else {
-            return;
-        };
+        let file_path = editor.highlight_path();
         let scroll = editor.scroll_offset;
         let viewport_height = editor.viewport_height.max(50);
         let language = editor.syntax_language_token();
@@ -463,30 +461,37 @@ impl App {
             .map(|start| (start, editor.syntax_dirty_through.unwrap_or(start)));
         let theme_key = self.syntax_theme.as_str();
         let diff_active = self.should_render_diff_for_active_editor();
+        let inline_diff = diff_active && self.diff_mode == crate::app::DiffMode::Inline;
         let (start, end, source_generation) = if diff_active {
-            let start = if self.diff_mode == crate::app::DiffMode::Inline {
+            let start = if inline_diff {
                 // Deleted rows can span many viewports without moving the
                 // target file's scroll offset. Follow the rendered inline row.
-                let inline_row = if std::sync::Arc::ptr_eq(
+                if !self.diff_inline_scroll.aligned && std::sync::Arc::ptr_eq(
                     &self.diff_inline_scroll.cache,
                     &self.diff_render_cache,
                 ) && self.diff_render_cache.target_line_for_inline_row(self.diff_inline_scroll.row) == scroll {
                     self.diff_inline_scroll.row
                 } else {
                     self.diff_render_cache.inline_row_for_target_line(scroll)
-                };
-                self.diff_render_cache.inline_rows.get(inline_row)
-                    .map_or(0, |row| row.aligned_row)
+                }
             } else {
                 self.diff_render_cache.aligned_row_for_target_line(scroll)
             };
-            let end = (start + viewport_height + 25).min(self.diff_render_cache.rows.len());
+            let row_count = if inline_diff {
+                self.diff_render_cache.inline_rows.len()
+            } else {
+                self.diff_render_cache.rows.len()
+            };
+            let end = (start + viewport_height + 25).min(row_count);
+            // Inline and side-by-side ranges use different display coordinates.
             (
                 start,
                 end,
                 self.diff_refresh_generation
                     .wrapping_add(self.git_compare_generation)
-                    .wrapping_add(1),
+                    .wrapping_add(1)
+                    .wrapping_mul(2)
+                    .wrapping_add(u64::from(inline_diff)),
             )
         } else {
             // Keep a small margin in both directions so reverse scrolling can
@@ -510,6 +515,7 @@ impl App {
         }
         // Most event-loop visits reuse the same viewport. Only snapshot the
         // rope and allocate owned request keys after the borrowed check fails.
+        let activity_path = editor.syntax_file_path().map(std::path::Path::to_path_buf);
         let rope = (!diff_active).then(|| editor.rope.clone());
         let diff_cache = diff_active.then(|| std::sync::Arc::clone(&self.diff_render_cache));
         let file_path = file_path.to_path_buf();
@@ -533,7 +539,7 @@ impl App {
             let Some(diff_cache) = diff_cache else {
                 return;
             };
-            let activity = self.background.activity.start("Highlighting", Some(&file_path));
+            let activity = self.background.activity.start("Highlighting", activity_path.as_deref());
             let token = self.background.submit_interactive(move |cancel| {
                 let _activity = activity.cancellable(cancel.clone()).running();
                 use crate::highlight::Highlighter;
@@ -553,10 +559,18 @@ impl App {
                     let spans = highlighters[side].highlight_line(&line);
                     entries.push((idx, hash, spans));
                 };
-                for row in &diff_cache.rows[start..end] {
+                for display_row in start..end {
                     if cancel.is_cancelled() {
                         return;
                     }
+                    // A grouped inline replacement jumps back to its first
+                    // aligned row between the removed and added blocks.
+                    let aligned_row = if inline_diff {
+                        diff_cache.inline_rows[display_row].aligned_row
+                    } else {
+                        display_row
+                    };
+                    let row = &diff_cache.rows[aligned_row];
                     if let Some(idx) = row.left_line {
                         highlight(
                             0,
@@ -626,7 +640,7 @@ impl App {
             let provisional_syntax_set = std::sync::Arc::clone(&syntax_set);
             let provisional_theme_set = std::sync::Arc::clone(&theme_set);
             let provisional_sender = sender.clone();
-            let activity = self.background.activity.start("Highlighting preview", Some(&file_path));
+            let activity = self.background.activity.start("Highlighting preview", activity_path.as_deref());
             let token = self.background.submit_interactive(move |cancel| {
                 let _activity = activity.cancellable(cancel.clone()).running();
                 let batch = provisional_job.run(
@@ -642,7 +656,7 @@ impl App {
             });
             self.provisional_highlight_cancel_token = Some(token);
         }
-        let activity = self.background.activity.start("Highlighting", Some(&file_path));
+        let activity = self.background.activity.start("Highlighting", activity_path.as_deref());
         let token = self.background.submit_interactive(move |cancel| {
             let _activity = activity.cancellable(cancel.clone()).running();
             let batch = job.run(&rope, &syntax_set, &theme_set, || cancel.is_cancelled());
@@ -1545,7 +1559,11 @@ impl App {
         };
         let mod_len: usize = if tab.has_unsaved_changes() { 2 } else { 0 };
         let pin_len: usize = if tab.pinned { 4 } else { 0 };
-        let icon_len: usize = if matches!(tab.kind, TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails) { 2 } else { 0 };
+        let icon_len = match tab.kind {
+            TabKind::File | TabKind::GitRevision if crate::ui_chrome_tabs::tab_icon(tab).is_empty() => 0,
+            TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails => 2,
+            _ => 0,
+        };
         let deleted_prefix_len: usize = if tab.kind == TabKind::File && tab.editor.disk_unavailable
         {
             1
@@ -1733,6 +1751,10 @@ mod preview_tests;
 #[cfg(test)]
 #[path = "app_tabs_performance_tests.rs"]
 mod performance_tests;
+
+#[cfg(test)]
+#[path = "untitled_highlight_tests.rs"]
+mod untitled_highlight_tests;
 
 #[cfg(test)]
 #[path = "app_tab_lifecycle_tests.rs"]
@@ -2223,6 +2245,8 @@ mod tests {
         let w = App::tab_ui_width(&tab);
         // 1 + 0(pin) + 0(mod) + 2(icon) + 0(deleted) + 7(name) + 3(close) = 13
         assert_eq!(w, 13);
+        let unknown = make_tab("notes.unknown", false, false);
+        assert_eq!(App::tab_ui_width(&unknown), 17);
     }
 
     #[test]

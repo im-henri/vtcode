@@ -695,10 +695,15 @@ fn diff_scope_clipping_and_horizontal_pan_keep_both_sides_around_visible_code() 
                         actual, expected,
                         "clipped strokes changed shape: {view}, compact={compact}, pan={pan}, requested={first}, rendered={rendered_first}"
                     );
-                    assert!(
-                        clipped_columns.last() > clipped_columns.first(),
-                        "clipped scope needs two sides: {view}, first={first}"
-                    );
+                    // A grouped removed block can fill the viewport before
+                    // any target scope is visible. The full contour then
+                    // correctly projects to no strokes in this window.
+                    if !expected.is_empty() {
+                        assert!(
+                            clipped_columns.last() > clipped_columns.first(),
+                            "clipped scope needs two sides: {view}, first={first}"
+                        );
+                    }
                     let colors: Vec<_> = route
                         .iter()
                         .filter(|(_, _, glyph, _)| glyph == "│")

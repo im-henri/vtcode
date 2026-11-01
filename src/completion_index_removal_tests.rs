@@ -238,8 +238,9 @@ fn erase_discards_queued_inflight_restore_and_walk_work_without_a_tombstone() {
     );
     worker.advance_scan(&settings);
     assert!(!worker.scans.is_empty());
-    worker.validation.push_back(path.clone());
+    worker.validation.insert(path.clone());
     worker.begin_walk();
+    worker.pending_walks.insert(root.clone());
     assert!(index.remove_file(&path));
     index.release(path.clone());
     index.changed(path.clone());
@@ -252,6 +253,7 @@ fn erase_discards_queued_inflight_restore_and_walk_work_without_a_tombstone() {
     assert!(worker.scans.is_empty());
     assert!(worker.validation.is_empty());
     assert!(worker.walk.is_none());
+    assert!(worker.pending_walks.is_empty());
     assert!(worker.shared.control.lock().unwrap().pending.is_empty());
     assert!(index.query("inflight", "").is_empty());
     worker.index_snapshot(

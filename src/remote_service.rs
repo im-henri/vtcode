@@ -358,9 +358,6 @@ impl Service {
                 &crate::background::CancellationToken::new(),
             )
             .map(Reply::Explorer),
-            Command::Tasks => Ok(Reply::Tasks(crate::app_terminal::discover_tasks(
-                &self.root,
-            ))),
             Command::Format {
                 path,
                 config,

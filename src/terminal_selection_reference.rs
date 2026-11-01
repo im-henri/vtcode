@@ -1,8 +1,8 @@
-// Frozen comparison copier from 5da4a00; test-only.
+// Comparison copier from 5da4a00, with the whitespace-trimmed selection contract; test-only.
 use super::*;
 impl TermGrid {
     pub(crate) fn reference_selected_text(&self) -> Option<String> {
-        let selection = self.selection.filter(|selection| selection.active)?;
+        let selection = self.selection.filter(|selection| selection.active && selection.has_text)?;
         let (start, end) = selection.bounds();
         let mut result = String::new();
         for index in start.row..=end.row {
@@ -29,7 +29,7 @@ impl TermGrid {
             if wrapped {
                 result.push_str(&text);
             } else {
-                result.push_str(text.trim_end_matches(' '));
+                result.push_str(text.trim_end_matches(char::is_whitespace));
                 if index < end.row {
                     result.push('\n');
                 }

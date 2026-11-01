@@ -1,5 +1,5 @@
 use crate::app::{
-    ActivePane, App, Tab, TabKind, TaskDefinition, TerminalDock, TerminalTab,
+    ActivePane, App, Tab, TabKind, TerminalDock, TerminalTab,
 };
 use crate::editor::Editor;
 use std::time::Instant;
@@ -149,7 +149,7 @@ impl App {
     pub(crate) fn terminal_is_open(&self, index: usize) -> bool {
         self.terminals.get(index).is_some_and(|terminal| {
             !terminal.is_placeholder || terminal.terminal_pty.is_some()
-                || terminal.terminal_launch_error.is_some() || terminal.pending_command.is_some()
+                || terminal.terminal_launch_error.is_some()
                 || self.terminal_is_in_editor(index) || self.show_terminal_sidebar
         })
     }
@@ -495,12 +495,6 @@ impl App {
                 tab.terminal_launch_error = None;
                 tab.completion = Default::default();
                 tab.terminal_pty = Some(emu);
-                if let Some(command) = tab.pending_command.take() {
-                    if let Some(pty) = &tab.terminal_pty {
-                        pty.write(command.as_bytes());
-                        pty.write(b"\r");
-                    }
-                }
             }
             Err(e) => {
                 self.terminals[index].terminal_launch_error = Some(e.to_string());
@@ -521,171 +515,6 @@ impl App {
         }
         self.ensure_terminal_pty_at(index, width, height);
     }
-
-    /// Discover project task definitions without running their commands.
-    pub(crate) fn discover_tasks(&mut self) { self.task_list = discover_tasks(&self.explorer.root); }
-
-    /// Execute a task by running its command in a new terminal tab
-    pub(crate) fn run_task(&mut self, command: &str, label: &str) {
-        self.last_task = Some(command.to_string());
-        // Create a new terminal tab for the task
-        let cwd = self.explorer.root.clone();
-        let name = format!("Task: {label}");
-        let mut terminal = TerminalTab::new(name, cwd);
-        terminal.pending_command = Some(command.to_string());
-        self.insert_terminal(terminal);
-        // Reveal after insertion so an unopened slot can still be reused.
-        self.show_terminal_sidebar = true;
-        self.terminal_sidebar_revealed = true;
-        self.terminal_panel_focused = true;
-        self.active_pane = ActivePane::Editor;
-    }
-
-    /// Open the task picker UI
-    pub(crate) fn open_task_picker(&mut self) {
-        if let Some(remote) = self.remote_workspace.clone() {
-            self.task_list.clear();
-            self.task_picker_active = true;
-            self.task_picker_query.clear(); self.task_picker_cursor = 0;
-            self.task_picker_selected = 0; self.task_picker_selection_anchor = None;
-            self.status_message = "Loading remote tasks...".into();
-            let sender = self.background.sender.clone(); let generation = self.workspace_generation;
-            self.background.spawn("remote-tasks",move || {
-                let result = remote.client.call(crate::remote::Command::Tasks).and_then(|reply| match reply {
-                    crate::remote::Reply::Tasks(tasks) => Ok(tasks), _ => Err(std::io::Error::other("Invalid task list reply")),
-                }).map_err(|error| error.to_string());
-                let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult { generation,
-                    result: Box::new(crate::background::BackgroundResult::RemoteTasks(result)) });
-            });
-            return;
-        }
-        self.discover_tasks();
-        if self.task_list.is_empty() {
-            self.status_message =
-                "No tasks found. Add .vscode/tasks.json or use a recognized project format.".into();
-            return;
-        }
-        self.task_picker_active = true;
-        self.task_picker_selected = 0;
-        self.task_picker_query.clear();
-        self.task_picker_cursor = 0;
-        self.task_picker_selection_anchor = None;
-    }
-
-}
-
-pub(crate) fn discover_tasks(root: &std::path::Path) -> Vec<TaskDefinition> {
-    let mut definitions = Vec::new();
-        // Parse .vscode/tasks.json
-        let tasks_json_path = root.join(".vscode").join("tasks.json");
-        if let Ok(content) = std::fs::read_to_string(&tasks_json_path) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(tasks) = json.get("tasks").and_then(|t| t.as_array()) {
-                    for task in tasks {
-                        let label = task
-                            .get("label")
-                            .and_then(|l| l.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let command =
-                            if let Some(cmd) = task.get("command").and_then(|c| c.as_str()) {
-                                let args: Vec<String> = task
-                                    .get("args")
-                                    .and_then(|a| a.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                if args.is_empty() {
-                                    cmd.to_string()
-                                } else {
-                                    format!("{} {}", cmd, args.join(" "))
-                                }
-                            } else {
-                                continue;
-                            };
-                        if !label.is_empty() {
-                            definitions.push(TaskDefinition {
-                                label,
-                                command,
-                                source: "vscode".into(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Auto-detect Cargo tasks
-        if root.join("Cargo.toml").exists() {
-            definitions.push(TaskDefinition {
-                label: "cargo build".into(),
-                command: "cargo build".into(),
-                source: "cargo".into(),
-            });
-            definitions.push(TaskDefinition {
-                label: "cargo test".into(),
-                command: "cargo test".into(),
-                source: "cargo".into(),
-            });
-            definitions.push(TaskDefinition {
-                label: "cargo run".into(),
-                command: "cargo run".into(),
-                source: "cargo".into(),
-            });
-            definitions.push(TaskDefinition {
-                label: "cargo clippy".into(),
-                command: "cargo clippy".into(),
-                source: "cargo".into(),
-            });
-            definitions.push(TaskDefinition {
-                label: "cargo check".into(),
-                command: "cargo check".into(),
-                source: "cargo".into(),
-            });
-        }
-
-        // Auto-detect npm/package.json scripts
-        let pkg_path = root.join("package.json");
-        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
-                    for (name, _cmd) in scripts {
-                        definitions.push(TaskDefinition {
-                            label: format!("npm: {name}"),
-                            command: format!("npm run {name}"),
-                            source: "npm".into(),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Auto-detect Makefile
-        if root.join("Makefile").exists() || root.join("makefile").exists() {
-            definitions.push(TaskDefinition {
-                label: "make".into(),
-                command: "make".into(),
-                source: "make".into(),
-            });
-            definitions.push(TaskDefinition {
-                label: "make clean".into(),
-                command: "make clean".into(),
-                source: "make".into(),
-            });
-        }
-
-        // Auto-detect Python
-        if root.join("setup.py").exists() || root.join("pyproject.toml").exists() {
-            definitions.push(TaskDefinition {
-                label: "python: test".into(),
-                command: "python -m pytest".into(),
-                source: "python".into(),
-            });
-        }
-    definitions
 }
 
 #[cfg(test)]
@@ -718,7 +547,7 @@ mod tests {
 
     #[test]
     fn new_terminal_preserves_hidden_sessions_including_before_first_paint() {
-        for state in ["unlaunched", "running", "error", "task"] {
+        for state in ["unlaunched", "running", "error"] {
             let mut app = App::test_new();
             match state {
                 "unlaunched" => {
@@ -728,7 +557,7 @@ mod tests {
                 "running" => app.terminals[0].terminal_pty = Some(
                     TerminalEmulator::test_with_output(40, 10, "original output")),
                 "error" => app.terminals[0].terminal_launch_error = Some("original error".into()),
-                _ => app.terminals[0].pending_command = Some("original command".into()),
+                _ => unreachable!(),
             }
             app.terminals[0].name = "Original".into();
             app.new_terminal_tab();
@@ -738,25 +567,9 @@ mod tests {
             match state {
                 "running" => assert!(app.terminals[0].terminal_pty.is_some()),
                 "error" => assert_eq!(app.terminals[0].terminal_launch_error.as_deref(), Some("original error")),
-                "task" => assert_eq!(app.terminals[0].pending_command.as_deref(), Some("original command")),
                 _ => assert!(app.terminal_is_open(0)),
             }
         }
-    }
-
-    #[test]
-    fn first_task_reuses_empty_slot_and_subsequent_tasks_keep_their_commands() {
-        let mut app = App::test_new();
-        app.run_task("first command", "First");
-        assert_eq!(app.terminals.len(), 1);
-        assert_eq!(app.terminals[0].name, "Task: First");
-        assert_eq!(app.terminals[0].pending_command.as_deref(), Some("first command"));
-        app.run_task("second command", "Second");
-        assert_eq!(app.terminals.len(), 2);
-        assert_eq!(app.terminals[0].pending_command.as_deref(), Some("first command"));
-        assert_eq!(app.terminals[1].pending_command.as_deref(), Some("second command"));
-        assert_eq!(app.terminals[1].dock, TerminalDock::Right);
-        assert!(app.show_terminal_sidebar && app.docked_terminal_has_focus());
     }
 
     #[test]
@@ -807,7 +620,6 @@ mod tests {
         assert_eq!(app.terminals.len(), 1);
         assert!(app.terminals[0].terminal_launch_error.is_none());
         assert!(app.terminals[0].terminal_pty.is_none());
-        assert!(app.terminals[0].pending_command.is_none());
         assert!(!app.show_terminal_sidebar);
         assert!(!app.terminal_sidebar_revealed);
         assert!(!app.terminal_panel_focused);

@@ -352,7 +352,7 @@ fn disk_events_received_during_local_noop_preparation_are_rechecked_after_comple
         f.app.pending_file_saves.insert(f.path.clone(), (f.app.workspace_generation, crate::editor::SaveIntent::new(request.clone())));
         if deleted { std::fs::remove_file(f.root.path().join("file.txt")).unwrap(); }
         else { std::fs::write(f.root.path().join("file.txt"), "external\n").unwrap(); }
-        f.app.background.sender.send(BackgroundResult::FileDiskState(WorkspacePathChange {
+        f.app.background.sender.send(BackgroundResult::FileDiskState(WorkspacePathChange { is_dir: false,
             path: f.path.clone(), observed_at: Instant::now(), exists: !deleted,
             modified: None, len: None,
         })).unwrap();

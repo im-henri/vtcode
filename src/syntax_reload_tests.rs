@@ -135,27 +135,21 @@ fn syntax_reload_builds_on_first_launch_and_recolors_open_files_without_restarti
 }
 
 #[test]
-fn syntax_reload_menu_click_handles_requests_received_during_a_build() {
+fn syntax_reload_palette_click_handles_requests_received_during_a_build() {
     let directory = tempfile::tempdir().unwrap();
     let syntaxes = directory.path().join("syntaxes");
     write_grammar(&syntaxes, "First", "keyword.control.reloadtest");
     let mut app = test_app(directory.path());
     app.request_syntax_assets_async();
     write_grammar(&syntaxes, "Latest", "comment.line.reloadtest");
-    app.menu_active = true;
-    app.menu_open = true;
-    app.menu_selected = 3;
+    app.open_palette();
+    app.palette.query = "Reload Syntaxes".into();
+    app.update_palette_filter();
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal
-        .draw(|frame| crate::ui::draw(frame, &mut app))
-        .unwrap();
-    let row = app
-        .menu_items(3)
-        .iter()
-        .position(|(_, command)| *command == "reload_syntaxes")
-        .unwrap();
-    let column = crate::ui_chrome::menu_dropdown_anchor_x(&app) + 2;
-    let row = app.menu_bar_area.unwrap().y + 2 + row as u16;
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let row = app.quick_picker.rows.first().expect("syntax reload palette result").0;
+    let column = row.x;
+    let row = row.y;
     crate::mouse::handle_mouse(
         &mut app,
         MouseEvent {

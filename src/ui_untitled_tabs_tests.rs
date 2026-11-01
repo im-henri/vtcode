@@ -32,8 +32,11 @@ fn untitled_names_update_rendering_and_mouse_targets_in_plain_and_grouped_tab_ba
             }
             terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
             assert!(contents(terminal.backend().buffer()).contains(expected));
+            assert!(!contents(terminal.backend().buffer()).contains('·'));
             let hits = TabBarHits::new(&app, area);
             assert_eq!(hits.tabs.len(), 2);
+            let modified_width = if app.tabs[0].has_unsaved_changes() { 2 } else { 0 };
+            assert_eq!(usize::from(hits.tabs[0].1.width), 1 + modified_width + expected.width() + 3);
             for &(index, rect, close) in &hits.tabs {
                 assert_eq!(hits.tab_at(rect.x + 3).unwrap().0, index);
                 assert_eq!(rect.width, tab_render_width(&app, index, &app.tabs[index]));

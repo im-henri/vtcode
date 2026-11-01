@@ -439,6 +439,8 @@ pub(crate) struct Editor {
     pub(crate) document: crate::editor_document::DocumentView,
     /// Stable view identity, independent of tab order, file name and split.
     pub(crate) navigation_id: u64,
+    /// Lazily allocated cache identity for a view with no syntax filename.
+    untitled_highlight_path: std::sync::OnceLock<std::path::PathBuf>,
     /// Shared by duplicate views; a new Save As destination starts a new identity.
     pub(crate) save_identity: u64,
     pub rope: Rope,
@@ -625,6 +627,7 @@ impl Editor {
         let identity = Self::allocate_navigation_id();
         Self {
             navigation_id: identity,
+            untitled_highlight_path: Default::default(),
             save_identity: identity,
             document: Default::default(),
             rope: Rope::new(),
@@ -1867,6 +1870,16 @@ impl Editor {
         self.blame.revision.as_ref().map(|revision| revision.syntax_path.as_path())
             .or(self.file_path.as_deref())
             .or_else(|| self.suggested_file_name.as_deref().map(std::path::Path::new))
+    }
+
+    /// Highlight caches also need an identity for untitled buffers. This key
+    /// never becomes a filename or a target for filesystem operations.
+    pub(crate) fn highlight_path(&self) -> &std::path::Path {
+        self.syntax_file_path().unwrap_or_else(|| {
+            self.untitled_highlight_path.get_or_init(|| {
+                std::path::PathBuf::from(format!("untitled://buffer-{}", self.navigation_id))
+            }).as_path()
+        })
     }
 
     pub(crate) fn syntax_language_token(&self) -> Option<&str> {

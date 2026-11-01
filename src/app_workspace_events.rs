@@ -49,8 +49,8 @@ impl App {
                 for path in paths { self.queue_remote_file_change(path); }
             } else { self.queue_file_disk_checks(paths); }
         } else if !changes.is_empty() {
-            self.refresh_explorer_changed_paths(
-                changes.iter().map(|change| change.path.as_path()),
+            self.refresh_explorer_changed_path_states(
+                changes.iter().map(|change| (change.path.as_path(), Some(change.is_dir))),
                 structure_changed || changes.iter().any(|change| !change.exists),
             );
         }

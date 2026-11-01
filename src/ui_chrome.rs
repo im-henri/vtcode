@@ -259,18 +259,16 @@ mod explorer_open_editors_tests;
 const TITLE_BAR_LOGO: &str = "◈  ";
 /// Width of the window close-button region (" ✕ ") in the title bar.
 const TITLE_BAR_CLOSE_BTN_WIDTH: usize = 3;
-/// Minimize, maximize, and close regions are each three cells wide.
-const TITLE_BAR_WINDOW_CONTROLS_WIDTH: usize = TITLE_BAR_CLOSE_BTN_WIDTH * 3;
 const TITLE_BAR_CHAT_LABEL: &str = " ◇ Agent Chat ";
 const TITLE_BAR_CHAT_COMPACT_LABEL: &str = " ◇ ";
 const TITLE_BAR_NAVIGATION_WIDTH: usize = 6;
 pub(crate) const MENU_OVERFLOW_LABEL: &str = " … ";
 
 fn agent_chat_button_label(area_width: u16) -> Option<&'static str> {
-    // Keep the menu overflow and window controls usable even in narrow windows.
+    // Keep the menu overflow and close button usable even in narrow windows.
     let available = (area_width as usize).saturating_sub(
         UnicodeWidthStr::width(TITLE_BAR_LOGO)
-            + TITLE_BAR_WINDOW_CONTROLS_WIDTH
+            + TITLE_BAR_CLOSE_BTN_WIDTH
             + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL)
             + 1,
     );
@@ -285,7 +283,7 @@ fn agent_chat_reserved_width(area_width: u16) -> usize {
 
 fn navigation_reserved_width(area_width: u16) -> usize {
     let minimum = UnicodeWidthStr::width(TITLE_BAR_LOGO)
-        + TITLE_BAR_WINDOW_CONTROLS_WIDTH + UnicodeWidthStr::width(TITLE_BAR_CHAT_LABEL) + 1
+        + TITLE_BAR_CLOSE_BTN_WIDTH + UnicodeWidthStr::width(TITLE_BAR_CHAT_LABEL) + 1
         + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL) + TITLE_BAR_NAVIGATION_WIDTH;
     if area_width as usize >= minimum { TITLE_BAR_NAVIGATION_WIDTH } else { 0 }
 }
@@ -294,7 +292,7 @@ pub(crate) fn agent_chat_button_area(area: Rect) -> Option<Rect> {
     if area.height == 0 { return None; }
     let width = UnicodeWidthStr::width(agent_chat_button_label(area.width)?) as u16;
     Some(Rect::new(
-        area.right() - TITLE_BAR_WINDOW_CONTROLS_WIDTH as u16 - 1 - width,
+        area.right() - TITLE_BAR_CLOSE_BTN_WIDTH as u16 - 1 - width,
         area.y,
         width,
         1,
@@ -303,7 +301,7 @@ pub(crate) fn agent_chat_button_area(area: Rect) -> Option<Rect> {
 
 pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
     let labels = App::menu_labels();
-    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_WINDOW_CONTROLS_WIDTH
+    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
         + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width);
     let all_width = labels
         .iter()
@@ -331,7 +329,7 @@ pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
 }
 
 pub(crate) fn menu_overflow_visible(area_width: u16) -> bool {
-    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_WINDOW_CONTROLS_WIDTH
+    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
         + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width);
     visible_menu_label_count(area_width) < App::menu_labels().len()
         && area_width as usize >= fixed + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL)
@@ -353,7 +351,7 @@ fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
             .map(|label| UnicodeWidthStr::width(*label) + 2).sum::<usize>()
         + usize::from(menu_overflow_visible(area.width)) * UnicodeWidthStr::width(MENU_OVERFLOW_LABEL);
     let remaining = (area.width as usize).saturating_sub(
-        used + TITLE_BAR_WINDOW_CONTROLS_WIDTH + agent_chat_reserved_width(area.width));
+        used + TITLE_BAR_CLOSE_BTN_WIDTH + agent_chat_reserved_width(area.width));
     let center = Rect::new(area.x.saturating_add(used as u16), area.y, remaining as u16, area.height.min(1));
     let nav_width = navigation_reserved_width(area.width);
     let workspace_width = UnicodeWidthStr::width(workspace_name(app)) + 2;
@@ -1409,24 +1407,11 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
     let close_bg = close_style.bg.unwrap_or(bg);
     let close_fg = close_style.fg.unwrap_or(fg);
 
-    let fixed_width = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_WINDOW_CONTROLS_WIDTH;
+    let fixed_width = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH;
     if (area.width as usize) < fixed_width {
         let width = area.width as usize;
         let mut compact = Vec::with_capacity(3);
-        if width >= TITLE_BAR_WINDOW_CONTROLS_WIDTH {
-            compact.push(Span::styled(
-                crate::helpers::spaces(width - TITLE_BAR_WINDOW_CONTROLS_WIDTH),
-                Style::default().bg(bg),
-            ));
-            compact.push(Span::styled(
-                " ─  □ ",
-                Style::default().fg(fg).bg(bg),
-            ));
-            compact.push(Span::styled(
-                " × ",
-                Style::default().fg(close_fg).bg(close_bg),
-            ));
-        } else if width >= TITLE_BAR_CLOSE_BTN_WIDTH {
+        if width >= TITLE_BAR_CLOSE_BTN_WIDTH {
             compact.push(Span::styled(
                 crate::helpers::spaces(width - TITLE_BAR_CLOSE_BTN_WIDTH),
                 Style::default().bg(bg),
@@ -1533,35 +1518,37 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(agent_chat_button_label(area.width).unwrap_or_default(), style));
         spans.push(Span::styled(" ", Style::default().bg(bg)));
     }
-    spans.push(Span::styled(
-        " ─  □ ",
-        Style::default().fg(fg).bg(bg),
-    ));
     spans.push(Span::styled(" × ", Style::default().fg(close_fg).bg(close_bg)));
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &App) {
-    let raw_items = app.menu_items(app.menu_selected);
+pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &mut App) {
+    if app.menu_rendered != Some(app.menu_selected) {
+        app.menu_dropdown_scroll = 0;
+    }
+    app.menu_dropdown_inner = None;
+    app.menu_rendered = Some(app.menu_selected);
+    let raw_items = app.menu_entries(app.menu_selected);
     if raw_items.is_empty() { return; }
 
     let menu_x = menu_dropdown_anchor_x(app);
     let menu_y: u16 = if let Some(bar) = app.menu_bar_area { bar.y + 1 } else { 1 };
 
     let items: Vec<DropdownItem> = raw_items.iter()
-        .map(|(label, cmd)| {
-            let disabled = !cmd.is_empty() && label != "─" && app.is_menu_cmd_disabled(cmd);
-            DropdownItem::new(label).disabled(disabled)
+        .map(|entry| {
+            let disabled = !entry.command.is_empty() && app.is_menu_cmd_disabled(entry.command);
+            DropdownItem::new(&entry.label).shortcut(&entry.shortcut).disabled(disabled)
         })
         .collect();
     let colors = themed_dropdown_colors(&app.colors);
-    DropdownMenu::new(&items, colors)
+    let inner = DropdownMenu::new(&items, colors)
         .anchor(menu_x, menu_y)
         .min_width(16)
         .selected(app.menu_item_selected)
         .mouse(app.mouse_row, app.mouse_col)
-        .render(f);
+        .render_scrolled(f, &mut app.menu_dropdown_scroll);
+    app.menu_dropdown_inner = Some(inner);
 }
 
 pub(crate) fn draw_outline(f: &mut Frame, app: &App, area: Rect) {
@@ -2151,7 +2138,7 @@ mod tests {
     }
 
     #[test]
-    fn narrow_menu_bar_preserves_window_controls() {
+    fn narrow_menu_bar_preserves_only_the_close_button() {
         let app = App::test_new();
         assert_eq!(visible_menu_label_count(120), App::menu_labels().len());
         assert!(visible_menu_label_count(40) < App::menu_labels().len());
@@ -2167,6 +2154,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         assert!(row.ends_with(" × "), "menu row: {row:?}");
+        assert!(!row.contains('─') && !row.contains('□'), "menu row: {row:?}");
         assert!(row.contains('…'), "hidden menus expose an overflow affordance");
         assert!(row.contains('◇'), "compact chat button stays accessible");
 
@@ -2190,6 +2178,7 @@ mod tests {
                 .map(|cell| cell.symbol())
                 .collect();
             assert!(compact_row.contains('×'), "compact menu row: {compact_row:?}");
+            assert!(!compact_row.contains('─') && !compact_row.contains('□'), "compact menu row: {compact_row:?}");
         }
     }
 
@@ -2264,7 +2253,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_bar_renders_command_center_and_window_controls() {
+    fn menu_bar_renders_command_center_and_only_the_close_button() {
         let app = App::test_new();
         let mut terminal = Terminal::new(TestBackend::new(140, 1)).expect("test terminal");
         terminal
@@ -2287,7 +2276,8 @@ mod tests {
         assert!(!row.contains("‹ ›"));
         assert!(row.contains(workspace_name));
         assert!(row.contains("◇ Agent Chat"));
-        assert!(row.ends_with(" ─  □  × "));
+        assert!(row.ends_with(" × "));
+        assert!(!row.contains('─') && !row.contains('□'));
 
         let workspace_chars: Vec<char> = workspace_name.chars().collect();
         let command_x = (0..140u16.saturating_sub(workspace_chars.len() as u16))

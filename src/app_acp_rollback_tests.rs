@@ -1185,7 +1185,7 @@ fn chat_rollback_ignores_transient_and_stale_watcher_deletions() {
     app.open_file(&path);
     let observed_at = Instant::now();
     app.chat.rollback.write_paths = vec![app.chat.rollback.path_key(&path)];
-    let missing = crate::background::WorkspacePathChange {
+    let missing = crate::background::WorkspacePathChange { is_dir: false,
         path: path.clone(),
         observed_at,
         exists: false,
@@ -1215,7 +1215,7 @@ fn chat_rollback_ignores_transient_and_stale_watcher_deletions() {
         !app.editor().unwrap().modified,
         "an old missing-path observation cannot turn a restored buffer into unsaved content"
     );
-    let current = crate::background::WorkspacePathChange {
+    let current = crate::background::WorkspacePathChange { is_dir: false,
         path,
         observed_at: Instant::now(),
         exists: false,
