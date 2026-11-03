@@ -8,6 +8,9 @@ use crate::app::ActivePane;
 /// Save one current snapshot per path and retain all documents on failure.
 /// Both keyboard and mouse exit paths use this result before allowing exit.
 pub(crate) fn save_text_documents_before_exit(app: &mut App) -> Result<(), String> {
+    if !app.pending_custom_recoveries.is_empty() {
+        return Err("Wait for custom editor recovery to finish before Save and Quit, or choose Keep Unsaved".into());
+    }
     if app.paste_in_progress() {
         return Err("Wait for the paste to finish or cancel it before Save and Quit".into());
     }
@@ -64,7 +67,35 @@ pub(crate) fn save_text_documents_before_exit(app: &mut App) -> Result<(), Strin
 /// Handle exit confirmation dialog.
 /// Returns `Some(should_quit)` when consumed, `None` when dialog is not active.
 pub(crate) fn handle_exit_confirm_key(app: &mut App, key: KeyEvent) -> Option<bool> {
-    handle_exit_confirm_key_inner(app, key, false)
+    let choice = match key.code {
+        KeyCode::Enter => Some('y'),
+        KeyCode::Char(choice @ ('y' | 'Y' | 'd' | 'D' | 'k' | 'K')) => Some(choice.to_ascii_lowercase()),
+        _ => None,
+    };
+    if app.exit_confirm_active && choice.is_some() && app.workspace_sets_saving() {
+        app.modal.error = Some("Wait for workspace sets to finish saving before quitting".into());
+        return Some(false);
+    }
+    if app.exit_confirm_active && app.workspaces.exit.is_none() && !app.workspaces.parked.is_empty() {
+        let choice = match key.code {
+            KeyCode::Enter => Some('y'),
+            KeyCode::Char(choice @ ('y' | 'Y' | 'd' | 'D' | 'k' | 'K')) => Some(choice.to_ascii_lowercase()),
+            _ => None,
+        };
+        if let Some(choice) = choice {
+            app.exit_confirm_active = false;
+            app.workspaces.request = Some(crate::app_workspaces::Request::Exit(choice));
+            return Some(false);
+        }
+    }
+    if app.exit_confirm_active && let Some(choice) = choice { app.workspace_exit_choice(choice); }
+    let result = handle_exit_confirm_key_inner(app, key, false);
+    if result == Some(true) && app.workspaces.exit.is_some() {
+        app.exit_confirm_active = false;
+        app.shutdown_anim_active = true;
+        return Some(false);
+    }
+    result
 }
 
 pub(crate) fn confirm_large_backup(app: &mut App) -> bool {
@@ -161,6 +192,7 @@ fn handle_exit_confirm_key_inner(app: &mut App, key: KeyEvent, backup_confirmed:
             app.exit_confirm_active = false;
         }
         KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+            app.reset_workspace_exit();
             app.exit_confirm_active = false;
         }
         _ => {}
@@ -457,43 +489,7 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
         return None;
     }
     // Keybinding capture mode
-    if app.settings_kb_editing {
-        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
-            app.settings_kb_editing = false;
-            app.apply_effective_settings();
-            app.notify("Keybinding edit cancelled");
-        } else {
-            let items = app.settings_items();
-            if let Some((_, _, setting_id)) = items.get(app.settings_selected) {
-                let scoped_before = app.selected_scope_settings();
-                app.apply_setting_value(setting_id, &scoped_before);
-                if let Some(kb_idx) = setting_id
-                    .strip_prefix("kb_")
-                    .and_then(|v| v.parse::<usize>().ok())
-                {
-                    if let Some(kb) = app.keybindings.get_mut(kb_idx) {
-                        if key.modifiers.is_empty()
-                            && matches!(key.code, KeyCode::Delete | KeyCode::Backspace)
-                        {
-                            kb.modifiers = KeyModifiers::empty();
-                            kb.code = KeyCode::Null;
-                            let msg = format!("Unassigned {}", kb.label);
-                            app.notify(msg);
-                        } else {
-                            kb.modifiers = key.modifiers;
-                            kb.code = key.code;
-                            let msg = format!("Set {} to {}", kb.label, kb.display());
-                            app.notify(msg);
-                        }
-                        app.rebuild_keybinding_settings_cache();
-                        app.persist_scoped_setting_change(setting_id, &scoped_before);
-                    }
-                }
-            }
-            app.settings_kb_editing = false;
-        }
-        return Some(false);
-    }
+    if app.handle_shortcut_editor_key(key) { return Some(false); }
     if app.settings_value_editing {
         match key.code {
             KeyCode::Esc => app.cancel_numeric_setting_edit(),
@@ -735,43 +731,7 @@ pub(crate) fn handle_settings_panel_key(app: &mut App, key: KeyEvent) -> Option<
         return None;
     }
     // Keybinding capture mode
-    if app.settings_kb_editing {
-        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
-            app.settings_kb_editing = false;
-            app.apply_effective_settings();
-            app.notify("Keybinding edit cancelled");
-        } else {
-            let items = app.settings_items();
-            if let Some((_, _, setting_id)) = items.get(app.settings_selected) {
-                let scoped_before = app.selected_scope_settings();
-                app.apply_setting_value(setting_id, &scoped_before);
-                if let Some(kb_idx) = setting_id
-                    .strip_prefix("kb_")
-                    .and_then(|v| v.parse::<usize>().ok())
-                {
-                    if let Some(kb) = app.keybindings.get_mut(kb_idx) {
-                        if key.modifiers.is_empty()
-                            && matches!(key.code, KeyCode::Delete | KeyCode::Backspace)
-                        {
-                            kb.modifiers = KeyModifiers::empty();
-                            kb.code = KeyCode::Null;
-                            let msg = format!("Unassigned {}", kb.label);
-                            app.notify(msg);
-                        } else {
-                            kb.modifiers = key.modifiers;
-                            kb.code = key.code;
-                            let msg = format!("Set {} to {}", kb.label, kb.display());
-                            app.notify(msg);
-                        }
-                        app.rebuild_keybinding_settings_cache();
-                        app.persist_scoped_setting_change(setting_id, &scoped_before);
-                    }
-                }
-            }
-            app.settings_kb_editing = false;
-        }
-        return Some(false);
-    }
+    if app.handle_shortcut_editor_key(key) { return Some(false); }
     match key.code {
         KeyCode::Esc => app.settings_active = false,
         KeyCode::Up => {

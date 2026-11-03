@@ -51,6 +51,12 @@ impl App {
             return Some((KeyModifiers::empty(), KeyCode::Null));
         }
 
+        let plus;
+        let text = if text == "+" { "Plus" } else if text.ends_with("++") {
+            plus = format!("{}Plus", &text[..text.len() - 1]);
+            &plus
+        } else { text };
+
         let parts: Vec<&str> = text
             .split('+')
             .map(str::trim)
@@ -68,6 +74,12 @@ impl App {
                 modifiers |= KeyModifiers::ALT;
             } else if part.eq_ignore_ascii_case("shift") {
                 modifiers |= KeyModifiers::SHIFT;
+            } else if ["super", "win", "cmd"].iter().any(|name| part.eq_ignore_ascii_case(name)) {
+                modifiers |= KeyModifiers::SUPER;
+            } else if part.eq_ignore_ascii_case("hyper") {
+                modifiers |= KeyModifiers::HYPER;
+            } else if part.eq_ignore_ascii_case("meta") {
+                modifiers |= KeyModifiers::META;
             } else {
                 return None;
             }
@@ -84,8 +96,10 @@ impl App {
             "down" => KeyCode::Down,
             "home" => KeyCode::Home,
             "end" => KeyCode::End,
-            "pageup" | "page_up" => KeyCode::PageUp,
-            "pagedown" | "page_down" => KeyCode::PageDown,
+            "pageup" | "page_up" | "pgup" => KeyCode::PageUp,
+            "pagedown" | "page_down" | "pgdn" => KeyCode::PageDown,
+            "space" => KeyCode::Char(' '),
+            "plus" => KeyCode::Char('+'),
             "tab" => KeyCode::Tab,
             "backtab" | "back_tab" => KeyCode::BackTab,
             "delete" => KeyCode::Delete,
@@ -158,14 +172,15 @@ impl App {
             let overrides: Vec<KeybindingSetting> = self
                 .keybindings
                 .iter()
-                .filter_map(|kb| {
+                .enumerate()
+                .filter_map(|(index, kb)| {
                     if !kb.is_modified() {
                         return None;
                     }
                     Some(KeybindingSetting {
                         command: Some(kb.id.to_string()),
                         key: Some(kb.display()),
-                        index: None,
+                        index: (self.keybindings.iter().filter(|other| other.id == kb.id).count() > 1).then_some(index),
                         modifiers: None,
                         key_code: None,
                     })
@@ -727,31 +742,7 @@ impl App {
             for kb in &mut self.keybindings {
                 kb.reset();
             }
-            for binding in custom_keybindings {
-                if let (Some(command), Some(key)) =
-                    (binding.command.as_deref(), binding.key.as_deref())
-                {
-                    if let Some((modifiers, code)) = Self::keybinding_from_settings_text(key) {
-                        if let Some(kb) = self.keybindings.iter_mut().find(|kb| kb.id == command) {
-                            kb.modifiers = modifiers;
-                            kb.code = code;
-                            continue;
-                        }
-                    }
-                }
-                if let (Some(index), Some(modifiers), Some(key_code)) = (
-                    binding.index,
-                    binding.modifiers,
-                    binding.key_code.as_deref(),
-                ) {
-                    if let Some(code) = Self::keycode_from_settings_token(key_code) {
-                        if let Some(kb) = self.keybindings.get_mut(index) {
-                            kb.modifiers = KeyModifiers::from_bits_truncate(modifiers);
-                            kb.code = code;
-                        }
-                    }
-                }
-            }
+            Self::apply_shortcut_overrides(&mut self.keybindings, custom_keybindings);
         }
         if let Some(v) = s.search_case_sensitive {
             self.search_case_sensitive = v;
@@ -825,13 +816,14 @@ impl App {
 
     pub(crate) fn settings_for_scope(&self, scope: crate::settings::SettingsScope) -> Settings {
         // Explicit legacy timing still provides the per-effect fallback.
-        // Otherwise retain Cursor Smear's separate built-in duration.
+        // Otherwise retain separate built-in durations.
         let mut defaults = self.settings_defaults.clone();
-        if self.settings_global.animation_duration_ms.is_some()
-            || (scope == crate::settings::SettingsScope::Workspace
-                && self.settings_workspace.animation_duration_ms.is_some())
-        {
+        let legacy_duration = if scope == crate::settings::SettingsScope::Workspace {
+            self.settings_workspace.animation_duration_ms.or(self.settings_global.animation_duration_ms)
+        } else { self.settings_global.animation_duration_ms };
+        if legacy_duration.is_some() {
             defaults.animation_cursor_smear_duration_ms = None;
+            defaults.animation_tab_slide_duration_ms = legacy_duration;
         }
         defaults.animation_cursor_smear_intensity = None;
         defaults.animation_cursor_fire_duration_ms = None;
@@ -840,7 +832,6 @@ impl App {
         defaults.animation_whitespace_reveal_intensity = None;
         defaults.animation_scope_bubble_duration_ms = None;
         defaults.animation_scope_bubble_intensity = None;
-        defaults.animation_tab_slide_duration_ms = None;
         defaults.animation_tab_slide_intensity = None;
         let global = defaults.merge(&self.settings_global);
         match scope {
@@ -1133,11 +1124,13 @@ impl App {
         };
         let parent_bindings = Self::keybindings_for_settings(&parent);
         let mut overrides = Vec::new();
-        for (binding, inherited) in self.keybindings.iter().zip(parent_bindings.iter()) {
-            if binding.modifiers != inherited.modifiers || binding.code != inherited.code {
+        for (index, (binding, inherited)) in self.keybindings.iter().zip(parent_bindings.iter()).enumerate() {
+            if crate::app_shortcuts::normalize((binding.modifiers, binding.code)) != crate::app_shortcuts::normalize((inherited.modifiers, inherited.code))
+                || binding.chord.map(crate::app_shortcuts::normalize) != inherited.chord.map(crate::app_shortcuts::normalize) {
                 overrides.push(KeybindingSetting {
                     command: Some(binding.id.to_string()),
                     key: Some(binding.display()),
+                    index: (self.keybindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
                     ..Default::default()
                 });
             }
@@ -1148,7 +1141,7 @@ impl App {
         if let Some(existing) = &existing_layer.keybindings {
             overrides.extend(existing.iter().filter(|entry| {
                 let known_command = entry.command.as_deref().is_some_and(|command| {
-                    self.keybindings.iter().any(|binding| binding.id == command)
+                    self.keybindings.iter().any(|binding| binding.id == crate::app_menu::keybinding_id_for_command(command))
                 });
                 let known_index = entry.command.is_none()
                     && entry.index.is_some_and(|index| index < self.keybindings.len());
@@ -1259,7 +1252,6 @@ impl App {
         let Some(binding) = self.keybindings.get(index) else {
             return false;
         };
-        let command = binding.id;
         let label = binding.label;
         let mut target = match self.settings_scope {
             crate::settings::SettingsScope::Global => self.settings_global.clone(),
@@ -1269,10 +1261,7 @@ impl App {
             return false;
         };
         let previous_len = entries.len();
-        entries.retain(|entry| {
-            entry.command.as_deref() != Some(command)
-                && !(entry.command.is_none() && entry.index == Some(index))
-        });
+        entries.retain(|entry| Self::shortcut_entry_index(&self.keybindings, entry) != Some(index));
         if entries.len() == previous_len {
             return false;
         }
@@ -1491,6 +1480,7 @@ impl App {
             show_minimap: visibility.1,
             show_panel: visibility.2,
             panel_height: self.panel_height,
+            terminal_sidebar_width: self.terminal_sidebar.width,
             panel_tab: self.panel_tab,
             show_line_numbers: Some(self.show_line_numbers),
             relative_line_numbers: self.relative_line_numbers,
@@ -1615,6 +1605,7 @@ impl App {
         self.show_minimap = session.show_minimap;
         self.show_panel = session.show_panel;
         self.panel_height = session.panel_height.max(3);
+        self.terminal_sidebar.restore_width(session.terminal_sidebar_width);
         self.panel_tab = Self::normalize_panel_tab(session.panel_tab);
         if let Some(v) = session.show_line_numbers {
             self.show_line_numbers = v;

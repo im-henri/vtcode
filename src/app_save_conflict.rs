@@ -302,12 +302,9 @@ impl App {
         self.diff_target_path = Some(result.target.path.clone());
         self.diff_tab_label = Some(format!(
             "{} (Save conflict)",
-            result
-                .target
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
+            crate::remote::workspace::display_name(&result.target.path)
+                .map(std::borrow::Cow::Owned)
+                .unwrap_or_else(|| result.target.path.file_name().unwrap_or_default().to_string_lossy())
         ));
         self.diff_mode = self.preferred_diff_mode;
         self.apply_prepared_compare_diff(

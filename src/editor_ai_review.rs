@@ -95,7 +95,7 @@ pub(crate) struct ReviewView {
     inline_blame: Option<crate::editor_blame::InlineDetails>,
     width: usize,
     pub(crate) wrapped: bool,
-    folds: std::collections::BTreeMap<usize, usize>,
+    folds: crate::editor::FoldedRanges,
     chunks: Vec<InlineChunk>,
     order: Vec<usize>,
     selected: Option<(u64, usize)>,

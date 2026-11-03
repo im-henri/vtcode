@@ -53,7 +53,19 @@ fn remote_buffer_index_uses_loaded_text_and_persists_only_learned_data_without_w
         std::fs::read_to_string(source).unwrap(),
         "nativeDiskOnlyIdentifier"
     );
-    let checkpoint = std::fs::read_to_string(checkpoint).unwrap();
+    // The in-memory erase can publish before a coalesced cache write ends.
+    // Retain a complete disk snapshot; a concurrent Windows copy fallback can
+    // briefly expose an empty file without changing the eventual checkpoint.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let checkpoint = loop {
+        if let Ok(snapshot) = std::fs::read_to_string(&checkpoint)
+            && snapshot.lines().count() == 1
+            && snapshot.lines().next().is_some_and(|line|
+                serde_json::from_str::<CacheHeader>(line).is_ok_and(|header| header.root == root))
+        { break snapshot; }
+        assert!(Instant::now() < deadline, "erasure did not persist a complete checkpoint");
+        std::thread::sleep(Duration::from_millis(5));
+    };
     assert_eq!(
         checkpoint.lines().count(),
         1,

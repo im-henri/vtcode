@@ -8,6 +8,7 @@ const BLINK_STEP: Duration = Duration::from_millis(250);
 pub(crate) struct Commands {
     started: u64,
     finished: u64,
+    failed: u64,
     running: bool,
     exit_code: Option<i32>,
 }
@@ -15,6 +16,8 @@ pub(crate) struct Commands {
 impl Commands {
     #[cfg(test)]
     pub(crate) fn finished_count(&self) -> u64 { self.finished }
+
+    pub(crate) fn running(&self) -> bool { self.running }
 
     pub(crate) fn osc(&mut self, params: &[&[u8]]) {
         if params.len() < 2 || !matches!(params[0], b"133" | b"633") {
@@ -30,6 +33,7 @@ impl Commands {
                 self.running = false;
                 self.exit_code = params.get(2)
                     .and_then(|code| std::str::from_utf8(code).ok()?.parse().ok());
+                if self.exit_code.is_some_and(|code| code != 0) { self.failed = self.failed.wrapping_add(1); }
             }
             _ => {}
         }
@@ -45,6 +49,8 @@ pub(crate) struct Notice {
 }
 
 impl Notice {
+    pub(crate) fn finished_count(&self) -> u64 { self.commands.finished }
+    pub(crate) fn failed_count(&self) -> u64 { self.commands.failed }
     pub(crate) fn update(&mut self, commands: Commands, focused: bool, now: Instant) -> bool {
         let changed = commands != self.commands;
         if changed {

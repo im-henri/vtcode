@@ -24,6 +24,73 @@ fn state(name: &str) -> AgentState {
     }
 }
 
+#[test]
+fn hidden_agent_reads_use_current_disk_text_and_preserve_unsaved_buffers() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("agent.txt");
+    std::fs::write(&path, "original").unwrap();
+    let mut app = App::test_new();
+    app.explorer.root = root.path().into();
+    let mut editor = crate::editor::Editor::new();
+    editor.open_file(&path).unwrap();
+    app.tabs = vec![Tab::new_file(editor)];
+    app.workspace_visible = false;
+    std::fs::write(&path, "external change").unwrap();
+    let workspace = vtcode::acp::Workspace::new(root.path()).unwrap();
+    let request = p::ReadTextFileRequest::new("chat", &path);
+    let read = |app: &App| {
+        let buffer = app.acp_read_buffer(&app.acp_file_editors(&path)).map(|rope| rope.to_string());
+        workspace.read(&request, buffer.as_deref()).unwrap().content
+    };
+    assert_eq!(read(&app), "external change");
+    assert_eq!(app.editor().unwrap().rope.to_string(), "original");
+    app.editor_mut().unwrap().insert_char('!');
+    assert_eq!(read(&app), "!original");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "external change");
+}
+
+#[test]
+fn hidden_stale_large_buffers_do_not_reject_small_agent_reads() {
+    struct Sink(std::sync::mpsc::Sender<Command>);
+    impl vtcode::acp::CommandSink for Sink {
+        fn send(&self, command: Command, _: bool) -> Result<(), String> {
+            self.0.send(command).map_err(|error| error.to_string())
+        }
+        fn disconnect(&self) {}
+    }
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("shrunk.txt");
+    std::fs::write(&path, "current small file").unwrap();
+    let mut app = App::test_new();
+    app.explorer.root = root.path().into();
+    let mut editor = crate::editor::Editor::test_with_text(&"x".repeat(vtcode::acp::MAX_FILE_BYTES + 1));
+    editor.file_path = Some(path.clone());
+    app.tabs = vec![Tab::new_file(editor)];
+    let (commands, responses) = std::sync::mpsc::channel();
+    let (_events, receiver) = std::sync::mpsc::channel();
+    app.chat.client = Some(Client::hosted(
+        vtcode::acp::Workspace::new(root.path()).unwrap(),
+        std::sync::Arc::new(Sink(commands)),
+        receiver,
+    ));
+    for (visible, dirty) in [(false, false), (false, true), (true, false)] {
+        app.workspace_visible = visible;
+        app.editor_mut().unwrap().modified = dirty;
+        app.acp_file_request_ready(
+            p::RequestId::Number(1), 0,
+            FileRequest::Read(p::ReadTextFileRequest::new("chat", &path)), None,
+        );
+        let Command::FileResponse { result, .. } = responses.recv_timeout(Duration::from_secs(10)).unwrap() else {
+            panic!("expected the agent's file response");
+        };
+        if visible || dirty {
+            assert!(result.is_err(), "an authoritative oversized buffer must still be rejected");
+        } else {
+            assert_eq!(result.unwrap()["content"], "current small file");
+        }
+    }
+}
+
 fn app() -> App {
     let mut app = App::test_new();
     app.chat.connection = state("OpenCode");

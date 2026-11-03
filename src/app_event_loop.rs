@@ -568,6 +568,10 @@ pub(crate) fn handle_paste_input(app: &mut App, text: &str) {
 }
 
 fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
+    if app.workspaces.popup.open {
+        if app.accept_terminal_paste() { crate::ui_workspace_sets::paste(app, value.as_ref()); }
+        return;
+    }
     let _foreground = app.vtcomplete_worker.activity().enter();
     if app.completion_index_ui.open {
         crate::ui_vtcomplete_index::handle_paste(app, value.as_ref());
@@ -686,7 +690,7 @@ pub(crate) fn handle_mouse_input(
         app.terminal_has_focus && mouse.kind != MouseEventKind::Moved,
     );
     let resizing_layout = app.resizing_split || app.resizing_explorer || app.resizing_panel
-        || app.resizing_diff_split || app.resizing_sc_graph || app.chat.resizing;
+        || app.resizing_diff_split || app.resizing_sc_graph || app.chat.resizing || app.terminal_sidebar.dragging();
     let mut mouse = if resizing_layout { pump.latest_split_drag(mouse) } else { mouse };
     let is_move = mouse.kind == MouseEventKind::Moved;
     let sidebar_visible_before = app.sidebar_is_visible();
@@ -713,6 +717,7 @@ pub(crate) fn handle_mouse_input(
         && !app.resizing_diff_split
         && !app.resizing_explorer
         && !app.resizing_panel
+        && !app.terminal_sidebar.dragging()
         && !app.resizing_sc_graph
         && app.dragging_tab.is_none()
         && app.dragging_terminal_tab.is_none()
@@ -809,6 +814,7 @@ struct LayoutDragState {
     cursor_visible: bool,
     explorer: u16,
     panel: (u16, bool),
+    terminal: Option<u16>,
     diff: u32,
     graph: (u16, bool),
     chat: u16,
@@ -820,6 +826,7 @@ fn layout_drag_state(app: &App) -> LayoutDragState {
         cursor_visible: app.cursor_visible,
         explorer: app.explorer_width,
         panel: (app.panel_height, app.panel_chrome.maximized),
+        terminal: app.terminal_sidebar.width,
         diff: app.diff_split_ratio.to_bits(),
         graph: (app.sc_graph_height, app.sc_graph_collapsed),
         chat: app.chat.width,
@@ -850,7 +857,7 @@ fn editor_selection_drag_state(
         || app.multi_click_anchor.is_some() || app.middle_drag_start.is_some()
         || app.dragging_gutter || app.dragging_v_scrollbar || app.dragging_h_scrollbar
         || app.dragging_diff_left_h_scrollbar || app.dragging_minimap
-        || app.alt_cursor_mouse_down_active || app.desks.popup.mode.is_some()
+        || app.alt_cursor_mouse_down_active || app.desks.popup.mode.is_some() || app.workspaces.popup.open
         || app.hunk_peek.is_some() || app.hunk_popup_active
         || app.side_notice.visible() || app.remote_connection.details || app.inline_blame_hover.is_some()
         || app.background.activity.details_open || app.file_deletion.is_some()
@@ -1989,6 +1996,7 @@ mod tests {
     fn editor_animation_deadlines_stop_for_settings_and_unfocused_windows() {
         use crate::animation_config::AnimationEffect;
         let mut app = animation_fixture();
+        app.animation_settings.set(AnimationEffect::TabSlide, false);
         app.animation_settings.set(AnimationEffect::CursorSmear, true);
         draw_animation_fixture(&mut app);
         app.tabs[0].editor.cursor_col = 5;
@@ -2001,6 +2009,18 @@ mod tests {
         app.open_settings_tab();
         draw_animation_fixture(&mut app);
         assert_eq!(next_event_wait(&app, false, false), None, "a hidden editor has no animation deadline");
+    }
+
+    #[test]
+    fn filesystem_git_refresh_has_one_deadline_and_waits_for_running_readers() {
+        let mut app = animation_fixture();
+        assert_eq!(next_event_wait(&app, false, false), None);
+        app.refresh_source_control_from_watcher(std::iter::once(app.explorer.root.join("build/output.o")).collect(), false);
+        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_millis(600)));
+        app.bg_git_status_running = true;
+        assert_eq!(next_event_wait(&app, false, false), None, "the running reader wakes the workbench on completion");
+        app.cancel_source_control_reads();
+        assert_eq!(next_event_wait(&app, false, false), None);
     }
 
     #[test]
@@ -2614,6 +2634,7 @@ fn has_delayed_auto_save_candidate(app: &App) -> bool {
 /// request is pending (or has failed), the event loop can block until another
 /// edit or a worker result instead of repeatedly revisiting an expired timer.
 fn queue_due_delayed_auto_saves(app: &mut App) -> usize {
+    if app.exit_keep_unsaved_quit || app.exit_discard_quit || app.shutdown_anim_active || app.workspace_set_preserving() { return 0; }
     let trim = app.trim_trailing_on_save;
     let newline = app.insert_final_newline;
     let mut newest_by_path = rustc_hash::FxHashMap::default();
@@ -2651,12 +2672,39 @@ pub(crate) fn next_visible_extension_tick_wait(app: &App) -> Option<Duration> {
     crate::extension_scheduler::next_wait(app)
 }
 
+pub(crate) fn queue_background_workspace_auto_saves(app: &mut App) {
+    if app.exit_keep_unsaved_quit || app.exit_discard_quit || app.shutdown_anim_active || app.workspace_set_preserving() { return; }
+    if matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay)
+        && app.last_edit_time.elapsed() >= Duration::from_millis(app.auto_save_delay)
+    {
+        queue_due_delayed_auto_saves(app);
+    }
+}
+
+/// Hidden workbenches only contribute real work deadlines. Cursor blinks,
+/// overlays and activity animations cannot keep an idle registry awake.
+pub(crate) fn background_workspace_wait(app: &App, closing_workspaces: bool) -> Option<Duration> {
+    let now = std::time::Instant::now();
+    let mut waits = vec![
+        app.remote_connection.next_wait(),
+        app.formatting.next_wait(),
+        app.chat.rollback.next_capture_deadline().map(|deadline| deadline.saturating_duration_since(now)),
+        app.lsp_manager.diagnostic_publication.next_wait(now),
+        crate::extension_scheduler::next_wait(app),
+    ];
+    if !closing_workspaces && !app.exit_keep_unsaved_quit && !app.exit_discard_quit && !app.shutdown_anim_active
+        && matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay) && has_delayed_auto_save_candidate(app) {
+        waits.push(Some(remaining(app.last_edit_time, Duration::from_millis(app.auto_save_delay))));
+    }
+    waits.into_iter().flatten().min()
+}
+
 fn next_event_wait(
     app: &App,
     needs_redraw: bool,
     has_periodic_disk_paths: bool,
 ) -> Option<Duration> {
-    if needs_redraw || app.background.has_pending_results() {
+    if needs_redraw || app.workspaces_have_pending_results() {
         return Some(Duration::ZERO);
     }
 
@@ -2664,6 +2712,7 @@ fn next_event_wait(
     let mut include = |candidate: Duration| {
         wait = Some(wait.map_or(candidate, |current| current.min(candidate)));
     };
+    if let Some(wait) = app.background_workspace_wait() { include(wait); }
     if let Some(wait) = app.completion_index_next_wait() {
         include(wait);
     }
@@ -2739,6 +2788,9 @@ fn next_event_wait(
     if let Some(wait) = app.global_search_debounce_wait(std::time::Instant::now()) {
         include(wait);
     }
+    if let Some(wait) = app.git_watcher_refresh_wait(std::time::Instant::now()) {
+        include(wait);
+    }
     if !app.lsp_manager.configs.is_empty()
         && app.last_edit_time.elapsed() < crate::app_lsp_poll::LSP_EDIT_QUIET_PERIOD
     {
@@ -2754,7 +2806,8 @@ fn next_event_wait(
         include(diagnostic_wait);
     }
 
-    if matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay)
+    if !app.workspace_set_preserving() && !app.exit_keep_unsaved_quit && !app.exit_discard_quit && !app.shutdown_anim_active
+        && matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay)
         && has_delayed_auto_save_candidate(app)
     {
         include(remaining(
@@ -2826,7 +2879,7 @@ fn next_event_wait_for_redraw(app: &App, needs_redraw: bool, input_redraw: bool,
         // Producers still wake us, incomplete service cycles never park, and
         // ready worker results are consumed immediately.
         Some(wait.map_or(redraw_wait, |current| {
-            if current.is_zero() && !input_redraw && !app.background.has_pending_results() {
+            if current.is_zero() && !input_redraw && !app.workspaces_have_pending_results() {
                 redraw_wait
             } else {
                 current.min(redraw_wait)
@@ -3311,7 +3364,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     let mut last_caret_state = capture_caret_state(app);
     let mut periodic_disk_paths_cache = PeriodicDiskPaths::default();
     let mut last_terminal_title = String::new();
-    let mut last_title_key: (u64, bool) = (u64::MAX, false); // (view identity, modified)
+    let mut last_title_key: Option<(u64, bool)> = None; // (view identity, modified)
     let mut needs_redraw = true;
     let mut input_redraw = true;
     let mut chat_redraw_pending = false;
@@ -3329,6 +3382,19 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     app.refresh_source_control_async();
     app.refresh_git_branch_async();
     loop {
+        // Include workspace-loader completions in the same wake ticket as
+        // all other producers; observing after polling can lose their wake.
+        let observed_wake = service_scheduler.observe_wake(ui_wake.generation());
+        if app.poll_workspace_requests() {
+            needs_redraw = true;
+            input_redraw = true;
+            last_caret_state = capture_caret_state(app);
+            last_revealed_tab = None;
+            last_revealed_path = None;
+            last_title_key = None;
+            periodic_disk_paths_cache = PeriodicDiskPaths::default();
+            selection_drag = None;
+        }
         if let Some(started) = input_started.take() {
             app.background.activity.ui.input_handled(started, std::time::Instant::now(), needs_redraw && app.terminal_has_focus);
         }
@@ -3336,7 +3402,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // arrive after its queue was polled but before we reach the wait below.
         // Taking a fresh snapshot there would forget that work and sleep until
         // an unrelated event or cosmetic timer wakes us again.
-        let observed_wake = service_scheduler.observe_wake(ui_wake.generation());
         if (input_redraw && needs_redraw) || event_pump.has_pending_event() {
             app.vtcomplete_worker.activity().note_input();
         } else {
@@ -3363,6 +3428,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         if app.poll_pending_global_search(std::time::Instant::now()) {
             needs_redraw = true;
         }
+        if app.poll_git_watcher_refresh(std::time::Instant::now()) {
+            needs_redraw = true;
+        }
 
         // One shared wall-clock budget, interrupted by queued input. Giving
         // every producer its own full budget used to add up before a key or
@@ -3377,26 +3445,12 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         ) {
             use crate::ui_work::Service;
             let service_started = std::time::Instant::now();
-            match service {
-                Service::LanguageServers => crate::app_lsp_poll::poll_lsp_until(app, &mut needs_redraw, service_turn.deadline),
-                Service::Workers => {
-                    needs_redraw |= app.poll_background_results_until(service_turn.deadline);
-                    needs_redraw |= crate::diff_scope_source::poll(app);
-                }
-                Service::Terminals => {
-                    needs_redraw |= app.process_terminals_until(service_turn.deadline, || {
-                        !event_pump.has_pending_event()
-                    });
-                }
-                Service::Agents => {
-                    agent_changed = app.poll_acp_until(service_turn.deadline);
-                    needs_redraw |= agent_changed;
-                }
-                Service::Extensions => {
-                    needs_redraw |= app.apply_extension_text_edits();
-                    crate::extension_scheduler::dispatch(app);
-                }
+            let changed = app.service_workspaces_until(service, service_turn.deadline, || !event_pump.has_pending_event());
+            if app.workspace_service_pending(service) {
+                service_scheduler.defer_last_service(&mut service_turn, observed_wake);
             }
+            needs_redraw |= changed;
+            if service == Service::Agents { agent_changed = changed; }
             let finished = std::time::Instant::now();
             let phase = match service {
                 Service::LanguageServers => UiPhase::LanguageServers,
@@ -3501,8 +3555,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 let title_key = app
                     .tabs.get(app.active_tab)
                     .map_or((u64::MAX, false), |tab| (tab.editor.navigation_id, tab.has_unsaved_changes()));
-                if title_key != last_title_key {
-                    last_title_key = title_key;
+                if Some(title_key) != last_title_key {
+                    last_title_key = Some(title_key);
                     let title = if let Some(tab) = app.tabs.get(app.active_tab) {
                         let name = tab.editor.file_name();
                         let modified = if tab.has_unsaved_changes() { "● " } else { "" };
@@ -3592,11 +3646,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 }
                 // Only start optional services once the editor is visible and
                 // input is running. File/recovery loads use a separate I/O queue.
-                app.request_external_themes_async();
-                app.request_syntax_assets_async();
                 app.initialize_extensions();
-                if let Some(remote) = &app.remote_workspace { let _ = remote.client.notify(crate::remote::Command::Watch); }
-                else { app.background.start_file_watcher(app.explorer.root.clone()); }
+                app.start_visible_workspace_services();
                 startup_assets_requested = true;
             }
             // Drawing establishes the exact current viewport width. Queueing
@@ -3658,6 +3709,16 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 app.start_exit_recovery();
                 needs_redraw = true;
             }
+        }
+
+        if app.advance_workspace_exit() {
+            needs_redraw = true;
+            input_redraw = true;
+            last_title_key = None;
+            last_revealed_tab = None;
+            last_revealed_path = None;
+            periodic_disk_paths_cache = PeriodicDiskPaths::default();
+            continue;
         }
 
         // Shutdown fade-to-black animation
@@ -3811,7 +3872,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             // rather than periodically walking the application state.
             let wait = next_event_wait_for_redraw(app, needs_redraw, input_redraw, !periodic_disk_paths.is_empty());
             let mut next_event = event_pump.try_recv()?;
-            if next_event.is_none() && !service_turn.deferred() && !app.background.has_pending_results() {
+            if next_event.is_none() && !service_turn.deferred() && !app.workspaces_have_pending_results() {
                 ui_wake.wait_for_change(observed_wake, wait);
                 next_event = event_pump.try_recv()?;
             }

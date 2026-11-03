@@ -846,7 +846,7 @@ mod tests {
 
         let text = render(&mut terminal, &mut app);
         assert_eq!(app.unsaved_file_count(), 0);
-        assert!(text.contains("Close this workspace and quit?"));
+        assert!(text.contains("Close 1 workspace and quit?"));
         assert!(!text.contains("unsaved file"));
         assert_eq!(app.exit_confirm_buttons.len(), 2);
 
@@ -860,6 +860,15 @@ mod tests {
         let text = render(&mut terminal, &mut app);
         assert_eq!(app.unsaved_file_count(), 1);
         assert!(text.contains("1 unsaved document"));
+        assert_eq!(app.exit_confirm_buttons.len(), 4);
+
+        // A clean visible workspace must include its parked dirty sibling.
+        app.insert_workspace(App::test_new());
+        let text = render(&mut terminal, &mut app);
+        assert_eq!(app.unsaved_file_count(), 0);
+        assert_eq!(app.workspace_unsaved_file_count(), 1);
+        assert!(text.contains("1 unsaved document"));
+        assert!(text.contains("2 workspaces"));
         assert_eq!(app.exit_confirm_buttons.len(), 4);
     }
 

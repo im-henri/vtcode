@@ -68,6 +68,7 @@ impl Repositories {
 }
 
 pub(crate) struct Repository {
+    pub operation: Option<crate::git_operation::State>,
     pub root: PathBuf,
     // The active repository's files and input live in App while it is selected.
     // Switching moves them, including input undo history; it never clones files.
@@ -99,6 +100,7 @@ pub(crate) struct View {
 
 #[derive(Clone)]
 pub(crate) struct Scan<P = String> {
+    pub operation: Option<crate::git_operation::State>,
     pub root: PathBuf,
     pub files: Vec<GitFileChange<P>>,
     pub branch: String,
@@ -772,6 +774,7 @@ impl App {
                 .any(|repo| &repo.root == workdir)
             {
                 self.repositories.entries.push(Repository {
+                    operation: None,
                     root: workdir.clone(),
                     files: Vec::new(),
                     branch: String::new(),
@@ -794,6 +797,7 @@ impl App {
             else {
                 continue;
             };
+            self.repositories.entries[index].operation = scan.operation;
             // Ahead/behind information is refreshed on Git metadata changes,
             // not recomputed by every ordinary file-status scan.
             if self.repositories.entries[index]
@@ -890,6 +894,11 @@ impl App {
             self.refresh_git_line_status_async();
         }
         self.repositories.expand_single();
+        if self.remote_workspace.is_none() {
+            self.background.update_file_watcher_repositories(self.repositories.entries.iter()
+                .filter(|repo| !self.repositories.closed.contains(&repo.root))
+                .map(|repo| repo.root.clone()).collect());
+        }
         true
     }
 

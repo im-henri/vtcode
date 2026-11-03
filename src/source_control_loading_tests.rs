@@ -36,6 +36,7 @@ fn status(
             parent: None,
         },
         scans: vec![crate::git_repositories::Scan {
+            operation: None,
             root: root.clone(),
             files: vec![change()],
             branch: String::new(),

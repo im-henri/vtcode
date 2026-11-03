@@ -207,6 +207,8 @@ impl App {
         self.resizing_explorer = false;
         self.explorer_scrollbar_drag = None;
         self.resizing_panel = false;
+        if self.terminal_sidebar.dragging() { self.drag_start_pos = None; }
+        self.terminal_sidebar.cancel_drag();
         self.resizing_sc_graph = false;
         self.resizing_split = false;
         self.resizing_diff_split = false;
@@ -524,19 +526,12 @@ impl App {
                 "General"
             }
         };
-        let sanitize = |id: &str| -> String {
-            id.chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                .collect()
-        };
         let mut grouped: std::collections::BTreeMap<&'static str, Vec<(String, String, String)>> =
             std::collections::BTreeMap::new();
-        let mut configurable_ids: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
 
         self.keybinding_settings_cache.clear();
         for (idx, kb) in self.keybindings.iter().enumerate() {
-            configurable_ids.insert(kb.id.to_string());
-            let group = binding_group(kb.id);
+            let group = if kb.built_in_handler { command_group(kb.label, kb.id) } else { binding_group(kb.id) };
             let kb_id = format!("kb_{idx}");
             let label = format!("Shortcut: {}", kb.label);
             let value = kb.display();
@@ -544,31 +539,6 @@ impl App {
                 .entry(group)
                 .or_default()
                 .push((label, value, kb_id));
-        }
-
-        let mut seen_readonly: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
-        let syntax_names = self.highlighter.syntax_names();
-        let commands = Self::build_command_list_with_themes(&self.loaded_themes, &syntax_names);
-        for (idx, command) in commands.iter().enumerate() {
-            let shortcut = command.shortcut.trim();
-            if shortcut.is_empty() {
-                continue;
-            }
-            let cmd_id = command.id.as_ref();
-            if configurable_ids.contains(cmd_id) {
-                continue;
-            }
-            let dedupe_key = format!("{cmd_id}|{shortcut}");
-            if !seen_readonly.insert(dedupe_key) {
-                continue;
-            }
-            let group = command_group(&command.name, cmd_id);
-            let setting_id = format!("shortcut_ro_{}_{}", sanitize(cmd_id), idx);
-            let label = format!("Shortcut: {} ({shortcut})", command.name);
-            grouped
-                .entry(group)
-                .or_default()
-                .push((label, "Read-only".to_string(), setting_id));
         }
 
         for (group, heading_label, heading_id) in GROUPS {
@@ -784,7 +754,8 @@ impl App {
         self.save_conflict = None;
         self.modal.kind = None;
         let message = message.into();
-        self.notify_error(message.clone());
+        if self.workspace_visible { self.notify_error(message.clone()); }
+        else { self.record_workspace_event(message.clone(), crate::app_workspaces::Level::Attention); }
         self.status_message = "Save failed; your edits remain open.".into();
         self.save_error = Some(message);
     }
@@ -851,6 +822,7 @@ impl App {
         if !self.should_render_diff_for_active_editor() {
             return;
         }
+        if !self.workspace_visible { return; }
 
         let Some(editor) = self.editor() else {
             return;
@@ -979,16 +951,12 @@ impl App {
         base_path: std::path::PathBuf,
         target_path: std::path::PathBuf,
     ) {
-        let base_name = base_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("base")
-            .to_string();
-        let target_name = target_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("target")
-            .to_string();
+        let base_name = crate::remote::workspace::display_name(&base_path).unwrap_or_else(|| {
+            base_path.file_name().and_then(|name| name.to_str()).unwrap_or("base").to_string()
+        });
+        let target_name = crate::remote::workspace::display_name(&target_path).unwrap_or_else(|| {
+            target_path.file_name().and_then(|name| name.to_str()).unwrap_or("target").to_string()
+        });
         self.open_file(&target_path);
         self.clear_diff_state();
         self.diff_labels = Some(crate::app::DiffLabels::new(
@@ -1017,13 +985,13 @@ impl App {
             return false;
         }
         let base = &self.tabs[base_tab];
-        let base_name = base.editor.file_name().to_string();
+        let base_name = base.editor.file_display_name().into_owned();
         let base_path = base.editor.file_path.clone();
         let base_rope = base.editor.rope.clone();
         let Some(target) = self.editor() else {
             return false;
         };
-        let target_name = target.file_name().to_string();
+        let target_name = target.file_display_name().into_owned();
         let target_path = target.file_path.clone();
 
         self.clear_diff_state();

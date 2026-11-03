@@ -13,7 +13,7 @@ pub(crate) struct MenuEntry {
     pub command: &'static str,
 }
 
-fn keybinding_id_for_command(command: &str) -> &str {
+pub(crate) fn keybinding_id_for_command(command: &str) -> &str {
     match command {
         "goto_line" => "go_to_line",
         "palette_menu" | "command_palette" => "palette",
@@ -56,6 +56,13 @@ impl App {
         syntax_names: &[String],
     ) -> Vec<PaletteCommand> {
         let mut cmds = vec![
+            PaletteCommand { name: "Workspaces: Add Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_add") },
+            PaletteCommand { name: "Workspaces: Switch Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_switch") },
+            PaletteCommand { name: "Workspaces: Saved Workspace Sets…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_sets") },
+            PaletteCommand { name: "Workspaces: Save Workspace Set…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_set_save") },
+            PaletteCommand { name: "Workspaces: Next Workspace".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_next") },
+            PaletteCommand { name: "Workspaces: Previous Workspace".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_previous") },
+            PaletteCommand { name: "Workspaces: Close Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_close") },
             PaletteCommand { name: "Desks: New Desk…".into(), shortcut: String::new(), id: Cow::Borrowed("desk_new") },
             PaletteCommand { name: "Desks: Switch Desk…".into(), shortcut: String::new(), id: Cow::Borrowed("desk_switch") },
             PaletteCommand { name: "Desks: Previous Desk".into(), shortcut: String::new(), id: Cow::Borrowed("desk_previous") },
@@ -107,6 +114,8 @@ impl App {
             PaletteCommand { name: "View: Customize Status Bar".into(), shortcut: String::new(), id: Cow::Borrowed("customize_status_bar") },
             PaletteCommand { name: "Fold: Collapse All".into(), shortcut: "Ctrl+K, 0".into(), id: Cow::Borrowed("fold_all") },
             PaletteCommand { name: "Fold: Expand All".into(), shortcut: "Ctrl+K, Ctrl+J".into(), id: Cow::Borrowed("unfold_all") },
+            PaletteCommand { name: "Fold: Collapse Current Conditional Branch Only".into(), shortcut: String::new(), id: Cow::Borrowed("fold_conditional_branch") },
+            PaletteCommand { name: "Fold: Collapse Entire Conditional (All Branches)".into(), shortcut: String::new(), id: Cow::Borrowed("fold_conditional") },
             PaletteCommand { name: "Fold: Collapse Level 1".into(), shortcut: "Ctrl+K 1".into(), id: Cow::Borrowed("fold_level_1") },
             PaletteCommand { name: "Fold: Collapse Level 2".into(), shortcut: "Ctrl+K 2".into(), id: Cow::Borrowed("fold_level_2") },
             PaletteCommand { name: "Fold: Collapse Level 3".into(), shortcut: "Ctrl+K 3".into(), id: Cow::Borrowed("fold_level_3") },
@@ -149,6 +158,11 @@ impl App {
             PaletteCommand { name: "Git: Unstage All".into(), shortcut: String::new(), id: Cow::Borrowed("git_unstage_all") },
             PaletteCommand { name: "Git: Discard All Changes".into(), shortcut: String::new(), id: Cow::Borrowed("git_discard_all") },
             PaletteCommand { name: "Git: Commit".into(), shortcut: String::new(), id: Cow::Borrowed("git_commit") },
+            PaletteCommand { name: "Git: Rebase Current Branch…".into(), shortcut: String::new(), id: Cow::Borrowed("git_rebase") },
+            PaletteCommand { name: "Git: Cherry-pick Commit…".into(), shortcut: String::new(), id: Cow::Borrowed("git_cherry_pick") },
+            PaletteCommand { name: "Git: Continue Rebase / Cherry-pick".into(), shortcut: String::new(), id: Cow::Borrowed("git_operation_continue") },
+            PaletteCommand { name: "Git: Skip Current Commit…".into(), shortcut: String::new(), id: Cow::Borrowed("git_operation_skip") },
+            PaletteCommand { name: "Git: Abort Rebase / Cherry-pick…".into(), shortcut: String::new(), id: Cow::Borrowed("git_operation_abort") },
             PaletteCommand { name: "Git: Fetch".into(), shortcut: String::new(), id: Cow::Borrowed("git_fetch") },
             PaletteCommand { name: "Git: Pull".into(), shortcut: String::new(), id: Cow::Borrowed("git_pull") },
             PaletteCommand { name: "Git: Push".into(), shortcut: String::new(), id: Cow::Borrowed("git_push") },
@@ -415,6 +429,11 @@ impl App {
                 ("─", "", ""),
                 ("Open File…", "Ctrl+P", "quick_open"),
                 ("Open Folder…", "", "change_dir"),
+                ("Add Workspace…", "", "workspace_add"),
+                ("Switch Workspace…", "", "workspace_switch"),
+                ("Saved Workspace Sets…", "", "workspace_sets"),
+                ("Save Workspace Set…", "", "workspace_set_save"),
+                ("Close Workspace…", "", "workspace_close"),
                 ("Open Recent…", "", "open_recent_menu"),
                 ("─", "", ""),
                 ("Save", "", "save"),

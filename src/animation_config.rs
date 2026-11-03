@@ -1,4 +1,4 @@
-//! Optional terminal animation preferences. Every effect is independent and off by default.
+//! Independent terminal animation preferences. Sliding Tabs is enabled by default.
 
 pub(crate) const MIN_ANIMATION_DURATION_MS: u64 = 1;
 pub(crate) const MAX_ANIMATION_DURATION_MS: u64 = 5_000;
@@ -65,7 +65,7 @@ animation_effects! {
     (CursorFire, "animation_cursor_fire", "animationCursorFire", "Fire Hazard", "Follow the cursor with curling flame tongues, fine drifting sparks, and glowing embers that cool along the trail. Works independently from Cursor Smear."),
     (WhitespaceReveal, "animation_whitespace_reveal", "animationWhitespaceReveal", "Whitespace Reveal", "Sweep a filled ribbon smoothly across inserted tabs and spaces, with fractional edges and a soft arrival at each tab stop. Editing remains immediate."),
     (ScopeConnector, "animation_scope_connector", "animationScopeConnector", "Scope Bubble", "Wrap the active block, including Python indentation, brace-free C/C++ statements, preprocessor branches (#if/#elif/#else/#endif), and nested braces, in rounded tracing lines on both sides. The bubble follows whitespace around the code, stays visible inside the block, and fades smoothly between scopes."),
-    (TabSlide, "animation_tab_slide", "animationTabSlide", "Sliding Tab Indicator", "Stretch the active underline toward its next tab, then gather it with independent edge springs. Rapid switches preserve position and momentum."),
+    (TabSlide, "animation_tab_slide", "animationTabSlide", "Sliding Tabs", "Slide reordered tabs and their neighbors smoothly into place. The active underline stretches during tab switches; rapid switches and reorders preserve position and momentum."),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,7 +86,7 @@ pub(crate) struct AnimationSettings {
 
 impl Default for AnimationSettings {
     fn default() -> Self {
-        Self {
+        let mut settings = Self {
             enabled: [false; 5],
             durations: [None; 5],
             intensities: [None; 5],
@@ -97,7 +97,10 @@ impl Default for AnimationSettings {
             scope_fill: false,
             scope_disabled_languages: Vec::new(),
             scope_languages: crate::scope_bubble_config::Rules::empty(),
-        }
+        };
+        settings.set(AnimationEffect::TabSlide, true);
+        settings.set_duration(AnimationEffect::TabSlide, 250);
+        settings
     }
 }
 
@@ -336,8 +339,12 @@ mod tests {
     }
 
     #[test]
-    fn all_effects_start_disabled_and_can_be_enabled_independently() {
+    fn sliding_tabs_start_enabled_and_effects_can_be_toggled_independently() {
         let mut settings = AnimationSettings::default();
+        assert!(settings.enabled(AnimationEffect::TabSlide));
+        assert_eq!(settings.duration(AnimationEffect::TabSlide), 250);
+        assert!(!settings.editor_effects_enabled());
+        for effect in AnimationEffect::ALL { settings.set(effect, false); }
         assert!(!settings.any_enabled());
         for effect in AnimationEffect::ALL {
             assert!(!settings.enabled(effect));
@@ -396,6 +403,8 @@ mod tests {
                 settings.duration(effect),
                 if effect == AnimationEffect::ScopeConnector {
                     710
+                } else if effect == AnimationEffect::TabSlide {
+                    250
                 } else {
                     330
                 }
@@ -450,7 +459,7 @@ mod tests {
             let mut settings = AnimationSettings::default();
             settings.duration_ms = input;
             for effect in AnimationEffect::ALL {
-                assert_eq!(settings.duration(effect), expected);
+                assert_eq!(settings.duration(effect), if effect == AnimationEffect::TabSlide { 250 } else { expected });
                 settings.set_duration(effect, input);
                 assert_eq!(settings.duration(effect), expected);
             }

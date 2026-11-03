@@ -5,6 +5,64 @@ use std::time::{Duration, Instant};
 #[path = "app_git_untracked_tests.rs"]
 mod untracked;
 
+#[test]
+fn compiler_output_does_not_scan_status_but_tracked_files_inside_ignored_folders_do() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    std::fs::write(root.join(".gitignore"), "build/\n*.o\n").unwrap();
+    std::fs::create_dir_all(root.join("build/tests")).unwrap();
+    std::fs::write(root.join("build/keep.cc"), "tracked source\n").unwrap();
+    let repo = git2::Repository::open(&root).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("build/keep.cc")).unwrap();
+    index.write().unwrap();
+    let mut discovery = Discovery { workspace: root.clone(), roots: vec![root.clone()], parent: None, errors: Vec::new() };
+    let before = STATUS_READS.get();
+    // New names in every burst model a compiler, rather than repeatedly
+    // touching one small fixture that is already warm in a path cache.
+    for batch in 0..20 {
+        let mut changed = FxHashSet::default();
+        for file in 0..150 {
+            let path = root.join(format!("build/tests/{batch}-{file}.o"));
+            std::fs::write(&path, "object\n").unwrap();
+            changed.insert(path);
+        }
+        let scans = collect(&mut discovery, vec![root.clone()], Some(changed), &root, &CancellationToken::new(), true);
+        assert!(scans[0].files.is_empty());
+        assert!(scans[0].worktree_paths.is_some());
+    }
+    assert_eq!(STATUS_READS.get(), before, "ignored build output must never call libgit2 status");
+
+    std::fs::write(root.join("build/keep.cc"), "changed source\n").unwrap();
+    let scans = collect(&mut discovery, vec![root.clone()], Some([root.join("build/tests"), root.join("build/keep.cc")].into_iter().collect()), &root, &CancellationToken::new(), true);
+    assert_eq!(STATUS_READS.get(), before + 1);
+    assert!(scans[0].files.iter().any(|file| file.path == "build/keep.cc" && file.status == 'M'));
+
+    std::fs::remove_file(root.join("build/keep.cc")).unwrap();
+    let scans = collect(&mut discovery, vec![root.clone()], Some([root.join("build")].into_iter().collect()), &root, &CancellationToken::new(), false);
+    assert_eq!(STATUS_READS.get(), before + 2);
+    assert!(scans[0].files.iter().any(|file| file.path == "build/keep.cc" && file.status == 'D'));
+}
+
+#[test]
+fn hidden_untracked_output_skips_status_and_visible_output_is_still_reported() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    std::fs::create_dir_all(root.join("generated/deep")).unwrap();
+    std::fs::write(root.join("generated/deep/result.log"), "test run\n").unwrap();
+    let mut discovery = Discovery { workspace: root.clone(), roots: vec![root.clone()], parent: None, errors: Vec::new() };
+    let before = STATUS_READS.get();
+    let changes: FxHashSet<_> = [root.join("generated"), root.join("generated/deep/result.log")].into_iter().collect();
+    let scans = collect(&mut discovery, vec![root.clone()], Some(changes.clone()), &root, &CancellationToken::new(), false);
+    assert!(scans[0].files.is_empty());
+    assert_eq!(STATUS_READS.get(), before);
+    let scans = collect(&mut discovery, vec![root.clone()], Some(changes), &root, &CancellationToken::new(), true);
+    assert_eq!(STATUS_READS.get(), before + 1);
+    assert!(scans[0].files.iter().any(|file| file.status == '?' && file.path == "generated"));
+}
+
 fn init(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
     let repo = git2::Repository::init(path).unwrap();

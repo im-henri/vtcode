@@ -46,6 +46,7 @@ fn scene(app: &App, width: u16, indexed: bool) -> ratatui::buffer::Buffer {
                 frame,
                 app,
                 area,
+                full_area,
                 std::time::Instant::now(),
                 duplicates.as_ref(),
             )
@@ -334,6 +335,7 @@ fn benchmark_tab_bar_duplicate_names() {
                                 draw_tab_bar_labels(
                                     frame,
                                     &app,
+                                    area,
                                     area,
                                     std::time::Instant::now(),
                                     duplicates.as_ref(),

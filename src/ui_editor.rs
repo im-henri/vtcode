@@ -27,7 +27,7 @@ mod plain_runs;
 mod source_lines;
 use crate::ui_editor_minimap::{
     ChangeLineIndex, DiagnosticLineIndex, MinimapParams, ScrollbarParams, draw_minimap,
-    draw_scrollbar, scrollbar_change_rows_indexed,
+    draw_editor_scrollbar, scrollbar_change_rows_indexed,
 };
 
 /// Lines beyond cursor distance before focus-mode dimming begins.
@@ -496,7 +496,10 @@ pub(crate) fn cached_overview_change_rows(
         diff_ptr,
         diff_len,
         app.git_compare_generation,
-        app.diff_refresh_generation,
+        (app.diff_refresh_generation, editor.folded_ranges.revision(),
+            if editor.word_wrap { editor.content_version } else { 0 },
+            if editor.word_wrap { editor.wrap_revision } else { 0 }, editor.word_wrap,
+            if editor.word_wrap { editor.effective_wrap_width() } else { 0 }, editor.overview_total_rows()),
     );
     refresh_editor_change_index(app, diff_changes);
     if app.cached_overview_change_rows_key.as_ref() != Some(&key) {
@@ -954,10 +957,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let mut selection_style = app.copy_animation_selection_style();
     let extra_cursor_viewport = ExtraCursorViewport::new(
         editor,
-        scroll
-            ..scroll
-                .saturating_add(visible_lines)
-                .min(editor.rope.len_lines()),
+        scroll..editor.visible_line_at(scroll, visible_lines).unwrap_or(editor.line_count()),
     );
     let mut extra_cursor_scratch = ExtraCursorLine::default();
 
@@ -978,7 +978,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let mut spans = Vec::with_capacity(32);
     let mut cell_batch = String::with_capacity(visible_width);
     for screen_row in 0..visible_lines {
-        let line_idx = scroll.saturating_add(screen_row);
+        let line_idx = editor.visible_line_at(scroll, screen_row).unwrap_or(editor.line_count());
         if line_idx >= editor.rope.len_lines() {
             format_empty_gutter_row(&mut gutter_num_buf, render_line_numbers, gutter_width);
             gutter_lines.push(f, [Span::styled(
@@ -1244,22 +1244,23 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
         );
     }
 
-    draw_scrollbar(
+    draw_editor_scrollbar(
         f,
         ScrollbarParams {
             area: scrollbar_area,
-            total_lines: editor.line_count(),
+            total_lines: editor.visible_line_count(),
             visible_lines,
-            scroll,
+            scroll: editor.visible_scroll_offset(),
             search_matches: &app.tabs[app.active_tab].file_search.search_matches,
             diagnostic_lines: &[],
             diagnostic_index: None,
             change_rows: &change_rows,
-            cursor_line,
+            cursor_line: editor.visible_row_for_line(cursor_line),
             colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
         },
+        editor,
     );
 
     if show_h_scrollbar {
@@ -1486,6 +1487,19 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         // immutable index must be prepared from that same source.
         .filter(|_| !bounded_render_mode)
         .map(|cache| cache.target_changes.as_slice());
+    // Prepare the same row geometry used by the overview before querying its
+    // retained marker cache (including after resizing or folding).
+    {
+        let editor = &mut app.tabs[app.active_tab].editor;
+        editor.viewport_height = code_area.height as usize;
+        editor.viewport_width = code_area.width as usize;
+        editor.restore_reopen_wrap_scroll();
+        editor.scroll_past_end = app.scroll_past_end;
+        editor.clamp_cursor();
+        if editor.word_wrap && !bounded_render_mode {
+            editor.wrapped_total_rows(editor.effective_wrap_width());
+        }
+    }
     let change_rows =
         cached_overview_change_rows(app, scrollbar_area.height as usize, diff_changes);
     let diag_lines = &app.cached_diag_lines;
@@ -1502,20 +1516,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         (None, None)
     };
 
-    // Update viewport dimensions
     let mut selection_style = app.copy_animation_selection_style();
     let crate::app::Tab { editor, file_search, .. } = &mut app.tabs[app.active_tab];
-    editor.viewport_height = code_area.height as usize;
-    editor.viewport_width = code_area.width as usize;
-    editor.restore_reopen_wrap_scroll();
-    editor.scroll_past_end = app.scroll_past_end;
-    // Defensive clamp: ensure cursor is within rope bounds before rendering
-    editor.clamp_cursor();
 
     if bounded_render_mode {
         if editor.blame.enabled {
             editor.blame.rows = (0..code_area.height as usize).map(|row| {
-                let line_idx = editor.scroll_offset.saturating_add(row);
+                let line_idx = editor.visible_line_at(editor.scroll_offset, row).unwrap_or(editor.line_count());
                 (line_idx < editor.rope.len_lines()).then_some(crate::editor::WrappedRowInfo {
                     line_idx, start_col: 0, end_col: 0, line_len: 0, is_first: true,
                 })
@@ -2440,7 +2447,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
         let wrap_scroll = editor.wrap_scroll_offset;
         let wrap_total_rows = editor.wrapped_total_rows(wrap_width);
-        draw_scrollbar(
+        draw_editor_scrollbar(
             f,
             ScrollbarParams {
                 area: scrollbar_area,
@@ -2456,6 +2463,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 hovered: app.hovered_scrollbar,
                 active: app.dragging_v_scrollbar,
             },
+            editor,
         );
         if minimap_sep_width > 0 {
             draw_minimap_separator(f, minimap_sep_area, app.colors.ui.fg_overview_border, app.colors.bg_editor);
@@ -3679,22 +3687,23 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Draw scrollbar (use visible line count for folds)
     let effective_lines = app.tabs[app.active_tab].editor.visible_line_count();
-    draw_scrollbar(
+    draw_editor_scrollbar(
         f,
         ScrollbarParams {
             area: scrollbar_area,
             total_lines: effective_lines,
             visible_lines,
-            scroll,
+            scroll: app.tabs[app.active_tab].editor.visible_scroll_offset(),
             search_matches: &app.tabs[app.active_tab].file_search.search_matches,
             diagnostic_lines: diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &change_rows,
-            cursor_line,
+            cursor_line: app.tabs[app.active_tab].editor.overview_row_for_line(cursor_line),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
         },
+        &app.tabs[app.active_tab].editor,
     );
 
     // Draw horizontal scrollbar
@@ -3760,6 +3769,7 @@ pub(crate) fn draw_animation_frame_tooltips(f: &mut Frame, app: &mut App) {
     if let Some(code) = app.code_area {
         draw_diagnostic_marker_tooltip(f, app, code);
     }
+    crate::ui_editor_folds::draw_tooltip(f, app);
 }
 
 #[cfg(test)]

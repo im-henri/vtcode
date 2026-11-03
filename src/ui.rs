@@ -7,6 +7,7 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, TerminalDock};
+use crate::terminal_sidebar::width as responsive_right_dock_width;
 use crate::ui_animation_chrome::{draw as draw_static_chrome, Region as ChromeRegion};
 use crate::{
     ui_chrome, ui_dialogs, ui_helpers, ui_panels, ui_pickers, ui_search_dialog, ui_settings,
@@ -48,23 +49,6 @@ fn responsive_sidebar_width(available: u16, requested: u16) -> u16 {
     }
 
     requested.clamp(12.min(max_sidebar), max_sidebar)
-}
-
-fn responsive_right_dock_width(available: u16, expanded: bool) -> u16 {
-    if available <= 1 {
-        return 0;
-    }
-    if !expanded {
-        return 3.min(available.saturating_sub(1));
-    }
-
-    // Keep approximately two thirds of the workbench for the editor and its
-    // sidebar. The old 32-column hard minimum overwhelmed ordinary 80-column
-    // terminals whenever Explorer and the right terminal were both open.
-    available
-        .div_ceil(3)
-        .min(56)
-        .min(available.saturating_sub(1))
 }
 
 pub(crate) fn responsive_panel_height(available: u16, requested: u16) -> u16 {
@@ -378,6 +362,7 @@ fn apply_area_gradient_reference(
 }
 
 pub(crate) fn draw(f: &mut Frame, app: &mut App) {
+    app.git_operation_ui.buttons.clear();
     app.acknowledge_focused_terminal_completion();
     app.viewport_area = f.area();
     app.begin_copy_animation_frame(std::time::Instant::now());
@@ -532,7 +517,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         && body_area.width > 1;
     let (workbench_area, terminal_sidebar_area) = if terminal_sidebar_available {
         let side_width =
-            responsive_right_dock_width(body_area.width, app.show_terminal_sidebar);
+            responsive_right_dock_width(body_area.width, app.show_terminal_sidebar, app.terminal_sidebar.width);
         let body = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(1), Constraint::Length(side_width)])
@@ -642,6 +627,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         ui_panels::draw_terminal_sidebar(f, app, sidebar_area);
     } else {
         app.terminal_sidebar_area = None;
+        app.terminal_sidebar.hide();
         app.terminal_sidebar_toggle_area = None;
         app.terminal_sidebar_plus_area = None;
         app.terminal_sidebar_tab_areas.clear();
@@ -699,6 +685,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     ui_chrome::draw_navigation_tooltip(f, app);
     crate::ui_source_control::draw_action_tooltip(f, app);
     crate::ui_panels::draw_tooltip(f, app);
+    crate::ui_editor_folds::draw_tooltip(f, app);
 
     crate::ui_inline_blame::draw(f, app);
 
@@ -948,7 +935,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             let body = app.workbench_body_area?;
             match dock {
                 TerminalDock::Right => {
-                    let width = responsive_right_dock_width(body.width, true);
+                    let width = responsive_right_dock_width(body.width, true, app.terminal_sidebar.width);
                     if width == 0 {
                         return None;
                     }
@@ -1074,8 +1061,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_status::draw_overlays(f, app);
     crate::ui_quick_picker::draw_active(f, app);
     crate::ui_desks::draw(f, app);
+    crate::ui_workspaces::draw(f, app);
     crate::ui_vtcomplete_index::draw(f, app);
     crate::ui_modal::draw_active(f, app);
+    crate::app_shortcuts::draw_editor(f, app);
     crate::ui_loading::finish_frame(app, std::time::Instant::now());
 }
 
@@ -1199,10 +1188,10 @@ mod tests {
         assert_eq!(responsive_sidebar_width(42, 34), 14);
         assert_eq!(responsive_sidebar_width(1, 34), 0);
 
-        assert_eq!(responsive_right_dock_width(74, true), 25);
-        assert_eq!(responsive_right_dock_width(100, true), 34);
-        assert_eq!(responsive_right_dock_width(200, true), 56);
-        assert_eq!(responsive_right_dock_width(74, false), 3);
+        assert_eq!(responsive_right_dock_width(74, true, None), 25);
+        assert_eq!(responsive_right_dock_width(100, true, None), 34);
+        assert_eq!(responsive_right_dock_width(200, true, None), 56);
+        assert_eq!(responsive_right_dock_width(74, false, None), 3);
 
         assert_eq!(responsive_panel_height(22, 10), 10);
         assert_eq!(responsive_panel_height(10, 10), 4);

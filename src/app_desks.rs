@@ -16,6 +16,8 @@ pub(crate) struct DeskLayout {
     pub terminal: usize,
     pub terminal_sidebar: bool,
     pub terminal_revealed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_width: Option<u16>,
     pub chat: bool,
     pub chat_visible: bool,
     pub chat_width: u16,
@@ -453,6 +455,7 @@ impl App {
             layout.panel = current.panel;
             layout.panel_tab = current.panel_tab;
             layout.panel_height = current.panel_height;
+            layout.terminal_width = current.terminal_width;
             layout.search = current.search;
             layout.search_replace = current.search_replace;
             layout.search_include = current.search_include;
@@ -643,6 +646,7 @@ impl App {
             terminal: self.active_terminal,
             terminal_sidebar: self.show_terminal_sidebar,
             terminal_revealed: self.terminal_sidebar_revealed,
+            terminal_width: self.terminal_sidebar.width,
             chat: self.chat.layout.dock_visible,
             chat_visible: self.chat.visible,
             chat_width: self.chat.width,
@@ -682,6 +686,7 @@ impl App {
         self.active_terminal = layout.terminal.min(self.terminals.len().saturating_sub(1));
         self.show_terminal_sidebar = layout.terminal_sidebar;
         self.terminal_sidebar_revealed = layout.terminal_revealed;
+        self.terminal_sidebar.restore_width(layout.terminal_width);
         self.chat.layout.dock_visible = layout.chat;
         self.chat.visible = layout.chat_visible;
         self.chat.width = layout.chat_width;
@@ -992,6 +997,9 @@ impl App {
     /// Keep groups contiguous while preserving each group's internal order and
     /// tracking selection by stable view identity rather than a moving index.
     pub(crate) fn normalize_tab_groups(&mut self) {
+        let scroll_anchor = self.tab_scroll_manual_anchor
+            .and_then(|index| self.tabs.get(index))
+            .map(|tab| tab.editor.navigation_id);
         let active = self
             .tabs
             .get(self.active_tab)
@@ -1016,6 +1024,9 @@ impl App {
                 n
             });
         }
+        if let Some(id) = active {
+            self.animations.tab_reorder.borrow_mut().request(self.active_group, id);
+        }
         self.tabs.sort_by_key(|tab| {
             let key = self
                 .desks
@@ -1037,6 +1048,7 @@ impl App {
             .map(|(i, t)| (t.editor.navigation_id, i))
             .collect();
         self.tab_mru_order = mru.iter().filter_map(|id| index.get(id).copied()).collect();
+        self.tab_scroll_manual_anchor = scroll_anchor.and_then(|id| index.get(&id).copied());
     }
 
     pub(crate) fn move_tabs_to_desk(&mut self, target: u64, copy: bool, ids: &[u64]) {

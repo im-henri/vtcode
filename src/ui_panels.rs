@@ -255,11 +255,14 @@ pub(crate) fn close_panel(app: &mut App) {
 }
 
 pub(crate) fn draw_tooltip(frame: &mut Frame, app: &App) {
-    if !app.show_panel || app.menu_active || app.remote_connection.details
+    let terminal_resize = !app.terminal_sidebar.dragging() && app.terminal_sidebar.handle
+        .is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()));
+    if (!app.show_panel && !terminal_resize) || app.menu_active || app.remote_connection.details
         || app.side_notice.area.is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()))
         || crate::ui_modal::active(app).is_some() || crate::ui_quick_picker::active(app).is_some() { return; }
     let point = (app.mouse_col, app.mouse_row).into();
-    let hint = if app.panel_chrome.close.contains(point) { Some("Close Panel".into()) }
+    let hint = if terminal_resize { Some("Drag to resize Terminal".into()) }
+        else if app.panel_chrome.close.contains(point) { Some("Close Panel".into()) }
         else if app.panel_chrome.maximize.contains(point) { Some(if app.panel_chrome.maximized { "Restore Panel Size" } else { "Maximize Panel" }.into()) }
         else { crate::ui_logs::hint(app) };
     if let Some(hint) = hint {
@@ -306,6 +309,7 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     app.terminal_sidebar_tab_areas.clear();
     app.terminal_sidebar_close_areas.clear();
     if area.is_empty() {
+        app.terminal_sidebar.hide();
         return;
     }
 
@@ -314,6 +318,7 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         area,
     );
 
+    let area = crate::terminal_sidebar::content_area(f, app, area);
     let toggle_width = area.width.min(3);
     let toggle_x = area.x.saturating_add(area.width.saturating_sub(toggle_width));
     let toggle_area = Rect::new(toggle_x, area.y, toggle_width, 1);

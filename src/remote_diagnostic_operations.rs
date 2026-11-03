@@ -305,7 +305,7 @@ impl Attempt {
         // closes are fire-and-forget; do not pretend the node acknowledged one.
         if !matches!(
             command,
-            Command::Close { .. } | Command::Watch | Command::Shutdown
+            Command::Close { .. } | Command::Watch | Command::PauseWatch | Command::Shutdown
         ) {
             return None;
         }
@@ -503,6 +503,7 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             use crate::git_tasks::Task;
             path(
                 match task {
+                    Task::Operation(_) => "Git rebase / cherry-pick",
                     Task::Stage(_) => "Git stage files",
                     Task::Unstage(_) => "Git unstage files",
                     Task::Discard(_) => "Git discard files",

@@ -1,7 +1,7 @@
 //! Keyboard Shortcuts is a workbench tab. Input follows its rendered pane,
 //! while the focused tab alone can capture a shortcut assignment.
 use crate::app::{ActivePane, App, TabKind};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -39,7 +39,7 @@ fn first_row(app: &App, list: Rect) -> usize {
         .saturating_sub((list.height as usize).saturating_sub(1))
 }
 
-fn focused(app: &App) -> bool {
+pub(crate) fn focused(app: &App) -> bool {
     app.active_pane == ActivePane::Editor
         && !app.docked_terminal_has_focus()
         && app
@@ -62,28 +62,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if !focused(app) {
         return false;
     }
-    if app.keybindings_editing {
-        if !(key.code == KeyCode::Esc && key.modifiers.is_empty()) {
-            if let Some(kb) = app.keybindings.get_mut(app.keybindings_selected) {
-                let message = if key.modifiers.is_empty()
-                    && matches!(key.code, KeyCode::Delete | KeyCode::Backspace)
-                {
-                    kb.modifiers = KeyModifiers::empty();
-                    kb.code = KeyCode::Null;
-                    format!("Unassigned {}", kb.label)
-                } else {
-                    kb.modifiers = key.modifiers;
-                    kb.code = key.code;
-                    format!("Set {} to {}", kb.label, kb.display())
-                };
-                app.notify(message);
-                app.rebuild_keybinding_settings_cache();
-                app.save_settings();
-            }
-        }
-        app.keybindings_editing = false;
-        return true;
-    }
+    if app.handle_shortcut_editor_key(key) { return true; }
     match key.code {
         KeyCode::Esc => app.close_tab(app.active_tab),
         KeyCode::Up => app.keybindings_selected = app.keybindings_selected.saturating_sub(1),
@@ -93,7 +72,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 .saturating_add(1)
                 .min(app.keybindings.len().saturating_sub(1))
         }
-        KeyCode::Enter => app.keybindings_editing = !app.keybindings.is_empty(),
+        KeyCode::Enter => app.begin_shortcut_edit(app.keybindings_selected, false),
         _ => {}
     }
     true
@@ -152,7 +131,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 let index = view.first + (mouse.row - view.list.y) as usize;
                 if index < app.keybindings.len() {
                     app.keybindings_selected = index;
-                    app.keybindings_editing = true;
+                    app.begin_shortcut_edit(index, false);
                 }
             }
         }

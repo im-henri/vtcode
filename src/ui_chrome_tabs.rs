@@ -19,6 +19,10 @@ pub(crate) use tab_path_labels::NameCache;
 mod strip_scroll;
 pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, scroll_by as scroll_strip_by};
 
+#[path = "tab_reorder_animation.rs"]
+mod reorder;
+pub(crate) use reorder::State as ReorderState;
+
 /// Width of each tab-bar scroll indicator ("◂ " / " ▸").
 const TAB_SCROLL_INDICATOR_WIDTH: usize = 2;
 
@@ -56,6 +60,7 @@ pub(crate) struct TabBarHits {
     pub after_tabs: Rect,
     pub groups: Vec<(u64, Rect)>,
     tab_clips: Vec<usize>,
+    tab_widths: Vec<usize>,
     group_clips: Vec<(usize, usize)>,
     new_tab_clip: usize,
 }
@@ -66,7 +71,9 @@ impl TabBarHits {
     }
 
     pub(crate) fn for_group(app: &App, area: Rect, group: usize) -> Self {
-        Self::for_group_with_names(app, area, group, None)
+        let mut hits = Self::for_group_with_names(app, area, group, None);
+        app.animations.tab_reorder.borrow().apply_hits(app, area, group, &mut hits);
+        hits
     }
 
     fn for_group_with_names(app: &App, area: Rect, group: usize, names: Option<&TabNameDuplicates>) -> Self {
@@ -81,6 +88,7 @@ impl TabBarHits {
             new_tab: Rect::default(),
             after_tabs: Rect::default(),
             tab_clips: Vec::new(),
+            tab_widths: Vec::new(),
             group_clips: Vec::new(),
             new_tab_clip: 0,
         };
@@ -165,6 +173,7 @@ impl TabBarHits {
                 cells(used + width - 3, 3)
             };
             hits.tabs.push((index, cells(used, width), close));
+            hits.tab_widths.push(width);
             used += width;
         }
         if used + 3 <= usize::from(area.width) {
@@ -177,10 +186,33 @@ impl TabBarHits {
     }
 
     pub(crate) fn tab_at(&self, column: u16) -> Option<(usize, Rect, Rect)> {
+        if [self.left, self.right, self.new_tab].into_iter().any(|rect| Self::contains(rect, column))
+            || self.groups.iter().any(|(_, rect)| Self::contains(*rect, column)) {
+            return None;
+        }
         self.tabs
             .iter()
             .copied()
             .find(|(_, rect, _)| Self::contains(*rect, column))
+    }
+
+    /// Insert only after crossing a neighbor's center. Use its complete label,
+    /// including clipped cells, so redraws cannot move the threshold under a
+    /// stationary pointer and send the dragged tab back the other way.
+    pub(crate) fn reorder_target(&self, source: usize, column: u16) -> Option<usize> {
+        let mut target = None;
+        for (position, &(index, rect, _)) in self.tabs.iter().enumerate() {
+            let inset = self.tab_clips.get(position).copied().unwrap_or(0);
+            let center = i64::from(rect.x) - inset as i64
+                + (self.tab_widths[position] / 2) as i64;
+            if index < source && i64::from(column) < center {
+                return Some(index);
+            }
+            if index > source && i64::from(column) >= center {
+                target = Some(index);
+            }
+        }
+        target
     }
 
     pub(crate) fn contains(rect: Rect, column: u16) -> bool {
@@ -214,7 +246,7 @@ fn tab_display_name_with_duplicates<'a>(
     tab: &'a crate::app::Tab,
     duplicates: Option<&TabNameDuplicates>,
 ) -> std::borrow::Cow<'a, str> {
-    let name = tab.editor.file_name();
+    let name = tab.editor.file_display_name();
     if tab.kind == crate::app::TabKind::ExtensionInfo {
         let id = crate::ui_extension_info::tab_extension_id(tab);
         let name = app.extension_views().into_iter().find(|ext| Some(ext.id.as_str()) == id.as_deref())
@@ -240,7 +272,9 @@ fn tab_display_name_with_duplicates<'a>(
             && let Some(root) = app.diff_tabs.repository_for_tab(tab)
             && let Some(repository) = root.file_name()
         {
-            return std::borrow::Cow::Owned(format!("{name} ({label} · {})", repository.to_string_lossy()));
+            let repository = crate::remote::workspace::display_name(root)
+                .map(std::borrow::Cow::Owned).unwrap_or_else(|| repository.to_string_lossy());
+            return std::borrow::Cow::Owned(format!("{name} ({label} · {repository})"));
         }
         return std::borrow::Cow::Owned(format!("{name} ({label})"));
     }
@@ -278,7 +312,7 @@ fn tab_display_name_with_duplicates<'a>(
     if let Some(context) = context {
         return std::borrow::Cow::Owned(format!("{name} ({context}){review_mark}"));
     }
-    if pending { std::borrow::Cow::Owned(format!("{name}{review_mark}")) } else { std::borrow::Cow::Borrowed(name) }
+    if pending { std::borrow::Cow::Owned(format!("{name}{review_mark}")) } else { name }
 }
 
 fn role_name_with_context<'a>(app: &App, tab: &crate::app::Tab, name: String, duplicates: Option<&TabNameDuplicates>) -> std::borrow::Cow<'a, str> {
@@ -355,7 +389,8 @@ pub(crate) fn draw_tab_bar_for_group(
                         &cache.cells.content[source..source + usize::from(area.width)],
                     );
                 }
-                draw_tab_indicator(f, app, area, cache.active, cache.track,
+                let active = reorder::paint(f, app, area, cache.active, now);
+                draw_tab_indicator(f, app, area, active, cache.track,
                     cache.strip_scroll.map_or(cache.scroll, |scroll| scroll.columns), now);
                 return;
             }
@@ -413,6 +448,9 @@ pub(crate) fn draw_tab_bar_for_group(
     }
     let mut active_rect = None;
     let mut file_icon_areas = Vec::new();
+    let mut reorder_labels = (group == app.active_group && app.terminal_has_focus
+        && app.animation_settings.enabled(crate::animation_config::AnimationEffect::TabSlide))
+        .then(Vec::new);
     for (position, &(i, rect, close)) in hits.tabs.iter().enumerate() {
         let clip = hits.tab_clips.get(position).copied().unwrap_or(0);
         let tab = &tabs[i];
@@ -510,6 +548,22 @@ pub(crate) fn draw_tab_bar_for_group(
         let width = tab_label_width(app, tab, &display_name);
         spans.push(Span::styled(display_name, style));
         spans.push(Span::styled("   ", style));
+        if let Some(labels) = &mut reorder_labels {
+            let mut line = Line::from(spans.iter().cloned().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>());
+            if !tab.pinned && (is_active || hovered) {
+                *line.spans.last_mut().unwrap() = Span::styled(" × ", app.colors.ui.toolbar_style(
+                    fg, tab_bg, close.contains((app.mouse_col, app.mouse_row).into()), false, false,
+                ));
+            }
+            let start = if tab.pinned { " 📌".width() } else { 1 }
+                + if tab.has_unsaved_changes() { 2 } else { 0 };
+            labels.push(reorder::Label {
+                id: tab.editor.navigation_id, index: i, x: i32::from(rect.x) - clip as i32,
+                width, pinned: tab.pinned, line, style,
+                icon: matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision)
+                    .then_some(start..start + icon.width()),
+            });
+        }
         f.render_widget(Paragraph::new(Line::from(spans)).scroll((0, crate::helpers::len_as_u16(clip))).style(style), rect);
         if !close.is_empty() && (is_active || hovered) {
             f.render_widget(
@@ -584,6 +638,18 @@ pub(crate) fn draw_tab_bar_for_group(
         } else {
             *app.tab_animation_cache.borrow_mut() = None;
         }
+        if let Some(labels) = reorder_labels {
+            let left = area.x.saturating_add(prefix).saturating_add(hits.left.width);
+            let right = if hits.right.is_empty() { area.right() } else { hits.right.x };
+            let mut fixed: Vec<_> = hits.groups.iter().map(|(_, rect)| *rect).collect();
+            fixed.extend([hits.left, hits.right, hits.new_tab]);
+            reorder::capture(f, app, reorder::Capture {
+                area, bar: area, viewport: Rect::new(left, area.y, right.saturating_sub(left), 1),
+                labels, fixed, gradient: strip_scroll.is_some()
+                    && app.colors.gradients.bg_tabbar.start != app.colors.gradients.bg_tabbar.end,
+            }, now);
+        }
+        let active_rect = reorder::paint(f, app, area, active_rect, now);
         draw_tab_indicator(
             f,
             app,
@@ -615,16 +681,17 @@ fn draw_tab_bar_at(f: &mut Frame, app: &App, area: Rect, now: std::time::Instant
     }
     crate::ui_desks::draw_controls(f, app, area, app.active_group);
     let (_, _, prefix) = crate::ui_desks::controls(app, area, app.active_group);
+    let bar = area;
     let area = Rect::new(
         area.x.saturating_add(prefix),
         area.y,
         area.width.saturating_sub(prefix),
         area.height,
     );
-    draw_plain_tab_bar_at(f, app, area, now);
+    draw_plain_tab_bar_at(f, app, area, bar, now);
 }
 
-fn draw_plain_tab_bar_at(f: &mut Frame, app: &App, area: Rect, now: std::time::Instant) {
+fn draw_plain_tab_bar_at(f: &mut Frame, app: &App, area: Rect, bar: Rect, now: std::time::Instant) {
     if app.rendering_animation_frame {
         let cache = app.tab_animation_cache.borrow();
         if let Some(cache) = cache.as_ref().filter(|cache| {
@@ -641,18 +708,20 @@ fn draw_plain_tab_bar_at(f: &mut Frame, app: &App, area: Rect, now: std::time::I
                     &cache.cells.content[source..source + usize::from(area.width)],
                 );
             }
-            draw_tab_indicator(f, app, area, cache.active, cache.track, cache.scroll, now);
+            let active = reorder::paint(f, app, bar, cache.active, now);
+            draw_tab_indicator(f, app, area, active, cache.track, cache.scroll, now);
             return;
         }
     }
     let duplicates = TabNameDuplicates::for_viewport(app, area.width);
-    draw_tab_bar_labels(f, app, area, now, duplicates.as_ref());
+    draw_tab_bar_labels(f, app, area, bar, now, duplicates.as_ref());
 }
 
 fn draw_tab_bar_labels(
     f: &mut Frame,
     app: &App,
     area: Rect,
+    bar: Rect,
     now: std::time::Instant,
     duplicates: Option<&TabNameDuplicates>,
 ) {
@@ -672,6 +741,7 @@ fn draw_tab_bar_labels(
         && app
             .animation_settings
             .enabled(crate::animation_config::AnimationEffect::TabSlide);
+    let mut reorder_labels = sliding_indicator.then(Vec::new);
 
     let available_width = area.width as usize;
     let mut used_width = 0;
@@ -767,6 +837,7 @@ fn draw_tab_bar_labels(
             text_style = text_style.add_modifier(Modifier::UNDERLINED).underline_color(border);
         }
         // Split tab into parts for per-element styling
+        let span_start = spans.len();
         spans.push(Span::styled(prefix, text_style));
         if tab.has_unsaved_changes() {
             let mod_color = app.colors.ui.readable_foreground(app.colors.fg_modified_indicator, bg, 3.0);
@@ -794,6 +865,16 @@ fn draw_tab_bar_labels(
         if let Some(border) = app.colors.ui.border_tab {
             spans.push(Span::styled(close, close_style.add_modifier(Modifier::UNDERLINED).underline_color(border)));
         } else { spans.push(Span::styled(close, close_style)); }
+        if let Some(labels) = &mut reorder_labels {
+            let start = prefix.width() + modified_width;
+            labels.push(reorder::Label {
+                id: tab.editor.navigation_id, index: i, x: i32::from(area.x) + used_width as i32,
+                width: tab_width, pinned: tab.pinned, style: text_style,
+                line: Line::from(spans[span_start..].iter().map(|span|
+                    Span::styled(span.content.to_string(), span.style)).collect::<Vec<_>>()),
+                icon: is_file_tab.then_some(start..start + icon.width()),
+            });
+        }
         used_width += tab_width;
         tab_track_end = used_width.min(available_width);
     }
@@ -859,6 +940,15 @@ fn draw_tab_bar_labels(
     } else {
         *app.tab_animation_cache.borrow_mut() = None;
     }
+    if let Some(labels) = reorder_labels {
+        let left = area.x.saturating_add(tab_track_start as u16);
+        reorder::capture(f, app, reorder::Capture {
+            area, bar, viewport: Rect::new(left, area.y, area.right().saturating_sub(left), 1),
+            labels, fixed: vec![Rect::new(area.x + tab_track_end as u16, area.y,
+                area.width.saturating_sub(tab_track_end as u16), 1)], gradient: has_gradient,
+        }, now);
+    }
+    let active_tab_area = reorder::paint(f, app, bar, active_tab_area, now);
     draw_tab_indicator(
         f,
         app,
@@ -1292,6 +1382,10 @@ mod performance_tests;
 #[cfg(test)]
 #[path = "ui_untitled_tabs_tests.rs"]
 mod untitled_tests;
+
+#[cfg(test)]
+#[path = "ui_remote_tab_names_tests.rs"]
+mod remote_names_tests;
 
 #[cfg(test)]
 mod tests {

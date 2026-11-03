@@ -117,7 +117,6 @@ impl Editor {
         self.active_undo_change_id = None;
         self.mark_syntax_dirty_range(dirty_from, dirty_through);
         self.content_version += 1;
-        self.cached_visible_line_count = None;
         self.cached_wrapped_total = None;
         let change_id = self.next_undo_change_id;
         self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
@@ -164,7 +163,6 @@ impl Editor {
     fn invalidate_grouped_edit(&mut self) {
         self.mark_syntax_dirty_range(self.earliest_edit_line(), self.latest_edit_line());
         self.content_version += 1;
-        self.cached_visible_line_count = None;
         self.cached_wrapped_total = None;
     }
 
@@ -243,7 +241,6 @@ impl Editor {
                     .max(state.dirty_from.saturating_add(line_delta)),
             );
             self.content_version += 1;
-            self.cached_visible_line_count = None;
             self.cached_wrapped_total = None;
             self.clear_stale_folds();
             self.modified = state.modified;
@@ -295,7 +292,6 @@ impl Editor {
                     .max(state.dirty_from.saturating_add(line_delta)),
             );
             self.content_version += 1;
-            self.cached_visible_line_count = None;
             self.cached_wrapped_total = None;
             self.clear_stale_folds();
             self.modified = state.modified;

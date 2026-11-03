@@ -34,24 +34,10 @@ impl Editor {
                 let wrap_width = self.effective_wrap_width();
                 let cursor_row =
                     self.wrapped_row_for_position(self.cursor_line, self.cursor_col, wrap_width);
-                self.wrap_scroll_offset = cursor_row.saturating_sub(center);
-                self.sync_line_scroll_from_wrap(wrap_width);
+                self.set_wrap_scroll_offset(cursor_row.saturating_sub(center));
             } else {
-                let mut top = self.cursor_line.saturating_sub(center);
-                if !self.folded_ranges.is_empty() {
-                    // Count screen rows, jumping over hidden bodies instead of
-                    // walking their source lines (which may number millions).
-                    top = self.cursor_line;
-                    for _ in 0..center.min(self.cursor_line) {
-                        top = top.saturating_sub(1);
-                        while let Some((start, _)) = self.folded_range_containing(top) {
-                            top = start;
-                        }
-                        if top == 0 { break; }
-                    }
-                }
-                self.scroll_offset = top;
-                self.wrap_scroll_offset = top;
+                let row = self.visible_row_for_line(self.cursor_line).saturating_sub(center);
+                self.set_visible_scroll_offset(row);
             }
         }
     }
@@ -72,16 +58,12 @@ impl Editor {
                 self.cursor_line = 0;
                 self.cursor_col = self.source_column_at_cell(0, 0, self.line_len(0), desired).0;
             }
-            self.wrap_scroll_offset = self.wrap_scroll_offset.saturating_sub(page);
-            self.sync_line_scroll_from_wrap(wrap_width);
+            self.set_wrap_scroll_offset(self.wrap_scroll_offset.saturating_sub(page));
         } else {
             let desired = self.vertical_goal_column(0);
-            self.cursor_line = self.cursor_line.saturating_sub(page);
-            // Skip out of folded regions
-            while let Some((fold_start, _)) = self.folded_range_containing(self.cursor_line) {
-                self.cursor_line = fold_start;
-            }
-            self.scroll_offset = self.scroll_offset.saturating_sub(page);
+            let row = self.visible_row_for_line(self.cursor_line).saturating_sub(page);
+            self.cursor_line = self.line_for_visible_row(row);
+            self.scroll_up(page);
             let max_col = self.current_line_len();
             self.cursor_col = self.source_column_at_cell(self.cursor_line, 0, max_col, desired).0;
         }
@@ -105,27 +87,13 @@ impl Editor {
                 self.cursor_line = max_line;
                 self.cursor_col = self.source_column_at_cell(max_line, 0, self.line_len(max_line), desired).0;
             }
-            self.wrap_scroll_offset =
-                (self.wrap_scroll_offset + page).min(total_rows.saturating_sub(1));
-            self.sync_line_scroll_from_wrap(wrap_width);
+            self.set_wrap_scroll_offset(self.wrap_scroll_offset.saturating_add(page));
         } else {
             let desired = self.vertical_goal_column(0);
-            self.cursor_line = (self.cursor_line + page).min(max_line);
-            // Skip out of folded regions
-            while let Some((fold_start, fold_end)) = self.folded_range_containing(self.cursor_line)
-            {
-                if fold_end > max_line {
-                    self.cursor_line = fold_start;
-                    break;
-                }
-                self.cursor_line = fold_end;
-            }
-            let scroll_max = if self.scroll_past_end {
-                max_line
-            } else {
-                max_line.saturating_sub(self.viewport_height.saturating_sub(1))
-            };
-            self.scroll_offset = (self.scroll_offset + page).min(scroll_max);
+            let row = self.visible_row_for_line(self.cursor_line).saturating_add(page)
+                .min(self.visible_line_count().saturating_sub(1));
+            self.cursor_line = self.line_for_visible_row(row);
+            self.scroll_down(page);
             let max_col = self.current_line_len();
             self.cursor_col = self.source_column_at_cell(self.cursor_line, 0, max_col, desired).0;
         }
@@ -523,29 +491,19 @@ impl Editor {
 
     pub(crate) fn scroll_up(&mut self, lines: usize) {
         if self.word_wrap {
-            self.wrap_scroll_offset = self.wrap_scroll_offset.saturating_sub(lines);
-            self.sync_line_scroll_from_wrap(self.effective_wrap_width());
-            self.horizontal_scroll = 0;
+            self.set_wrap_scroll_offset(self.wrap_scroll_offset.saturating_sub(lines));
         } else {
-            self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+            let row = self.visible_scroll_offset().saturating_sub(lines);
+            self.set_visible_scroll_offset(row);
         }
     }
 
     pub(crate) fn scroll_down(&mut self, lines: usize) {
         if self.word_wrap {
-            let wrap_width = self.effective_wrap_width();
-            let max = self.wrapped_total_rows(wrap_width).saturating_sub(1);
-            self.wrap_scroll_offset = (self.wrap_scroll_offset + lines).min(max);
-            self.sync_line_scroll_from_wrap(wrap_width);
-            self.horizontal_scroll = 0;
+            self.set_wrap_scroll_offset(self.wrap_scroll_offset.saturating_add(lines));
         } else {
-            let max = if self.scroll_past_end {
-                self.line_count().saturating_sub(1)
-            } else {
-                self.line_count()
-                    .saturating_sub(self.viewport_height.max(1))
-            };
-            self.scroll_offset = (self.scroll_offset + lines).min(max);
+            let row = self.visible_scroll_offset().saturating_add(lines);
+            self.set_visible_scroll_offset(row);
         }
     }
 

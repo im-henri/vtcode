@@ -257,6 +257,7 @@ impl App {
     pub(crate) fn refresh_git_log_async(&mut self) {
         if !self.source_control_enabled { return; }
         if self.repositories.discovered && self.repositories.active.is_none() { return; }
+        if self.defer_git_work(crate::app_workspaces::GitWork::History) { return; }
         self.invalidate_git_history();
         let root = self.source_control_root().to_owned();
         let generation = self.git_history.generation;
@@ -288,6 +289,10 @@ impl App {
         let Some(control) = self.git_history.control.as_ref() else {
             return;
         };
+        if !self.workspace_visible {
+            self.defer_git_work(crate::app_workspaces::GitWork::MoreHistory);
+            return;
+        }
         if control.requests.send(()).is_ok() {
             self.bg_git_log_running = true;
         } else {

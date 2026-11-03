@@ -16,6 +16,7 @@ pub(crate) enum TextInputId {
     GlobalSearch(u8),
     ExplorerFind,
     GitBranch,
+    GitOperationTarget,
     CommandPalette,
     SymbolList,
     SaveAs,
@@ -673,6 +674,7 @@ impl App {
             };
         }
         match id {
+            TextInputId::GitOperationTarget => (&mut self.git_operation_ui.target, &mut self.git_operation_ui.cursor, &mut self.git_operation_ui.anchor),
             TextInputId::ScopeBubbleLanguage => {
                 let field = &mut self.scope_bubble_settings.field;
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
@@ -798,6 +800,7 @@ impl App {
                 | TextInputId::RenameSymbol
                 | TextInputId::TerminalRename
                 | TextInputId::GotoLine
+                | TextInputId::GitOperationTarget
                 | TextInputId::CommandPalette
         ) {
             self.modal.focus = 0;
@@ -976,6 +979,7 @@ impl App {
         if self.sidebar_view == crate::app::SidebarView::SourceControl
             && self.active_pane == crate::app::ActivePane::Explorer
             && self.source_control_input_mode
+            && self.current_git_operation().is_none()
         {
             return Some(TextInputId::SourceControlCommit);
         }
@@ -1010,6 +1014,7 @@ impl App {
                         || self.sidebar_view == crate::app::SidebarView::Search
                 }
                 TextInputId::GitBranch => self.git_branch_picker_active,
+                TextInputId::GitOperationTarget => self.git_operation_ui.request.as_ref().is_some_and(|request| request.choice == crate::ui_git_operation::Choice::Start),
                 TextInputId::CommandPalette => self.palette.active,
                 TextInputId::SymbolList => self.symbol_list_active,
                 TextInputId::SaveAs => self.save_as_active,
@@ -1084,6 +1089,7 @@ impl App {
 
     pub(crate) fn text_input_changed(&mut self, id: TextInputId) {
         match id {
+            TextInputId::GitOperationTarget => crate::ui_modal::field_changed(self),
             TextInputId::Chat => self.refresh_chat_file_completion(),
             TextInputId::AgentSetting(_) => {
                 self.agent_settings.error = None;
@@ -1235,6 +1241,7 @@ impl App {
             | TextInputId::QuickOpen
             | TextInputId::GotoLine
             | TextInputId::GitBranch
+            | TextInputId::GitOperationTarget
             | TextInputId::CommandPalette
             | TextInputId::SymbolList
             | TextInputId::SaveAs
@@ -1521,6 +1528,7 @@ mod tests {
         TextInputId::GlobalSearch(3),
         TextInputId::ExplorerFind,
         TextInputId::GitBranch,
+        TextInputId::GitOperationTarget,
         TextInputId::CommandPalette,
         TextInputId::SymbolList,
         TextInputId::SaveAs,
@@ -1590,6 +1598,7 @@ mod tests {
                 app.search_focus_field = field;
             }
             TextInputId::GitBranch => app.git_branch_picker_active = true,
+            TextInputId::GitOperationTarget => app.start_git_operation_dialog(crate::git_operation::Kind::CherryPick),
             TextInputId::CommandPalette => app.palette.active = true,
             TextInputId::SymbolList => app.symbol_list_active = true,
             TextInputId::SaveAs => app.save_as_active = true,
@@ -1762,6 +1771,7 @@ mod tests {
                 TextInputId::QuickOpen => crate::ui_search_dialog::draw_quick_open(frame, app),
                 TextInputId::GotoLine => crate::ui_search_dialog::draw_goto_line(frame, app),
                 TextInputId::GitBranch => crate::ui_pickers::draw_git_branch_picker(frame, app),
+                TextInputId::GitOperationTarget => crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::GitOperationTarget),
                 TextInputId::CommandPalette => crate::ui_pickers::draw_command_palette(frame, app),
                 TextInputId::SymbolList => crate::ui_pickers::draw_symbol_list(frame, app),
                 TextInputId::SaveAs => crate::ui_dialogs::draw_save_as_dialog(frame, app),

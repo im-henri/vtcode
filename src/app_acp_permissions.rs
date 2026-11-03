@@ -93,6 +93,7 @@ impl App {
             self.chat.focus = None;
         }
         self.chat.permissions.push_back(permission);
+        self.record_workspace_event(format!("{}: permission needed", self.chat.name()), crate::app_workspaces::Level::Attention);
         if !self.chat.visible {
             self.notify("Agent needs permission · open Agent Chat");
         }

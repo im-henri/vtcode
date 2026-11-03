@@ -262,6 +262,7 @@ fn draw_field(f: &mut Frame, app: &mut App, area: Rect, field: u8, placeholder: 
 }
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
+    app.search_control_regions.retain(|button| !matches!(button.control, SearchControl::DismissResult(_, _)));
     if area.height == 0 || app.global_search_results.is_empty() {
         return;
     }
@@ -292,6 +293,10 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         area.height,
     );
     let mut items = Vec::with_capacity(visible);
+    let mut actions = Vec::with_capacity(visible);
+    let action_width = result_area.width.min(3);
+    let text_area = Rect::new(result_area.x, result_area.y, result_area.width.saturating_sub(action_width), result_area.height);
+    let revision = app.global_search_results.revision();
     for (visual_row, hit) in app.global_search_results.visible_rows(viewport) {
         let (index, header) = match hit {
             crate::search_results::SearchRow::Header(index) => (index, true),
@@ -304,6 +309,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
             let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
                 if hovered { bg } else { header_bg }, false, active, hovered);
+            actions.push((hit, row_area, row_style, hovered));
             let row_bg = row_style.bg.unwrap_or(bg);
             let dim = app.colors.ui.description_color(row_bg);
             let collapsed = app.is_global_search_file_collapsed(&result.file_path);
@@ -350,7 +356,8 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
         let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
             bg, selected, active, hovered);
-        let (before, matched, after) = preview_parts(result, result_area.width.saturating_sub(3) as usize);
+        actions.push((hit, row_area, row_style, hovered || (selected && active && !app.global_search_active)));
+        let (before, matched, after) = preview_parts(result, text_area.width.saturating_sub(3) as usize);
         items.push(
             ListItem::new(Line::from(vec![
                 Span::raw("   "),
@@ -364,7 +371,14 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             .style(row_style),
         );
     }
-    f.render_widget(List::new(items).style(Style::default().bg(bg)), result_area);
+    f.render_widget(List::new(items).style(Style::default().bg(bg)), text_area);
+    for (hit, row, style, visible) in actions {
+        let area = Rect::new(row.right().saturating_sub(action_width), row.y, action_width, 1);
+        f.render_widget(Block::default().style(style), area);
+        if visible {
+            draw_button(f, app, SearchScope::Workspace, SearchControl::DismissResult(hit, revision), area, "×", false, false);
+        }
+    }
     if show_scrollbar {
         let hovered = app.mouse_col == result_area.right() && (area.y..area.bottom()).contains(&app.mouse_row);
         let (track, thumb) = app.colors.ui.scrollbar_colors(bg, hovered, false);
@@ -413,6 +427,43 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
+
+    #[test]
+    fn search_fields_keep_long_text_and_mouse_targets_stable_while_the_cursor_blinks() {
+        for theme in [crate::app_theme::EditorTheme::Dark, crate::app_theme::EditorTheme::Light] {
+            for width in [24, 48] {
+                for text in ["abcdefghijklmnopqrstuvwxyz0123456789".repeat(3), "find界e\u{301}👩‍💻".repeat(12)] {
+                    let mut app = App::test_new();
+                    app.colors = theme.colors();
+                    app.global_search_active = true;
+                    app.global_search_replace_visible = true;
+                    app.global_search_query = text.clone();
+                    app.global_search_replace_query = text.clone();
+                    app.search_include_pattern = text.clone();
+                    app.search_exclude_pattern = text.clone();
+                    app.global_search_field_cursors = [text.len(); 4];
+                    let mut terminal = Terminal::new(TestBackend::new(width, 14)).unwrap();
+                    for field in 0..4 {
+                        app.search_focus_field = field;
+                        let mut baseline = None;
+                        for visible in [true, false, true, false] {
+                            app.cursor_visible = visible;
+                            app.text_input_regions.clear();
+                            terminal.draw(|frame| draw_search_panel(frame, &mut app, Rect::new(0, 0, width, 14)))
+                                .unwrap();
+                            let symbols: Vec<_> = terminal.backend().buffer().content.iter()
+                                .map(|cell| cell.symbol().to_string()).collect();
+                            let snapshot = (symbols, app.text_input_regions.clone());
+                            if let Some(expected) = &baseline {
+                                assert_eq!(&snapshot, expected,
+                                    "blink moved search field {field} at width {width}");
+                            } else { baseline = Some(snapshot); }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn scrolled_search_rows_match_full_render_with_collapsed_groups() {

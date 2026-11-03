@@ -16,6 +16,12 @@ pub(crate) enum Service {
     Agents,
     Extensions,
 }
+impl Service {
+    pub(crate) fn index(self) -> usize {
+        match self { Self::LanguageServers => 0, Self::Workers => 1, Self::Terminals => 2,
+            Self::Agents => 3, Self::Extensions => 4 }
+    }
+}
 
 const SERVICES: [Service; 5] = [
     Service::LanguageServers,
@@ -28,13 +34,14 @@ const SERVICES: [Service; 5] = [
 pub(crate) struct Scheduler {
     next: usize,
     remaining: usize,
+    unfinished: [bool; 5],
     last_service: Option<Instant>,
     observed_wake: Option<u64>,
 }
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self { next: 0, remaining: SERVICES.len(), last_service: None, observed_wake: None }
+        Self { next: 0, remaining: SERVICES.len(), unfinished: [true; 5], last_service: None, observed_wake: None }
     }
 }
 
@@ -55,6 +62,17 @@ impl Turn {
 }
 
 impl Scheduler {
+    /// A service can itself span several workspace slices. Keep its original
+    /// wake ticket until it finishes; a continuation is not a new producer wake.
+    pub(crate) fn defer_last_service(&mut self, turn: &mut Turn, observed_wake: u64) {
+        // Keep rotating between services. A large set of LSP queues must not
+        // monopolize all slices before terminals or agents get their turn.
+        self.unfinished[(self.next + SERVICES.len() - 1) % SERVICES.len()] = true;
+        self.remaining = if turn.complete { 1 } else { self.remaining + 1 };
+        self.observed_wake.get_or_insert(observed_wake);
+        turn.complete = false;
+    }
+
     pub(crate) fn observe_wake(&mut self, generation: u64) -> u64 {
         // A cycle can span several input turns. A producer already polled in
         // an earlier turn may publish again before this one starts; keep the
@@ -74,13 +92,18 @@ impl Scheduler {
             self.last_service.get_or_insert(now);
             return None;
         }
+        if self.remaining == 0 {
+            self.remaining = SERVICES.len();
+            self.unfinished = [true; 5];
+        }
+        while !self.unfinished[self.next] { self.next = (self.next + 1) % SERVICES.len(); }
         let service = SERVICES[self.next];
+        self.unfinished[self.next] = false;
         self.next = (self.next + 1) % SERVICES.len();
         self.last_service = Some(now);
         turn.visited += 1;
         self.remaining -= 1;
         if self.remaining == 0 {
-            self.remaining = SERVICES.len();
             self.observed_wake = None;
             turn.complete = true;
         }
@@ -91,6 +114,25 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_slices_keep_the_cycle_ticket_and_eventually_finish() {
+        let mut scheduler = Scheduler::default();
+        let mut now = Instant::now();
+        assert_eq!(scheduler.observe_wake(7), 7);
+        for slice in 0..3 {
+            for (index, expected) in SERVICES.into_iter().enumerate() {
+                assert_eq!(scheduler.observe_wake(8), 7, "do not forget a producer wake during the cycle");
+                let mut turn = Turn::new(now);
+                assert_eq!(scheduler.next(&mut turn, now, false), Some(expected));
+                if slice < 2 { scheduler.defer_last_service(&mut turn, 7); }
+                now += TURN_BUDGET;
+                assert_eq!(scheduler.next(&mut turn, now, false), None);
+                assert_eq!(turn.deferred(), slice < 2 || index + 1 < SERVICES.len());
+            }
+        }
+        assert_eq!(scheduler.observe_wake(8), 8);
+    }
 
     #[test]
     fn services_share_one_budget_and_resume_in_order() {

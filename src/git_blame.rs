@@ -72,9 +72,13 @@ impl Revision {
     }
 
     pub fn tab_title(&self) -> String {
+        let path = self.file_path();
+        let name = crate::remote::workspace::display_name(&path)
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or_else(|| self.path.file_name().unwrap_or_default().to_string_lossy());
         format!(
             "{} @ {}",
-            self.path.file_name().unwrap_or_default().to_string_lossy(),
+            name,
             self.short_hash()
         )
     }

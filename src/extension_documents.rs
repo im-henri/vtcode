@@ -259,6 +259,7 @@ struct RemoteDocument {
 pub(crate) struct BinaryFragment(Vec<Piece>, u64);
 
 impl BinaryDocument {
+    pub(crate) fn exit_revision(&self) -> (PathBuf, u64, u64) { (self.path.clone(), self.current.revision, self.saved_revision) }
     pub(crate) fn unsaved() -> Self {
         let snapshot = Snapshot { pieces: Vec::new(), len: 0, revision: 0 };
         Self {

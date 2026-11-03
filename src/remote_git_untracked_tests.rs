@@ -29,7 +29,7 @@ fn headless_status_omits_untracked_discovery_but_keeps_staged_and_modified_files
     let mut service = Service::new(root.path()).unwrap();
     for include_untracked in [false, true, false] {
         let Reply::GitStatus { scans, .. } = service
-            .execute(Command::GitStatus {
+            .execute(Command::GitStatus { revalidate: false,
                 changed: None,
                 known: None,
                 parent_open: false,

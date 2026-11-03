@@ -186,32 +186,34 @@ fn hidden_dirty_diffs_wait_for_activation_and_leave_other_views_unchanged() {
 
 #[test]
 fn watcher_overflow_revalidates_worktree_bytes_and_workspace_events_cover_descendants() {
-    let mut f = Fixture::new(false);
-    f.open(0, false);
-    f.write(0, "event was lost\n");
-    f.app
-        .background
-        .sender
-        .send(BackgroundResult::FilesChanged {
-            root: f.app.explorer.root.clone(),
-            changes: Vec::new(),
-            structure_changed: false,
-            rescan: true,
-            git_metadata_changed: false,
-        })
-        .unwrap();
-    f.app.poll_background_results();
-    f.settle();
-    assert_eq!(f.app.editor().unwrap().rope.to_string(), "event was lost\n");
-    f.write(0, "workspace replaced\n");
-    f.app.refresh_source_control_diffs_for_paths(Some(
-        &[f.app.explorer.root.clone()].into_iter().collect(),
-    ));
-    f.settle();
-    assert_eq!(
-        f.app.editor().unwrap().rope.to_string(),
-        "workspace replaced\n"
-    );
+    for remote in [false, true] {
+        let mut f = Fixture::new(remote);
+        f.open(0, false);
+        f.write(0, "event was lost\n");
+        f.app
+            .background
+            .sender
+            .send(BackgroundResult::FilesChanged {
+                root: f.app.explorer.root.clone(),
+                changes: Vec::new(),
+                structure_changed: false,
+                rescan: true,
+                git_metadata_changed: false,
+            })
+            .unwrap();
+        f.app.poll_background_results();
+        f.settle();
+        assert_eq!(f.app.editor().unwrap().rope.to_string(), "event was lost\n");
+        f.write(0, "workspace replaced\n");
+        f.app.refresh_source_control_diffs_for_paths(Some(
+            &[f.app.explorer.root.clone()].into_iter().collect(),
+        ));
+        f.settle();
+        assert_eq!(
+            f.app.editor().unwrap().rope.to_string(),
+            "workspace replaced\n"
+        );
+    }
 }
 
 #[test]

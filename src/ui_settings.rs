@@ -864,7 +864,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let control_text = if id.starts_with("kb_") {
             if is_selected && app.settings_kb_editing {
-                "⌨ waiting...".to_string()
+                "Editing shortcut…".to_string()
             } else {
                 value.clone()
             }
@@ -1017,13 +1017,13 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         }
         if draw_y >= min_y && draw_y < max_y && needs_control_row {
             let max_w = content_area.width as usize;
-            if id.starts_with("kb_") && max_w > 8 {
+            if id.starts_with("kb_") && max_w >= 34 {
                 let reset_label = "[Reset]";
                 let unassign_label = "[Unassign]";
                 let reset_w = UnicodeWidthStr::width(reset_label);
                 let unassign_w = UnicodeWidthStr::width(unassign_label);
                 let buttons_w = reset_w + 1 + unassign_w;
-                let mut left = format!("  {control_text}");
+                let mut left = format!("  [Edit]  {control_text}");
                 let left_w = max_w.saturating_sub(buttons_w);
                 let left_len = left.chars().count();
                 if left_len > left_w {
@@ -1067,6 +1067,10 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                     ])),
                     Rect::new(content_area.x, draw_y as u16, content_area.width, 1),
                 );
+            } else if id.starts_with("kb_") {
+                f.render_widget(Paragraph::new(format!("[Edit] {control_text}"))
+                    .style(Style::default().fg(control_fg).bg(row_bg)),
+                    Rect::new(content_area.x, draw_y as u16, content_area.width, 1));
             } else {
                 let prefix = format!("{marker} ");
                 let prefix_w = UnicodeWidthStr::width(prefix.as_str());
@@ -1704,6 +1708,7 @@ mod tests {
         for width in [46, 100] {
             for &id in &ids {
                 let mut app = App::test_new();
+                let enabled_before = AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect));
                 app.settings_editor_active = true;
                 app.active_pane = crate::app::ActivePane::Editor;
                 app.settings_focus_categories = false;
@@ -1799,9 +1804,9 @@ mod tests {
                         Some(!mouse_value)
                     );
                 }
-                assert!(
-                    !app.animation_settings.any_enabled(),
-                    "editing options enabled an effect: {id}"
+                assert_eq!(
+                    AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect)), enabled_before,
+                    "editing options changed enabled effects: {id}"
                 );
             }
         }

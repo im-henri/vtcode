@@ -590,12 +590,20 @@ fn external_save_watcher_preserves_unsaved_edits_and_warns_once_for_backward_tim
         app.editor_mut().unwrap().insert_char('X');
         app.duplicate_tab(0);
         app.create_split_group(1);
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            !app.background.has_active_jobs() && !app.background.has_pending_results()
+        });
         fs::write(&path, "external\n").unwrap();
+        // Native checks may run between injected events. Keep their observed
+        // metadata consistent with the backward timestamp under test.
+        let modified = UNIX_EPOCH + Duration::from_secs(1);
+        fs::OpenOptions::new().write(true).open(&path).unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
         let change = WorkspacePathChange { is_dir: false,
             path: path.clone(),
             observed_at: Instant::now(),
             exists: true,
-            modified: Some(UNIX_EPOCH + Duration::from_secs(1)),
+            modified: Some(modified),
             len: Some(9),
         };
         for _ in 0..2 {
@@ -612,6 +620,9 @@ fn external_save_watcher_preserves_unsaved_edits_and_warns_once_for_backward_tim
             };
             send(&mut app, event);
         }
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            !app.background.has_active_jobs() && !app.background.has_pending_results()
+        });
         assert_eq!(
             app.notification_history
                 .iter()
@@ -635,6 +646,47 @@ fn external_save_watcher_preserves_unsaved_edits_and_warns_once_for_backward_tim
         );
         assert_eq!(fs::read_to_string(path).unwrap(), "external\n");
     }
+}
+
+#[test]
+fn stale_byte_validation_does_not_clear_a_newer_disk_conflict_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file.txt");
+    let mut app = app(&path);
+    app.editor_mut().unwrap().insert_char('X');
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        !app.background.has_active_jobs() && !app.background.has_pending_results()
+    });
+    let editor = app.editor().unwrap();
+    let document = editor.save_identity;
+    let baseline = crate::editor::DiskSaveBaseline {
+        rope: editor.saved_rope.as_ref().unwrap().clone(), encoding: editor.saved_encoding,
+    };
+    let old_size = editor.file_size;
+    let old_modified = editor.last_disk_modified;
+    let generation = app.workspace_generation;
+    // Model a byte check that finished before the external edit but whose
+    // response arrives after its newer metadata notification.
+    app.pending_file_reloads.insert(path.clone());
+    fs::write(&path, "external replacement\n").unwrap();
+    let change = crate::background::inspect_workspace_path(path.clone());
+    send(&mut app, BackgroundResult::FileDiskState(change.clone()));
+    send(&mut app, BackgroundResult::NativeFileValidated {
+        generation, path: path.clone(), document, baseline,
+        cancel: crate::background::CancellationToken::new(),
+        result: Ok(crate::remote::workspace::Validation {
+            changed: false, size: old_size, modified: old_modified,
+        }),
+    });
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        !app.background.has_active_jobs() && !app.background.has_pending_results()
+    });
+    send(&mut app, BackgroundResult::FileDiskState(change));
+    assert_eq!(app.notification_history.iter()
+        .filter(|entry| entry.0.contains("changed on disk")).count(), 1);
+    assert_eq!(app.editor().unwrap().rope, "Xoriginal\n");
+    assert!(app.editor().unwrap().modified && app.editor().unwrap().can_undo());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "external replacement\n");
 }
 
 #[test]

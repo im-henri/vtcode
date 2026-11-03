@@ -22,6 +22,7 @@ pub(crate) struct Validation {
 
 #[derive(Clone)]
 pub(crate) struct Workspace {
+    family: Arc<()>,
     pub connection: Option<Arc<launch::Process>>,
     pub(crate) recipe: Option<Arc<launch::Recipe>>,
     pub client: client::Client,
@@ -67,15 +68,7 @@ pub(crate) fn is_view_key(path: &Path) -> bool {
     path.as_os_str().as_encoded_bytes().contains(&0)
 }
 pub(crate) fn display_name(path: &Path) -> Option<String> {
-    if !is_view_key(path) {
-        return None;
-    }
-    let name = path.file_name()?.to_str()?;
-    // Ordinary names can keep the editor's borrowed, allocation-free label.
-    if !name.contains('%') {
-        return None;
-    }
-    let bytes = uncomponent(name).ok()?;
+    let bytes = display_component(path, path.file_name()?)?;
     let mut display = String::with_capacity(bytes.len());
     for ch in String::from_utf8_lossy(&bytes).chars() {
         if ch.is_control() {
@@ -85,6 +78,15 @@ pub(crate) fn display_name(path: &Path) -> Option<String> {
         }
     }
     Some(display)
+}
+/// Decode exactly one component of an opaque view key. Native filenames with
+/// literal percent sequences must never be interpreted as encoded names.
+pub(crate) fn display_component(path: &Path, name: &std::ffi::OsStr) -> Option<Vec<u8>> {
+    if !is_view_key(path) { return None; }
+    let name = name.to_str()?;
+    // Ordinary names can keep the editor's borrowed, allocation-free label.
+    if !name.contains('%') { return None; }
+    uncomponent(name).ok()
 }
 /// A human label for a hosted location, without retaining a connection in the
 /// chat renderer. Identity and actions continue to use the original view key.
@@ -180,6 +182,13 @@ fn uncomponent(text: &str) -> io::Result<Vec<u8>> {
     Ok(result)
 }
 impl Workspace {
+    pub(crate) fn workspace_sets_scope(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(&self.connection_identity);
+        if self.connection_identity.is_empty() { hash.update(self.client.workspace_sets_root_uri()); }
+        URL_SAFE_NO_PAD.encode(hash.finalize())
+    }
     #[cfg(test)]
     pub(crate) fn new(client: client::Client) -> Self {
         Self::with_connection_identity(client, &[])
@@ -217,6 +226,7 @@ impl Workspace {
         let view_root =
             PathBuf::from(format!("{prefix}\0vtcode-remote-{id}")).join(component(&name));
         Self {
+            family: Arc::new(()),
             client,
             view_root,
             display_root,
@@ -244,6 +254,8 @@ impl Workspace {
         let mut workspace = Self::with_connection_identity(client, &self.connection_identity);
         workspace.connection = self.connection.clone();
         workspace.recipe = self.recipe.clone();
+        workspace.disconnect_requested = self.disconnect_requested.clone();
+        workspace.family = self.family.clone();
         Ok(workspace)
     }
     pub(crate) fn take_disconnect(&self) -> bool {
@@ -254,6 +266,7 @@ impl Workspace {
         if disconnected && let Some(connection) = &self.connection { connection.terminate(); }
         disconnected
     }
+    pub(crate) fn same_family(&self, other: &Self) -> bool { Arc::ptr_eq(&self.family, &other.family) }
     pub(crate) fn disconnect(&self) {
         self.disconnect_requested.store(true, std::sync::atomic::Ordering::Release);
         self.client.disconnect();
@@ -283,6 +296,7 @@ impl Workspace {
         if next.view_root != self.view_root { return Err(io::Error::other("Reconnected workspace identity changed; local buffers were not retargeted")); }
         next.recovery = self.recovery.clone();
         next.recipe = self.recipe.clone();
+        next.family = self.family.clone();
         Ok(next)
     }
     pub(crate) fn view_key(&self, path: &RemotePath) -> PathBuf {

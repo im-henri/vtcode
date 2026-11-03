@@ -254,6 +254,12 @@ fn stop_watch(ws: &WatchState, meta_tx: &Sender<MetaEvent>) {
     let _ = meta_tx.send(MetaEvent::SingleWatchComplete);
 }
 
+fn emit_event(event_handler: &Mutex<dyn EventHandler>, res: Result<Event>) {
+    if let Ok(mut guard) = event_handler.lock() {
+        guard.handle_event(res);
+    }
+}
+
 fn start_read(rd: &ReadData, event_handler: Arc<Mutex<dyn EventHandler>>, handle: HANDLE) {
     let request = Box::new(ReadDirectoryRequest {
         event_handler,
@@ -298,12 +304,14 @@ fn start_read(rd: &ReadData, event_handler: Arc<Mutex<dyn EventHandler>>, handle
         );
 
         if ret == 0 {
+            let error = std::io::Error::last_os_error();
             // error reading. retransmute request memory to allow drop.
             // Because of the error, ownership of the `overlapped` alloc was not passed
             // over to `ReadDirectoryChangesW`.
             // So we can claim ownership back.
             let _overlapped = Box::from_raw(overlapped);
             let request = Box::from_raw(request);
+            emit_event(&request.event_handler, Err(Error::io(error).add_path(request.data.dir.clone())));
             ReleaseSemaphore(request.data.complete_sem, 1, ptr::null_mut());
         }
     }
@@ -311,7 +319,7 @@ fn start_read(rd: &ReadData, event_handler: Arc<Mutex<dyn EventHandler>>, handle
 
 unsafe extern "system" fn handle_event(
     error_code: u32,
-    _bytes_written: u32,
+    bytes_written: u32,
     overlapped: *mut OVERLAPPED,
 ) {
     let overlapped: Box<OVERLAPPED> = Box::from_raw(overlapped);
@@ -324,8 +332,24 @@ unsafe extern "system" fn handle_event(
         return;
     }
 
+    if error_code != 0 {
+        // Deleted directories and failed network watches must lose coverage.
+        // Retrying a dead handle can also spin through completion callbacks.
+        emit_event(&request.event_handler, Err(Error::io(std::io::Error::from_raw_os_error(error_code as i32))
+            .add_path(request.data.dir.clone())));
+        ReleaseSemaphore(request.data.complete_sem, 1, ptr::null_mut());
+        return;
+    }
+
     // Get the next request queued up as soon as possible
     start_read(&request.data, request.event_handler.clone(), request.handle);
+
+    if bytes_written == 0 {
+        // A successful empty completion means overflow. Do not interpret an
+        // empty FILE_NOTIFY_INFORMATION buffer as an ordinary root event.
+        emit_event(&request.event_handler, Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan)));
+        return;
+    }
 
     // The FILE_NOTIFY_INFORMATION struct has a variable length due to the variable length
     // string as its last member. Each struct contains an offset for getting the next entry in
@@ -357,13 +381,6 @@ unsafe extern "system" fn handle_event(
             );
 
             let newe = Event::new(EventKind::Any).add_path(path);
-
-            fn emit_event(event_handler: &Mutex<dyn EventHandler>, res: Result<Event>) {
-                if let Ok(mut guard) = event_handler.lock() {
-                    let f: &mut dyn EventHandler = &mut *guard;
-                    f.handle_event(res);
-                }
-            }
 
             let event_handler = |res| emit_event(&request.event_handler, res);
 

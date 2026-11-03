@@ -105,8 +105,16 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
             }
         }
         KeyCode::Tab => {
-            app.search_focus_field = (app.search_focus_field + 1) % 4;
-            if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 2; }
+            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search
+                && app.search_focus_field == 3 && !app.global_search_results.is_empty()
+            {
+                app.global_search_active = false;
+                app.ensure_global_search_selection_visible();
+                app.reveal_global_search_selection();
+            } else {
+                app.search_focus_field = (app.search_focus_field + 1) % 4;
+                if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 2; }
+            }
         }
         KeyCode::BackTab => {
             app.search_focus_field = if app.search_focus_field == 0 {
@@ -268,6 +276,29 @@ pub(crate) fn handle_search_key(app: &mut App, code: KeyCode, modifiers: KeyModi
 }
 
 pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if app.sidebar_view == crate::app::SidebarView::Search {
+        match code {
+            KeyCode::Up => {
+                app.global_search_select_prev_visible();
+                app.reveal_global_search_selection();
+            }
+            KeyCode::Down => {
+                app.global_search_select_next_visible();
+                app.reveal_global_search_selection();
+            }
+            KeyCode::Delete if modifiers.is_empty()
+                && app.global_search_results.result_row(app.global_search_selected).is_some() => {
+                app.dismiss_global_search_result(crate::search_results::SearchRow::Result(app.global_search_selected));
+                app.reveal_global_search_selection();
+            }
+            KeyCode::Enter => { app.open_global_search_result(); }
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => {
+                app.focus_text_input(TextInputId::GlobalSearch(if code == KeyCode::BackTab { 3 } else { 0 }));
+            }
+            _ => {}
+        }
+        return;
+    }
     if code == KeyCode::Insert {
         let command = match modifiers {
             KeyModifiers::CONTROL => Some("copy"),

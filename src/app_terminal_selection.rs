@@ -1,6 +1,6 @@
 //! Mouse capture and clipboard routing for regular workbench terminals.
 use crate::app::{ActivePane, App, TabKind};
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,7 +82,8 @@ impl App {
                     .find(|surface| surface.area.contains((mouse.column, mouse.row).into()))
                     .and_then(|surface| self.terminals.get(surface.index))
                     .and_then(|terminal| terminal.terminal_pty.as_ref())
-                    .is_some_and(|pty| pty.grid.mouse_tracking != 0))
+                    .is_some_and(|pty| pty.grid.mouse_tracking != 0
+                        || pty.grid.alternate_scroll_key(mouse.kind).is_some()))
     }
 
     fn forward_terminal_mouse_at(&mut self, surface: TerminalSurface, mouse: MouseEvent) {
@@ -105,6 +106,19 @@ impl App {
             if let Some(bytes) = pty.grid.mouse_sequence(local) {
                 pty.grid.scroll_view = 0;
                 pty.write(&bytes);
+            } else if let Some(key) = pty.grid.alternate_scroll_key(local.kind) {
+                let mut bytes = Vec::new();
+                for kind in [KeyEventKind::Press, KeyEventKind::Release] {
+                    crate::input_terminal::write_key(
+                        KeyEvent::new_with_kind(key, local.modifiers, kind),
+                        pty.grid.application_cursor_keys,
+                        pty.grid.win32_input_mode,
+                        |data| bytes.extend_from_slice(data),
+                    );
+                }
+                pty.grid.scroll_view = 0;
+                // One write keeps a wheel tick together on remote transports.
+                pty.write(&bytes.repeat(self.scroll_speed.max(1)));
             }
         }
     }
@@ -274,6 +288,9 @@ impl App {
                 }
                 true
             }
+            // A terminal with mouse reporting disabled cannot use horizontal
+            // wheel input, but it must not scroll an editor behind the terminal.
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => true,
             _ => false,
         }
     }
@@ -333,3 +350,7 @@ impl App {
 #[cfg(test)]
 #[path = "app_terminal_selection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "terminal_wheel_tests.rs"]
+mod wheel_tests;

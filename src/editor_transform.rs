@@ -179,14 +179,14 @@ fn rope_line_region_marker(line: ropey::RopeSlice<'_>) -> Option<bool> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum PreprocessorDirective {
+pub(crate) enum PreprocessorDirective {
     If,
     Branch,
     End,
     Other,
 }
 
-fn preprocessor_directive(line: ropey::RopeSlice<'_>) -> Option<PreprocessorDirective> {
+pub(crate) fn preprocessor_directive(line: ropey::RopeSlice<'_>) -> Option<PreprocessorDirective> {
     let mut chars = line.chars().skip_while(|c| c.is_whitespace());
     if chars.next() != Some('#') { return None; }
     let word = chars.skip_while(|c| c.is_whitespace())
@@ -202,7 +202,7 @@ fn preprocessor_directive(line: ropey::RopeSlice<'_>) -> Option<PreprocessorDire
     })
 }
 
-fn preprocessor_continues(line: ropey::RopeSlice<'_>) -> bool {
+pub(crate) fn preprocessor_continues(line: ropey::RopeSlice<'_>) -> bool {
     line.chars_at(line.len_chars()).reversed().find(|c| !c.is_whitespace()) == Some('\\')
 }
 
@@ -656,13 +656,9 @@ impl Editor {
         self.folded_range_containing(line).is_some()
     }
 
-    /// Return the nearest folded interval containing `line`. Navigation uses
-    /// its boundary to jump across even million-line folds in one tree lookup.
+    /// Navigation shares the same union of hidden intervals as scrolling.
     pub(crate) fn folded_range_containing(&self, line: usize) -> Option<(usize, usize)> {
-        self.folded_ranges
-            .range(..line)
-            .next_back()
-            .and_then(|(&start, &end)| (line < end).then_some((start, end)))
+        self.folded_ranges.containing(line)
     }
 
     /// Check if a line is the start of a fold
@@ -741,7 +737,7 @@ impl Editor {
         false
     }
 
-    fn has_preprocessor_folds(&self) -> bool {
+    pub(crate) fn has_preprocessor_folds(&self) -> bool {
         matches!(self.language_name(), "C" | "C++" | "C/C++ Header" | "C#"
             | "Objective-C" | "Objective-C++" | "GLSL" | "HLSL")
     }
@@ -776,7 +772,7 @@ impl Editor {
                 PreprocessorDirective::If => depth += 1,
                 PreprocessorDirective::End if depth > 0 => depth -= 1,
                 PreprocessorDirective::End => return Some(start_line + offset + 1),
-                PreprocessorDirective::Branch if depth == 0 && directive == PreprocessorDirective::Branch =>
+                PreprocessorDirective::Branch if depth == 0 =>
                     return Some(start_line + offset + 1),
                 _ => {}
             }
@@ -791,7 +787,13 @@ impl Editor {
             return None;
         }
 
-        // Check LSP folding ranges first
+        // Conditional boundaries are explicit in the source. An LSP range
+        // covering the whole tree must not turn a branch fold into an all fold.
+        if let Some(directive @ (PreprocessorDirective::If | PreprocessorDirective::Branch)) = self.conditional_directive(start_line) {
+            return self.preprocessor_fold_end(start_line, directive).filter(|&end| end > start_line + 1);
+        }
+
+        // Check LSP folding ranges first for other kinds of folds.
         if let Some(end) = self.lsp_fold_end_at(start_line) { return Some(end); }
 
         let start = self.rope.line(start_line);
@@ -875,8 +877,10 @@ impl Editor {
             return false;
         }
 
-        // Check LSP folding ranges
-        if self.lsp_fold_end_at(start_line).is_some() { return true; }
+        // Conditional headers keep source branch boundaries even if an LSP
+        // provider advertises a wider range starting on the same line.
+        if !matches!(self.conditional_directive(start_line), Some(PreprocessorDirective::If | PreprocessorDirective::Branch))
+            && self.lsp_fold_end_at(start_line).is_some() { return true; }
 
         let preprocessor = self.has_preprocessor_folds();
         {
@@ -907,6 +911,12 @@ impl Editor {
             return (true, start_line);
         }
         if preprocessor && let Some(directive) = preprocessor_directive(line) {
+            if matches!(directive, PreprocessorDirective::If | PreprocessorDirective::Branch) {
+                let next = start_line + 1;
+                let empty = !preprocessor_continues(line) && next < self.line_count()
+                    && matches!(preprocessor_directive(self.rope.line(next)), Some(PreprocessorDirective::Branch | PreprocessorDirective::End));
+                return (!empty, next);
+            }
             return (matches!(directive, PreprocessorDirective::If | PreprocessorDirective::Branch)
                 || (directive == PreprocessorDirective::Other && preprocessor_continues(line)), start_line);
         }
@@ -943,7 +953,15 @@ impl Editor {
         self.fold_buttons.clear();
         if self.folded_ranges.contains_key(&line) {
             self.folded_ranges.remove(&line);
+            self.refresh_fold_scroll();
         } else if let Some(end) = self.find_fold_end(line) {
+            self.collapse_range(line, end);
+        }
+    }
+
+    pub(crate) fn collapse_range(&mut self, line: usize, end: usize) {
+        self.fold_buttons.clear();
+        if end > line + 1 && end <= self.line_count() {
             // Remove any sub-folds that are within the new fold range
             self.folded_ranges
                 .retain(|&start, &mut sub_end| !(start > line && start <= end && sub_end <= end));
@@ -956,9 +974,7 @@ impl Editor {
                 self.clear_selection();
             }
         }
-        self.cached_wrapped_total = None;
-        self.cached_row_offsets = None;
-        self.cached_visible_line_count = None;
+        self.refresh_fold_scroll();
     }
 
     /// Fold all foldable regions
@@ -968,25 +984,21 @@ impl Editor {
         let total = self.line_count();
         let mut line = 0;
         while line < total {
-            if let Some(end) = self.find_fold_end(line) {
+            if let Some(end) = self.conditional_fold(line).map(|scope| scope.end).or_else(|| self.find_fold_end(line)) {
                 self.folded_ranges.insert(line, end);
                 line = end;
             } else {
                 line += 1;
             }
         }
-        self.cached_visible_line_count = None;
-        self.cached_wrapped_total = None;
-        self.cached_row_offsets = None;
+        self.refresh_fold_scroll();
     }
 
     /// Unfold all folded regions
     pub(crate) fn unfold_all(&mut self) {
         self.fold_buttons.clear();
         self.folded_ranges.clear();
-        self.cached_visible_line_count = None;
-        self.cached_wrapped_total = None;
-        self.cached_row_offsets = None;
+        self.refresh_fold_scroll();
     }
 
     /// Fold regions at a specific indentation level
@@ -1012,112 +1024,71 @@ impl Editor {
                 covered_until = end;
             }
         }
-        self.cached_visible_line_count = None;
+        self.refresh_fold_scroll();
+    }
+
+    /// Resolve a viewport row through the compact fold index. An anchor inside
+    /// a hidden body advances to the next visible line, matching painting.
+    pub(crate) fn visible_line_at(&self, from: usize, offset: usize) -> Option<usize> {
+        if from >= self.line_count() { return None; }
+        let mut row = self.visible_row_for_line(from);
+        if self.line_for_visible_row(row) < from { row += 1; }
+        let line = self.line_for_visible_row(row.checked_add(offset)?);
+        (line < self.line_count()).then_some(line)
+    }
+
+    /// Return source lines for only the requested visible rows.
+    pub(crate) fn visible_lines(&self, from: usize, count: usize) -> Vec<usize> {
+        let Some(first) = self.visible_line_at(from, 0) else { return Vec::new(); };
+        let start = self.visible_row_for_line(first);
+        let end = start.saturating_add(count).min(self.visible_line_count());
+        (start..end).map(|row| self.line_for_visible_row(row)).collect()
+    }
+
+    pub(crate) fn visible_line_count(&self) -> usize {
+        self.folded_ranges.visible_count(self.line_count())
+    }
+
+    pub(crate) fn visible_row_for_line(&self, line: usize) -> usize {
+        self.folded_ranges.row_for_line(line)
+    }
+
+    pub(crate) fn line_for_visible_row(&self, row: usize) -> usize {
+        self.folded_ranges.line_for_row(row, self.line_count())
+    }
+
+    pub(crate) fn visible_scroll_offset(&self) -> usize {
+        self.visible_row_for_line(self.scroll_offset)
+    }
+
+    pub(crate) fn max_visible_scroll_offset(&self) -> usize {
+        self.visible_line_count().saturating_sub(if self.scroll_past_end {
+            1
+        } else {
+            self.viewport_height.max(1)
+        })
+    }
+
+    pub(crate) fn set_visible_scroll_offset(&mut self, row: usize) {
+        let row = row.min(self.max_visible_scroll_offset());
+        self.scroll_offset = self.line_for_visible_row(row);
+        self.wrap_scroll_offset = row;
+    }
+
+    pub(crate) fn refresh_fold_scroll(&mut self) {
         self.cached_wrapped_total = None;
         self.cached_row_offsets = None;
-    }
-
-    /// Resolve one viewport row without materializing every preceding line.
-    /// Plain runs are skipped together, so work depends on crossed folds.
-    pub(crate) fn visible_line_at(&self, from: usize, mut offset: usize) -> Option<usize> {
-        let total = self.line_count();
-        if self.folded_ranges.is_empty() {
-            return from.checked_add(offset).filter(|&line| line < total);
+        // Preserve the source anchor when folding above the viewport, and
+        // resolve a hidden anchor to its fold header when folding across it.
+        let row = self.visible_scroll_offset();
+        if self.word_wrap {
+            self.scroll_offset = self.line_for_visible_row(row);
+            let width = self.effective_wrap_width();
+            let row = self.wrapped_row_for_position(self.scroll_offset, 0, width);
+            self.set_wrap_scroll_offset(row);
+        } else {
+            self.set_visible_scroll_offset(row);
         }
-        let mut line = from;
-        while line < total {
-            if let Some((_, &end)) = self.folded_ranges.range(..line).next_back()
-                && line < end
-            {
-                line = end;
-                continue;
-            }
-            if offset == 0 {
-                return Some(line);
-            }
-            let Some((&start, &end)) = self.folded_ranges.range(line..).next() else {
-                return line.checked_add(offset).filter(|&line| line < total);
-            };
-            let plain_count = start.min(total).saturating_sub(line);
-            if offset < plain_count {
-                return Some(line + offset);
-            }
-            offset -= plain_count;
-            if start >= total {
-                return None;
-            }
-            if offset == 0 {
-                return (start < total).then_some(start);
-            }
-            offset -= 1; // The fold header itself remains visible.
-            line = end;
-        }
-        None
-    }
-
-    /// Get visible lines (skipping folded ranges), returns list of actual line indices
-    pub(crate) fn visible_lines(&self, from: usize, count: usize) -> Vec<usize> {
-        let total = self.line_count();
-        if self.folded_ranges.is_empty() {
-            if from >= total {
-                return Vec::new();
-            }
-            let end = from.saturating_add(count).min(total);
-            return (from..end).collect();
-        }
-        let mut result = Vec::with_capacity(count.min(total.saturating_sub(from)));
-        let mut line = from;
-        while result.len() < count && line < total {
-            if let Some((_, &end)) = self.folded_ranges.range(..line).next_back() {
-                if line < end {
-                    // Jump across the hidden interval in one step. Advancing
-                    // one line at a time made a viewport request proportional
-                    // to the size of a large collapsed block.
-                    line = end;
-                    continue;
-                }
-            }
-            // Tree lookups are needed only at crossed folds, not for every
-            // visible row between them.
-            let next = self.folded_ranges.range(line..).next();
-            let plain_end = next.map_or(total, |(&start, _)| start.min(total));
-            let end = line.saturating_add(count - result.len()).min(plain_end);
-            result.extend(line..end);
-            line = end;
-            if result.len() == count || line >= total { break; }
-            if let Some((&start, &end)) = next {
-                result.push(start);
-                line = end.max(start.saturating_add(1));
-            }
-        }
-        result
-    }
-
-    /// Count total visible lines (excluding folded), with caching
-    pub(crate) fn visible_line_count(&mut self) -> usize {
-        if let Some(count) = self.cached_visible_line_count {
-            return count;
-        }
-        let total = self.line_count();
-        if self.folded_ranges.is_empty() {
-            self.cached_visible_line_count = Some(total);
-            return total;
-        }
-        // Fold ranges are normally disjoint, but session data may contain
-        // overlaps. Count the union of hidden `(start + 1)..end` intervals in
-        // O(number of folds), never O(number of document lines).
-        let mut hidden = 0usize;
-        let mut covered_until = 0usize;
-        for (&start, &end) in &self.folded_ranges {
-            let hidden_start = start.saturating_add(1).min(total);
-            let hidden_end = end.min(total);
-            let uncovered_start = hidden_start.max(covered_until);
-            hidden = hidden.saturating_add(hidden_end.saturating_sub(uncovered_start));
-            covered_until = covered_until.max(hidden_end);
-        }
-        let count = total.saturating_sub(hidden);
-        self.cached_visible_line_count = Some(count);
-        count
     }
 
     pub(crate) fn toggle_bookmark(&mut self) {
@@ -1265,7 +1236,6 @@ impl Editor {
 
     fn reset_reloaded_view(&mut self) {
         self.snippet_cancel();
-        self.cached_visible_line_count = None;
         self.cached_wrapped_total = None;
         self.cached_row_offsets = None;
         self.folded_ranges.clear();

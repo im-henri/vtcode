@@ -247,6 +247,7 @@ fn reopen_candidates_ignore_obsolete_paths_and_do_not_duplicate_a_closed_parent(
     let mut app = App::new_deferred(root_path.clone());
     app.repositories.parent = Some(root_path.clone());
     app.repositories.entries.push(Repository {
+        operation: None,
         root: root_path.clone(),
         files: Vec::new(),
         branch: String::new(),

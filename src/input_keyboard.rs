@@ -23,6 +23,24 @@ fn terminal_has_focus(app: &App) -> bool {
 /// Workbench commands that VS Code keeps even when the integrated terminal is
 /// focused. All other keys should reach the shell before editor keybindings.
 fn terminal_workbench_shortcut(app: &App, key: crossterm::event::KeyEvent) -> bool {
+    let allowed = |command: &str| {
+        if app.focused_terminal_is_fullscreen() { return command == "toggle_terminal"; }
+        matches!(command, "toggle_terminal" | "new_terminal" | "palette" | "settings" | "source_control"
+            | "extensions" | "global_search" | "toggle_explorer" | "toggle_panel" | "toggle_problems" | "acp_chat"
+            | "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page")
+            || matches!(command, "workspace_switch" | "workspace_add" | "workspace_next" | "workspace_previous" | "workspace_sets" | "workspace_set_save")
+            || (app.zen_mode && command == "toggle_zen")
+    };
+    if app.keybindings.iter().any(|binding| binding.chord.is_some() && allowed(binding.id)
+        && app.shortcut_applies(binding)
+        && crate::app_shortcuts::normalize((binding.modifiers, binding.code))
+            == crate::app_shortcuts::normalize((key.modifiers, key.code))) {
+        return true;
+    }
+    if let Some(command) = app.lookup_keybinding(key.modifiers, key.code) {
+        return allowed(command);
+    }
+    if app.shortcut_default_overridden((key.modifiers, key.code), None) { return false; }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     if ctrl && key.code == KeyCode::Char('`') {
@@ -73,6 +91,8 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
 }
 
 fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+    if crate::ui_workspaces::handle_key(app, key) { return false; }
+    if app.handle_shortcut_editor_key(key) { return false; }
     if crate::ui_vtcomplete_index::handle_key(app, key) {
         return false;
     }
@@ -145,44 +165,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         return quit;
     }
 
-    if app.settings_editor_has_focus() && app.settings_kb_editing {
-        if key.code == KeyCode::Esc && key.modifiers.is_empty() {
-            app.settings_kb_editing = false;
-            app.apply_effective_settings();
-            app.notify("Keybinding edit cancelled");
-        } else {
-            let items = app.settings_items();
-            if let Some((_, _, setting_id)) = items.get(app.settings_selected) {
-                let scoped_before = app.selected_scope_settings();
-                app.apply_setting_value(setting_id, &scoped_before);
-                if let Some(kb_idx) = setting_id
-                    .strip_prefix("kb_")
-                    .and_then(|v| v.parse::<usize>().ok())
-                {
-                    if let Some(kb) = app.keybindings.get_mut(kb_idx) {
-                        if key.modifiers.is_empty()
-                            && matches!(key.code, KeyCode::Delete | KeyCode::Backspace)
-                        {
-                            kb.modifiers = KeyModifiers::empty();
-                            kb.code = KeyCode::Null;
-                            let msg = format!("Unassigned {}", kb.label);
-                            app.notify(msg);
-                        } else {
-                            kb.modifiers = key.modifiers;
-                            kb.code = key.code;
-                            let msg = format!("Set {} to {}", kb.label, kb.display());
-                            app.notify(msg);
-                        }
-                        app.rebuild_keybinding_settings_cache();
-                        app.persist_scoped_setting_change(setting_id, &scoped_before);
-                    }
-                }
-            }
-            app.settings_kb_editing = false;
-        }
-        return false;
-    }
-
     // A focused numeric Settings field owns every key, including unmodified
     // digits that users may have assigned as workbench shortcuts.
     if app.settings_editor_has_focus() && app.settings_value_editing {
@@ -193,6 +175,16 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     // standalone editing or workbench shortcut (for example Ctrl+C or Ctrl+W).
     if app.chord_pending {
         app.chord_pending = false;
+        let prefix = app.shortcut_chord_prefix.take().unwrap_or((KeyModifiers::CONTROL, KeyCode::Char('k')));
+        if let Some(command) = app.lookup_shortcut_chord(prefix, (key.modifiers, key.code)) {
+            app.execute_palette_command(command);
+            return false;
+        }
+        if crate::app_shortcuts::normalize(prefix) != (KeyModifiers::CONTROL, KeyCode::Char('k'))
+            || app.shortcut_default_overridden(prefix, Some((key.modifiers, key.code))) {
+            app.notify("Chord cancelled");
+            return false;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('d' | 'D') if !ctrl => { crate::ui_desks::open(app, crate::ui_desks::Mode::Switch); }
@@ -284,6 +276,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.modifiers.contains(KeyModifiers::ALT)
             && !key.modifiers.contains(KeyModifiers::SHIFT)
+            && app.lookup_keybinding(key.modifiers, key.code).is_none()
         {
             if let KeyCode::Char(c) = key.code {
                 if app.active_pane == ActivePane::Editor {
@@ -298,6 +291,13 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
 
         // Configurable keybinding dispatch
         if app.route_custom_editor_shortcut(key.code, key.modifiers) { return false; }
+        if app.shortcut_starts_chord((key.modifiers, key.code)) {
+            app.chord_pending = true;
+            app.shortcut_chord_prefix = Some((key.modifiers, key.code));
+            app.chord_start = std::time::Instant::now();
+            app.notify(format!("{} …", crate::app_shortcuts::display_stroke(key.modifiers, key.code)));
+            return false;
+        }
         if let Some(cmd_id) = app.lookup_keybinding(key.modifiers, key.code) {
             if app.route_explorer_edit_command(cmd_id) { return false; }
             // End clipboard cycle on any keybinding that isn't clipboard_history
@@ -471,6 +471,14 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                     return false;
                 }
             }
+        }
+
+        if (!key.modifiers.is_empty() || matches!(key.code, KeyCode::F(_)))
+            && app.shortcut_default_overridden((key.modifiers, key.code), None) {
+            if let Some(command) = app.remaining_default_shortcut((key.modifiers, key.code)) {
+                app.execute_palette_command(command);
+            }
+            return false;
         }
 
         // Global keybindings (Ctrl+*)
@@ -831,7 +839,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                 }
                 KeyCode::Char('o') => {
                     // Ctrl+O: open folder / change directory
-                    app.open_folder_browser();
+                    crate::ui_workspaces::add(app);
                     return false;
                 }
                 KeyCode::Char(',') => {
@@ -1278,6 +1286,10 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     if crate::ui_keybindings::handle_key(app, key) { return false; }
     if crate::ui_extension_info::handle_key(app, key) { return false; }
 
+    if app.active_pane == ActivePane::Editor
+        && app.shortcut_default_overridden((key.modifiers, key.code), None) {
+        return false;
+    }
     match app.active_pane {
         ActivePane::Explorer => input::handle_explorer_key(app, key.code, key.modifiers),
         ActivePane::Editor => input::handle_editor_key(app, key.code, key.modifiers),
@@ -1520,7 +1532,7 @@ mod tests {
 
     #[test]
     fn f11_exits_zen_mode_with_editor_or_terminal_focus() {
-        for terminal in [false, true] {
+        for (terminal, customized) in [(false, false), (false, true), (true, false), (true, true)] {
             let mut app = App::test_new();
             let mut tab = crate::app::Tab::new_file(crate::editor::Editor::new());
             if terminal {
@@ -1530,8 +1542,13 @@ mod tests {
             app.tabs = vec![tab];
             app.active_tab = 0;
             app.active_pane = ActivePane::Editor;
+            let shortcut = if customized { KeyCode::F(7) } else { KeyCode::F(11) };
+            if customized {
+                app.keybindings.iter_mut().find(|binding| binding.id == "toggle_zen").unwrap()
+                    .assign(KeyModifiers::NONE, shortcut, None);
+            }
             app.execute_palette_command("toggle_zen");
-            assert!(!handle_keyboard_event(&mut app, key(KeyCode::F(11))));
+            assert!(!handle_keyboard_event(&mut app, key(shortcut)));
             assert!(!app.zen_mode);
             assert!(app.show_tab_bar);
         }
@@ -1549,6 +1566,28 @@ mod tests {
 
         assert!(!handle_keyboard_event(&mut app, shortcut));
         assert!(!app.show_terminal_sidebar);
+    }
+
+    #[test]
+    fn reassigned_terminal_chord_works_with_terminal_focus_and_keeps_shell_keys() {
+        let mut app = App::test_new();
+        app.settings_persistence_enabled = false;
+        let binding = app.keybindings.iter_mut().find(|binding| binding.id == "toggle_terminal").unwrap();
+        binding.assign(KeyModifiers::CONTROL, KeyCode::F(6), Some((KeyModifiers::NONE, KeyCode::F(7))));
+        let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
+        let input = pty.test_capture_input();
+        app.terminals[0].terminal_pty = Some(pty);
+        app.terminals[0].dock = crate::app::TerminalDock::Right;
+        app.show_terminal_sidebar = true;
+        app.terminal_panel_focused = true;
+
+        assert!(!terminal_workbench_shortcut(&app, key_mod(KeyCode::Char('`'), KeyModifiers::CONTROL)));
+        assert!(!terminal_workbench_shortcut(&app, key_mod(KeyCode::Char('k'), KeyModifiers::CONTROL)));
+        handle_keyboard_event(&mut app, key_mod(KeyCode::F(6), KeyModifiers::CONTROL));
+        assert!(app.chord_pending);
+        handle_keyboard_event(&mut app, key(KeyCode::F(7)));
+        assert!(!app.show_terminal_sidebar);
+        assert!(input.lock().unwrap().is_empty());
     }
 
     // ── Exit confirmation dialog ──────────────────────────────────────

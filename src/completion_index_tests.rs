@@ -43,6 +43,32 @@ fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
 }
 
 #[test]
+fn hidden_workspace_suspension_preserves_pending_work_and_user_preferences() {
+    let (_temporary, root, cache) = fixture();
+    let index = CompletionIndex::new_for_test(root.clone(), cache);
+    settle(&index, 0);
+    let settings = index.settings();
+    index.set_workspace_suspended(true);
+    let path = root.join("source.custom");
+    index.observe(path.clone(), ropey::Rope::from_str("suspendedIdentifier"));
+    index.rescan();
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(index.settings(), settings);
+    assert_eq!(index.status().indexed_files, 0);
+    assert!(index.handle.as_ref().unwrap().0.control.lock().unwrap().pending.contains_key(&path));
+    let mut paused = settings.clone();
+    paused.paused = true;
+    index.configure(paused.clone());
+    index.set_workspace_suspended(false);
+    wait(&index, |status| status.phase == IndexPhase::Paused);
+    assert_eq!(index.settings(), paused);
+    assert_eq!(index.status().indexed_files, 0);
+    index.configure(settings);
+    settle(&index, 1);
+    assert!(index.query("suspended", "").iter().any(|entry| entry.word == "suspendedIdentifier"));
+}
+
+#[test]
 fn a_completed_scan_can_yield_finalization_without_replaying_source_tokens() {
     let (_temporary, root, _) = fixture();
     let path = root.join("replayed.rs");

@@ -124,9 +124,7 @@ impl App {
             "show_output" => { self.show_output(); return true; }
             "remote_connection_diagnostics" => { self.show_remote_diagnostics(); return true; }
             "remote_connection_sign_in" => {
-                if self.remote_connection.phase == crate::app_remote_connection::Phase::Connecting {
-                    self.remote_connection.details = true;
-                }
+                self.show_workspace_connection_sign_in();
                 return true;
             }
             "remote_connection_diagnostics_copy" => { self.copy_remote_diagnostics(); return true; }
@@ -438,12 +436,28 @@ impl App {
                 }
             }
             "change_dir" => {
-                self.open_folder_browser();
+                crate::ui_workspaces::add(self);
+            }
+            "workspace_add" => crate::ui_workspaces::add(self),
+            "workspace_switch" => crate::ui_workspaces::open(self),
+            "workspace_sets" => crate::ui_workspace_sets::open(self),
+            "workspace_set_save" => crate::ui_workspace_sets::save(self),
+            "workspace_close" => crate::ui_workspaces::close(self),
+            "workspace_next" | "workspace_previous" => {
+                let entries = self.workspace_entries();
+                let selected = match &self.workspaces.request {
+                    Some(crate::app_workspaces::Request::Switch(id)) => *id,
+                    _ => self.workspaces.active,
+                };
+                let index = entries.iter().position(|entry| entry.id == selected).unwrap_or(0);
+                let next = if id == "workspace_next" { (index + 1) % entries.len() }
+                    else { (index + entries.len() - 1) % entries.len() };
+                self.workspaces.request = Some(crate::app_workspaces::Request::Switch(entries[next].id));
             }
             "open_parent" => {
                 if let Some(parent) = self.explorer.root.parent() {
                     let parent = parent.to_path_buf();
-                    self.change_workspace(&parent);
+                    self.workspaces.request = Some(crate::app_workspaces::Request::Open(parent));
                 }
             }
             "source_control" => {

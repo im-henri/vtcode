@@ -1118,6 +1118,10 @@ impl App {
                 session_id,
                 response,
             } => {
+                if let Some(session) = self.chat.sessions.get(&session_id).filter(|session| session.busy) {
+                    let title = if session.title.is_empty() { "Agent Chat" } else { &session.title };
+                    self.record_workspace_event(format!("{title}: agent finished"), crate::app_workspaces::Level::Done);
+                }
                 if response.stop_reason != p::StopReason::EndTurn
                     && let Some(queue) = self.chat.queues.get_mut(&session_id)
                     && queue.priority.is_none()
@@ -1161,12 +1165,13 @@ impl App {
                     .collect::<rustc_hash::FxHashSet<_>>().into_iter().cloned()
                     .collect();
                 for path in paths {
-                    self.queue_file_reload(path);
+                    if self.workspace_visible { self.queue_file_reload(path); }
+                    else { self.defer_workspace_file_check(&path); }
                 }
                 // An ordinary write changes content, not file eligibility or
                 // name-sorted directories. Empty-before also covers newly
                 // created files, so conservatively refresh structure there.
-                self.refresh_explorer_changed_paths([edit.path.as_path()], edit.before.is_empty());
+                self.refresh_explorer_changed_path_states([(edit.path.as_path(), Some(false))], edit.before.is_empty());
                 self.refresh_source_control_changed_paths([edit.path.clone()]);
                 if let Some(session) = self.chat.sessions.get_mut(&edit.session_id) {
                     session.push(ChatEntry::Edit(edit));
@@ -1195,6 +1200,7 @@ impl App {
                 session_id,
                 error,
             } => {
+                self.record_workspace_event(format!("Agent {:?}: {}", operation, error.message), crate::app_workspaces::Level::Attention);
                 let control_finished = self.chat.finish_control(&operation, session_id.as_ref());
                 if operation == Operation::SetConfig
                     && self.chat.model_change.is_some()
@@ -1264,6 +1270,7 @@ impl App {
                 }
             }
             Event::Disconnected(reason) => {
+                self.record_workspace_event(format!("Agent disconnected: {reason}"), crate::app_workspaces::Level::Attention);
                 self.chat.discard_history_load();
                 self.chat.model_change = None;
                 self.pause_chat_queues();
@@ -1436,14 +1443,13 @@ impl App {
             let _ = handle.send(Command::FileResponse { id, ticket, result: Err(p::Error::new(-32000, "Wait for the open files to finish loading, then retry this file request.")), edit: None });
             return;
         }
+        let buffer = self.acp_read_buffer(&editors);
         if self
             .chat
             .sessions
             .get(request.session_id())
             .is_some_and(|s| s.cancelling)
-            || editors
-                .iter()
-                .any(|tab| tab.editor.rope.len_bytes() > vtcode::acp::MAX_FILE_BYTES)
+            || buffer.as_ref().is_some_and(|rope| rope.len_bytes() > vtcode::acp::MAX_FILE_BYTES)
         {
             let _ = handle.send(Command::FileResponse {
                 id,
@@ -1460,10 +1466,6 @@ impl App {
             let _ = handle.send(Command::FileResponse { id, ticket, result: Err(p::Error::new(-32000, "The file has unsaved edits, is read-only, or has a pending save. Save or revert it before the agent retries.")), edit: None });
             return;
         }
-        let buffer = editors
-            .iter()
-            .max_by_key(|tab| tab.editor.modified)
-            .map(|tab| tab.editor.rope.clone());
         let modified_buffers: Vec<_> = editors.iter().filter(|tab| tab.editor.modified).map(|tab| tab.editor.rope.clone()).collect();
         // Disk IO is isolated from the UI; open buffers are snapshotted above.
         let failure_handle = handle.clone();
@@ -1509,6 +1511,13 @@ impl App {
                 edit: None,
             });
         }
+    }
+
+    fn acp_read_buffer(&self, editors: &[&crate::app::Tab]) -> Option<ropey::Rope> {
+        // Hidden clean buffers deliberately do not follow filesystem events.
+        // Agent reads must consult disk on demand; unsaved text stays authoritative.
+        editors.iter().filter(|tab| self.workspace_visible || tab.editor.modified)
+            .max_by_key(|tab| tab.editor.modified).map(|tab| tab.editor.rope.clone())
     }
 
     pub(crate) fn chat_action(&mut self, action: ChatAction) {

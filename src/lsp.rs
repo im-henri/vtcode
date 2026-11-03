@@ -1788,6 +1788,12 @@ impl LspManager {
         false
     }
 
+    pub(crate) fn has_pending_workspace_changes(&self) -> bool {
+        !self.workspace_edit_requests.is_empty() || self.will_rename_edit.is_some()
+            || self.clients.iter().any(|client| client.pending_requests.lock().unwrap().values()
+                .any(|request| matches!(request.method.as_str(), "workspace/executeCommand" | "workspace/willRenameFiles")))
+    }
+
     /// Request inlay hints for a visible range
     pub(crate) fn request_inlay_hints(
         &mut self,

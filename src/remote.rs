@@ -60,8 +60,8 @@ pub(crate) mod wire;
 #[path = "remote_workspace.rs"]
 pub(crate) mod workspace;
 
-// Repository access failures and repository-specific trust are part of Git snapshots/actions.
-pub(crate) const VERSION: u32 = 26;
+// PauseWatch retains coverage and buffers changes without passive remote work.
+pub(crate) const VERSION: u32 = 30;
 /// Per-message/queue memory budget, not a file size limit. Larger documents use
 /// remote_text's bounded pipeline instead of a document-sized JSON allocation.
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -323,6 +323,18 @@ pub(crate) struct Request {
     pub command: Command,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum WatchState { Active, Paused, Closed }
+impl WatchState {
+    fn from_command(command: &Command) -> Self {
+        match command { Command::Watch => Self::Active, Command::PauseWatch => Self::Paused,
+            Command::Unwatch => Self::Closed, _ => unreachable!("not a watcher control") }
+    }
+    fn command(self) -> Command {
+        match self { Self::Active => Command::Watch, Self::Paused => Command::PauseWatch, Self::Closed => Command::Unwatch }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum Command {
     PerformanceSnapshot,
@@ -360,6 +372,8 @@ pub(crate) enum Command {
         encoding: String,
     },
     Watch,
+    PauseWatch,
+    Unwatch,
     Inspect {
         paths: Vec<RemotePath>,
     },
@@ -409,6 +423,8 @@ pub(crate) enum Command {
         closed: Vec<RemotePath>,
         include_untracked: bool,
         changed: Option<Vec<RemotePath>>,
+        #[serde(default)]
+        revalidate: bool,
     },
     GitAction {
         repo: RemotePath,

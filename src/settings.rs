@@ -259,7 +259,7 @@ fn merge_keybinding_layers(
                 .command
                 .as_ref()
                 .zip(existing.command.as_ref())
-                .is_some_and(|(left, right)| left == right)
+                .is_some_and(|(left, right)| left == right && entry.index == existing.index)
                 || (entry.command.is_none()
                     && existing.command.is_none()
                     && entry.index.is_some()
@@ -772,7 +772,10 @@ mod tests {
         })).unwrap();
         let mut effective = crate::animation_config::AnimationSettings::default();
         effective.apply(&old);
-        assert!(!effective.any_enabled());
+        let defaults = crate::animation_config::AnimationSettings::default();
+        for effect in crate::animation_config::AnimationEffect::ALL {
+            assert_eq!(effective.enabled(effect), defaults.enabled(effect));
+        }
         assert_eq!(effective.duration_ms, 310);
         assert_eq!(old.tab_size, Some(8));
         let saved = serde_json::to_value(old).unwrap();

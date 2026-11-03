@@ -13,11 +13,19 @@ pub(crate) mod changes;
 #[path = "app_git_refresh.rs"]
 pub(crate) mod refresh;
 
+#[path = "app_git_watcher.rs"]
+pub(crate) mod watcher;
+
 #[cfg(test)]
 #[path = "app_git_untracked_directory_tests.rs"]
 mod untracked_directory_tests;
 
+#[cfg(test)]
+#[path = "app_git_untracked_line_tests.rs"]
+mod untracked_line_tests;
+
 pub(crate) struct SourceControlStatusSnapshot<P = String> {
+    pub operation: Option<crate::git_operation::State>,
     pub files: Vec<GitFileChange<P>>,
     pub workdir: Option<PathBuf>,
     pub repository_found: bool,
@@ -42,6 +50,9 @@ pub(crate) fn commit_repository(
     stage_all: bool,
 ) -> Result<crate::background::GitActionOutcome, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
+    if crate::git_operation::read(&repo)?.is_some() {
+        return Err("Use Continue in Source Control to finish the current Git operation.".into());
+    }
     let sig = repo
         .signature()
         .or_else(|_| git2::Signature::now("VTCode User", "user@vtcode.dev"))
@@ -293,7 +304,7 @@ pub(crate) fn collect_source_control_status_with_paths<P: Ord>(
     include_untracked: bool,
     format_path: impl Fn(&Path) -> P,
 ) -> SourceControlStatusSnapshot<P> {
-    collect_source_control_status_impl(root, repository_found_callback, cancel, format_path, None, include_untracked)
+    collect_source_control_status_impl(root, repository_found_callback, cancel, format_path, &mut None, include_untracked, false)
 }
 
 fn collect_source_control_status_impl<P: Ord>(
@@ -301,11 +312,12 @@ fn collect_source_control_status_impl<P: Ord>(
     repository_found_callback: impl FnOnce(),
     cancel: &crate::background::CancellationToken,
     format_path: impl Fn(&Path) -> P,
-    mut changed: Option<&mut refresh::WorktreePaths>,
+    changed: &mut Option<refresh::WorktreePaths>,
     include_untracked: bool,
+    revalidate: bool,
 ) -> SourceControlStatusSnapshot<P> {
     if cancel.is_cancelled() {
-        return SourceControlStatusSnapshot { files: Vec::new(), workdir: None, repository_found: false, branch: String::new(), error: None };
+        return SourceControlStatusSnapshot { operation: None, files: Vec::new(), workdir: None, repository_found: false, branch: String::new(), error: None };
     }
     let root = std::fs::canonicalize(&root).unwrap_or(root);
     let mut files = Vec::new();
@@ -313,12 +325,13 @@ fn collect_source_control_status_impl<P: Ord>(
     let mut repository_found = false;
     let mut branch = String::new();
     let mut error = None;
+    let mut operation = None;
 
     {
         let repo = match git2::Repository::discover(&root) {
             Ok(repo) => repo,
             Err(cause) => return SourceControlStatusSnapshot {
-                files, workdir, repository_found, branch,
+                operation, files, workdir, repository_found, branch,
                 error: crate::git_trust::Failure::opening(&root, &cause),
             },
         };
@@ -330,25 +343,45 @@ fn collect_source_control_status_impl<P: Ord>(
             .workdir()
             .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
         if cancel.is_cancelled() {
-            return SourceControlStatusSnapshot { files, workdir, repository_found, branch, error };
+            return SourceControlStatusSnapshot { operation, files, workdir, repository_found, branch, error };
         }
         match repo.head() {
             Ok(head) => branch = head.shorthand().unwrap_or_default().to_owned(),
             Err(cause) if matches!(cause.code(), git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch) => {}
             Err(cause) => return SourceControlStatusSnapshot {
-                files, workdir, repository_found, branch,
+                operation, files, workdir, repository_found, branch,
                 error: Some(crate::git_trust::Failure::reading(&root, cause)),
             },
         }
 
+        match crate::git_operation::read(&repo) {
+            Ok(value) => operation = value,
+            Err(cause) => error = Some(crate::git_trust::Failure::reading(&root, cause)),
+        }
+        if operation.is_some() { *changed = None; }
+
         // Let Git collapse only directories with no indexed descendants.
         let _ = ignore_formatter_working_copies(&repo);
-        if let Some(changed) = changed.as_deref_mut() {
+        let mut status_paths = if let Some(changed) = changed.as_mut() {
             // Use Git's policy, including case-sensitive Windows worktrees,
             // when merging cached paths after this read.
             changed.set_ignore_case(repo.config().and_then(|config| config.get_bool("core.ignorecase"))
                 .unwrap_or(cfg!(windows)));
-            if include_untracked { changed.expand_untracked_directories(&repo); }
+            // Filter before expanding untracked directory scopes. Otherwise an
+            // ignored object file can widen into a traversal of all build output.
+            let mut relevant = changed.relevant(&repo, include_untracked);
+            if include_untracked { relevant.expand_untracked_directories(&repo); }
+            let ignore_case = changed.ignore_case();
+            *changed = refresh::WorktreePaths::new(changed.paths.iter().chain(&relevant.paths).cloned().collect());
+            changed.set_ignore_case(ignore_case);
+            Some(relevant)
+        } else { None };
+        if status_paths.as_ref().is_some_and(|paths| paths.paths.is_empty()) {
+            return SourceControlStatusSnapshot { operation, files, workdir, repository_found, branch, error };
+        }
+        if revalidate {
+            *changed = None;
+            status_paths = None;
         }
         let mut options = git2::StatusOptions::new();
         options
@@ -356,11 +389,13 @@ fn collect_source_control_status_impl<P: Ord>(
             .include_untracked(include_untracked)
             .recurse_untracked_dirs(false)
             .renames_head_to_index(changed.is_none());
-        if let Some(changed) = changed {
+        if let Some(changed) = status_paths {
             options.disable_pathspec_match(true);
             for path in &changed.paths { options.pathspec(path); }
         }
 
+        #[cfg(test)]
+        refresh::STATUS_READS.with(|count| count.set(count.get() + 1));
         let statuses = match repo.statuses(Some(&mut options)) {
             Ok(statuses) => Some(statuses),
             Err(cause) => {
@@ -424,6 +459,7 @@ fn collect_source_control_status_impl<P: Ord>(
     let group = |file: &GitFileChange<P>| if file.status == '!' { 0 } else if file.staged { 1 } else if file.status == '?' { 3 } else { 2 };
     files.sort_unstable_by(|a, b| group(a).cmp(&group(b)).then(a.path.cmp(&b.path)));
     SourceControlStatusSnapshot {
+        operation,
         files,
         workdir,
         repository_found,
@@ -498,7 +534,8 @@ impl App {
     }
 
     /// Rapid navigation must not repeatedly walk the whole working tree.
-    /// Watcher events, saves, Git actions and explicit refresh bypass this gate.
+    /// Saves, Git actions and explicit refresh bypass this gate; watcher bursts
+    /// have their own bounded debounce.
     pub(crate) fn refresh_source_control_for_navigation(&mut self) {
         if self.bg_git_status_running
             || self.source_control_last_refresh.is_some_and(|time| time.elapsed() < std::time::Duration::from_secs(2))
@@ -532,22 +569,30 @@ impl App {
     }
 
     pub(crate) fn refresh_source_control_for_paths(&mut self, paths: Option<rustc_hash::FxHashSet<std::path::PathBuf>>) {
+        if !self.source_control_enabled { return; }
         self.refresh_source_control_diffs_for_paths(paths.as_ref());
         self.start_source_control_status_refresh(paths);
     }
 
-    pub(crate) fn refresh_source_control_git_changed_paths(&mut self, paths: impl IntoIterator<Item = std::path::PathBuf>) {
-        self.refresh_source_control_diff_git_changed(&paths.into_iter().collect());
-        self.start_source_control_status_refresh(None);
+    pub(crate) fn start_source_control_status_refresh(&mut self, mut paths: Option<rustc_hash::FxHashSet<std::path::PathBuf>>) {
+        if !self.source_control_enabled || self.defer_git_status(paths.as_ref(), false) { return; }
+        let metadata = self.absorb_git_watcher_refresh(&mut paths);
+        self.start_source_control_status_refresh_with_feedback(paths, false);
+        if metadata {
+            self.refresh_git_log_async();
+            self.refresh_git_branch_async();
+        }
     }
 
-    pub(crate) fn start_source_control_status_refresh(&mut self, mut paths: Option<rustc_hash::FxHashSet<std::path::PathBuf>>) {
+    pub(crate) fn start_source_control_status_refresh_with_feedback(&mut self, mut paths: Option<rustc_hash::FxHashSet<std::path::PathBuf>>, passive: bool) {
         if !self.source_control_enabled { return; }
+        if self.defer_git_status(paths.as_ref(), passive) { return; }
         if self.repositories.workspace.as_ref().is_some_and(|root| root != &self.explorer.root) {
             self.repositories = Default::default();
         }
         self.repositories.workspace = Some(self.explorer.root.clone());
         if self.bg_git_status_running {
+            self.bg_git_status_passive &= passive;
             if self.bg_git_status_pending {
                 match (&mut self.pending_git_status_paths, paths) {
                     (Some(pending), Some(paths)) => pending.extend(paths),
@@ -563,6 +608,7 @@ impl App {
             paths = None;
         }
         self.bg_git_status_running = true;
+        self.bg_git_status_passive = passive;
         let report_discovery = self.source_control_repository_state
             != crate::app::SourceControlRepositoryState::Available;
         let root = self.explorer.root.clone();
@@ -883,7 +929,7 @@ impl App {
         let Some(file_path) = editor.file_path.clone() else {
             return false;
         };
-        let file_name = editor.file_name().to_string();
+        let file_name = editor.file_display_name().into_owned();
         let still_loading = editor.bg_loading;
         if editor.large_file_mode {
             self.notify("Diff is paused for this large file; adjust the large-file threshold to enable it");
@@ -912,6 +958,7 @@ impl App {
         {
             return;
         }
+        if !self.workspace_visible { return; }
 
         let Some(editor) = self.editor() else {
             return;
@@ -938,7 +985,7 @@ impl App {
         let target_rope = editor.rope.clone();
         let staged = self.tabs.get(self.active_tab)
             .and_then(|tab| self.diff_tabs.staged_for_tab(tab));
-        let file_name = editor.file_name().to_string();
+        let file_name = editor.file_display_name().into_owned();
         let hint = self.tabs.get(self.active_tab).and_then(|tab| self.diff_tabs.repository_for_tab(tab))
             .map(Path::to_owned).or_else(|| self.repository_hint_for_path(&target.file_path));
         let sender = self.source_control_sender();
@@ -1029,6 +1076,7 @@ impl App {
     }
 
     pub(crate) fn git_commit(&mut self) {
+        if self.current_git_operation().is_some() { self.continue_git_operation(); return; }
         if !self.source_control_enabled { return; }
         if self.bg_git_action_running || self.bg_git_remote_running {
             self.notify("Another git operation is already running");
@@ -1083,6 +1131,8 @@ impl App {
     }
 
     fn queue_auto_save_for_modified_tabs(&mut self) {
+        if self.workspaces.exit.is_some() || self.workspace_set_preserving() || self.exit_keep_unsaved_quit
+            || self.exit_discard_quit || self.shutdown_anim_active { return; }
         let trim = self.trim_trailing_on_save;
         let newline = self.insert_final_newline;
         let paste_document = self.pending_paste_document();
@@ -1752,6 +1802,7 @@ impl App {
         if self.remote_workspace.is_some() { return; }
         if !self.source_control_enabled { return; }
         if self.repositories.discovered && self.repositories.active.is_none() { return; }
+        if self.defer_git_work(crate::app_workspaces::GitWork::Branch) { return; }
         if self.bg_git_branch_running {
             self.bg_git_branch_pending = true;
             return;
@@ -1795,6 +1846,7 @@ impl App {
         if self.active_diff_uses_snapshot_target() {
             return;
         }
+        if self.defer_git_work(crate::app_workspaces::GitWork::Lines) { return; }
         let Some(editor) = self.editor() else {
             return;
         };
@@ -1806,6 +1858,7 @@ impl App {
         };
         let line_count = editor.rope.len_lines();
         let saved_snapshot = editor.saved_rope.clone().unwrap_or_else(|| editor.rope.clone());
+        let include_untracked = self.sc_visibility.untracked;
         if self.bg_git_diff_running {
             self.bg_git_diff_pending = true;
             return;
@@ -1817,23 +1870,32 @@ impl App {
         let log = self.git_output();
         if let Some(remote) = self.remote_workspace.clone() {
             self.background.spawn("remote-git-line-diff", move || {
-                let result = remote.git_sources(&file_path, hint.as_deref(), false).ok().filter(|sources| !sources.ignored).map(|sources| {
+                let mut untracked = false;
+                let result = remote.git_sources(&file_path, hint.as_deref(), false).ok().and_then(|sources| {
+                    untracked = !sources.conflicted && sources.head.is_none() && sources.index.is_none();
+                    if sources.ignored || (untracked && !include_untracked) || sender.is_cancelled() {
+                        return None;
+                    }
                     let head = sources.head.as_deref().unwrap_or_default().lines().collect::<Vec<_>>();
                     let index = sources.index.as_deref().unwrap_or_default().lines().collect::<Vec<_>>();
                     let saved = saved_snapshot.to_string();
                     let working = saved.lines().collect::<Vec<_>>();
                     let staged = if sources.conflicted { Vec::new() } else { compute_line_diff(&head, &index) };
-                    (staged, compute_line_diff(&index, &working))
+                    Some((staged, compute_line_diff(&index, &working)))
                 });
                 let (staged, unstaged) = result.unwrap_or_default();
-                let status = crate::editor::PreparedGitLineStatus::from_diffs(line_count, &staged, &unstaged);
+                let mut status = crate::editor::PreparedGitLineStatus::from_diffs(
+                    if untracked && !include_untracked { 0 } else { line_count }, &staged, &unstaged,
+                );
+                status.untracked = untracked;
                 let _ = sender.send(crate::background::BackgroundResult::GitLineDiff { file_path, status });
             });
             return;
         }
         self.background.spawn("git-line-diff", move || {
             if sender.is_cancelled() { return; }
-            let operation = crate::git_output::native(&log, "Read line diff", &file_path);
+            let mut operation = None;
+            let mut untracked = false;
             let result = (|| -> Option<(Vec<char>, Vec<char>)> {
                 let repo = crate::git_repositories::open_file_repository(&file_path, hint.as_deref()).ok()?;
                 if sender.is_cancelled() { return None; }
@@ -1843,10 +1905,15 @@ impl App {
                 // Missing HEAD/index content also occurs for ignored files.
                 // Only genuine untracked files should diff against an empty base.
                 // Git status keeps tracked files visible even if an ignore rule matches.
-                if repo.status_file(&rel_path).ok()?.is_ignored() {
+                let status = repo.status_file(&rel_path).ok()?;
+                // Staged additions/deletions and conflicts remain tracked;
+                // only a purely new worktree path is excluded by this setting.
+                untracked = status == git2::Status::WT_NEW;
+                if status.is_ignored() || (untracked && !include_untracked) {
                     return None;
                 }
                 if sender.is_cancelled() { return None; }
+                operation = Some(crate::git_output::native(&log, "Read line diff", &file_path));
 
                 let (index_content, conflicted) = line_diff_index_content(&repo, &rel_path).ok()?;
                 let head_content = if conflicted { None } else {
@@ -1868,34 +1935,18 @@ impl App {
                 Some((staged, unstaged))
             })();
 
-            if !sender.is_cancelled() {
+            if !sender.is_cancelled() && let Some(operation) = operation {
                 operation.completed(if result.is_some() { "Line changes prepared" } else { "No Git line changes available" }.into());
             }
-            if let Some((staged, unstaged)) = result {
-                let status = crate::editor::PreparedGitLineStatus::from_diffs(
-                    line_count,
-                    &staged,
-                    &unstaged,
-                );
-                // Error OK: receiver dropped means no listener
-                let _ = sender.send(crate::background::BackgroundResult::GitLineDiff {
-                    file_path,
-                    status,
-                });
-            } else {
-                // Send an empty prepared status to clear the running flag and
-                // any markers left by the previous repository state.
-                let status = crate::editor::PreparedGitLineStatus::from_diffs(
-                    line_count,
-                    &[],
-                    &[],
-                );
-                // Error OK: receiver dropped means no listener
-                let _ = sender.send(crate::background::BackgroundResult::GitLineDiff {
-                    file_path,
-                    status,
-                });
-            }
+            // Empty results also clear markers left by a previous repository
+            // state. Hidden untracked files need no per-line allocation.
+            let (staged, unstaged) = result.unwrap_or_default();
+            let mut status = crate::editor::PreparedGitLineStatus::from_diffs(
+                if untracked && !include_untracked { 0 } else { line_count }, &staged, &unstaged,
+            );
+            status.untracked = untracked;
+            // Error OK: receiver dropped means no listener
+            let _ = sender.send(crate::background::BackgroundResult::GitLineDiff { file_path, status });
         });
     }
 
@@ -1993,7 +2044,6 @@ impl App {
             ed.content_version = 0;
             ed.syntax_dirty_from = Some(0);
             ed.syntax_dirty_through = Some(ed.rope.len_lines());
-            ed.cached_visible_line_count = None;
             ed.saved_rope = Some(ed.rope.clone());
             ed.detect_indentation();
         }
@@ -2020,7 +2070,7 @@ impl App {
     }
 
     pub(crate) fn git_amend_commit(&mut self) {
-        if self.source_control_commit_msg.trim().is_empty() {
+        if !self.source_control_commit_msg.is_empty() && self.source_control_commit_msg.trim().is_empty() {
             self.notify("Commit message cannot be empty");
             return;
         }
@@ -2028,7 +2078,7 @@ impl App {
             self.notify("No staged changes to commit");
             return;
         }
-        let message = self.source_control_commit_msg.clone();
+        let message = (!self.source_control_commit_msg.is_empty()).then(|| self.source_control_commit_msg.clone());
         self.queue_git_task("git-amend", "amend", crate::git_tasks::Task::Amend { message });
     }
 
@@ -2063,6 +2113,10 @@ mod tests;
 #[cfg(test)]
 #[path = "app_git_commit_tests.rs"]
 mod commit_tests;
+
+#[cfg(test)]
+#[path = "git_amend_tests.rs"]
+mod amend_tests;
 
 #[cfg(test)]
 #[path = "source_control_loading_tests.rs"]

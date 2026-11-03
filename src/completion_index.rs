@@ -355,6 +355,7 @@ struct Control {
     touches: VecDeque<PathBuf>,
     rescan: bool,
     cancelled: bool,
+    workspace_suspended: bool,
     stopped: bool,
 }
 
@@ -731,6 +732,15 @@ impl CompletionIndex {
                 .retain(|_, request| matches!(request, Pending::Erase));
             control.pending_bytes = 0;
         }
+        handle.0.available.notify_all();
+    }
+
+    /// Workspace visibility is independent of the user's indexing preference.
+    /// Preserve queued learning and caches while the worker sleeps.
+    pub(crate) fn set_workspace_suspended(&self, suspended: bool) {
+        let Some(handle) = &self.handle else { return; };
+        let mut control = handle.0.control.lock().unwrap_or_else(|e| e.into_inner());
+        control.workspace_suspended = suspended;
         handle.0.available.notify_all();
     }
 
@@ -1446,6 +1456,12 @@ impl Worker {
         let _priority = crate::worker_priority::CompletionPriority::new();
         self.restore();
         loop {
+            {
+                let mut control = self.shared.control.lock().unwrap_or_else(|e| e.into_inner());
+                while control.workspace_suspended && !control.stopped {
+                    control = self.shared.available.wait(control).unwrap_or_else(|e| e.into_inner());
+                }
+            }
             let delay = {
                 let control = self
                     .shared
@@ -1786,7 +1802,7 @@ impl Worker {
                         .control
                         .lock()
                         .unwrap_or_else(|e| e.into_inner());
-                    if control.settings != settings
+                    if control.workspace_suspended || control.settings != settings
                         || control.cancelled
                         || control.rescan
                         || control

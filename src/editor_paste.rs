@@ -2,7 +2,7 @@
 //! language assets, saved file, clipboard copies, or undo stacks are cloned.
 use crate::{background::CancellationToken, editor::Editor};
 use ropey::Rope;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 #[derive(Clone, PartialEq, Eq)]
 struct View {
@@ -11,7 +11,7 @@ struct View {
     cursors: Vec<(usize, usize)>,
     anchors: Vec<Option<(usize, usize)>>,
     bookmarks: BTreeSet<usize>,
-    folds: BTreeMap<usize, usize>,
+    folds: crate::editor::FoldedRanges,
 }
 
 impl View {
@@ -129,7 +129,6 @@ impl Prepared {
             self.view.install(editor);
             editor.modified = true;
             editor.desired_col = None;
-            editor.cached_visible_line_count = None;
             editor.cached_wrapped_total = None;
             editor.cached_row_offsets = None;
             editor.fold_buttons.clear();

@@ -617,6 +617,10 @@ fn keybinding_capture_preserves_ui_changes_and_workspace_defaults() {
         &mut app,
         KeyEvent::new(KeyCode::F(12), KeyModifiers::CONTROL | KeyModifiers::ALT),
     );
+    assert!(app.settings_kb_editing, "recording previews the binding until Save");
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
     assert!(!app.settings_kb_editing);
     assert_eq!(app.theme_key, "light");
     assert_eq!(app.show_minimap, minimap);

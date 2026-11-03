@@ -163,6 +163,7 @@ impl App {
     pub(crate) fn toggle_terminal_sidebar(&mut self) {
         if self.show_terminal_sidebar {
             self.show_terminal_sidebar = false;
+            self.terminal_sidebar.hide();
             self.terminal_panel_focused = false;
             self.notify("Terminal collapsed");
             return;
@@ -283,6 +284,7 @@ impl App {
         let focused = self.completion_focused_terminal_index();
         let mut processed_output = false;
         let mut exited = Vec::new();
+        let mut completions = Vec::new();
         let count = self.terminals.len();
         for visited in 0..count {
             let index = self.next_terminal_to_process % count;
@@ -303,7 +305,13 @@ impl App {
                     exited.push(index);
                 }
                 clipboard_update = pty.grid.clipboard_update.take();
+                let previous = terminal.completion.finished_count();
+                let previous_failed = terminal.completion.failed_count();
                 needs_redraw |= terminal.completion.update(pty.grid.commands, focused == Some(index), Instant::now());
+                if terminal.completion.finished_count() != previous {
+                    completions.push((terminal.name.clone(), terminal.completion.finished_count().wrapping_sub(previous),
+                        terminal.completion.failed_count().wrapping_sub(previous_failed)));
+                }
             }
             if let Some(text) = clipboard_update {
                 if let Err(error) = crate::clipboard::set_text(text) {
@@ -323,7 +331,15 @@ impl App {
             needs_redraw = true;
         }
         exited.sort_unstable();
+        for (name, count, failed) in completions {
+            let message = if count == 1 { format!("{name}: command {}", if failed > 0 { "failed" } else { "finished" }) }
+                else { format!("{name}: {count} commands finished ({failed} failed)") };
+            self.record_workspace_events(message,
+                if failed > 0 { crate::app_workspaces::Level::Attention } else { crate::app_workspaces::Level::Done },
+                usize::try_from(count).unwrap_or(usize::MAX));
+        }
         for index in exited.into_iter().rev() {
+            self.record_workspace_event(format!("{}: terminal exited", self.terminals[index].name), crate::app_workspaces::Level::Done);
             self.close_terminal_tab_at(index);
         }
         needs_redraw

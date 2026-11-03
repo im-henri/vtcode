@@ -22,6 +22,10 @@ mod performance_tests;
 #[path = "app_global_search_debounce_tests.rs"]
 mod debounce_tests;
 
+#[cfg(test)]
+#[path = "workspace_search_dismiss_tests.rs"]
+mod dismiss_tests;
+
 fn search_failed(sender: &crate::background::BackgroundResultSender, generation: u64, error: String) {
     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchFailed {
         generation, error,
@@ -122,6 +126,7 @@ impl App {
     }
 
     pub(crate) fn global_search_debounce_wait(&self, now: Instant) -> Option<Duration> {
+        if !self.workspace_visible { return None; }
         self.global_search_pending_since.map(|start| Duration::from_millis(self.search_debounce_ms)
             .saturating_sub(now.saturating_duration_since(start)))
     }
@@ -140,6 +145,11 @@ impl App {
     }
 
     fn start_global_search(&mut self) {
+        if !self.workspace_visible {
+            self.global_search_pending_since = (!self.global_search_query.is_empty()).then(Instant::now);
+            if self.global_search_query.is_empty() { self.bg_global_search_running = false; }
+            return;
+        }
         self.bg_global_search_running = false;
         if self.global_search_query.is_empty() { return; }
         let query = self.global_search_query.clone();
@@ -301,6 +311,32 @@ impl App {
         self.global_search_selected = 0;
         self.global_search_scroll = 0;
         self.update_global_search();
+    }
+
+    pub(crate) fn dismiss_global_search_result(&mut self, row: crate::search_results::SearchRow) {
+        use crate::search_results::SearchRow;
+        let anchor = self.global_search_results.row_at(self.global_search_scroll).map(|row| {
+            let (SearchRow::Header(index) | SearchRow::Result(index)) = row;
+            (self.global_search_results[index].clone(), matches!(row, SearchRow::Header(_)))
+        });
+        let Some(removed) = self.global_search_results.dismiss(row) else { return; };
+        if self.global_search_selected >= removed.end {
+            self.global_search_selected -= removed.len();
+        } else if self.global_search_selected >= removed.start {
+            self.global_search_selected = removed.start;
+        }
+        self.ensure_global_search_selection_visible();
+        if let Some((result, header)) = anchor
+            && let Some(index) = self.global_search_results.index_of(&result)
+            && let Some(row) = if header { self.global_search_results.header_row(index) }
+                else { self.global_search_results.result_row(index) }
+        {
+            self.global_search_scroll = row;
+        }
+        let visible = self.explorer_area.map_or(1, |area| {
+            usize::from(area.bottom().saturating_sub(crate::ui_search_panel::search_results_start_y(self, area)))
+        }).max(1);
+        self.global_search_scroll = self.global_search_scroll.min(self.global_search_results.row_count().saturating_sub(visible));
     }
 
     /// Search open models first; decode disk files with BOM detection.

@@ -58,7 +58,7 @@ pub(crate) struct Service {
     processes: Option<process::Manager>,
     process_ownership: Option<process::Ownership>,
     index: Option<FileIndex>,
-    watcher: Option<watch::Watch>,
+    watchers: HashMap<PathBuf, watch::Watch>,
     output: Option<std::sync::mpsc::SyncSender<Response>>,
     histories: Option<history::Manager>,
     explorer: Option<(u64, crate::explorer::FileExplorer)>,
@@ -112,7 +112,7 @@ impl Service {
             processes: None,
             process_ownership: None,
             index: None,
-            watcher: None,
+            watchers: HashMap::new(),
             output: None,
             histories: None,
             explorer: None,
@@ -122,6 +122,33 @@ impl Service {
             agents: None,
             observations: Default::default(),
             git_observation: None,
+        }
+    }
+    fn set_workspace_watch(&mut self, root: PathBuf, state: WatchState) -> io::Result<()> {
+        if state == WatchState::Active {
+            if self.watchers.get(&root).is_some_and(watch::Watch::is_finished) {
+                self.watchers.remove(&root);
+            }
+            let output = self.output.clone().ok_or_else(|| io::Error::other("Watch transport unavailable"))?;
+            if let Some(watcher) = self.watchers.get(&root) {
+                // Resume flushes only accumulated changes and acknowledges
+                // readiness. Coalesced controls never force a workspace scan.
+                return watcher.resume();
+            }
+            if !self.watchers.contains_key(&root) {
+                let watcher = watch::Watch::start(root.clone(), output, self.observations.get(&root))?;
+                self.watchers.insert(root, watcher);
+            }
+        } else if state == WatchState::Paused {
+            if let Some(watcher) = self.watchers.get(&root) { watcher.pause(); }
+        } else { self.watchers.remove(&root); }
+        Ok(())
+    }
+    fn observe_git_status(&mut self, reply: &Reply, parent_open: bool, closed: &[RemotePath]) {
+        if let Reply::GitStatus { discovery, .. } = reply {
+            let observation = self.observations.get(&self.root);
+            observation.repositories(&self.root, discovery, parent_open, closed);
+            self.git_observation = Some(observation);
         }
     }
     pub(crate) fn hello(&self, session: u64) -> Hello {
@@ -327,15 +354,15 @@ impl Service {
                 Ok(Reply::Done)
             }
             Command::Watch => {
-                if self.watcher.is_none() {
-                    self.watcher = Some(watch::Watch::start(
-                        self.root.clone(),
-                        self.output
-                            .clone()
-                            .ok_or_else(|| io::Error::other("Watch transport unavailable"))?,
-                        self.observations.get(&self.root),
-                    )?);
-                }
+                self.set_workspace_watch(self.root.clone(), WatchState::Active)?;
+                Ok(Reply::Done)
+            }
+            Command::PauseWatch => {
+                self.set_workspace_watch(self.root.clone(), WatchState::Paused)?;
+                Ok(Reply::Done)
+            }
+            Command::Unwatch => {
+                self.set_workspace_watch(self.root.clone(), WatchState::Closed)?;
                 Ok(Reply::Done)
             }
             Command::Inspect { paths } => watch::inspect(
@@ -432,6 +459,7 @@ impl Service {
                 closed,
                 include_untracked,
                 changed,
+                revalidate,
             } => {
                 let excluded = closed.clone();
                 let reply = git::status(
@@ -440,14 +468,10 @@ impl Service {
                 parent_open,
                 closed,
                 include_untracked,
-                changed,
+                (changed, revalidate),
                 &crate::background::CancellationToken::new(),
                 )?;
-                if let Reply::GitStatus { discovery, .. } = &reply {
-                    let observation = self.observations.get(&self.root);
-                    observation.repositories(&self.root, discovery, parent_open, &excluded);
-                    self.git_observation = Some(observation);
-                }
+                self.observe_git_status(&reply, parent_open, &excluded);
                 Ok(reply)
             },
             Command::GitSources {
@@ -1276,6 +1300,8 @@ fn serve_service(
                     | Command::ProcessKill { .. }
                     | Command::Close { .. }
                     | Command::Watch
+                    | Command::PauseWatch
+                    | Command::Unwatch
                     | Command::HistoryClose { .. }
                     | Command::Binary(binary::Command::Close { .. })
                     | Command::Text(text::Command::Close { .. })
@@ -1319,6 +1345,15 @@ fn serve_service(
         } else {
             None
         };
+        if id == 0 && matches!(request.command, Command::Watch | Command::PauseWatch | Command::Unwatch) {
+            let root = match &request.workspace {
+                Some(root) => url::Url::parse(root).map_err(io::Error::other)?.to_file_path()
+                    .map_err(|_| io::Error::other("Invalid workspace context URI"))?,
+                None => canonical.clone(),
+            };
+            observer.get()?.queue_control(ResourceClose::Watch(root, WatchState::from_command(&request.command)))?;
+            continue;
+        }
         let queue = match request.command {
             Command::PerformanceSnapshot => {
                 if diagnostics.is_none() {
@@ -1415,7 +1450,7 @@ fn serve_service(
             Command::Search(_) => search.get()?,
             Command::Filesystem(_) | Command::Replace(_) => filesystem.get()?,
             Command::Format { .. } | Command::FormatSource { .. } => formatter.get()?,
-            Command::Watch => observer.get()?,
+            Command::Watch | Command::PauseWatch | Command::Unwatch => observer.get()?,
             _ => &files,
         };
         if let Err(error) = queue.enqueue(request, cancel) {
@@ -1494,12 +1529,15 @@ impl LazyActor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ResourceClose {
     Text(u64),
     Binary(u64),
     History(u64),
     Rollback(u64),
+    // Subscription changes share the ticketed out-of-band control mailbox.
+    // One latest state per root survives a saturated ordinary actor inbox.
+    Watch(PathBuf, WatchState),
 }
 
 #[derive(Default)]
@@ -1519,7 +1557,7 @@ impl ResourceCloses {
                 if *after > completed {
                     return true;
                 }
-                ready.push(*resource);
+                ready.push(resource.clone());
                 false
             });
             self.pending.store(!entries.is_empty(), Ordering::Release);
@@ -1546,6 +1584,15 @@ impl ResourceCloses {
                     }
                 }
                 ResourceClose::Rollback(id) => service.rollback.close(id),
+                ResourceClose::Watch(root, state) => {
+                    if service.set_workspace_watch(root.clone(), state).is_err()
+                        && let (Some(output), Ok(uri)) = (&service.output, url::Url::from_directory_path(root))
+                    {
+                        let _ = output.send(Response { id: 0, result: Ok(Reply::WorkspaceChanges(watch::Batch {
+                            root_uri: uri.into(), active: Some(false), rescan: true, ..Default::default()
+                        })) });
+                    }
+                }
             }
         }
     }
@@ -1577,7 +1624,13 @@ impl Actor {
         Ok(())
     }
     fn close(&self, resource: ResourceClose) -> io::Result<()> {
+        self.queue_control(resource)
+    }
+    fn queue_control(&self, resource: ResourceClose) -> io::Result<()> {
         let mut closes = self.closes.entries.lock().unwrap();
+        if let ResourceClose::Watch(root, _) = &resource {
+            closes.retain(|control, _| !matches!(control, ResourceClose::Watch(previous, _) if previous == root));
+        }
         // This exceeds the live binary (1024), text/context (40), history (4)
         // and journal (8) handle limits while still bounding malformed peers.
         if closes.len() >= 2048 && !closes.contains_key(&resource) {
@@ -1692,8 +1745,7 @@ fn actor(
                     service.index = None;
                     service.explorer = None;
                     // Process and history IDs are connection-wide. Their
-                    // resources retain their own cwd; only the watcher changes.
-                    service.watcher = None;
+                    // resources and watchers retain their own workspace roots.
                 }
                 let process_id = match &request.command {
                     Command::ProcessInput { process, .. }
@@ -1740,15 +1792,16 @@ fn actor(
                             closed,
                             include_untracked,
                             changed,
-                        } => git::status(
-                            &service.root,
-                            known,
-                            parent_open,
-                            closed,
-                            include_untracked,
-                            changed,
-                            cancel.as_ref().unwrap(),
-                        ),
+                            revalidate,
+                        } => {
+                            let excluded = closed.clone();
+                            git::status(&service.root, known, parent_open, closed, include_untracked,
+                                (changed, revalidate), cancel.as_ref().unwrap()).inspect(|reply| {
+                                    // The cancellable transport path must publish
+                                    // dependencies just like direct execution.
+                                    service.observe_git_status(reply, parent_open, &excluded);
+                                })
+                        },
                         Command::Search(query) => {
                             if query.stream {
                                 search::execute_streaming(&service.root, query, cancel.as_ref().unwrap(), |hits| {

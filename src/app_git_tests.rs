@@ -1848,6 +1848,7 @@ fn ignored_files_in_new_repositories_have_no_git_markers_or_hunk_preview() {
 #[test]
 fn tracked_files_matching_ignore_rules_keep_git_markers_and_hunk_preview() {
     let (repo_dir, file, mut app) = make_git_app_with_file("tracked-ignore-rule", "before\n", "after\n");
+    app.sc_visibility.untracked = false;
     std::fs::write(repo_dir.join(".gitignore"), "*.txt\n").unwrap();
     let added = repo_dir.join("added.txt");
     std::fs::write(&added, "staged addition\n").unwrap();

@@ -424,6 +424,16 @@ fn previous_workspace_save_completion_preserves_destination_recovery() {
 
     app.change_workspace(b.path());
     wait_for_files(&mut app);
+    // Hold the save worker while checking the queued request's generation;
+    // a fast filesystem can otherwise finish it in the same UI poll.
+    app.background.use_single_save_worker();
+    let (started, running) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    app.background.save_for_file(&shared, move || {
+        let _ = started.send(());
+        let _ = resume.recv();
+    });
+    running.recv_timeout(Duration::from_secs(10)).unwrap();
     let recovered = format!("B{original}");
     assert_eq!(app.tabs[0].editor.content_version, 0);
     app.background
@@ -451,11 +461,13 @@ fn previous_workspace_save_completion_preserves_destination_recovery() {
     assert!(app.tabs[0].editor.modified);
     // The queued write still belongs to A even though it starts in B.
     assert_eq!(app.pending_file_saves[&shared].0, original_generation);
+    release.send(()).unwrap();
     app.wait_for_background(Duration::from_secs(10), |app| {
         app.pending_file_saves.is_empty()
     });
     assert_eq!(app.tabs[0].editor.rope.to_string(), recovered);
     assert!(app.tabs[0].editor.modified);
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), format!("A{original}"));
 }
 
 #[test]

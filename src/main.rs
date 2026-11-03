@@ -40,6 +40,7 @@ mod completion_match;
 mod ui_vtcomplete_index;
 mod app_commands;
 mod app_commands_editor;
+mod app_shortcuts;
 mod app_commands_git;
 mod app_commands_settings;
 mod app_commands_view;
@@ -59,6 +60,11 @@ mod app_source_control;
 mod app_global_search;
 mod app_layout;
 mod app_desks;
+mod app_workspaces;
+mod ui_workspaces;
+mod ui_workspace_picker;
+mod workspace_sets;
+mod ui_workspace_sets;
 mod editor_document;
 mod merge_conflicts;
 mod merge_conflict_ui;
@@ -141,6 +147,7 @@ mod diff_context;
 mod diff_selection;
 mod diff_scope_source;
 mod editor_comments;
+mod editor_conditional_folds;
 mod editor_columns;
 mod editor_cursor;
 mod editor_cursor_brackets;
@@ -155,6 +162,7 @@ mod editor_text_ops;
 mod editor_transform;
 mod editor_undo;
 mod editor_wrap;
+#[cfg(test)]
 mod editorconfig;
 mod explorer;
 mod explorer_find;
@@ -213,6 +221,8 @@ mod terminal_shell;
 mod ui_terminal_rows;
 mod remote;
 mod git_tasks;
+mod git_operation;
+mod ui_git_operation;
 mod git_output;
 #[cfg(windows)]
 mod windows_input;
@@ -272,6 +282,7 @@ mod ui_extension_versions;
 mod ui_helpers;
 mod ui_markdown;
 mod ui_panels;
+mod terminal_sidebar;
 mod ui_status;
 mod ui_performance;
 mod ui_performance_details;
@@ -472,37 +483,8 @@ fn run_main() -> io::Result<()> {
     startup_timings.mark("workbench_ready");
     let res = app_event_loop::run_app(&mut terminal, &mut app, events, Some(startup_timings));
 
-    // Save session before exit (skip if user chose to discard)
-    if app.exit_discard_quit {
-        // Discard unsaved file changes but preserve settings
-        for tab in &mut app.tabs {
-            if tab.kind == crate::app::TabKind::File && tab.has_unsaved_changes() {
-                if let Some(path) = tab.editor.file_path.clone() {
-                    if path.exists() {
-                        let _ = tab.editor.open_file(&path); // Error OK: file may not be loadable
-                    }
-                }
-            }
-        }
-        for group in &mut app.groups {
-            for tab in &mut group.tabs {
-                if tab.kind == crate::app::TabKind::File && tab.has_unsaved_changes() {
-                    if let Some(path) = tab.editor.file_path.clone() {
-                        if path.exists() {
-                            let _ = tab.editor.open_file(&path); // Error OK: file may not be loadable
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Normal exit - save everything as-is
-    }
     app.save_settings();
-    // Keep & quit already committed its recovery on a worker, before allowing
-    // the UI to close. Do not write the same large buffers a second time here.
-    if !app.exit_keep_unsaved_quit || !app.exit_recovery.saved { app.save_session(); }
-    app.lsp_manager.shutdown_all();
+    app.finish_workspaces_on_shutdown();
 
     #[cfg(unix)]
     drop(keyboard_protocol);

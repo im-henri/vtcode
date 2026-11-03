@@ -38,6 +38,8 @@ pub(crate) enum Kind {
     Move,
     Discard,
     StageAllCommit,
+    GitOperationTarget,
+    GitOperationConfirm,
     Exit,
     ExitBackup,
     ExitRecovery,
@@ -51,6 +53,7 @@ impl Kind {
             Self::Rename => Some(TextInputId::RenameSymbol),
             Self::RenameTerminal => Some(TextInputId::TerminalRename),
             Self::Goto => Some(TextInputId::GotoLine),
+            Self::GitOperationTarget => Some(TextInputId::GitOperationTarget),
             _ => None,
         }
     }
@@ -97,6 +100,8 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::Discard)
     } else if app.sc_stage_all_commit_request.is_some() {
         Some(Kind::StageAllCommit)
+    } else if let Some(request) = &app.git_operation_ui.request {
+        Some(if request.choice == crate::ui_git_operation::Choice::Start { Kind::GitOperationTarget } else { Kind::GitOperationConfirm })
     } else if app.save_as_active {
         Some(Kind::SaveAs)
     } else if app.rename.symbol_active {
@@ -149,6 +154,7 @@ fn sync(app: &mut App, kind: Kind) {
                 Kind::CloseAgent | Kind::ThemeDelete => 1,
                 Kind::ExitBackup => 1,
                 Kind::Discard => 1,
+                Kind::GitOperationConfirm => 1,
                 Kind::Delete => app.confirm_delete_selected,
                 Kind::Move => app.confirm_move_selected,
                 _ => 0,
@@ -164,6 +170,7 @@ fn sync(app: &mut App, kind: Kind) {
 }
 
 fn focus_enabled(app: &App, kind: Kind, focus: usize) -> bool {
+    if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending { return false; }
     if kind == Kind::ExitRecovery { return false; }
     if kind == Kind::SaveError && app.save_conflict.as_ref().is_some_and(|conflict| conflict.busy()) { return false; }
     !(kind == Kind::ThemeInstall && app.install_prompt_running() && focus < 2)
@@ -226,14 +233,17 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
             "Discard all"
         } else { "Discard changes" }, "Cancel"],
         Kind::StageAllCommit => vec!["Stage all & commit", "Cancel"],
-        Kind::Exit if app.unsaved_file_count() > 0 => vec![
+        Kind::GitOperationTarget | Kind::GitOperationConfirm => vec![crate::ui_git_operation::primary(app), "Cancel"],
+        Kind::Exit if app.closing_workspace_only() && app.exit_unsaved_file_count() > 0 => vec!["Save & close", "Discard & close", "Keep unsaved & close", "Cancel"],
+        Kind::Exit if app.closing_workspace_only() => vec!["Close workspace", "Cancel"],
+        Kind::Exit if app.workspace_unsaved_file_count() > 0 => vec![
             "Save & quit",
             "Discard & quit",
             "Keep unsaved & quit",
             "Cancel",
         ],
         Kind::Exit => vec!["Quit", "Cancel"],
-        Kind::ExitBackup => vec!["Back up & quit", "Back"],
+        Kind::ExitBackup => vec![if app.closing_workspace_only() { "Back up & close" } else { "Back up & quit" }, "Back"],
         Kind::ExitRecovery => vec!["Backing up…"],
     }
 }
@@ -267,7 +277,9 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::Move => app.execute_confirm_move(false),
         Kind::Discard => app.execute_source_control_discard_confirm(false),
         Kind::StageAllCommit => app.sc_stage_all_commit_request = None,
+        Kind::GitOperationTarget | Kind::GitOperationConfirm => app.git_operation_ui.request = None,
         Kind::Exit => {
+            app.reset_workspace_exit();
             app.exit_confirm_active = false;
             app.exit_backup_warning = None;
         }
@@ -361,10 +373,11 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
         Kind::Move => app.execute_confirm_move(true),
         Kind::Discard => app.execute_source_control_discard_confirm(true),
         Kind::StageAllCommit => app.confirm_stage_all_commit(),
+        Kind::GitOperationTarget | Kind::GitOperationConfirm => app.submit_git_operation_dialog(),
         Kind::ExitBackup => return crate::input_dialogs::confirm_large_backup(app),
         Kind::ExitRecovery => {},
         Kind::Exit => {
-            let key = if app.unsaved_file_count() == 0 {
+            let key = if app.exit_unsaved_file_count() == 0 {
                 KeyCode::Char('y')
             } else {
                 [KeyCode::Char('y'), KeyCode::Char('d'), KeyCode::Char('k')][index]
@@ -384,6 +397,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     let kind = active(app)?;
+    if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending { return Some(false); }
     app.chord_pending = false;
     if kind == Kind::ThemeInstall && app.palette.extension_versions.is_some() {
         crate::ui_extension_versions::handle_key(app, key);
@@ -490,6 +504,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
+    if matches!(active(app), Some(Kind::GitOperationTarget | Kind::GitOperationConfirm)) && app.git_operation_ui.pending { return true; }
     let Some(kind) = active(app) else {
         return false;
     };
@@ -664,6 +679,10 @@ fn document_name(editor: &crate::editor::Editor) -> std::borrow::Cow<'_, str> {
 
 fn copy(app: &App, kind: Kind) -> Copy {
     match kind {
+        Kind::GitOperationTarget | Kind::GitOperationConfirm => {
+            let (title, message, context, help, field) = crate::ui_git_operation::dialog_copy(app);
+            Copy { title, message, context, help, field }
+        }
         Kind::About => Copy {
             title: "About VTCode",
             message: app.about_info.clone().unwrap_or_default(),
@@ -944,37 +963,43 @@ fn copy(app: &App, kind: Kind) -> Copy {
         }
         Kind::ExitRecovery => Copy {
             title: "Backing up unsaved files…",
-            message: "Writing recovery data on this computer. VTCode will quit when the backup is complete.".into(),
+            message: if app.closing_workspace_only() { "Writing recovery data on this computer. This workspace will close when the backup is complete." } else { "Writing recovery data on this computer. VTCode will quit when the backup is complete." }.into(),
             context: Vec::new(),
             help: "Your edits will stay open if the backup cannot be completed.".into(),
             field: "",
         },
         Kind::Exit => {
-            let count = app.unsaved_file_count();
-            let mut context: Vec<_> = app
-                .tabs
-                .iter()
-                .chain(app.groups.iter().flat_map(|g| &g.tabs))
-                .filter(|t| t.has_unsaved_changes())
-                .take(3)
-                .map(|t| document_name(&t.editor).to_string())
-                .collect();
+            let count = app.exit_unsaved_file_count();
+            let mut context: Vec<_> = if app.closing_workspace_only() || app.workspaces.parked.is_empty() {
+                app.tabs.iter().chain(app.groups.iter().flat_map(|g| &g.tabs))
+                    .filter(|t| t.has_unsaved_changes()).take(3)
+                    .map(|t| document_name(&t.editor).to_string()).collect()
+            } else {
+                app.workspace_entries().iter().map(|entry| entry.path.clone()).collect()
+            };
             if count > 3 {
                 context.push(format!("… and {} more documents", count - 3));
             }
             Copy {
-                title: "Quit VT Code",
-                message: if count == 0 {
-                    "Close this workspace and quit?".into()
+                title: if app.closing_workspace_only() { "Close Workspace" } else { "Quit VT Code" },
+                message: if app.closing_workspace_only() {
+                    format!("Close this workspace with {count} unsaved document{}?", if count == 1 { "" } else { "s" })
+                } else if count == 0 {
+                    format!("Close {} workspace{} and quit?", app.workspaces.parked.len() + 1,
+                        if app.workspaces.parked.is_empty() { "" } else { "s" })
                 } else {
                     format!(
-                        "You have {count} unsaved document{}.",
-                        if count == 1 { "" } else { "s" }
+                        "You have {count} unsaved document{} across {} workspace{}.",
+                        if count == 1 { "" } else { "s" },
+                        app.workspaces.parked.len() + 1,
+                        if app.workspaces.parked.is_empty() { "" } else { "s" }
                     )
                 },
                 context,
-                help: if count == 0 {
-                    "Your workspace can be restored the next time you open VT Code.".into()
+                help: if app.closing_workspace_only() {
+                    "Only this workspace will close. Keep unsaved & close preserves its edits for next time; its terminals and agents will stop.".into()
+                } else if count == 0 {
+                    "All workspaces will close. Terminals and agents will stop.".into()
                 } else {
                     "Keep unsaved & quit preserves your edits in the session for next time.".into()
                 },
@@ -1062,6 +1087,7 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::Move) => crate::ui_dialogs::draw_confirm_move(f, app),
         Some(Kind::Discard) => crate::ui_dialogs::draw_source_control_discard_confirm(f, app),
         Some(Kind::StageAllCommit) => draw(f, app, Kind::StageAllCommit),
+        Some(kind @ (Kind::GitOperationTarget | Kind::GitOperationConfirm)) => draw(f, app, kind),
         Some(Kind::Exit) => crate::ui_dialogs::draw_exit_confirm(f, app),
         Some(Kind::ExitBackup) => draw(f, app, Kind::ExitBackup),
         Some(Kind::ExitRecovery) => draw(f, app, Kind::ExitRecovery),
@@ -1286,6 +1312,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         let input_inner = border.inner(input_area);
         f.render_widget(border, input_area);
         let (value, cursor, anchor) = match id {
+            TextInputId::GitOperationTarget => (&app.git_operation_ui.target, app.git_operation_ui.cursor, app.git_operation_ui.anchor),
             TextInputId::CommandPalette => (
                 &app.palette.query,
                 app.palette.cursor,
@@ -1340,7 +1367,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             app.register_text_input(id, hit);
         }
     }
-    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::ThemeDelete) || app.modal.overwrite.is_some();
+    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::ThemeDelete | Kind::GitOperationConfirm) || app.modal.overwrite.is_some();
     text(
         f,
         rows[4],
@@ -1371,10 +1398,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             1,
         );
         let selected = app.modal.focus == i + usize::from(has_input);
-        let destructive = (matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::ThemeDelete) && i == 0)
+        let destructive = (matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::ThemeDelete | Kind::GitOperationConfirm) && i == 0)
             || (kind == Kind::SaveError && app.save_conflict.is_some() && i == 0)
             || (matches!(kind, Kind::Close | Kind::Exit) && i == 1 && i + 1 < labels.len());
         let disabled = (kind == Kind::ThemeInstall && app.install_prompt_running() && i == 0)
+            || (matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending)
             || kind == Kind::ExitRecovery
             || (kind == Kind::SaveError && app.save_conflict.as_ref().is_some_and(|conflict| conflict.busy()));
         draw_dialog_button(f, rect, label, &app.colors, i == 0, selected, destructive, !disabled);
@@ -1604,6 +1632,10 @@ mod tests {
                     root: app.explorer.root.clone(),
                     message: "Improve Source Control commit flow".into(),
                 });
+            }
+            Kind::GitOperationTarget | Kind::GitOperationConfirm => {
+                app.start_git_operation_dialog(crate::git_operation::Kind::Rebase);
+                if kind == Kind::GitOperationConfirm { app.git_operation_ui.request.as_mut().unwrap().choice = crate::ui_git_operation::Choice::Abort; }
             }
             Kind::Exit => {
                 app.editor_mut().unwrap().modified = true;

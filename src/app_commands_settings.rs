@@ -526,12 +526,9 @@ impl App {
                 }
                 // Handle keybinding editing from settings
                 if id.starts_with("kb_") {
-                    self.settings_kb_editing = true;
-                    self.notify("Press new key combination (Esc to cancel)");
-                    return;
-                }
-                if id.starts_with("shortcut_ro_") {
-                    self.notify("This shortcut is currently read-only");
+                    if let Some(index) = id.strip_prefix("kb_").and_then(|index| index.parse().ok()) {
+                        self.begin_shortcut_edit(index, true);
+                    }
                     return;
                 }
                 // Handle clipboard history paste
@@ -953,15 +950,17 @@ mod tests {
     fn every_animation_can_be_toggled_and_reset_independently() {
         use crate::animation_config::AnimationEffect;
         let mut app = App::test_new();
+        let defaults = app.animation_settings.clone();
         for effect in AnimationEffect::ALL {
-            assert!(!app.animation_settings.any_enabled());
             app.toggle_setting(effect.id());
             for other in AnimationEffect::ALL {
-                assert_eq!(app.animation_settings.enabled(other), other == effect);
+                assert_eq!(app.animation_settings.enabled(other), defaults.enabled(other) ^ (other == effect));
             }
             assert_eq!(app.setting_source_label(effect.id()), "Global");
             assert!(app.reset_setting_in_selected_scope(effect.id()));
-            assert!(!app.animation_settings.any_enabled());
+            for other in AnimationEffect::ALL {
+                assert_eq!(app.animation_settings.enabled(other), defaults.enabled(other));
+            }
             assert_eq!(app.setting_source_label(effect.id()), "Default");
         }
     }
@@ -1008,6 +1007,7 @@ mod tests {
     #[test]
     fn animation_numeric_controls_clamp_persist_and_reset() {
         let mut app = App::test_new();
+        let defaults = app.animation_settings.clone();
         for (id, input, expected, default) in [
             (
                 "animation_scope_connector_duration_ms",
@@ -1029,7 +1029,9 @@ mod tests {
             let value = app.settings_items().into_iter()
                 .find(|(_, _, setting_id)| setting_id == id).unwrap().1;
             assert_eq!(value, default);
-            assert!(!app.animation_settings.any_enabled());
+            for effect in crate::animation_config::AnimationEffect::ALL {
+                assert_eq!(app.animation_settings.enabled(effect), defaults.enabled(effect));
+            }
         }
     }
 

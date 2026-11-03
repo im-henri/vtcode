@@ -109,6 +109,7 @@ pub struct TermGrid {
     pub win32_input_mode: bool,
     pub mouse_tracking: u16,
     sgr_mouse: bool,
+    alternate_scroll: bool,
     pub focus_reporting: bool,
     pending_wrap: bool,
 
@@ -156,6 +157,7 @@ impl TermGrid {
             win32_input_mode: false,
             mouse_tracking: 0,
             sgr_mouse: false,
+            alternate_scroll: true,
             focus_reporting: false,
             pending_wrap: false,
             saved_cursor: None,
@@ -697,6 +699,7 @@ impl vte::Perform for TermGrid {
                             1000 | 1002 | 1003 => self.mouse_tracking = *mode,
                             1004 => self.focus_reporting = true,
                             1006 => self.sgr_mouse = true,
+                            1007 => self.alternate_scroll = true,
                             2004 => self.bracketed_paste = true,
                             9001 => self.win32_input_mode = true,
                             _ => {}
@@ -717,6 +720,7 @@ impl vte::Perform for TermGrid {
                             }
                             1004 => self.focus_reporting = false,
                             1006 => self.sgr_mouse = false,
+                            1007 => self.alternate_scroll = false,
                             2004 => self.bracketed_paste = false,
                             9001 => self.win32_input_mode = false,
                             _ => {}

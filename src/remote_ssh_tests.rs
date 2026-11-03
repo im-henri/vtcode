@@ -61,7 +61,7 @@ fn windows_ssh_scoped_git_status_keeps_full_state_and_native_filename_identity()
         parent: None,
     };
     let file = RemotePath::new("core-workflow/file[1] λ.rs".as_bytes().to_vec()).unwrap();
-    let Reply::GitStatus { scans, .. } = workspace.client.call(Command::GitStatus {
+    let Reply::GitStatus { scans, .. } = workspace.client.call(Command::GitStatus { revalidate: false,
         known: Some(known.clone()), closed: Vec::new(), parent_open: false, include_untracked: true,
         changed: Some(vec![file.clone()]),
     }).unwrap() else { panic!(); };
@@ -77,7 +77,7 @@ fn windows_ssh_scoped_git_status_keeps_full_state_and_native_filename_identity()
         scan.files.into_iter().map(|file| (file.path, file.original_path, file.status, file.staged)).collect::<Vec<_>>()))
         .collect::<Vec<_>>();
     assert_eq!(keys(scoped), keys(complete));
-    let Reply::GitStatus { scans, .. } = workspace.client.call(Command::GitStatus {
+    let Reply::GitStatus { scans, .. } = workspace.client.call(Command::GitStatus { revalidate: false,
         known: Some(known), closed: Vec::new(), parent_open: false, include_untracked: true,
         changed: Some(vec![RemotePath::new(b"git-identities/byte-\xff.rs".to_vec()).unwrap()]),
     }).unwrap() else { panic!(); };
@@ -184,7 +184,7 @@ fn ssh_logs_are_available_while_connected_and_after_transport_disconnect() {
     assert!(screen.contains("Remote SSH Connection") && screen.contains("Handshake"));
     assert!(!workspace.client.capturing_cpu(), "opening Logs never samples the node");
     workspace.client.call(Command::Watch).unwrap();
-    workspace.client.call(Command::GitStatus { include_untracked: true, known: None, parent_open: false, closed: Vec::new(), changed: None }).unwrap();
+    workspace.client.call(Command::GitStatus { revalidate: false, include_untracked: true, known: None, parent_open: false, closed: Vec::new(), changed: None }).unwrap();
     app.execute_palette_command("remote_capture_cpu");
     assert!(workspace.client.capturing_cpu());
     app.wait_for_background(Duration::from_secs(30), |_| !workspace.client.capturing_cpu());

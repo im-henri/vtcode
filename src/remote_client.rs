@@ -13,7 +13,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, Write},
     sync::{
-        Arc, Condvar, Mutex, OnceLock,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
@@ -142,7 +142,8 @@ impl Drop for Delivery {
 }
 struct Shared {
     diagnostics: Option<super::diagnostics::Attempt>,
-    git_output: OnceLock<super::diagnostics::Log>,
+    git_output: Mutex<HashMap<String, super::diagnostics::Log>>,
+    git_logging: AtomicBool,
     capture: cpu_capture::CaptureState,
     failure: Mutex<Option<String>>,
     pending: Mutex<HashMap<u64, Pending>>,
@@ -154,6 +155,7 @@ struct Shared {
     killed: Mutex<std::collections::HashSet<u64>>,
     cancelled: Mutex<std::collections::HashSet<u64>>,
     resized: Mutex<HashMap<u64, (u16, u16)>>,
+    watches: Mutex<HashMap<Option<String>, WatchState>>,
     workspace_changes: Mutex<HashMap<String, watch::Batch>>,
     histories: Mutex<HashMap<u64, mpsc::SyncSender<history::Page>>>,
     binary_pages: Arc<Mutex<binary::Pages>>,
@@ -183,7 +185,7 @@ impl Shared {
     fn operation(&self, id: u64) -> Option<diagnostics::Operation> {
         // No diagnostic lock is held with the admission lock. Formatting is
         // deferred to the viewer, never performed by these transport workers.
-        if self.diagnostics.is_none() && self.git_output.get().is_none() { return None; }
+        if self.diagnostics.is_none() && !self.git_logging.load(Ordering::Relaxed) { return None; }
         self.pending.lock().unwrap().get(&id).and_then(|pending| pending.operation.clone())
     }
     fn stop(&self, id: u64, error: &io::Error) {
@@ -324,7 +326,8 @@ impl Client {
         diagnostics: Option<super::diagnostics::Attempt>,
     ) -> io::Result<Self> {
         let shared = Arc::new(Shared {
-            git_output: OnceLock::new(),
+            git_output: Mutex::default(),
+            git_logging: AtomicBool::new(false),
             diagnostics,
             capture: Default::default(),
             failure: Mutex::default(),
@@ -337,6 +340,7 @@ impl Client {
             killed: Mutex::default(),
             cancelled: Mutex::default(),
             resized: Mutex::default(),
+            watches: Mutex::default(),
             workspace_changes: Mutex::default(),
             histories: Mutex::default(),
             binary_pages: Arc::default(),
@@ -569,9 +573,18 @@ impl Client {
         self.0.shared.diagnostics.as_ref().map(|trace| trace.log.clone())
     }
     pub(crate) fn set_git_output(&self, log: &super::diagnostics::Log) {
-        if self.0.shared.git_output.get().is_none() {
-            let _ = self.0.shared.git_output.set(log.clone());
-        }
+        let mut logs = self.0.shared.git_output.lock().unwrap();
+        logs.entry(self.hello().root_uri.clone()).or_insert_with(|| log.clone());
+        self.0.shared.git_logging.store(true, Ordering::Relaxed);
+    }
+    pub(crate) fn release_git_output(&self) {
+        let mut logs = self.0.shared.git_output.lock().unwrap();
+        logs.remove(&self.hello().root_uri);
+        self.0.shared.git_logging.store(!logs.is_empty(), Ordering::Relaxed);
+        self.0.shared.workspace_changes.lock().unwrap().remove(&self.hello().root_uri);
+    }
+    pub(crate) fn same_transport(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
     pub(super) fn file_operation(&self, name: &'static str, path: &RemotePath) -> Option<diagnostics::Operation> {
         self.0.shared.diagnostics.as_ref().map(|trace| trace.operation(name, path))
@@ -584,6 +597,7 @@ impl Client {
             .as_ref()
             .map_or(&self.0.hello, |context| &context.hello)
     }
+    pub(crate) fn workspace_sets_root_uri(&self) -> &str { &self.0.hello.root_uri }
     pub(crate) fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0.shared, &other.0.shared)
     }
@@ -836,6 +850,17 @@ impl Client {
             ));
         }
         match command {
+            command @ (Command::Watch | Command::PauseWatch | Command::Unwatch) => {
+                // Use the same scope as ordinary requests. On Windows the
+                // default canonical root can have a verbatim path prefix that
+                // a parsed context URI omits; observation keys must agree.
+                let root = self.1.as_ref().map(|context| context.root.clone());
+                let mut watches = self.0.shared.watches.lock().unwrap();
+                if watches.len() >= 2048 && !watches.contains_key(&root) {
+                    return Err(io::Error::other("Remote watcher control limit exceeded"));
+                }
+                watches.insert(root, WatchState::from_command(&command));
+            }
             Command::Cancel { request } => {
                 self.0.shared.cancelled.lock().unwrap().insert(request);
             }
@@ -1270,7 +1295,8 @@ impl Client {
         }
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
         let git_operation = crate::git_output::is_git_command(&command).then(|| {
-            self.0.shared.git_output.get().and_then(|log| log.git_request(
+            let log = self.0.shared.git_output.lock().unwrap().get(&self.hello().root_uri).cloned();
+            log.and_then(|log| log.git_request(
                 self.0.shared.diagnostics.as_ref().map_or(0, |trace| trace.id),
                 id, &command, &self.hello().root,
             ))
@@ -1466,6 +1492,11 @@ fn write_controls(
     input: &mpsc::Receiver<Request>,
     session: u64,
 ) -> io::Result<()> {
+    let watches = std::mem::take(&mut *shared.watches.lock().unwrap());
+    for (root, state) in watches {
+        let request = Request { id: 0, workspace: root, command: state.command() };
+        wire::write_message(writer, 'C', session, 0, &wire::encode(&request)?)?;
+    }
     let batch = std::mem::take(&mut *shared.agent_closed.lock().unwrap());
     for agent in batch {
         wire::write_message(

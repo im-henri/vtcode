@@ -14,6 +14,7 @@ fn fixture() -> App {
     app.cursor_blinking = false;
     app.idle_quiescent = true;
     app.workspace_watcher_active = true;
+    app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, false);
     assert!(!app.animation_settings.any_enabled());
     app
 }
@@ -258,6 +259,20 @@ fn search_and_git_use_the_same_loading_feedback_only_for_live_work() {
         render(&mut app, &mut terminal, false);
         assert!(!app.loading.active());
     }
+}
+
+#[test]
+fn routine_watcher_git_status_does_not_animate_but_git_actions_still_do() {
+    let mut app = fixture();
+    app.sidebar_view = SidebarView::SourceControl;
+    app.bg_git_status_running = true;
+    app.bg_git_status_passive = true;
+    let mut terminal = Terminal::new(TestBackend::new(100, 26)).unwrap();
+    render(&mut app, &mut terminal, false);
+    assert!(!app.loading.active());
+    app.bg_git_action_running = true;
+    render(&mut app, &mut terminal, false);
+    assert!(app.loading.active());
 }
 
 #[test]

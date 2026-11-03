@@ -302,7 +302,8 @@ pub(crate) fn agent_chat_button_area(area: Rect) -> Option<Rect> {
 pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
     let labels = App::menu_labels();
     let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
-        + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width);
+        + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width)
+        + if area_width >= 48 { 15 } else { 0 };
     let all_width = labels
         .iter()
         .map(|label| UnicodeWidthStr::width(*label) + 2)
@@ -330,7 +331,8 @@ pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
 
 pub(crate) fn menu_overflow_visible(area_width: u16) -> bool {
     let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
-        + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width);
+        + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width)
+        + if area_width >= 48 { 15 } else { 0 };
     visible_menu_label_count(area_width) < App::menu_labels().len()
         && area_width as usize >= fixed + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL)
 }
@@ -339,10 +341,28 @@ struct TitleBarCenterLayout {
     area: Rect,
     navigation: Option<[Rect; 2]>,
     workspace: Option<Rect>,
+    add_workspace: Option<Rect>,
+    saved_sets: Option<Rect>,
 }
 
-fn workspace_name(app: &App) -> &str {
-    app.explorer.root.file_name().and_then(|name| name.to_str()).unwrap_or("VTCode")
+fn workspace_name(app: &App) -> String {
+    crate::ui_workspaces::escaped(&crate::remote::workspace::display_name(&app.explorer.root)
+        .unwrap_or_else(|| app.explorer.root.file_name().and_then(|name| name.to_str()).unwrap_or("VTCode").to_owned())).into_owned()
+}
+
+fn workspace_label(app: &App, width: usize) -> String {
+    let unread = app.workspace_unread();
+    let attention = app.workspace_needs_attention();
+    let marker = if attention { "!" } else { "●" };
+    let badge = if unread > 0 && width >= 12 { format!(" {marker}{}", unread.min(999)) }
+        else if (unread > 0 || attention) && width >= 7 { format!(" {marker}") } else { String::new() };
+    let suffix = format!("{badge} ▾ ");
+    let name = workspace_name(app);
+    let target = (name.width() + suffix.width() + 1).min(width);
+    let name = crate::ui_workspaces::clipped(&name, width.saturating_sub(suffix.width() + 1));
+    let mut label = format!(" {name}{suffix}");
+    label.push_str(&crate::helpers::spaces(target.saturating_sub(label.width())));
+    label
 }
 
 fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
@@ -354,17 +374,29 @@ fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
         used + TITLE_BAR_CLOSE_BTN_WIDTH + agent_chat_reserved_width(area.width));
     let center = Rect::new(area.x.saturating_add(used as u16), area.y, remaining as u16, area.height.min(1));
     let nav_width = navigation_reserved_width(area.width);
-    let workspace_width = UnicodeWidthStr::width(workspace_name(app)) + 2;
-    let show_workspace = nav_width + workspace_width <= remaining && area.height > 0;
-    let content_width = nav_width + if show_workspace { workspace_width } else { 0 };
+    let sets_width = if remaining >= nav_width + 18 { 6 } else { 3 };
+    let workspace_width = workspace_label(app, usize::MAX / 2).width()
+        .min(remaining.saturating_sub(nav_width + sets_width + 3)).min(40);
+    let show_workspace = workspace_width >= 5 && area.height > 0;
+    let content_width = nav_width + if show_workspace { workspace_width + sets_width + 3 } else { 0 };
     let x = center.x + remaining.saturating_sub(content_width) as u16 / 2;
     TitleBarCenterLayout {
         area: center,
         navigation: (nav_width > 0 && area.height > 0).then(|| [
             Rect::new(x, area.y, 3, 1), Rect::new(x + 3, area.y, 3, 1),
         ]),
-        workspace: show_workspace.then(|| Rect::new(x + nav_width as u16, area.y, workspace_width as u16, 1)),
+        saved_sets: show_workspace.then(|| Rect::new(x + nav_width as u16, area.y, sets_width as u16, 1)),
+        workspace: show_workspace.then(|| Rect::new(x + nav_width as u16 + sets_width as u16, area.y, workspace_width as u16, 1)),
+        add_workspace: show_workspace.then(|| Rect::new(x + nav_width as u16 + sets_width as u16 + workspace_width as u16, area.y, 3, 1)),
     }
+}
+
+pub(crate) fn workspace_controls(app: &App) -> Option<(Rect, Rect)> {
+    let layout = title_bar_center_layout(app, app.menu_bar_area?);
+    Some((layout.workspace?, layout.add_workspace?))
+}
+pub(crate) fn saved_workspace_sets_area(app: &App) -> Option<Rect> {
+    title_bar_center_layout(app, app.menu_bar_area?).saved_sets
 }
 
 pub(crate) fn navigation_button_at(app: &App, col: u16, row: u16) -> Option<(Rect, bool)> {
@@ -377,7 +409,19 @@ pub(crate) fn navigation_button_at(app: &App, col: u16, row: u16) -> Option<(Rec
 pub(crate) fn draw_navigation_tooltip(f: &mut Frame, app: &App) {
     if app.palette.active || app.menu_active || app.change_dir_active
         || app.context_menu_active || app.explorer_context_active || app.sc_context_active
-        || crate::ui_modal::active(app).is_some() { return; }
+        || app.workspaces.popup.open || crate::ui_modal::active(app).is_some() { return; }
+    if let Some(area) = saved_workspace_sets_area(app).filter(|area| area.contains((app.mouse_col, app.mouse_row).into())) {
+        crate::ui_widgets::Tooltip::hover(vec![Line::raw("Saved workspace sets")], &app.colors).prefer_below().render(f, area.x, area.y);
+        return;
+    }
+    if let Some((workspace, add)) = workspace_controls(app) {
+        for (area, label) in [(workspace, "Switch workspace"), (add, "Add workspace")] {
+            if area.contains((app.mouse_col, app.mouse_row).into()) {
+                crate::ui_widgets::Tooltip::hover(vec![Line::raw(label)], &app.colors).prefer_below().render(f, area.x, area.y);
+                return;
+            }
+        }
+    }
     let Some((area, forward)) = navigation_button_at(app, app.mouse_col, app.mouse_row) else { return; };
     let (label, command) = if forward { ("Go Forward", "navigate_forward") } else { ("Go Back", "navigate_back") };
     let shortcut = app.shortcut_for_command(command);
@@ -618,7 +662,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             let name = match tab.kind {
                 crate::app::TabKind::CommitDetails => Cow::Borrowed("Commit details"),
                 crate::app::TabKind::File => tab.editor.display_name(),
-                _ => Cow::Borrowed(tab.editor.file_name()),
+                _ => tab.editor.file_display_name(),
             };
             let deleted_prefix = if tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable {
                 "~"
@@ -1482,7 +1526,7 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
     // Render from the same layout used by mouse hit testing and tooltips.
     let center = title_bar_center_layout(app, area);
     let content_start = center.navigation.map(|buttons| buttons[0].x)
-        .or(center.workspace.map(|workspace| workspace.x)).unwrap_or(center.area.x);
+        .or(center.saved_sets.map(|sets| sets.x)).or(center.workspace.map(|workspace| workspace.x)).unwrap_or(center.area.x);
     spans.push(Span::styled(crate::helpers::spaces((content_start - center.area.x) as usize), Style::default().bg(bg)));
     let mut content_end = content_start;
     if let Some(buttons) = center.navigation {
@@ -1500,13 +1544,24 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
             content_end = button.right();
         }
     }
+    if let Some(sets) = center.saved_sets {
+        spans.push(Span::styled(if sets.width == 6 { " Sets " } else { " ▤ " }, app.colors.ui.toolbar_style(fg, bg,
+            sets.contains((app.mouse_col, app.mouse_row).into()), app.workspaces.popup.sets.mode.is_some(), false)));
+        content_end = sets.right();
+    }
     if let Some(workspace) = center.workspace {
         spans.push(Span::styled(
-            format!(" {} ", workspace_name(app)),
+            workspace_label(app, workspace.width as usize),
             app.colors.ui.command_center_style(bg, app.terminal_has_focus,
-                workspace.contains((app.mouse_col, app.mouse_row).into()) || app.palette.active),
+                workspace.contains((app.mouse_col, app.mouse_row).into())
+                    || app.workspaces.popup.open && app.workspaces.popup.sets.mode.is_none()),
         ));
         content_end = workspace.right();
+    }
+    if let Some(plus) = center.add_workspace {
+        spans.push(Span::styled(if app.workspace_opening() { " … " } else { " + " },
+            app.colors.ui.toolbar_style(fg, bg, plus.contains((app.mouse_col, app.mouse_row).into()), false, false)));
+        content_end = plus.right();
     }
     spans.push(Span::styled(crate::helpers::spaces(center.area.right().saturating_sub(content_end) as usize), Style::default().bg(bg)));
     if let Some(button) = agent_chat_button_area(area) {

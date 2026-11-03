@@ -29,6 +29,7 @@ fn multicursor_suspends_each_editor_effect_and_resumes_without_replaying_edits()
             let mut app = fixture(
                 "fn example() {\n    call(first_argument, second_argument, third_argument);\n    call_again();\n}\n",
             );
+            app.animation_settings.set(Effect::TabSlide, false);
             app.show_minimap = false;
             app.sticky_scroll = false;
             app.tabs[0].editor.file_path = Some("example.rs".into());

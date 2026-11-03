@@ -395,7 +395,7 @@ impl Setup {
         workspace.recipe = self.recipe;
         workspace
     }
-    #[cfg(all(test, windows))]
+    #[cfg(test)]
     pub(crate) fn workspace_for_test(self) -> io::Result<workspace::Workspace> {
         let start = std::time::Instant::now();
         loop {

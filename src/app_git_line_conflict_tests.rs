@@ -189,6 +189,7 @@ fn unmerged_file_has_sparse_gutter_minimap_and_scrollbar_markers_locally_and_rem
         app.tabs = vec![Tab::new_file(editor)];
         app.active_tab = 0;
         app.source_control_enabled = true;
+        app.sc_visibility.untracked = false;
         refresh(&mut app);
         assert_sparse_conflict_markers(&mut app);
     }

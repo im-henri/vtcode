@@ -33,6 +33,7 @@ pub(crate) enum SearchControl {
     Stop,
     Clear,
     CollapseResults,
+    DismissResult(crate::search_results::SearchRow, u64),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -135,6 +136,8 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
         SearchControl::Refresh => "Refresh Search",
         SearchControl::Stop => "Stop Search (Escape)",
         SearchControl::Clear => "Clear Search Results",
+        SearchControl::DismissResult(crate::search_results::SearchRow::Header(_), _) => "Dismiss File from Results",
+        SearchControl::DismissResult(crate::search_results::SearchRow::Result(_), _) => "Dismiss Match (Delete)",
         SearchControl::CollapseResults => {
             if app.global_search_all_files_toggle_label() == "⊞" {
                 "Expand All Results"
@@ -161,6 +164,11 @@ pub(crate) fn handle_click(app: &mut App, scope: SearchScope, col: u16, row: u16
         return false;
     };
     if button.disabled {
+        return true;
+    }
+    if matches!(button.control, SearchControl::DismissResult(_, _)) {
+        app.global_search_active = false;
+        activate(app, scope, button.control);
         return true;
     }
     if scope == SearchScope::Workspace {
@@ -254,6 +262,11 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
         SearchControl::Stop => app.stop_global_search(),
         SearchControl::Clear => app.clear_global_search(),
         SearchControl::CollapseResults => app.toggle_global_search_all_files_collapsed(),
+        SearchControl::DismissResult(row, revision) => {
+            if scope == SearchScope::Workspace && revision == app.global_search_results.revision() {
+                app.dismiss_global_search_result(row);
+            }
+        }
     }
     if matches!(control, SearchControl::MatchCase | SearchControl::WholeWord
         | SearchControl::Regex | SearchControl::PreserveCase)

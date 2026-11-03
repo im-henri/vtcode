@@ -9,6 +9,7 @@ use std::path::Path;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Task<P = String> {
+    Operation(crate::git_operation::Action),
     Stage(Vec<GitFileChange<P>>),
     Unstage(Vec<GitFileChange<P>>),
     Discard(Vec<GitFileChange<P>>),
@@ -17,7 +18,8 @@ pub(crate) enum Task<P = String> {
     Init,
     TrustRepository,
     Amend {
-        message: String,
+        /// None preserves the complete message of the commit being amended.
+        message: Option<String>,
     },
     Stash {
         stash_message: String,
@@ -51,6 +53,7 @@ impl<P> Task<P> {
                 .collect::<Result<_, _>>()
         };
         Ok(match self {
+            Self::Operation(action) => Task::Operation(action),
             Self::Stage(files) => Task::Stage(changes(files)?),
             Self::Unstage(files) => Task::Unstage(changes(files)?),
             Self::Discard(files) => Task::Discard(changes(files)?),
@@ -85,9 +88,13 @@ pub(crate) fn execute<P: AsRef<Path>>(
     task: Task<P>,
 ) -> Result<GitActionOutcome, String> {
     match task {
+        Task::Operation(action) => crate::git_operation::execute(root, action),
         Task::Amend { message } => {
             let root = root.to_path_buf();
             let repo = git2::Repository::open(&root).map_err(|error| error.to_string())?;
+            if crate::git_operation::read(&repo)?.is_some() {
+                return Err("Use Continue in Source Control to finish the current Git operation.".into());
+            }
             let sig = repo
                 .signature()
                 .or_else(|_| git2::Signature::now("VTCode User", "user@vtcode.dev"))
@@ -107,14 +114,14 @@ pub(crate) fn execute<P: AsRef<Path>>(
                     Some(&sig),
                     Some(&sig),
                     None,
-                    Some(&message),
+                    message.as_deref(),
                     Some(&tree),
                 )
                 .map_err(|error| error.to_string())?;
             Ok(crate::background::GitActionOutcome {
-                message: format!("Amended: {message}"),
+                message: format!("Amended: {}", message.as_deref().unwrap_or_else(|| head_commit.summary().unwrap_or("commit"))),
                 refresh_log: true,
-                clear_commit_message: Some(crate::app_git::GitCommitRequest { root, message }),
+                clear_commit_message: Some(crate::app_git::GitCommitRequest { root, message: message.unwrap_or_default() }),
                 leave_amend_mode: true,
                 ..Default::default()
             })
@@ -156,6 +163,9 @@ pub(crate) fn execute<P: AsRef<Path>>(
         Task::CreateBranch { branch_name } => {
             let root = root.to_path_buf();
             let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
+            if repo.state() != git2::RepositoryState::Clean {
+                return Err("Finish or abort the current Git operation before creating a branch.".into());
+            }
             if repo
                 .find_branch(&branch_name, git2::BranchType::Local)
                 .is_ok()
@@ -203,6 +213,9 @@ pub(crate) fn execute<P: AsRef<Path>>(
         } => {
             let root = root.to_path_buf();
             let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
+            if repo.state() != git2::RepositoryState::Clean {
+                return Err("Finish or abort the current Git operation before switching branches.".into());
+            }
             let remote_branch = repo
                 .find_branch(&remote_ref, git2::BranchType::Remote)
                 .map_err(|error| error.to_string())?;

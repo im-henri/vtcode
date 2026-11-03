@@ -1,7 +1,7 @@
 use crossterm::event::KeyModifiers;
 use crate::app::{ActivePane, App, TabKind, TerminalDock};
 use crate::explorer::FileExplorer;
-use crate::mouse::find_tab_at_col;
+use crate::ui_chrome_tabs::TabBarHits;
 
 #[cfg(test)]
 #[path = "mouse_tab_columns_tests.rs"]
@@ -633,17 +633,23 @@ pub(crate) fn handle_left_drag(
             {
                 app.tab_drop_zone = None;
                 app.tab_drop_target_group = None;
-                if let Some(drag_to) = find_tab_at_col(app, col, tab_area) {
-                    if drag_from != drag_to {
-                        app.tabs[drag_from].preview = false;
-                        app.swap_tabs(drag_from, drag_to);
-                        if app.active_tab == drag_from {
-                            app.active_tab = drag_to;
-                        } else if app.active_tab == drag_to {
-                            app.active_tab = drag_from;
-                        }
-                        app.dragging_tab = Some(drag_to);
-                    }
+                let hits = TabBarHits::new(app, tab_area);
+                // An oversized first label can hide the right arrow; the edge
+                // must still pan so its neighbors can become drop targets.
+                let scroll = if TabBarHits::contains(hits.left, col) {
+                    -3
+                } else if TabBarHits::contains(hits.right, col)
+                    || col == tab_area.right().saturating_sub(1)
+                {
+                    3
+                } else {
+                    0
+                };
+                if scroll != 0 {
+                    crate::ui_chrome_tabs::scroll_strip_by(app, tab_area, app.active_group, scroll);
+                } else if let Some(drag_to) = hits.reorder_target(drag_from, col) {
+                    app.move_tab(drag_from, drag_to);
+                    app.dragging_tab = Some(drag_to);
                 }
                 return;
             }
@@ -689,25 +695,20 @@ pub(crate) fn handle_left_drag(
         if let Some(scrollbar_area) = app.scrollbar_area {
             if let Some(ed) = app.editor_mut() {
                 let sb_height = scrollbar_area.height as usize;
-                if ed.word_wrap {
-                    let total_rows = ed.wrapped_total_rows(ed.effective_wrap_width());
-                    if sb_height > 0 && total_rows > ed.viewport_height {
-                        let click_row = row
-                            .max(scrollbar_area.y)
-                            .min(scrollbar_area.y + scrollbar_area.height.saturating_sub(1));
-                        let rel_row = (click_row.saturating_sub(scrollbar_area.y)) as usize;
-                        let max_scroll = total_rows.saturating_sub(ed.viewport_height.max(1));
-                        let target = (rel_row * max_scroll) / sb_height;
-                        ed.set_wrap_scroll_offset(target.min(max_scroll));
-                    }
-                } else {
-                    let total_lines = ed.line_count();
-                    if sb_height > 0 && total_lines > ed.viewport_height {
-                        let click_row = row.max(scrollbar_area.y).min(scrollbar_area.y + scrollbar_area.height.saturating_sub(1));
-                        let rel_row = (click_row.saturating_sub(scrollbar_area.y)) as usize;
-                        let max_scroll = total_lines.saturating_sub(ed.viewport_height);
-                        ed.scroll_offset = (rel_row * max_scroll) / sb_height;
-                        ed.scroll_offset = ed.scroll_offset.min(max_scroll);
+                if sb_height > 0 {
+                    let total = if ed.word_wrap {
+                        ed.wrapped_total_rows(ed.effective_wrap_width())
+                    } else {
+                        ed.visible_line_count()
+                    };
+                    let click_row = row.max(scrollbar_area.y).min(scrollbar_area.y + scrollbar_area.height.saturating_sub(1));
+                    let rel_row = (click_row.saturating_sub(scrollbar_area.y)) as usize;
+                    let max_scroll = total.saturating_sub(if ed.scroll_past_end { 1 } else { ed.viewport_height.max(1) });
+                    let target = rel_row * max_scroll / sb_height.saturating_sub(1).max(1);
+                    if ed.word_wrap {
+                        ed.set_wrap_scroll_offset(target);
+                    } else {
+                        ed.set_visible_scroll_offset(target);
                     }
                 }
             }
@@ -765,14 +766,14 @@ pub(crate) fn handle_left_drag(
         let drag_start = app.minimap_drag_start;
         if let Some(minimap_area) = app.minimap_area {
             if let Some(ed) = app.editor_mut() {
-                let total_lines = ed.line_count();
+                let total_lines = ed.visible_line_count();
                 let minimap_height = minimap_area.height as usize;
                 if minimap_height > 0 && total_lines > 0 {
                     let clamped_row = row
                         .max(minimap_area.y)
                         .min(minimap_area.y + minimap_area.height.saturating_sub(1));
                     let rel_row = (clamped_row - minimap_area.y) as usize;
-                    let (start_row, start_scroll) = drag_start.unwrap_or((rel_row, ed.scroll_offset));
+                    let (start_row, start_scroll) = drag_start.unwrap_or((rel_row, ed.visible_scroll_offset()));
                     let layout = crate::ui_editor_minimap::MinimapLayout::new(
                         total_lines,
                         start_scroll,
@@ -780,7 +781,7 @@ pub(crate) fn handle_left_drag(
                         minimap_height,
                         ed.scroll_past_end,
                     );
-                    ed.scroll_offset = layout.drag_scroll(start_row, rel_row);
+                    ed.set_visible_scroll_offset(layout.drag_scroll(start_row, rel_row));
                     if ed.word_wrap {
                         let wrap_row = ed.wrapped_row_for_position(
                             ed.scroll_offset,

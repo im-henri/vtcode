@@ -25,7 +25,7 @@ pub(crate) type OverviewChangeRowsKey = (
     usize,           // compare marker allocation identity
     usize,           // compare marker count
     u64,             // compare generation
-    u64,             // compare refresh generation
+    (u64, u64, u64, u64, bool, usize, usize), // compare refresh and overview layout identity
 );
 pub(crate) type CursorWordKey = (u64, usize, usize, u64);
 
@@ -53,6 +53,10 @@ impl Drop for RemoteDiskChecks {
 }
 
 pub(crate) struct App {
+    pub(crate) workspaces: crate::app_workspaces::Workspaces,
+    pub(crate) workspace_activity: crate::app_workspaces::Activity,
+    pub(crate) workspace_visible: bool,
+    pub(crate) workspace_observation: crate::app_workspaces::Observation,
     pub(crate) remote_workspace: Option<crate::remote::workspace::Workspace>,
     pub(crate) remote_connection: crate::app_remote_connection::State,
     pub(crate) side_notice: crate::ui_side_notice::State,
@@ -119,6 +123,7 @@ pub(crate) struct App {
     pub show_indent_guides: bool,
     pub rulers: Vec<u16>,    // Column ruler positions (e.g., 80, 120)
     pub chord_pending: bool, // Ctrl+K chord mode
+    pub(crate) shortcut_chord_prefix: Option<crate::app_shortcuts::Stroke>,
     pub chord_start: std::time::Instant, // When chord was initiated (for timeout)
     pub cursor_visible: bool, // For blink effect
     pub cursor_blinking: bool,
@@ -175,7 +180,7 @@ pub(crate) struct App {
     pub dragging_v_scrollbar: bool,
     pub dragging_h_scrollbar: bool,
     pub dragging_minimap: bool,
-    pub minimap_drag_start: Option<(usize, usize)>, // (pointer row, scroll offset)
+    pub minimap_drag_start: Option<(usize, usize)>, // (pointer row, visible scroll row)
     pub(crate) settings_scrollbar_drag: Option<crate::settings_layout::Drag>,
     /// Text-field hit maps rebuilt from the actual rendered viewport each frame.
     pub text_input_regions: Vec<crate::text_input::TextInputRegion>,
@@ -433,6 +438,7 @@ pub(crate) struct App {
     pub settings_value_cursor: usize,
     pub settings_value_selection_anchor: Option<usize>,
     pub settings_kb_editing: bool, // true when capturing a new keybinding in settings
+    pub(crate) shortcut_editor: Option<crate::app_shortcuts::EditorState>,
     pub settings_dropdown_open: bool,
     pub settings_dropdown_setting_id: Option<String>, // None while open means the category picker.
     pub settings_dropdown_options: Vec<String>,
@@ -475,6 +481,7 @@ pub(crate) struct App {
     /// The terminal's default home: an independently collapsible right-side dock.
     pub show_terminal_sidebar: bool,
     pub terminal_sidebar_revealed: bool,
+    pub(crate) terminal_sidebar: crate::terminal_sidebar::State,
     pub terminal_sidebar_area: Option<ratatui::layout::Rect>,
     pub terminal_sidebar_toggle_area: Option<ratatui::layout::Rect>,
     pub terminal_sidebar_plus_area: Option<ratatui::layout::Rect>,
@@ -721,6 +728,7 @@ pub(crate) struct App {
     pub resizing_sc_graph: bool,
     pub sc_graph_click_start: Option<(u16, u16)>,
     pub sc_amend_mode: bool,
+    pub(crate) git_operation_ui: crate::ui_git_operation::Ui,
     pub git_log: Vec<GitCommitInfo>,
     pub(crate) git_history: crate::git_history::GitHistory,
     pub git_log_scroll: usize,
@@ -932,6 +940,9 @@ pub(crate) struct App {
     pub background: crate::background::BackgroundWorkers,
     /// True while a background git-status refresh is in flight.
     pub bg_git_status_running: bool,
+    /// Routine watched-file updates do not animate the Source Control header.
+    pub(crate) bg_git_status_passive: bool,
+    pub(crate) git_watcher_refresh: crate::app_git::watcher::WatcherRefresh,
     /// A newer git-status refresh was requested while one was in flight.
     pub bg_git_status_pending: bool,
     pub(crate) pending_git_status_paths: Option<rustc_hash::FxHashSet<PathBuf>>,
@@ -1092,6 +1103,10 @@ impl App {
         let palette_commands = Self::build_command_list_with_themes(&loaded_themes, &syntax_names);
         let ui_wake = background.wake_handle();
         let mut app = Self {
+            workspaces: Default::default(),
+            workspace_activity: Default::default(),
+            workspace_visible: true,
+            workspace_observation: Default::default(),
             remote_workspace: None,
             remote_connection: Default::default(),
             side_notice: Default::default(),
@@ -1149,6 +1164,7 @@ impl App {
             show_indent_guides: true,
             rulers: vec![80],
             chord_pending: false,
+            shortcut_chord_prefix: None,
             chord_start: std::time::Instant::now(),
             cursor_visible: true,
             cursor_blinking: true,
@@ -1420,6 +1436,7 @@ impl App {
             settings_value_cursor: 0,
             settings_value_selection_anchor: None,
             settings_kb_editing: false,
+            shortcut_editor: None,
             settings_dropdown_open: false,
             settings_dropdown_setting_id: None,
             settings_dropdown_options: Vec::new(),
@@ -1461,6 +1478,7 @@ impl App {
             panel_area: None,
             show_terminal_sidebar: false,
             terminal_sidebar_revealed: false,
+            terminal_sidebar: Default::default(),
             terminal_sidebar_area: None,
             terminal_sidebar_toggle_area: None,
             terminal_sidebar_plus_area: None,
@@ -1676,6 +1694,7 @@ impl App {
             resizing_sc_graph: false,
             sc_graph_click_start: None,
             sc_amend_mode: false,
+            git_operation_ui: Default::default(),
             git_log: Vec::new(),
             git_history: crate::git_history::GitHistory::default(),
             git_log_scroll: 0,
@@ -1820,6 +1839,8 @@ impl App {
             pending_lsp_on_type_format: None,
             background,
             bg_git_status_running: false,
+            bg_git_status_passive: false,
+            git_watcher_refresh: Default::default(),
             bg_git_status_pending: false,
             pending_git_status_paths: None,
             bg_explorer_refresh_running: false,
@@ -1902,7 +1923,7 @@ impl App {
     pub(crate) fn poll_background_results_until(&mut self, deadline: std::time::Instant) -> bool {
         if let Some(remote) = &self.remote_workspace { remote.apply_notifications(&self.background.sender, self.workspace_generation); }
         let disconnected = self.poll_remote_connection(deadline);
-        self.sync_diff_tab();
+        if self.workspace_visible { self.sync_diff_tab(); }
         let mut budget = crate::background::ResultBudget::until(deadline);
         // A worker reply is not necessarily a visual change. Periodic disk,
         // branch, and blame probes commonly return the exact state already on
@@ -1911,7 +1932,6 @@ impl App {
         let mut has_visual_changes = disconnected;
         let mut file_reload_names: Vec<String> = Vec::new();
         while let Some(result) = budget.next(&mut self.background) {
-            self.completion_index_sync.buffers_changed = true;
             let result = match result {
                 crate::background::BackgroundResult::WorkspaceResult { generation, result } => {
                     if generation != self.workspace_generation { continue; }
@@ -1919,6 +1939,16 @@ impl App {
                 }
                 result => result,
             };
+            let result = match result {
+                crate::background::BackgroundResult::FileWatcherEvent { cancelled, result } => {
+                    if cancelled.load(std::sync::atomic::Ordering::Acquire) { continue; }
+                    *result
+                }
+                result => result,
+            };
+            if !matches!(result, crate::background::BackgroundResult::FileWatcherState { .. }) {
+                self.completion_index_sync.buffers_changed = true;
+            }
             let result = match result {
                 crate::background::BackgroundResult::SourceControlRead { cancel, result } => {
                     if !self.source_control_enabled || cancel.is_cancelled() { continue; }
@@ -1957,6 +1987,7 @@ impl App {
                     | crate::background::BackgroundResult::RemoteDiskChecksFailed { .. }
                     | crate::background::BackgroundResult::RemoteDiskChecksDone(_)
                     | crate::background::BackgroundResult::RemoteFileValidated { .. }
+                    | crate::background::BackgroundResult::NativeFileValidated { .. }
                     | crate::background::BackgroundResult::RemoteLocationResolved { .. }
                     | crate::background::BackgroundResult::RemoteLocationProgress { .. }
                     | crate::background::BackgroundResult::FileWatcherState { .. }
@@ -1999,6 +2030,9 @@ impl App {
                 }
                 crate::background::BackgroundResult::RemoteReconnected { generation, serial, result } => {
                     self.finish_remote_reconnect(generation, serial, result);
+                }
+                crate::background::BackgroundResult::SharedRemoteReconnected { generation, serial, result } => {
+                    self.finish_shared_remote_reconnect(generation, serial, result);
                 }
                 crate::background::BackgroundResult::RemoteReconnectFile { generation, check } => {
                     self.finish_remote_reconnect_file(generation, check);
@@ -2051,10 +2085,21 @@ impl App {
                 crate::background::BackgroundResult::RemoteFileValidated { generation, path, document, baseline, result } => {
                     has_visual_changes |= self.finish_remote_file_validation(generation, path, document, baseline, result);
                 }
+                crate::background::BackgroundResult::NativeFileValidated { generation, path, document, baseline, cancel, result } => {
+                    if generation != self.workspace_generation { continue; }
+                    if cancel.is_cancelled() {
+                        self.pending_file_reloads.remove(&path);
+                        self.pending_file_reload_again.remove(&path);
+                        self.queue_workspace_file_check(path);
+                        continue;
+                    }
+                    has_visual_changes |= self.finish_file_validation(generation, path, document, baseline, result);
+                }
                 crate::background::BackgroundResult::SourceControlRead { .. } => unreachable!("nested Git result"),
                 crate::background::BackgroundResult::RepositoryRead { .. } => unreachable!("nested repository result"),
                 crate::background::BackgroundResult::RemoteFileResult { .. } => unreachable!("nested remote file result"),
                 crate::background::BackgroundResult::WorkspaceResult { .. } => unreachable!("nested workspace result"),
+                crate::background::BackgroundResult::FileWatcherEvent { .. } => unreachable!("nested watcher result"),
                 crate::background::BackgroundResult::GitRepositories { root, workspace_generation, repository_generation, discovery, scans } => {
                     if root != self.explorer.root || workspace_generation != self.workspace_generation { continue; }
                     let obsolete = repository_generation != self.repositories.membership_generation
@@ -2065,6 +2110,7 @@ impl App {
                         has_visual_changes |= self.apply_repository_scan(root, workspace_generation, discovery, scans);
                     }
                     self.bg_git_status_running = false;
+                    self.bg_git_status_passive = false;
                     if obsolete {
                         self.bg_git_status_pending = false;
                         self.pending_git_status_paths = None;
@@ -2233,6 +2279,13 @@ impl App {
                 }
                 crate::background::BackgroundResult::GitActionDone { action, result } => {
                     self.bg_git_action_running = false;
+                    if matches!(action, "rebase" | "cherry-pick") && self.git_operation_ui.pending {
+                        self.git_operation_ui.pending = false;
+                        match &result {
+                            Ok(_) => { self.git_operation_ui.request = None; self.modal = Default::default(); }
+                            Err(error) => self.modal.error = Some(error.clone()),
+                        }
+                    }
                     match result {
                         Ok(outcome) => {
                             if let Some(request) = outcome.stage_all_commit_request {
@@ -2284,7 +2337,7 @@ impl App {
                             // A failed action can still have updated the index,
                             // for example staging succeeded but committing failed.
                             self.refresh_source_control_async();
-                            if action == "discard" {
+                            if matches!(action, "discard" | "rebase" | "cherry-pick") {
                                 self.refresh_explorer_async();
                                 self.refresh_git_line_status_async();
                                 self.queue_all_clean_file_reloads();
@@ -2575,7 +2628,7 @@ impl App {
                     }
                     let mut disk_state_changed = false;
                     let mut should_reload = false;
-                    let mut changed_unsaved = Vec::new();
+                    let mut changed_unsaved = false;
                     let remote_path = self.remote_workspace.is_some() && crate::remote::workspace::is_view_key(&change.path);
                     let mut inspect_tabs = |tabs: &mut Vec<crate::app::Tab>| {
                         for tab in tabs {
@@ -2605,7 +2658,7 @@ impl App {
                                 }
                                 tab.editor.publish_document();
                                 if tab.editor.modified && !remote_path {
-                                    changed_unsaved.push(tab.editor.file_name().to_string());
+                                    changed_unsaved = true;
                                 } else { should_reload = true; }
                             }
                         }
@@ -2624,11 +2677,8 @@ impl App {
                         if remote_path { self.queue_remote_file_change(change.path.clone()); }
                         else { self.queue_file_reload(change.path.clone()); }
                     }
-                    changed_unsaved.sort();
-                    changed_unsaved.dedup();
-                    for name in changed_unsaved {
-                        self.status_message = format!("{name} changed on disk; your unsaved edits are preserved.");
-                        self.notify_warn(self.status_message.clone());
+                    if changed_unsaved {
+                        has_visual_changes |= self.warn_file_changed_on_disk(&change.path);
                     }
                     if disk_state_changed && self.compare_base_path.as_ref() == Some(&change.path) {
                         self.compare_diff_base_revision = None;
@@ -2644,7 +2694,7 @@ impl App {
                 crate::background::BackgroundResult::FileWatcherState { root, active } => {
                     if root == self.explorer.root {
                         self.workspace_watcher_active = active;
-                        self.explorer.set_directory_watcher_active(active);
+                        self.explorer.set_directory_watcher_active(self.workspace_watcher_active);
                     }
                 }
                 crate::background::BackgroundResult::FilesChanged {
@@ -3115,8 +3165,7 @@ impl App {
                     // this potentially stale snapshot and immediately read once
                     // more. The editor never flashes intermediate disk state.
                     if self.pending_file_reload_again.remove(&path) {
-                        if crate::remote::workspace::is_view_key(&path) { self.queue_remote_file_change(path); }
-                        else { self.queue_file_reload(path); }
+                        self.queue_workspace_file_check(path);
                         continue;
                     }
                     self.refresh_source_control_diffs_for_paths(Some(&[path.clone()].into_iter().collect()));
@@ -3973,7 +4022,7 @@ impl App {
                         self.queue_background_save_job_for_workspace(next, generation);
                     }
                     if workspace_generation == self.workspace_generation && self.remote_changes_deferred.remove(&path) {
-                        self.queue_remote_file_change(path);
+                        self.queue_workspace_file_check(path);
                     }
                 }
                 crate::background::BackgroundResult::BlameHistory { navigation_id, generation, result } => {
@@ -4192,6 +4241,7 @@ impl App {
     /// Rebuild the visible Explorer tree on a worker. Filesystem traversal and
     /// size/date metadata sorting never need to occupy the event loop.
     pub(crate) fn refresh_explorer_async(&mut self) {
+        if self.defer_explorer_refresh(true) { return; }
         if let Some(remote) = &self.remote_workspace { remote.invalidate_directories(); }
         self.explorer.invalidate_directory_cache();
         self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
@@ -4209,6 +4259,10 @@ impl App {
     pub(crate) fn refresh_explorer_changed_path_states<'a>(
         &mut self, paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>, structural: bool,
     ) {
+        if !self.workspace_visible {
+            self.defer_explorer_paths(paths, structural);
+            return;
+        }
         if let Some(remote) = &self.remote_workspace { remote.invalidate_directories(); }
         let mut ignore_rules_changed = false;
         let mut visible_change = false;
@@ -4241,6 +4295,7 @@ impl App {
     /// Visible-tree changes do not change workspace file eligibility. Reuse the
     /// Quick Open index across expansion, collapse, sort and automatic reveal.
     pub(crate) fn refresh_explorer_tree_async(&mut self) {
+        if self.defer_explorer_refresh(false) { return; }
         self.explorer.set_files_exclude(&self.settings_effective.files_exclude);
         if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
             self.remote_explorer_error = Some("Connection lost. Showing cached files.".into());
@@ -4471,7 +4526,7 @@ impl App {
     /// palette, search bar, rename dialog, goto-line, terminal, etc.).
     /// Used to decide whether the cursor should blink.
     pub(crate) fn has_text_input_focus(&self) -> bool {
-        if self.status_details.open { return false; }
+        if self.status_details.open || self.workspaces.popup.open { return false; }
         if self.chat.visible && self.active_pane == ActivePane::Chat { return true; }
         // Overlay text inputs always have focus when active
         if self.palette.active
@@ -4502,23 +4557,18 @@ impl App {
     ) -> bool {
         let mut changed = false;
         let mut stale = false;
-        for tab in &mut self.tabs {
+        let hidden = status.untracked && !self.sc_visibility.untracked;
+        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
             if tab.kind == TabKind::File && tab.editor.file_path.as_deref() == Some(file_path) {
-                if tab.editor.rope.len_lines() == status.len() {
+                if hidden {
+                    // A result queued before the setting changed must not
+                    // restore hidden markers, including in inactive panes.
+                    changed |= tab.editor.has_git_line_changes();
+                    tab.editor.clear_git_line_status();
+                } else if tab.editor.rope.len_lines() == status.len() {
                     changed |= tab.editor.set_prepared_git_line_status(status.clone());
                 } else {
                     stale = true;
-                }
-            }
-        }
-        for group in &mut self.groups {
-            for tab in &mut group.tabs {
-                if tab.kind == TabKind::File && tab.editor.file_path.as_deref() == Some(file_path) {
-                    if tab.editor.rope.len_lines() == status.len() {
-                        changed |= tab.editor.set_prepared_git_line_status(status.clone());
-                    } else {
-                        stale = true;
-                    }
                 }
             }
         }
@@ -4689,7 +4739,8 @@ impl App {
         };
         let (modifiers, code) = normalize(modifiers, code);
         for kb in &self.keybindings {
-            if kb.code == KeyCode::Null {
+            if kb.code == KeyCode::Null || kb.chord.is_some() || !self.shortcut_applies(kb)
+                || (kb.built_in_handler && !kb.is_modified()) {
                 continue;
             }
             let (binding_modifiers, binding_code) = normalize(kb.modifiers, kb.code);
@@ -4714,7 +4765,8 @@ impl App {
             let mut normalized_modifiers = modifiers;
             normalized_modifiers.remove(KeyModifiers::SHIFT);
             for kb in &self.keybindings {
-                if kb.code == KeyCode::Null {
+                if kb.code == KeyCode::Null || kb.chord.is_some() || !self.shortcut_applies(kb)
+                    || (kb.built_in_handler && !kb.is_modified()) {
                     continue;
                 }
                 let (binding_modifiers, binding_code) = normalize(kb.modifiers, kb.code);
@@ -4759,6 +4811,7 @@ impl App {
     }
 
     /// Save current session to disk
+    #[cfg(test)]
     pub(crate) fn save_session(&self) {
         if let Err(error) = self.try_save_session() {
             log_error!("failed to save workspace session: {error}");
@@ -4803,8 +4856,9 @@ impl App {
             // A queued reply can start another worker. Check readiness after
             // applying replies, never followed by one more unobserved poll.
             self.poll_pending_global_search(std::time::Instant::now());
+            self.poll_git_watcher_refresh(std::time::Instant::now());
             self.poll_background_results();
-            if ready(self) {
+            if ready(self) && self.git_watcher_refresh_wait(std::time::Instant::now()).is_none() {
                 return;
             }
             assert!(
@@ -4823,6 +4877,7 @@ impl App {
                 // sleeping worker. Exercise the same wake policy in tests.
                 let wait = self.remote_connection.next_wait().map_or(remaining, |wait| remaining.min(wait));
                 let wait = self.global_search_debounce_wait(std::time::Instant::now()).map_or(wait, |search_wait| wait.min(search_wait));
+                let wait = self.git_watcher_refresh_wait(std::time::Instant::now()).map_or(wait, |git_wait| wait.min(git_wait));
                 wake.wait_for_change(
                     observed,
                     Some(wait),

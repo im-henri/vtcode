@@ -53,6 +53,7 @@ pub(crate) enum Action {
 
 #[derive(Default)]
 pub(crate) struct FolderBrowser {
+    pub add_workspace: bool,
     pub save_as_return: bool,
     pub focus: Focus,
     pub address_cursor: usize,
@@ -652,7 +653,11 @@ impl App {
             self.save_as_selection_anchor = None;
             crate::ui_modal::field_changed(self);
         } else {
-            self.change_workspace(&path);
+            if self.folder_browser.add_workspace {
+                self.workspaces.request = Some(crate::app_workspaces::Request::Open(path));
+            } else {
+                self.change_workspace(&path);
+            }
         }
         self.folder_browser_action(Action::Close);
     }

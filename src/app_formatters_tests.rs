@@ -42,6 +42,29 @@ fn mock_external(
 }
 
 #[test]
+fn closing_a_workspace_retains_an_outstanding_external_format_request() {
+    let (_dir, mut app, _path) = fixture();
+    let (_sender, cancelled) = mock_external(&mut app, false);
+    let other = tempfile::tempdir().unwrap();
+    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    app.switch_workspace(0);
+    app.workspaces.request = Some(crate::app_workspaces::Request::Close);
+    app.poll_workspace_requests();
+    app.start_exit_recovery();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !app.exit_recovery.saved {
+        app.poll_background_results();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    app.shutdown_anim_active = true;
+    app.advance_workspace_exit();
+    assert_eq!(app.workspace_entries().len(), 2);
+    assert!(app.save_error.is_some());
+    assert!(!cancelled.load(Ordering::Acquire));
+}
+
+#[test]
 fn formatter_first_use_asks_and_remembers_without_changing_lsp() {
     let (_dir, mut app, _path) = fixture();
     app.settings_global.lsp_enabled = Some(false);

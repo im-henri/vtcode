@@ -100,51 +100,18 @@ pub(crate) fn handle_editor_area_left_click(
                     return;
                 };
                 let clicked_row = if let Some(rows) = &ed.diff_display_rows {
-                    rows.get(screen_row).copied().flatten().map(|line_idx| crate::editor::WrappedRowInfo {
-                        line_idx, start_col: 0, end_col: ed.line_len(line_idx), line_len: ed.line_len(line_idx), is_first: true,
-                    })
+                    rows.get(screen_row).copied().flatten().map(|line_idx| (line_idx, true))
                 } else if ed.ai_review.active {
-                    ed.ai_review.source_rows.get(screen_row).copied().flatten()
-                } else if ed.word_wrap {
-                    if screen_row >= ed.viewport_height.max(1) {
-                        None
-                    } else if ed.ensure_row_offsets(ed.effective_wrap_width()) {
-                        ed.wrapped_row_at(
-                            ed.wrap_scroll_offset.saturating_add(screen_row),
-                            ed.effective_wrap_width(),
-                        )
-                    } else {
-                        // The pending-layout view paints consecutive visible
-                        // logical lines, rather than independent raw row IDs.
-                        ed.visible_line_at(ed.wrap_scroll_offset, screen_row).map(|line_idx| {
-                            let line_len = ed.line_len(line_idx);
-                            crate::editor::WrappedRowInfo {
-                                line_idx, start_col: 0, end_col: line_len, line_len, is_first: true,
-                            }
-                        })
-                    }
+                    ed.ai_review.source_rows.get(screen_row).copied().flatten().map(|row| (row.line_idx, row.is_first))
                 } else {
-                    (screen_row < ed.viewport_height)
-                        .then(|| ed.visible_line_at(ed.scroll_offset, screen_row))
-                        .flatten()
-                        .map(|line_idx| {
-                            let line_len = ed.line_len(line_idx);
-                            crate::editor::WrappedRowInfo {
-                            line_idx,
-                            start_col: 0,
-                            end_col: line_len,
-                            line_len,
-                            is_first: true,
-                            }
-                        })
+                    ed.source_line_at_screen(screen_row)
                 };
                 let diff_status = clicked_row
                     .as_ref()
-                    .map_or(' ', |row| ed.line_diff_status(row.line_idx));
+                    .map_or(' ', |&(line, _)| ed.line_diff_status(line));
                 (clicked_row, ed.file_path.clone(), diff_status)
             };
-            if let Some(clicked_row) = clicked_row {
-                let clicked_line = clicked_row.line_idx;
+            if let Some((clicked_line, is_first)) = clicked_row {
                 let compare_view = app.should_render_diff_for_active_editor();
                 if is_diff_col {
                     if compare_view {
@@ -155,7 +122,7 @@ pub(crate) fn handle_editor_area_left_click(
                     return;
                 }
                 if is_fold_col {
-                    if clicked_row.is_first {
+                    if is_first {
                         if let Some(ed) = app.editor_mut() {
                             ed.toggle_fold(clicked_line);
                         }
@@ -185,19 +152,19 @@ pub(crate) fn handle_editor_area_left_click(
             app.minimap_drag_start = None;
             let mut drag_start = None;
             if let Some(ed) = app.editor_mut() {
-                let total_lines = ed.line_count();
+                let total_lines = ed.visible_line_count();
                 let minimap_height = minimap_area.height as usize;
                 if minimap_height > 0 && total_lines > 0 {
                     let click_row = (row - minimap_area.y) as usize;
                     let layout = crate::ui_editor_minimap::MinimapLayout::new(
                         total_lines,
-                        ed.scroll_offset,
+                        ed.visible_scroll_offset(),
                         ed.viewport_height,
                         minimap_height,
                         ed.scroll_past_end,
                     );
-                    ed.scroll_offset = layout.click_scroll(click_row);
-                    drag_start = Some((click_row, ed.scroll_offset));
+                    ed.set_visible_scroll_offset(layout.click_scroll(click_row));
+                    drag_start = Some((click_row, ed.visible_scroll_offset()));
                     if ed.word_wrap {
                         let wrap_row = ed.wrapped_row_for_position(
                             ed.scroll_offset,
@@ -414,22 +381,19 @@ pub(crate) fn handle_editor_area_left_click(
             }
             if let Some(ed) = app.editor_mut() {
                 let sb_height = scrollbar_area.height as usize;
-                if ed.word_wrap {
-                    let total_rows = ed.wrapped_total_rows(ed.effective_wrap_width());
-                    if sb_height > 0 && total_rows > ed.viewport_height {
-                        let click_row = row.saturating_sub(scrollbar_area.y) as usize;
-                        let max_scroll =
-                            total_rows.saturating_sub(ed.viewport_height.max(1));
-                        let target = (click_row * max_scroll) / sb_height;
-                        ed.set_wrap_scroll_offset(target.min(max_scroll));
-                    }
-                } else {
-                    let total_lines = ed.line_count();
-                    if sb_height > 0 && total_lines > ed.viewport_height {
-                        let click_row = row.saturating_sub(scrollbar_area.y) as usize;
-                        let max_scroll = total_lines.saturating_sub(ed.viewport_height);
-                        ed.scroll_offset = (click_row * max_scroll) / sb_height;
-                        ed.scroll_offset = ed.scroll_offset.min(max_scroll);
+                if sb_height > 0 {
+                    let total = if ed.word_wrap {
+                        ed.wrapped_total_rows(ed.effective_wrap_width())
+                    } else {
+                        ed.visible_line_count()
+                    };
+                    let max_scroll = total.saturating_sub(if ed.scroll_past_end { 1 } else { ed.viewport_height.max(1) });
+                    let click_row = row.saturating_sub(scrollbar_area.y) as usize;
+                    let target = click_row * max_scroll / sb_height.saturating_sub(1).max(1);
+                    if ed.word_wrap {
+                        ed.set_wrap_scroll_offset(target);
+                    } else {
+                        ed.set_visible_scroll_offset(target);
                     }
                 }
             }
@@ -639,8 +603,8 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
     let is_file_tab = current_kind == Some(crate::app::TabKind::File);
     if is_file_tab {
         if let Some(code_area) = app.code_area {
-        if col >= code_area.x
-            && col < code_area.x + code_area.width
+        if ((col >= code_area.x && col < code_area.x + code_area.width)
+            || crate::ui_editor_folds::gutter_at(app, col, row))
             && row >= code_area.y
             && row < code_area.y + code_area.height
         {
@@ -653,6 +617,7 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             }
             app.context_menu_active = true;
             app.context_menu_items = App::build_context_menu();
+            crate::ui_editor_folds::add_context_actions(app);
             app.refresh_shortcut_hints();
             app.context_menu_pos = (col, row);
             app.context_menu_inner = None;

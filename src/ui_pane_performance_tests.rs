@@ -237,6 +237,7 @@ fn hidden_chrome_and_disabled_animations_release_pane_chrome_and_hit_areas() {
         assert!(group.tab_bar_area.is_none());
     }
     app.animation_settings = Default::default();
+    for effect in AnimationEffect::ALL { app.animation_settings.set(effect, false); }
     render(&mut app, &mut terminal, false);
     for group in &app.groups[1..] {
         assert!(group.inactive_chrome_cache.is_none());

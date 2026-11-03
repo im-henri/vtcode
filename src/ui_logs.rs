@@ -166,7 +166,6 @@ impl View {
             editor.rope.insert(editor.rope.len_chars(), &appended);
             editor.content_version = editor.content_version.wrapping_add(1);
             editor.file_size = editor.rope.len_bytes() as u64;
-            editor.cached_visible_line_count = None;
             editor.cached_wrapped_total = None;
             editor.cached_row_offsets = None;
             editor.mark_syntax_dirty_range(dirty_from, editor.rope.len_lines().saturating_sub(1));
@@ -344,6 +343,7 @@ fn blocked(app: &App) -> bool {
         || app.sc_context_active
         || app.change_dir_active
         || app.desks.popup.mode.is_some()
+        || app.workspaces.popup.open
         || crate::ui_quick_picker::active(app).is_some()
 }
 pub(crate) fn focused(app: &App) -> bool {

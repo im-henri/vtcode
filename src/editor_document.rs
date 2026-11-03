@@ -325,7 +325,6 @@ impl Editor {
             self.invalidate_unsaved_diff_version();
         }
         if text_changed || indentation_changed {
-            self.cached_visible_line_count = None;
             self.cached_wrapped_total = None;
             if indentation_changed { self.cached_row_offsets = None; }
         }

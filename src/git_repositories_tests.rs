@@ -742,6 +742,7 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
                 workspace: fixture.root.clone(),
             },
             scans: vec![Scan {
+                operation: None,
                 root: fixture.root.clone(),
                 branch: "obsolete".into(),
                 worktree_paths: None,

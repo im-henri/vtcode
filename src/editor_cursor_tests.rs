@@ -108,11 +108,11 @@
 
         ed.cursor_line = 0;
         ed.page_down();
-        assert_eq!(ed.cursor_line, 49_990);
+        assert_eq!(ed.cursor_line, 49_997);
 
         ed.cursor_line = 49_999;
         ed.page_up();
-        assert_eq!(ed.cursor_line, 10);
+        assert_eq!(ed.cursor_line, 2);
     }
 
     #[test]

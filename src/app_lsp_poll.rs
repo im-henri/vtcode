@@ -146,6 +146,15 @@ pub(crate) fn poll_lsp(app: &mut App, needs_redraw: &mut bool) {
 pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: std::time::Instant) {
     *needs_redraw |= app.poll_external_format();
     *needs_redraw |= app.flush_lsp_document_syncs();
+    if !app.workspace_visible {
+        // Keep protocol replies and user-requested document operations live.
+        // Presentation replies remain in the manager until this workspace is
+        // visible; no outline construction, token decoding or passive requests.
+        app.lsp_manager.poll_until(deadline);
+        *needs_redraw |= app.poll_lsp_format_request();
+        apply_pending_document_edits(app, needs_redraw);
+        return;
+    }
     *needs_redraw |= app.refresh_lsp_link_hover();
     if app.lsp_selection_range_source.is_some() && !app.lsp_selection_context_current() {
         app.clear_lsp_selection_context();
@@ -800,21 +809,6 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             .sort_by_key(|&(line, col, _, _)| (line, col));
         *needs_redraw = true;
     }
-    // Process on-type formatting responses
-    if app.lsp_manager.on_type_format_dirty {
-        app.lsp_manager.on_type_format_dirty = false;
-        let edits = std::mem::take(&mut app.lsp_manager.on_type_format_edits);
-        let target = app.lsp_on_type_format_target.take();
-        let response_is_current = target.is_some_and(|target| app.editor().is_some_and(|editor| {
-            editor.file_path.as_ref() == Some(&target.path) && editor.content_version == target.content_version
-        }));
-        if response_is_current && !edits.is_empty() {
-            if let Some(editor) = app.editor_mut() {
-                let _ = crate::app_lsp_edits::apply(editor, &edits);
-            }
-            *needs_redraw = true;
-        }
-    }
     if app.lsp_goto_pending && app.lsp_manager.definition_dirty && app.lsp_manager.definition_locations.is_empty() {
         app.lsp_goto_pending = false;
         app.notify("No definition found");
@@ -852,11 +846,6 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
         *needs_redraw = true;
     }
 
-    // Handle LSP format document results
-    if app.handle_lsp_format_result() {
-        *needs_redraw = true;
-    }
-
     // Handle LSP rename results
     // Handle prepareRename response
     if app.lsp_prepare_rename_pending && app.lsp_manager.prepare_rename_result.is_some() {
@@ -886,6 +875,27 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
         }
     }
 
+    apply_pending_document_edits(app, needs_redraw);
+}
+
+/// Text mutations must finish even after their workspace has been parked.
+fn apply_pending_document_edits(app: &mut App, needs_redraw: &mut bool) {
+    if app.lsp_manager.on_type_format_dirty {
+        app.lsp_manager.on_type_format_dirty = false;
+        let edits = std::mem::take(&mut app.lsp_manager.on_type_format_edits);
+        let target = app.lsp_on_type_format_target.take();
+        let response_is_current = target.is_some_and(|target| app.editor().is_some_and(|editor| {
+            editor.file_path.as_ref() == Some(&target.path) && editor.content_version == target.content_version
+        }));
+        if response_is_current && !edits.is_empty() {
+            if let Some(editor) = app.editor_mut() {
+                let _ = crate::app_lsp_edits::apply(editor, &edits);
+            }
+            app.completion_index_sync.buffers_changed = true;
+            *needs_redraw = true;
+        }
+    }
+    *needs_redraw |= app.handle_lsp_format_result();
     if app.lsp_rename_pending && app.lsp_manager.rename_edit.is_some() {
         app.lsp_rename_pending = false;
         if let Some(edit) = app.lsp_manager.rename_edit.take() {

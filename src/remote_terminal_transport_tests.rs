@@ -80,6 +80,67 @@ fn delayed_connection(root: &Path, one_way: Duration) -> (client::Client, Arc<At
 }
 
 #[test]
+fn remote_terminal_forwards_full_screen_wheel_and_native_mouse_over_the_connection() {
+    use crate::{app::{ActivePane, App, Tab}, app_terminal_selection::TerminalSurface, editor::Editor, terminal::TerminalEmulator};
+    use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+    fn wait_for(app: &mut App, marker: &str) {
+        let end = Instant::now() + Duration::from_secs(8);
+        loop {
+            let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
+            pty.process();
+            let text: String = pty.grid.cells.iter().flat_map(|row| row.iter().map(|cell| cell.ch)).collect();
+            if text.contains(marker) { return; }
+            assert!(Instant::now() < end, "remote terminal did not receive {marker}: {text}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let (client, _) = delayed_connection(directory.path(), Duration::from_millis(2));
+    let (program, args) = fixture_args("terminal_transport::remote_terminal_wheel_child");
+    // A pipe keeps the byte-level assertion portable; these are the same
+    // process channels and queued terminal writer used by SSH PTY sessions.
+    let process = client.spawn(program, args, RemotePath::default(), None, Default::default()).unwrap();
+    let mut app = App::test_new();
+    app.tabs = vec![Tab::new_file(Editor::new())];
+    app.active_pane = ActivePane::Editor;
+    app.show_terminal_sidebar = true;
+    app.terminal_panel_focused = true;
+    app.scroll_speed = 3;
+    app.terminals[0].terminal_pty = Some(TerminalEmulator::from_remote(process, 80, 24, Default::default()).unwrap());
+    app.terminal_surfaces = vec![TerminalSurface { index: 0, area: ratatui::layout::Rect::new(5, 6, 24, 4), group: None }];
+    wait_for(&mut app, "VT-WHEEL-READY");
+    for marker in ["VT-WHEEL-MOUSE-READY", "VT-WHEEL-OK"] {
+        for kind in [MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+            crate::mouse::handle_mouse(&mut app, MouseEvent { kind, column: 8, row: 7, modifiers: KeyModifiers::NONE });
+        }
+        wait_for(&mut app, marker);
+    }
+    drop(app);
+    client.call(Command::Shutdown).unwrap();
+}
+
+#[test]
+#[ignore = "subprocess fixture for remote terminal wheel input"]
+fn remote_terminal_wheel_child() {
+    let mut output = io::stdout().lock();
+    let mut input = io::stdin().lock();
+    output.write_all(b"\x1b[?1049;1h\r\nVT-WHEEL-READY\r\n").unwrap();
+    output.flush().unwrap();
+    let keys = [b"\x1bOA".repeat(3), b"\x1bOB".repeat(3)].concat();
+    let mut received = vec![0; keys.len()];
+    input.read_exact(&mut received).unwrap();
+    assert_eq!(received, keys);
+    output.write_all(b"\x1b[?1002;1006h\r\nVT-WHEEL-MOUSE-READY\r\n").unwrap();
+    output.flush().unwrap();
+    let reports = b"\x1b[<64;4;2M\x1b[<65;4;2M";
+    let mut received = vec![0; reports.len()];
+    input.read_exact(&mut received).unwrap();
+    assert_eq!(received, reports);
+    output.write_all(b"\x1b[?1002;1006;1049l\r\nVT-WHEEL-OK\r\n").unwrap();
+    output.flush().unwrap();
+}
+
+#[test]
 #[ignore = "Remote terminal throughput and echo benchmark; run explicitly"]
 fn benchmark_remote_terminal_transport() {
     for one_way in [Duration::ZERO, Duration::from_millis(20)] {

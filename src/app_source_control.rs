@@ -224,6 +224,8 @@ impl App {
         self.source_control_cancel = crate::background::CancellationToken::new();
         if !self.source_control_enabled { self.source_control_cancel.cancel(); }
         self.bg_git_status_running = false;
+        self.bg_git_status_passive = false;
+        self.git_watcher_refresh = Default::default();
         self.bg_git_status_pending = false;
         self.pending_git_status_paths = None;
         self.bg_git_branch_running = false;
@@ -288,6 +290,13 @@ impl App {
         self.source_control_discard_all_area = None;
         self.source_control_untracked_stage_area = None;
         self.source_control_untracked_discard_area = None;
+        if !visibility.untracked {
+            for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+                if tab.kind == crate::app::TabKind::File && tab.editor.git_line_status_untracked {
+                    tab.editor.clear_git_line_status();
+                }
+            }
+        }
         if self.repositories.discovered {
             if visibility.untracked {
                 // A tracked-only or path-limited snapshot cannot populate
@@ -297,6 +306,7 @@ impl App {
                 self.clear_untracked_source_control_cache();
             }
         }
+        self.refresh_git_line_status_async();
     }
 
     pub(crate) fn source_control_group_changes(&self, group: Group) -> Vec<GitFileChange> {

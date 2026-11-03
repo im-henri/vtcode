@@ -706,6 +706,7 @@ impl App {
         for edit in edits {
             self.apply_extension_text_edit(edit);
         }
+        self.completion_index_sync.buffers_changed = true;
         true
     }
 

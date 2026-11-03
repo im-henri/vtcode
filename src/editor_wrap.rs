@@ -531,7 +531,6 @@ impl Editor {
     pub(crate) fn invalidate_rope_caches(&mut self) {
         self.mark_syntax_dirty_range(0, self.rope.len_lines());
         self.content_version += 1;
-        self.cached_visible_line_count = None;
         self.cached_wrapped_total = None;
         self.cached_row_offsets = None;
     }
@@ -749,7 +748,18 @@ impl Editor {
 
             if let Some((start, end)) = folded_ranges.get(fold_index) {
                 if *start == line {
-                    let fold_end = (*end).clamp(line + 1, total_lines);
+                    let mut fold_end = (*end).clamp(line + 1, total_lines);
+                    // Restored ranges may overlap or nest. A hidden child
+                    // header cannot make the rest of an outer body visible.
+                    while let Some(&(next_start, next_end)) = folded_ranges.get(fold_index + 1)
+                        && next_start < fold_end
+                    {
+                        if fold_index % WRAP_CANCELLATION_WORK == 0 && is_cancelled() {
+                            return None;
+                        }
+                        fold_index += 1;
+                        fold_end = fold_end.max(next_end.min(total_lines));
+                    }
                     while offsets.len() < fold_end {
                         if offsets.len() % WRAP_CANCELLATION_WORK == 0 && is_cancelled() {
                             return None;
@@ -850,7 +860,7 @@ impl Editor {
             }
         }
         if !self.ensure_row_offsets(width) {
-            return self.line_count();
+            return self.visible_line_count();
         }
         self.cached_row_offsets
             .as_ref()
@@ -981,10 +991,11 @@ impl Editor {
         let width = wrap_width.max(1);
         let total_lines = self.line_count();
         let clamped_target_line = target_line.min(total_lines.saturating_sub(1));
+        let clamped_target_line = self.line_for_visible_row(self.visible_row_for_line(clamped_target_line));
 
         // Prefix lookup avoids updating every later offset after a local edit.
         if !self.ensure_row_offsets(width) {
-            return clamped_target_line;
+            return self.visible_row_for_line(clamped_target_line);
         }
         let base_row = if let Some((cached_w, ref offsets)) = self.cached_row_offsets {
             if cached_w == width && clamped_target_line < offsets.line_count() {
@@ -1050,20 +1061,18 @@ impl Editor {
 
     pub(crate) fn set_wrap_scroll_offset(&mut self, offset: usize) {
         let wrap_width = self.effective_wrap_width();
-        let max_wrap_row = self.wrapped_total_rows(wrap_width).saturating_sub(1);
+        let max_wrap_row = self.wrapped_total_rows(wrap_width).saturating_sub(if self.scroll_past_end {
+            1
+        } else {
+            self.viewport_height.max(1)
+        });
         self.wrap_scroll_offset = offset.min(max_wrap_row);
         self.sync_line_scroll_from_wrap(wrap_width);
         self.horizontal_scroll = 0;
     }
 
     fn unwrapped_row_at(&self, target_row: usize) -> Option<WrappedRowInfo> {
-        if target_row >= self.line_count() {
-            return None;
-        }
-        let mut line = target_row;
-        while let Some((_, fold_end)) = self.folded_range_containing(line) {
-            line = fold_end;
-        }
+        let line = self.line_for_visible_row(target_row);
         if line >= self.line_count() {
             return None;
         }
@@ -1083,15 +1092,9 @@ impl Editor {
         count: usize,
         mut visit: impl FnMut(WrappedRowInfo),
     ) {
-        let mut emitted = 0;
-        let mut line = start_row;
-        while line < self.line_count() && emitted < count {
-            if let Some((_, &end)) = self.folded_ranges.range(..line).next_back() {
-                if line < end {
-                    line = end;
-                    continue;
-                }
-            }
+        let end_row = start_row.saturating_add(count).min(self.visible_line_count());
+        for row in start_row..end_row {
+            let line = self.line_for_visible_row(row);
             let line_len = self.line_len(line);
             visit(WrappedRowInfo {
                 line_idx: line,
@@ -1100,9 +1103,26 @@ impl Editor {
                 line_len,
                 is_first: true,
             });
-            emitted += 1;
-            line = self.folded_ranges.get(&line).copied().unwrap_or(line + 1);
         }
+    }
+
+    /// Resolve gutter actions and hover against the same rows the editor paints,
+    /// including the folded fallback while a large file's wrap layout is pending.
+    /// Return (source line, first visual row) using metadata, without decoding text.
+    pub(crate) fn source_line_at_screen(&mut self, screen_row: usize) -> Option<(usize, bool)> {
+        let visible_rows = if self.word_wrap { self.viewport_height.max(1) } else { self.viewport_height };
+        if screen_row >= visible_rows { return None; }
+        if self.word_wrap {
+            let target = self.wrap_scroll_offset.saturating_add(screen_row);
+            if self.ensure_row_offsets(self.effective_wrap_width()) {
+                return self.cached_row_offsets.as_ref()?.1.line_for_row(target)
+                    .map(|(line, base)| (line, base == target));
+            }
+            let line = self.line_for_visible_row(target);
+            return (line < self.line_count()).then_some((line, true));
+        }
+        let line_idx = self.visible_line_at(self.scroll_offset, screen_row)?;
+        Some((line_idx, true))
     }
 
     /// Clear all folds when line structure changes (insert/delete/paste multi-line).
@@ -1110,10 +1130,39 @@ impl Editor {
         self.fold_buttons.clear();
         if !self.folded_ranges.is_empty() {
             self.folded_ranges.clear();
-            self.cached_visible_line_count = None;
             self.cached_wrapped_total = None;
             self.cached_row_offsets = None;
         }
+    }
+
+    fn overview_wrap_offsets(&self) -> Option<&WrapRowOffsets> {
+        (self.word_wrap && self.wrap_layout_ready(self.effective_wrap_width()))
+            .then(|| self.cached_row_offsets.as_ref().map(|(_, offsets)| offsets))
+            .flatten()
+    }
+
+    pub(crate) fn overview_total_rows(&self) -> usize {
+        self.overview_wrap_offsets().map_or_else(|| self.visible_line_count(), |offsets| offsets.total)
+    }
+
+    pub(crate) fn overview_row_for_line(&self, line: usize) -> usize {
+        let visible_row = self.visible_row_for_line(line);
+        self.overview_wrap_offsets().map_or(visible_row, |offsets| {
+            offsets.row_for_line(self.line_for_visible_row(visible_row))
+        })
+    }
+
+    /// Inverse of the nondecreasing source-to-overview projection. Hidden
+    /// markers belong to their fold header; wrapped markers use the first row
+    /// of their source line. Range queries remain bounded by overview height.
+    pub(crate) fn overview_source_boundary(&self, row: usize) -> usize {
+        if row == 0 { return 0; }
+        if let Some(offsets) = self.overview_wrap_offsets() {
+            return offsets.line_for_row(row - 1).map_or(self.line_count(), |(line, _)| {
+                self.line_for_visible_row(self.visible_row_for_line(line) + 1)
+            });
+        }
+        self.line_for_visible_row(row)
     }
 }
 
@@ -1929,10 +1978,10 @@ mod tests {
     #[test]
     fn clear_stale_folds_noop_when_empty() {
         let mut ed = Editor::test_with_text("a\n");
-        ed.cached_visible_line_count = Some(1);
+        let revision = ed.folded_ranges.revision();
         ed.clear_stale_folds();
-        // No folds to clear, so cached_visible_line_count should remain
-        assert_eq!(ed.cached_visible_line_count, Some(1));
+        assert_eq!(ed.folded_ranges.revision(), revision);
+        assert_eq!(ed.visible_line_count(), 2);
     }
 }
 

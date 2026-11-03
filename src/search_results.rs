@@ -1,7 +1,7 @@
 //! Search result metadata is maintained when batches arrive or file groups collapse,
 //! rather than rediscovered by every paint, click and keyboard navigation.
 use crate::app::GlobalSearchResult;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     ops::{Deref, Range},
     path::{Path, PathBuf},
@@ -18,6 +18,8 @@ struct FileInfo {
     matches: usize,
     collapsed: bool,
     sort_key: Option<crate::file_order::SearchPathKey>,
+    dismissed: bool,
+    dismissed_matches: FxHashSet<(usize, usize, usize)>,
 }
 
 struct Group {
@@ -38,6 +40,7 @@ pub(crate) struct SearchResults {
     rows: usize,
     remote: Option<crate::remote::workspace::Workspace>,
     ordering: Option<std::sync::Arc<crate::file_order::FileOrder>>,
+    revision: u64,
 }
 
 impl SearchResults {
@@ -72,6 +75,49 @@ impl SearchResults {
         self.groups.clear();
         self.rows = 0;
         self.remote = None;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub(crate) fn revision(&self) -> u64 { self.revision }
+
+    /// Dismiss only from this search. Remember removals while later batches
+    /// arrive; clear() starts a fresh search with every match eligible again.
+    pub(crate) fn dismiss(&mut self, row: SearchRow) -> Option<Range<usize>> {
+        let (SearchRow::Header(index) | SearchRow::Result(index)) = row;
+        let result = self.results.get(index)?;
+        let file = self.files.get_mut(&result.file_path)?;
+        let range = match row {
+            SearchRow::Header(_) => {
+                file.dismissed = true;
+                let group = &self.groups[self.groups.partition_point(|group| group.start <= index) - 1];
+                group.start..group.end
+            }
+            SearchRow::Result(_) => {
+                file.dismissed_matches.insert((result.line_num, result.col_start, result.col_end));
+                index..index + 1
+            }
+        };
+        file.matches -= range.len();
+        if file.matches == 0 { self.file_count -= 1; }
+        self.results.drain(range.clone());
+        self.groups.clear();
+        self.rows = 0;
+        self.append_groups(0);
+        self.revision = self.revision.wrapping_add(1);
+        Some(range)
+    }
+
+    fn append_groups(&mut self, start: usize) {
+        for index in start..self.results.len() {
+            let result = &self.results[index];
+            let collapsed = self.files[&result.file_path].collapsed;
+            if self.groups.last().is_none_or(|last| self.results[last.start].file_path != result.file_path) {
+                self.groups.push(Group { start: index, end: index, row: self.rows, collapsed });
+                self.rows += 1;
+            }
+            self.groups.last_mut().unwrap().end = index + 1;
+            if !collapsed { self.rows += 1; }
+        }
     }
 
     pub(crate) fn file_count(&self) -> usize {
@@ -111,6 +157,7 @@ impl SearchResults {
     }
 
     fn reindex_rows(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
         self.rows = 0;
         for group in &mut self.groups {
             group.row = self.rows;
@@ -170,7 +217,11 @@ impl SearchResults {
 
 impl Extend<GlobalSearchResult> for SearchResults {
     fn extend<T: IntoIterator<Item = GlobalSearchResult>>(&mut self, values: T) {
-        let mut values: Vec<_> = values.into_iter().collect();
+        let mut values: Vec<_> = values.into_iter().filter(|result| {
+            self.files.get(&result.file_path).is_none_or(|file| {
+                !file.dismissed && !file.dismissed_matches.contains(&(result.line_num, result.col_start, result.col_end))
+            })
+        }).collect();
         if values.is_empty() { return; }
         let order = self.ordering.get_or_insert_with(crate::file_order::FileOrder::system).clone();
         for result in &values {
@@ -209,26 +260,8 @@ impl Extend<GlobalSearchResult> for SearchResults {
             self.groups.clear(); self.rows = 0;
             0
         };
-        for index in start..self.results.len() {
-            let result = &self.results[index];
-            let collapsed = self.files[&result.file_path].collapsed;
-            if self
-                .groups.last()
-                .is_none_or(|last| self.results[last.start].file_path != result.file_path)
-            {
-                self.groups.push(Group {
-                    start: index,
-                    end: index,
-                    row: self.rows,
-                    collapsed,
-                });
-                self.rows += 1;
-            }
-            self.groups.last_mut().unwrap().end = index + 1;
-            if !collapsed {
-                self.rows += 1;
-            }
-        }
+        self.append_groups(start);
+        self.revision = self.revision.wrapping_add(1);
     }
 }
 
@@ -311,6 +344,53 @@ mod tests {
                 (0..index).rev().find(visible)
             );
         }
+    }
+
+    #[test]
+    fn dismissals_keep_counts_and_rows_consistent_and_filter_later_batches_until_clear() {
+        let found = |file: &str, line, start| {
+            let mut found = result(file);
+            found.line_num = line;
+            found.col_start = start;
+            found.col_end = start + 1;
+            found
+        };
+        let mut results: SearchResults = [found("a", 1, 0), found("a", 1, 2), found("b", 2, 0), found("c", 1, 0)]
+            .into_iter().collect();
+        results.set_collapsed(Path::new("b"), true);
+        let revision = results.revision();
+        assert_eq!(results.dismiss(SearchRow::Result(0)), Some(0..1));
+        assert_ne!(results.revision(), revision);
+        assert_eq!(results.file_matches(Path::new("a")), 1);
+        assert_matches_scan(&results);
+        results.extend([found("a", 1, 0), found("a", 3, 0)]);
+        assert_eq!(results.file_matches(Path::new("a")), 2);
+        assert_matches_scan(&results);
+        let b = results.iter().position(|found| found.file_path == Path::new("b")).unwrap();
+        results.dismiss(SearchRow::Header(b));
+        results.extend([found("b", 4, 0), found("d", 1, 0)]);
+        assert_eq!(results.file_matches(Path::new("b")), 0);
+        assert_eq!(results.file_count(), 3);
+        assert_matches_scan(&results);
+        results.clear();
+        results.extend([found("a", 1, 0), found("b", 2, 0)]);
+        assert_eq!(results.len(), 2);
+        assert_matches_scan(&results);
+    }
+
+    #[test]
+    fn dismissing_last_matches_and_collapsed_files_removes_their_headers() {
+        let mut results: SearchResults = [result("a"), result("b")].into_iter().collect();
+        results.set_collapsed(Path::new("b"), true);
+        results.dismiss(SearchRow::Result(0));
+        assert_eq!(results.row_count(), 1);
+        assert_eq!(results.file_count(), 1);
+        assert_matches_scan(&results);
+        results.dismiss(SearchRow::Header(0));
+        assert!(results.is_empty());
+        assert_matches_scan(&results);
+        assert_eq!(results.dismiss(SearchRow::Result(usize::MAX)), None);
+        assert_eq!(results.dismiss(SearchRow::Header(0)), None);
     }
 
     #[test]

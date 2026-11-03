@@ -869,7 +869,7 @@
 
     #[test]
     fn visible_line_count_no_folds() {
-        let mut ed = Editor::test_with_text("a\nb\nc\n");
+        let ed = Editor::test_with_text("a\nb\nc\n");
         assert_eq!(ed.visible_line_count(), ed.line_count());
     }
 
@@ -887,7 +887,6 @@
         let mut ed = Editor::test_with_text(&"x\n".repeat(10));
         ed.folded_ranges.insert(0, 6);
         ed.folded_ranges.insert(3, 9);
-        ed.cached_visible_line_count = None;
 
         assert_eq!(ed.line_count(), 11);
         assert_eq!(ed.visible_line_count(), 3);

@@ -981,9 +981,10 @@ impl<'a> InputField<'a> {
             .cursor_byte_pos
             .map(|pos| crate::app::App::clamp_to_grapheme_boundary(self.text, pos));
         let cursor_visible = cursor_pos.is_some() && !self.cursor.is_empty();
-        let cursor_needs_cell = cursor_visible
-            && ((self.text.is_empty() && self.placeholder.is_empty())
-                || (cursor_pos == Some(self.text.len()) && !self.text.is_empty()));
+        // Blinking changes the caret's paint, not the text viewport. Reserve
+        // its trailing cell even while hidden so scrolling and hit targets stay put.
+        let cursor_needs_cell = cursor_pos == Some(self.text.len())
+            && (!self.text.is_empty() || self.placeholder.is_empty());
         let reserved = UnicodeWidthStr::width(self.prefix)
             + UnicodeWidthStr::width(self.suffix)
             + usize::from(cursor_needs_cell);
@@ -1107,8 +1108,10 @@ impl<'a> InputField<'a> {
             if !batch.is_empty() {
                 spans.push(Span::styled(batch, batch_style.unwrap_or_default()));
             }
-            if cursor_visible && pos == self.text.len() {
-                spans.push(Span::styled(" ", cursor_style));
+            if pos == self.text.len() {
+                spans.push(Span::styled(" ", if cursor_visible {
+                    cursor_style
+                } else { Style::default().fg(text_color) }));
             }
             if view_end < self.text.len() {
                 spans.push(Span::styled(
@@ -1149,7 +1152,7 @@ impl<'a> InputField<'a> {
                 let byte_idx = view_start + relative_idx;
                 push_hit_grapheme(&mut column_to_byte, ch, byte_idx);
             }
-            if cursor_visible && pos == self.text.len() {
+            if pos == self.text.len() {
                 push_hit_width(&mut column_to_byte, 1, pos);
             }
             if view_end < self.text.len() {
@@ -1803,6 +1806,71 @@ mod tests {
         assert_eq!(rendered, "abcd");
         assert_eq!(buffer.cell((2, 0)).map(|cell| cell.bg), Some(Color::Rgb(255, 255, 255)));
         assert_eq!(hit_map.unwrap().byte_at(2, 0), 2);
+    }
+
+    #[test]
+    fn input_field_blink_preserves_text_viewport_and_pointer_targets() {
+        let colors = crate::app_theme::EditorTheme::Dark.colors();
+        for text in ["", "12345678", "abcdefghijklmnopqrstuvwxyz0123456789", "ab界e\u{301}👩‍💻uvwxyz"] {
+            for width in [1, 2, 8, 16, 48] {
+                for cursor in [0, text.len() / 2, text.len()] {
+                    for (prefix, suffix, placeholder) in [("", "", ""), ("> ", " 2/7", "Find")] {
+                        let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+                        let mut baseline = None;
+                        for visible in [true, false, true, false] {
+                            let mut hit_map = None;
+                            terminal.draw(|frame| {
+                                hit_map = Some(InputField::new(text)
+                                    .theme_colors(&colors)
+                                    .prefix(prefix, colors.fg_input)
+                                    .suffix(suffix, colors.fg_dim)
+                                    .placeholder_text(placeholder)
+                                    .cursor_pos(cursor)
+                                    .selection_range(Some((0, cursor)))
+                                    .cursor_marker(if visible { "│" } else { "" })
+                                    .render(frame, Rect::new(0, 0, width, 1)));
+                            }).unwrap();
+                            let symbols: Vec<_> = terminal.backend().buffer().content.iter()
+                                .map(|cell| cell.symbol().to_string()).collect();
+                            let snapshot = (symbols, hit_map.unwrap());
+                            if let Some(expected) = &baseline {
+                                assert_eq!(&snapshot, expected,
+                                    "blink moved text or pointer targets: text={text:?}, width={width}, cursor={cursor}, prefix={prefix:?}, suffix={suffix:?}");
+                            } else { baseline = Some(snapshot); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn input_field_end_cursor_blinks_without_moving_its_suffix() {
+        let mut theme = crate::app_theme::load_builtin_themes().remove(0);
+        theme.workbench_colors.insert("input.foreground".into(), "#ffffff".into());
+        theme.workbench_colors.insert("input.background".into(), "#000000".into());
+        let colors = theme.to_theme_colors();
+        let mut terminal = Terminal::new(TestBackend::new(16, 1)).unwrap();
+        let mut buffers = Vec::new();
+        for visible in [true, false] {
+            terminal.draw(|frame| {
+                InputField::new("a界b")
+                    .theme_colors(&colors)
+                    .prefix("> ", colors.fg_input)
+                    .cursor_pos("a界b".len())
+                    .cursor_marker(if visible { "│" } else { "" })
+                    .suffix(" [3]", colors.fg_dim)
+                    .render(frame, Rect::new(0, 0, 16, 1));
+            }).unwrap();
+            buffers.push(terminal.backend().buffer().clone());
+        }
+        assert_eq!(buffers[0][(6, 0)].bg, Color::Rgb(255, 255, 255));
+        assert_eq!(buffers[1][(6, 0)].bg, Color::Rgb(0, 0, 0));
+        for x in 0..16 {
+            assert_eq!(buffers[0][(x, 0)].symbol(), buffers[1][(x, 0)].symbol());
+            if x != 6 { assert_eq!(buffers[0][(x, 0)], buffers[1][(x, 0)]); }
+        }
+        assert_eq!(buffers[1][(8, 0)].symbol(), "[");
     }
 
     // -----------------------------------------------------------------------

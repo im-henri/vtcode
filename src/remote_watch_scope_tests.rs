@@ -109,7 +109,7 @@ fn narrowing_and_widening_external_git_subscriptions_keep_child_watches_alive() 
     next_git(&receive);
     for (scope, branch) in [(child, "narrow"), (metadata, "wide")] {
         *observation.git.lock().unwrap() = vec![scope];
-        observation.wake.lock().unwrap().as_ref().unwrap().try_send(()).unwrap();
+        observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
         next_git(&receive);
         std::fs::write(&head, format!("ref: refs/heads/{branch}\n")).unwrap();
         next_git(&receive);
@@ -142,12 +142,12 @@ fn explicit_git_roots_inside_pruned_storage_reconcile_existing_parent_watches() 
     let _watch = Watch::start(root.path().to_owned(), send, observation.clone()).unwrap();
     next_git(&receive);
     *observation.git.lock().unwrap() = vec![metadata.clone(), child];
-    observation.wake.lock().unwrap().as_ref().unwrap().try_send(()).unwrap();
+    observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
     next_git(&receive);
     std::fs::write(&head, "ref: refs/heads/changed\n").unwrap();
     next_git(&receive);
     *observation.git.lock().unwrap() = vec![metadata];
-    observation.wake.lock().unwrap().as_ref().unwrap().try_send(()).unwrap();
+    observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
     next_git(&receive);
     std::fs::write(&head, "ref: refs/heads/retired\n").unwrap();
     assert!(receive.recv_timeout(Duration::from_millis(600)).is_err());

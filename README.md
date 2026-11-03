@@ -11,6 +11,7 @@ Built in Rust for Windows and Linux. Under active development.
 ## Features
 
 - **Edit:** desks and collapsible tab groups, split panes, multiple cursors, snippets, folding, minimaps, bracket colors, sticky scroll, and keyboard macros.
+- **Workspaces:** keep several folders open in one instance, each with its own desks, files, terminals, and Agent Chat. Switch from the directory title; background jobs keep running, with unread activity badges for completed commands, agent replies, and permission requests. Works locally and over a headless SSH connection.
 - **Find and navigate:** quick file/symbol search, back/forward history, and find/replace across files. Explorer's **Find by Name…** filters filenames with substring, fuzzy, or regex matching; **Find in Folder…** searches file contents.
 - **Delete files:** larger deletions show preparation, item counts, and a **Cancel** button while the editor stays usable. **File: Cancel Deletion** is also available in the Command Palette. Cancellation stops remaining items; it does not restore items already deleted.
 - **VTComplete:** built-in suggestions learned from your code, with no language server required.
@@ -21,6 +22,8 @@ Built in Rust for Windows and Linux. Under active development.
 - **Terminals and previews:** multiple terminals; Markdown preview with tables, math, Mermaid diagrams, and Ctrl+Click links.
 - **Agent chat:** connect Agent Client Protocol (ACP) agents, resume conversations, review changes, and respond to permission requests inside the editor.
 - **Customize:** user/workspace settings, keybindings, VS Code color themes, optional animations, and [Wasm extensions](extension-api/README.md) for commands, views, and custom editors.
+
+Filesystem-driven Git updates wait for 600 ms of quiet, with updates about every two seconds during sustained builds. Batches containing only ignored files or hidden untracked files skip worktree status scans. Open files reload promptly, and saves, Git actions, and manual refreshes bypass this delay.
 
 ## Screenshots
 
@@ -86,6 +89,46 @@ Keep `settings.json` and `.vtcode/` beside the executable when updating.
 | `Shift+Alt+F` | Format document |
 | `Ctrl+Shift+G` | Source Control |
 | `Ctrl+Shift+I` | Agent Chat |
+| `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` | Previous / next workspace |
+
+Click the directory name at the top to switch workspaces, or the adjacent **+**
+to add a folder. **File → Open Folder…** also adds a workspace and selects it;
+adding an already open folder returns to its live session. Each workspace keeps
+its unsaved documents, undo history, desks, splits, searches, Git state, terminals,
+and agent conversations while another workspace is selected. User settings are
+shared, and each folder keeps its own Workspace overrides.
+
+Inactive workspaces pause filesystem watching, completion indexing, Git refreshes,
+and searches, and defer editor UI work. Returning to a workspace refreshes its
+files and repository state after its watcher is ready. Terminals, agents, pending
+saves, and background extension tasks keep running locally and over headless SSH.
+
+A badge beside the title counts unread activity from other workspaces. Open the
+picker to see each folder's latest event and whether it is working or needs
+attention. Visiting a workspace clears its workspace badge; terminal and chat
+views retain their own unread indicators until viewed. Terminal command completion
+uses shell integration (OSC 133/633); terminal process exits are also reported.
+
+Use **Workspaces: Close Workspace…** in the Command Palette or the workspace
+picker to close a folder. Closing preserves unsaved edits for reopening and stops
+that workspace's terminals and agents. Quitting applies Save, Discard, or Keep
+Unsaved to all open workspaces. Live processes are retained while switching
+within the running instance; closing the application ends them. Over SSH, added
+folders are on the same remote host and use the existing headless connection.
+Update the local and headless binaries together; multi-workspace watcher cleanup
+uses SSH protocol 28. Closing the last workspace quits VTCode.
+
+**Saved workspace sets:** click **▤** immediately left of the directory title,
+or use **Saved workspace sets…** / **Save current workspace set…** in the title
+dropdown. Name a set containing one or more open folders, then reopen it from
+the list. Opening a set switches to exactly its folders and restores its active
+workspace. Matching live workspaces keep their files, undo, terminals, and chat.
+Before other workspaces close, a confirmation lists them; unsaved edits are
+preserved for next time and their terminals and agents stop. Missing folders
+leave the current workspaces open. Each folder restores its latest saved session.
+Use the list’s Update, Rename, and Delete actions to manage sets. Sets persist in
+the portable `.vtcode/workspace-sets.json`; remote sets belong to the current SSH
+connection and can be reopened after connecting with the same launch command.
 
 Reopening a closed file during the same workspace session restores its cursor
 and scroll position, including when opening it from the explorer or file picker.
@@ -136,6 +179,15 @@ or the command palette instead. Extended key reporting keeps both shortcuts dist
 Rename terminal tabs by right-clicking a tab and choosing **Rename Terminal…**,
 or use **Terminal → Rename Terminal…** or the command palette. Names stay with
 the session when moving between the side panel and an editor tab.
+
+In **Source Control → Actions**, choose **Rebase Current Branch…** or
+**Cherry-pick Commit…** to start an operation. Enter the base branch or commit;
+cherry-picking also uses the selected Graph commit when the Graph is open.
+Operations started in the terminal appear in Source Control too, including over
+SSH. Resolve each conflict, save the file, and stage its resolution. The operation
+card explains any remaining blockers and enables **Continue Rebase** or
+**Continue Cherry-pick** when the repository is ready. **Skip Commit…** and
+**Abort…** ask for confirmation before discarding resolution changes.
 
 In terminal output, right-click a selection to copy it and clear the selection;
 right-click without a selection to paste. Mouse-aware terminal applications receive
@@ -231,7 +283,11 @@ from File** and **Developer: Reload Syntaxes** in the command palette.
 
 ## Animations
 
-Optional and off by default; enable them in **Settings → Animations**.
+**Sliding Tabs** is enabled by default with a **250 ms** duration. Other effects
+are off by default; configure them in **Settings → Animations**.
+**Sliding Tabs** animates reordered tabs and their displaced neighbors, as well
+as the active underline when switching tabs. Repeated reorders continue from
+the current motion, and the duration and intensity controls apply to both.
 Cursor Smear, Fire Hazard, Whitespace Reveal, and Scope Bubble pause during
 multicursor editing. **Scope Bubble: Background Fill** adds animated shading
 after the scope outline finishes drawing.
@@ -264,7 +320,7 @@ for input; the configured FPS remains the upper limit.
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <strong>Sliding Tab Indicator</strong><br>
+      <strong>Sliding Tabs</strong><br>
       <img src="screenshots/animations/sliding-tabs.gif" alt="The active tab underline stretches and settles during quick tab switches" width="360">
     </td>
   </tr>

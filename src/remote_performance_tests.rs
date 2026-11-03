@@ -452,6 +452,57 @@ fn resource_cleanup_is_bounded_coalesced_and_does_not_start_optional_workers() {
 }
 
 #[test]
+fn watcher_controls_keep_latest_root_state_when_the_actor_inbox_is_full() {
+    let root = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let (sender, requests) = std::sync::mpsc::sync_channel(8);
+    let worker = Actor { sender, queued: std::cell::Cell::new(0), closes: Arc::default(), worker: None, join: false };
+    for id in 1..=8 {
+        worker.enqueue(Request { id, workspace: None, command: Command::Watch }, None).unwrap();
+    }
+    for _ in 0..2000 {
+        worker.queue_control(ResourceClose::Watch(root.path().into(), WatchState::Paused)).unwrap();
+        worker.queue_control(ResourceClose::Watch(root.path().into(), WatchState::Active)).unwrap();
+        worker.queue_control(ResourceClose::Watch(second.path().into(), WatchState::Paused)).unwrap();
+        worker.queue_control(ResourceClose::Watch(second.path().into(), WatchState::Closed)).unwrap();
+    }
+    assert_eq!(worker.closes.entries.lock().unwrap().len(), 2);
+    assert_eq!(requests.try_iter().count(), 8, "control state must survive without inbox space");
+    let (output, _responses) = std::sync::mpsc::sync_channel(128);
+    let mut service = Service::new(root.path()).unwrap();
+    service.output = Some(output);
+    let mut ready = Vec::new();
+    worker.closes.apply(&mut service, 7, &mut ready);
+    assert!(service.watchers.is_empty(), "controls must respect earlier request tickets");
+    worker.closes.apply(&mut service, 8, &mut ready);
+    assert!(service.watchers.contains_key(root.path()));
+    assert!(!service.watchers.contains_key(second.path()));
+    assert!(!worker.closes.pending.load(Ordering::Acquire));
+}
+
+#[test]
+fn a_failed_headless_watcher_can_be_restarted_when_its_folder_returns() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().join("recreated");
+    let mut service = Service::new(project.path()).unwrap();
+    let (output, responses) = std::sync::mpsc::sync_channel(128);
+    service.output = Some(output);
+    service.set_workspace_watch(root.clone(), WatchState::Active).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !service.watchers.get(&root).unwrap().is_finished() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(responses.try_iter().any(|response| matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(false))));
+    std::fs::create_dir(&root).unwrap();
+    service.set_workspace_watch(root, WatchState::Active).unwrap();
+    loop {
+        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true) && batch.rescan) { break; }
+    }
+}
+
+#[test]
 fn closing_an_old_workspace_transfer_preserves_the_current_saved_checkpoint() {
     let root = tempfile::tempdir().unwrap();
     let nested = root.path().join("second");
@@ -1041,6 +1092,84 @@ fn watched_file_index_survives_idle_and_invalidates_on_changes_or_watcher_failur
 }
 
 #[test]
+fn paused_watchers_invalidate_explicit_agent_file_lists_without_streaming_events() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("first.rs"), "first").unwrap();
+    let mut service = Service::new(root.path()).unwrap();
+    let (output, responses) = std::sync::mpsc::sync_channel(128);
+    service.output = Some(output);
+    let native = service.root.clone();
+    let observation = service.observations.get(&native);
+    service.set_workspace_watch(native.clone(), WatchState::Active).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true)) { break; }
+    }
+    service.set_workspace_watch(native.clone(), WatchState::Paused).unwrap();
+    let Reply::Files { version, .. } = service.execute(Command::Files {
+        generation: 1, known_version: None, excludes: Default::default(),
+    }).unwrap() else { panic!() };
+    let stamp = observation.stamp();
+    std::fs::write(root.path().join("second.rs"), "second").unwrap();
+    while observation.stamp() == stamp {
+        assert!(Instant::now() < deadline, "hidden change did not invalidate the explicit file-list cache");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(responses.try_recv().is_err(), "no hidden watcher traffic");
+    let Reply::Files { version, files: Some(files) } = service.execute(Command::Files {
+        generation: 1, known_version: Some(version), excludes: Default::default(),
+    }).unwrap() else { panic!("a live agent must see new files while its workspace is hidden") };
+    assert!(files.contains(&path("second.rs")));
+    let stamp = observation.stamp();
+    let built = service.index.as_ref().unwrap().built;
+    service.set_workspace_watch(native, WatchState::Active).unwrap();
+    loop {
+        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true)) { break; }
+    }
+    assert_eq!(observation.stamp(), stamp, "resuming a recorded change must not invalidate the filename index again");
+    assert!(matches!(service.execute(Command::Files {
+        generation: 1, known_version: Some(version), excludes: Default::default(),
+    }).unwrap(), Reply::Files { files: None, .. }));
+    assert_eq!(service.index.as_ref().unwrap().built, built);
+}
+
+#[test]
+fn paused_content_writes_do_not_rebuild_the_agent_filename_index() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("file.rs"), "before").unwrap();
+    let mut service = Service::new(root.path()).unwrap();
+    let native = service.root.clone();
+    let observation = service.observations.get(&native);
+    let (output, responses) = std::sync::mpsc::sync_channel(128);
+    service.output = Some(output);
+    service.set_workspace_watch(native.clone(), WatchState::Active).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true)) { break; }
+    }
+    let Reply::Files { version, .. } = service.execute(Command::Files {
+        generation: 1, known_version: None, excludes: Default::default(),
+    }).unwrap() else { panic!() };
+    let stamp = observation.stamp();
+    let built = service.index.as_ref().unwrap().built;
+    service.set_workspace_watch(native.clone(), WatchState::Paused).unwrap();
+    std::fs::write(root.path().join("file.rs"), "after").unwrap();
+    service.set_workspace_watch(native, WatchState::Active).unwrap();
+    loop {
+        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if !batch.states.is_empty()) { break; }
+    }
+    assert_eq!(observation.stamp(), stamp, "content does not change filenames");
+    assert!(matches!(service.execute(Command::Files {
+        generation: 1, known_version: Some(version), excludes: Default::default(),
+    }).unwrap(), Reply::Files { files: None, .. }));
+    assert_eq!(service.index.as_ref().unwrap().built, built);
+}
+
+#[test]
 fn workspace_watch_observations_are_shared_without_cross_root_invalidations_or_retaining_old_roots()
 {
     let registry = watch::Registry::default();
@@ -1596,13 +1725,13 @@ fn headless_git_status_sends_only_literal_worktree_deltas_and_full_rule_updates(
     git2::Repository::init(root.path()).unwrap();
     for name in ["literal[1].txt", "literal1.txt"] { std::fs::write(root.path().join(name), "original\n").unwrap(); }
     let mut service = Service::new(root.path()).unwrap();
-    let Reply::GitStatus { discovery: known, scans } = service.execute(Command::GitStatus {
+    let Reply::GitStatus { discovery: known, scans } = service.execute(Command::GitStatus { revalidate: false,
         known: None, parent_open: false, closed: Vec::new(), include_untracked: true,
         changed: Some(vec![path("literal[1].txt")]),
     }).unwrap() else { panic!(); };
     assert_eq!(scans[0].files.len(), 2, "Discovery must return a complete initial snapshot");
     assert!(scans[0].worktree_paths.is_none());
-    let mut query = |changed: Vec<RemotePath>| match service.execute(Command::GitStatus {
+    let mut query = |changed: Vec<RemotePath>| match service.execute(Command::GitStatus { revalidate: false,
         known: Some(known.clone()), parent_open: false, closed: Vec::new(), include_untracked: true,
         changed: Some(changed),
     }).unwrap() { Reply::GitStatus { scans, .. } => scans, _ => panic!() };
@@ -1648,6 +1777,139 @@ fn remote_status_deltas_do_not_extend_full_snapshot_expiry() {
     let (_, scans) = workspace.git_snapshot(true, Some(known), false, Vec::new(),
         Some(vec![path("reported.txt")]), &cancel).unwrap();
     assert_eq!(scans[0].files.len(), 3, "An evicted baseline requires a full snapshot");
+}
+
+#[test]
+fn expired_remote_status_rejects_ignored_output_before_revalidation_and_keeps_its_deadline() {
+    let root = tempfile::tempdir().unwrap();
+    git2::Repository::init(root.path()).unwrap();
+    std::fs::write(root.path().join(".gitignore"), "build/\n").unwrap();
+    std::fs::create_dir(root.path().join("build")).unwrap();
+    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let cancel = crate::background::CancellationToken::new();
+    let (initial, _) = workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let known = discovery(&workspace, &initial);
+    let mut cached = workspace.git_snapshots.lock().unwrap().take(&path("")).unwrap();
+    cached.checked -= Duration::from_secs(31);
+    let checked = cached.checked;
+    workspace.git_snapshots.lock().unwrap().insert(path(""), 1024, cached);
+    std::fs::write(root.path().join("unreported.txt"), "missed event\n").unwrap();
+    for batch in 0..4 {
+        let name = format!("build/{batch}.o");
+        std::fs::write(root.path().join(&name), "object\n").unwrap();
+        let (_, scans) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(), Some(vec![path(&name)]), &cancel).unwrap();
+        assert!(!scans[0].files.iter().any(|file| file.path == "unreported.txt"), "ignored output cannot cause a full worktree scan");
+        assert_eq!(workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked, checked);
+    }
+    // The missed-event fallback is retained for a relevant event or navigation.
+    std::fs::write(root.path().join("reported.txt"), "visible\n").unwrap();
+    let (_, scans) = workspace.git_snapshot(true, Some(known), false, Vec::new(), Some(vec![path("reported.txt")]), &cancel).unwrap();
+    assert!(scans[0].files.iter().any(|file| file.path == "unreported.txt"));
+    assert!(workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked > checked);
+}
+
+#[test]
+fn ssh_build_notifications_coalesce_into_one_status_request_and_keep_real_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(root.path()).unwrap();
+    repo.config().unwrap().set_bool("core.autocrlf", false).unwrap();
+    std::fs::write(root.path().join("source.cc"), "original\n").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("source.cc")).unwrap();
+    index.write().unwrap();
+    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let mut app = crate::app::App::new_deferred(workspace.view_root.clone());
+    app.remote_workspace = Some(workspace.clone());
+    app.workspace_watcher_active = true;
+    app.refresh_source_control_async();
+    let settle = |app: &mut crate::app::App| app.wait_for_background(Duration::from_secs(15), |app|
+        !app.bg_git_status_running && !app.bg_git_status_pending && !app.bg_git_log_running
+            && !app.bg_git_branch_running && !app.bg_git_branch_pending);
+    settle(&mut app);
+    let log = app.git_output();
+    let status_reads = || log.report().lines().filter(|line| line.contains("Git status") && line.contains("Queued")).count();
+    let before = status_reads();
+    // Keep untracked output visible, the most conservative interpretation of
+    // the report. The generated directory must still appear after the build.
+    std::fs::create_dir(root.path().join("generated")).unwrap();
+    for batch in 0..12 {
+        let mut changes = Vec::new();
+        for file in 0..180 {
+            let name = format!("generated/{batch}-{file}.o");
+            std::fs::write(root.path().join(&name), "object\n").unwrap();
+            changes.push(crate::background::WorkspacePathChange {
+                path: workspace.view_key(&path(&name)), exists: true, is_dir: false,
+                observed_at: Instant::now(), modified: None, len: Some(7),
+            });
+        }
+        if batch == 5 {
+            std::fs::write(root.path().join("source.cc"), "modified\n").unwrap();
+            changes.push(crate::background::WorkspacePathChange {
+                path: workspace.view_key(&path("source.cc")), exists: true, is_dir: false,
+                observed_at: Instant::now(), modified: None, len: Some(9),
+            });
+        }
+        app.apply_workspace_file_changes(workspace.view_root.clone(), changes, true, false, false);
+        assert!(!app.bg_git_status_running);
+    }
+    assert_eq!(status_reads(), before, "notifications must not launch a status RPC per batch");
+    assert!(app.poll_git_watcher_refresh(Instant::now() + Duration::from_secs(2)));
+    assert!(app.bg_git_status_passive);
+    settle(&mut app);
+    assert_eq!(status_reads(), before + 1);
+    assert!(app.source_control_files.iter().any(|file| file.path == "source.cc" && file.status == 'M'));
+    assert!(app.source_control_files.iter().any(|file| file.path == "generated" && file.status == '?' && file.directory));
+}
+
+#[test]
+fn native_remote_watcher_batches_a_running_compiler_without_delaying_open_file_reload() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(root.path()).unwrap();
+    repo.config().unwrap().set_bool("core.autocrlf", false).unwrap();
+    std::fs::write(root.path().join("source.cc"), "original\n").unwrap();
+    std::fs::create_dir(root.path().join("generated")).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("source.cc")).unwrap();
+    index.write().unwrap();
+    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let mut app = crate::app::App::new_deferred(workspace.view_root.clone());
+    workspace.client.set_wake(app.background.wake_handle());
+    app.remote_workspace = Some(workspace.clone());
+    app.open_file(&workspace.view_key(&path("source.cc")));
+    app.refresh_source_control_async();
+    app.wait_for_background(Duration::from_secs(15), |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading)
+            && !app.bg_git_status_running && !app.bg_git_status_pending
+            && !app.bg_git_log_running && !app.bg_git_branch_running && !app.bg_git_branch_pending
+    });
+    workspace.client.call(Command::Watch).unwrap();
+    app.wait_for_background(Duration::from_secs(10), |app| app.workspace_watcher_active);
+    let log = app.git_output();
+    let status_reads = || log.report().lines().filter(|line| line.contains("Git status") && line.contains("Queued")).count();
+    let before = status_reads();
+    let native = root.path().to_owned();
+    let started = Instant::now();
+    let writer = std::thread::spawn(move || {
+        for batch in 0..12 {
+            for file in 0..180 {
+                std::fs::write(native.join(format!("generated/{batch}-{file}.o")), "object\n").unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        std::fs::write(native.join("source.cc"), "final source edit\n").unwrap();
+    });
+    app.wait_for_background(Duration::from_secs(20), |app| {
+        app.editor().is_some_and(|editor| editor.rope == "final source edit\n" && !editor.bg_loading)
+            && !app.bg_git_status_running && !app.bg_git_status_pending
+    });
+    writer.join().unwrap();
+    let refreshes = status_reads() - before;
+    let allowed = started.elapsed().as_millis().div_ceil(2_000) as usize + 1;
+    assert!((1..=allowed).contains(&refreshes), "a real 12-burst build launched {refreshes} status requests (limit {allowed})");
+    eprintln!("Native remote build: 2,160 generated files; {refreshes} Git status requests; elapsed {:?}", started.elapsed());
+    assert!(app.source_control_files.iter().any(|file| file.path == "source.cc" && file.status == 'M'));
+    assert!(app.source_control_files.iter().any(|file| file.path == "generated" && file.status == '?' && file.directory));
+    workspace.client.call(Command::Shutdown).unwrap();
 }
 
 #[test]
@@ -1707,10 +1969,10 @@ fn headless_git_status_keeps_non_unicode_paths_lossless_when_a_delta_falls_back(
         std::fs::write(root.path().join(std::ffi::OsString::from_vec(bytes.to_vec())), "source\n").unwrap();
     }
     let mut service = Service::new(root.path()).unwrap();
-    let Reply::GitStatus { discovery: known, .. } = service.execute(Command::GitStatus {
+    let Reply::GitStatus { discovery: known, .. } = service.execute(Command::GitStatus { revalidate: false,
         known: None, parent_open: false, closed: Vec::new(), include_untracked: true, changed: None,
     }).unwrap() else { panic!(); };
-    let Reply::GitStatus { scans, .. } = service.execute(Command::GitStatus {
+    let Reply::GitStatus { scans, .. } = service.execute(Command::GitStatus { revalidate: false,
         known: Some(known), parent_open: false, closed: Vec::new(), include_untracked: true,
         changed: Some(vec![RemotePath::new(b"name-\xfe.txt".to_vec()).unwrap()]),
     }).unwrap() else { panic!(); };

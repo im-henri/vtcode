@@ -12,6 +12,9 @@ use ratatui::{
 
 fn fixture(text: &str) -> App {
     let mut app = App::test_new();
+    for effect in crate::animation_config::AnimationEffect::ALL {
+        app.animation_settings.set(effect, false);
+    }
     app.tabs.push(Tab::new_file(Editor::test_with_text(text)));
     app.active_pane = ActivePane::Editor;
     app.show_explorer = false;

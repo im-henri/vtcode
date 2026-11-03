@@ -10,6 +10,10 @@ use std::sync::Arc;
 
 use ropey::Rope;
 
+#[path = "editor_fold_map.rs"]
+mod fold_map;
+pub(crate) use fold_map::FoldedRanges;
+
 #[path = "editor_save.rs"]
 pub(crate) mod save;
 pub(crate) use save::DiskSaveBaseline;
@@ -39,6 +43,7 @@ pub(crate) struct PreparedGitLineStatus {
     markers: Arc<[char]>,
     changes: Arc<[(usize, char)]>,
     signature: u64,
+    pub(crate) untracked: bool,
 }
 
 impl PreparedGitLineStatus {
@@ -69,6 +74,7 @@ impl PreparedGitLineStatus {
             markers: markers.into(),
             changes: changes.into(),
             signature,
+            untracked: false,
         }
     }
 
@@ -87,6 +93,7 @@ impl PreparedGitLineStatus {
             markers: markers.into(),
             changes: changes.into(),
             signature,
+            untracked: false,
         }
     }
 
@@ -492,7 +499,7 @@ pub(crate) struct Editor {
     pub(crate) saved_save_options: Option<SaveOptions>,
     pub(crate) remote_checkpoint: Option<Arc<crate::remote::Checkpoint>>,
     // Code folding: maps fold start line -> fold end line (exclusive)
-    pub folded_ranges: std::collections::BTreeMap<usize, usize>,
+    pub folded_ranges: FoldedRanges,
     pub(crate) fold_buttons: crate::ui_editor_folds::Buttons,
     // Line bookmarks
     pub bookmarks: std::collections::BTreeSet<usize>,
@@ -538,6 +545,8 @@ pub(crate) struct Editor {
     /// Per-line change status:
     /// 'N' = unsaved buffer change, 'U' = unstaged git change, 'S' = staged git change, ' ' = unchanged.
     git_line_status: Arc<[char]>,
+    /// Provenance of automatic Git markers, used when untracked files are hidden.
+    pub(crate) git_line_status_untracked: bool,
     /// Large file mode: disables expensive parsing and whole-document features.
     pub large_file_mode: bool,
     /// A below-threshold file can also enter large-file mode after analysis times out.
@@ -548,11 +557,10 @@ pub(crate) struct Editor {
     pub lsp_folding_ranges: Vec<(usize, usize)>,
     /// Text-derived gutter hints, reused across cursor and selection redraws.
     pub(crate) fold_hint_cache: std::cell::RefCell<crate::editor_transform::FoldHintCache>,
+    pub(crate) conditional_fold_cache: std::cell::RefCell<crate::editor_conditional_folds::ConditionalFoldCache>,
     /// Bounded decoded viewport text reused across scrolling and redraws.
     pub(crate) render_line_cache: std::cell::RefCell<crate::ui_editor_highlight::RenderLineCache>,
     pub(crate) minimap_cache: std::cell::RefCell<crate::ui_editor_minimap::MinimapCache>,
-    /// Cached visible line count (invalidated on fold/unfold/content change)
-    pub cached_visible_line_count: Option<usize>,
     /// Cached wrapped total rows (invalidated on content/fold change)
     pub cached_wrapped_total: Option<(usize, usize)>, // (wrap_width, total_rows)
     /// Visual-row prefix tree, supporting local row-count changes and indexed
@@ -668,7 +676,7 @@ impl Editor {
             saved_encoding: "UTF-8",
             saved_save_options: None,
             remote_checkpoint: None,
-            folded_ranges: std::collections::BTreeMap::new(),
+            folded_ranges: FoldedRanges::default(),
             fold_buttons: Default::default(),
             bookmarks: std::collections::BTreeSet::new(),
             encoding: "UTF-8",
@@ -694,14 +702,15 @@ impl Editor {
             overview_change_revision: 0,
             desired_col: None,
             git_line_status: Arc::from([]),
+            git_line_status_untracked: false,
             large_file_mode: false,
             rich_features_timed_out: false,
             file_size: 0,
             lsp_folding_ranges: Vec::new(),
             fold_hint_cache: Default::default(),
+            conditional_fold_cache: Default::default(),
             render_line_cache: Default::default(),
             minimap_cache: Default::default(),
-            cached_visible_line_count: None,
             cached_wrapped_total: None,
             cached_row_offsets: None,
             scroll_past_end: true,
@@ -760,6 +769,7 @@ impl Editor {
         ed
     }
 
+    #[cfg(test)]
     pub(crate) fn open_file(&mut self, path: &Path) -> io::Result<()> {
         crate::editor_document::edit!(self, {
         self.fold_hint_cache.get_mut().clear();
@@ -795,7 +805,6 @@ impl Editor {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.break_undo_group();
-        self.cached_visible_line_count = None;
         self.cached_wrapped_total = None;
         self.cached_row_offsets = None;
         // Rope clones share their backing tree. Keeping the saved snapshot is
@@ -814,6 +823,7 @@ impl Editor {
     }
 
     /// Apply .editorconfig settings for the current file, overriding auto-detected values.
+    #[cfg(test)]
     fn apply_editorconfig(&mut self) {
         let path = match &self.file_path {
             Some(p) => p.clone(),
@@ -878,7 +888,6 @@ impl Editor {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.break_undo_group();
-        self.cached_visible_line_count = None;
         self.cached_wrapped_total = None;
         self.cached_row_offsets = None;
         self.clear_git_line_status();
@@ -910,7 +919,6 @@ impl Editor {
         self.cached_wrapped_total = None;
         self.cached_row_offsets = None;
         self.folded_ranges.clear();
-        self.cached_visible_line_count = None;
         self.clear_git_line_status();
         self.lsp_folding_ranges.clear();
     }
@@ -934,7 +942,6 @@ impl Editor {
             self.rope = content;
             self.mark_syntax_dirty_range(0, self.rope.len_lines());
             self.modified = true;
-            self.cached_visible_line_count = None;
             self.cached_wrapped_total = None;
             self.cached_row_offsets = None;
         }
@@ -1095,7 +1102,6 @@ impl Editor {
             self.rope = prepared;
             self.mark_syntax_dirty_range(0, self.rope.len_lines());
             self.content_version += 1;
-            self.cached_visible_line_count = None;
             self.cached_wrapped_total = None;
             self.cached_row_offsets = None;
             self.set_multi_cursor_states(self.collect_multi_cursors());
@@ -1190,7 +1196,6 @@ impl Editor {
                 let old_lines = self.rope.len_lines();
                 self.rope = saved_rope.clone();
                 self.mark_syntax_dirty_range(first, last);
-                self.cached_visible_line_count = None;
                 self.cached_wrapped_total = None;
                 self.snippet_cancel();
                 if old_lines != self.rope.len_lines() { self.clear_stale_folds(); }
@@ -1359,6 +1364,7 @@ impl Editor {
         &mut self,
         status: PreparedGitLineStatus,
     ) -> bool {
+        self.git_line_status_untracked = status.untracked;
         if self.git_line_status.len() == status.markers.len()
             && self.git_line_status_signature == status.signature
         {
@@ -1372,6 +1378,7 @@ impl Editor {
     }
 
     pub(crate) fn clear_git_line_status(&mut self) {
+        self.git_line_status_untracked = false;
         if self.git_line_status.is_empty() && self.git_change_lines.is_empty() {
             return;
         }
@@ -1402,6 +1409,7 @@ impl Editor {
             markers: Arc::clone(&self.git_line_status),
             changes: Arc::clone(&self.git_change_lines),
             signature: self.git_line_status_signature,
+            untracked: self.git_line_status_untracked,
         }
     }
 
@@ -1517,7 +1525,6 @@ impl Editor {
             }
             self.cached_wrapped_total = None;
             self.cached_row_offsets = None;
-            self.cached_visible_line_count = None;
         }
 
         if self.word_wrap {
@@ -1540,36 +1547,29 @@ impl Editor {
                         cursor_wrap_row.saturating_sub(visible_rows.saturating_sub(1));
                 }
             }
-            let max_wrap_row = self.wrapped_total_rows(wrap_width).saturating_sub(1);
-            self.wrap_scroll_offset = self.wrap_scroll_offset.min(max_wrap_row);
-            self.sync_line_scroll_from_wrap(wrap_width);
-            self.horizontal_scroll = 0;
+            self.set_wrap_scroll_offset(self.wrap_scroll_offset);
             return;
         }
 
+        let cursor_row = self.visible_row_for_line(self.cursor_line);
+        let mut scroll_row = self.visible_scroll_offset();
         if self.typewriter_mode && self.viewport_height > 2 {
             // Center cursor vertically
             let center = self.viewport_height / 2;
-            self.scroll_offset = self.cursor_line.saturating_sub(center);
+            scroll_row = cursor_row.saturating_sub(center);
         } else {
             // Normal scrolling with surrounding lines margin
             let margin = self.cursor_surrounding_lines.min(self.viewport_height / 2);
-            if self.cursor_line < self.scroll_offset + margin {
-                self.scroll_offset = self.cursor_line.saturating_sub(margin);
+            if cursor_row < scroll_row + margin {
+                scroll_row = cursor_row.saturating_sub(margin);
             }
             let visible = self.viewport_height.saturating_sub(1);
-            if visible > margin && self.cursor_line + margin >= self.scroll_offset + visible {
-                self.scroll_offset = (self.cursor_line + margin).saturating_sub(visible) + 1;
+            if visible > margin && cursor_row + margin >= scroll_row + visible {
+                scroll_row = (cursor_row + margin).saturating_sub(visible) + 1;
             }
         }
         // Clamp scroll offset so we don't scroll past end of file
-        let max_scroll = if self.scroll_past_end {
-            self.line_count().saturating_sub(1)
-        } else {
-            self.line_count()
-                .saturating_sub(self.viewport_height.max(1))
-        };
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
+        self.set_visible_scroll_offset(scroll_row);
         // Horizontal scrolling with small margin
         let h_margin: usize = 4;
         if self.cursor_col < self.horizontal_scroll + h_margin {
@@ -1581,7 +1581,7 @@ impl Editor {
             self.horizontal_scroll = (self.cursor_col + h_margin).saturating_sub(h_visible) + 1;
         }
         self.reveal_cursor_cells();
-        self.wrap_scroll_offset = self.scroll_offset;
+        self.wrap_scroll_offset = self.visible_scroll_offset();
     }
 
     pub(crate) fn set_cursor(&mut self, line: usize, col: usize) {
@@ -1616,17 +1616,21 @@ impl Editor {
             .unwrap_or("[No File]")
     }
 
+    /// Decode opaque remote keys only for display; file_name() keeps the path
+    /// spelling used for language detection, file icons and save paths.
+    pub(crate) fn file_display_name(&self) -> Cow<'_, str> {
+        self.file_path.as_deref().and_then(crate::remote::workspace::display_name)
+            .map_or_else(|| Cow::Borrowed(self.file_name()), Cow::Owned)
+    }
+
     /// UI label for unnamed documents; keep file_name() for language detection,
     /// file icons and save paths. Reading a bounded prefix avoids copying long
     /// first lines whenever the tab bar is painted or hit-tested.
     pub(crate) fn display_name(&self) -> Cow<'_, str> {
         use unicode_segmentation::UnicodeSegmentation;
 
-        if let Some(name) = self.file_path.as_deref().and_then(crate::remote::workspace::display_name) {
-            return Cow::Owned(name);
-        }
         if self.file_path.is_some() || self.suggested_file_name.is_some() {
-            return Cow::Borrowed(self.file_name());
+            return self.file_display_name();
         }
         let line = self.rope.line(0);
         let end = line.len_chars().min(128);
@@ -2279,3 +2283,7 @@ mod routine_efficiency_tests;
 #[cfg(test)]
 #[path = "editor_large_file_tests.rs"]
 mod large_file_tests;
+
+#[cfg(test)]
+#[path = "editor_fold_scroll_tests.rs"]
+mod fold_scroll_tests;

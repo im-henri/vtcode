@@ -12,6 +12,17 @@ use std::borrow::Cow;
 #[path = "app_git_refresh_tests.rs"]
 mod tests;
 
+pub(crate) struct WorktreeEvents {
+    pub paths: FxHashSet<PathBuf>,
+    // An expired baseline needs a full read only if these events can affect Git.
+    pub revalidate: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static STATUS_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone)]
 pub(crate) struct WorktreePaths {
     pub paths: Vec<PathBuf>,
@@ -82,6 +93,23 @@ impl WorktreePaths {
     }
 
     pub(crate) fn ignore_case(&self) -> bool { self.ignore_case }
+
+    pub(super) fn relevant(&self, repo: &git2::Repository, include_untracked: bool) -> Self {
+        let Ok(index) = repo.index() else { return self.clone(); };
+        let mut paths = Self::new(self.paths.iter().filter(|path| {
+            // Ignore rules never hide tracked files, even when a force-added
+            // source lives inside an otherwise ignored output directory. Include
+            // conflict stages, directory deletions and submodule descendants.
+            let indexed = (0..=3).any(|stage| index.get_path(path, stage).is_some())
+                || index.find_prefix(format!("{}/", path_key(&path.to_string_lossy(), false))).is_ok()
+                || path.ancestors().skip(1).take_while(|ancestor| !ancestor.as_os_str().is_empty()).any(|ancestor| {
+                    index.get_path(ancestor, 0).is_some_and(|entry| entry.mode == 0o160000)
+                });
+            indexed || include_untracked && !repo.status_should_ignore(path).unwrap_or(false)
+        }).cloned().collect());
+        paths.set_ignore_case(self.ignore_case);
+        paths
+    }
 
     pub(super) fn expand_untracked_directories(&mut self, repo: &git2::Repository) {
         let Ok(index) = repo.index() else { return; };
@@ -197,14 +225,14 @@ pub(super) fn collect(
     cancel: &CancellationToken,
     include_untracked: bool,
 ) -> Vec<Scan> {
-    collect_with_paths(discovery, roots, changed, workspace, cancel, include_untracked,
+    collect_with_paths(discovery, roots, changed.map(|paths| WorktreeEvents { paths, revalidate: false }), workspace, cancel, include_untracked,
         |path| path.to_string_lossy().into_owned())
 }
 
 pub(crate) fn collect_with_paths<P: Ord>(
     discovery: &mut Discovery,
     roots: Vec<PathBuf>,
-    changed: Option<FxHashSet<PathBuf>>,
+    changed: Option<WorktreeEvents>,
     workspace: &Path,
     cancel: &CancellationToken,
     include_untracked: bool,
@@ -213,7 +241,8 @@ pub(crate) fn collect_with_paths<P: Ord>(
     if cancel.is_cancelled() {
         return Vec::new();
     }
-    let changed = changed.and_then(|paths| event_paths(paths, workspace, &discovery.workspace));
+    let revalidate = changed.as_ref().is_some_and(|events| events.revalidate);
+    let changed = changed.and_then(|events| event_paths(events.paths, workspace, &discovery.workspace));
     let boundaries: FxHashSet<_> = discovery
         .roots
         .iter()
@@ -288,8 +317,9 @@ pub(crate) fn collect_with_paths<P: Ord>(
             || {},
             cancel,
             &format_path,
-            paths.as_mut(),
+            &mut paths,
             include_untracked,
+            revalidate,
         );
         if cancel.is_cancelled() {
             break;
@@ -304,6 +334,7 @@ pub(crate) fn collect_with_paths<P: Ord>(
             continue;
         }
         scans.push(Scan {
+            operation: snapshot.operation.clone(),
             root: workdir,
             files: snapshot.files,
             branch: snapshot.branch,

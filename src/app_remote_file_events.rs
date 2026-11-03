@@ -1,9 +1,70 @@
-//! Watch notifications are hints. Validate bytes beside the remote file without
-//! sending saved copies over SSH or changing a dirty local document.
+//! Watch notifications are hints. Validate bytes without changing dirty buffers.
 use super::*;
 use crate::remote::workspace::{Baseline, Validation};
 
 impl App {
+    /// Metadata hints and byte validation describe the same outstanding disk
+    /// conflict. Warn once until it is saved, reloaded, or verified unchanged.
+    pub(crate) fn warn_file_changed_on_disk(&mut self, path: &Path) -> bool {
+        if self.pending_file_reloads.contains(path) {
+            // An older in-flight byte check must not clear this newer hint.
+            self.pending_file_reload_again.insert(path.to_owned());
+        }
+        if !self.remote_change_warnings.insert(path.to_owned()) { return false; }
+        self.status_message = format!("{} changed on disk; your unsaved edits are preserved.", self.display_path(path));
+        self.notify_warn(self.status_message.clone());
+        true
+    }
+
+    pub(crate) fn queue_workspace_file_check(&mut self, path: PathBuf) {
+        if self.remote_workspace.is_some() { self.queue_remote_file_change(path); return; }
+        if self.defer_workspace_file_check(&path) { return; }
+        if self.pending_file_saves.contains_key(&path) {
+            self.remote_changes_deferred.insert(path);
+            return;
+        }
+        let snapshot = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+            .find_map(|tab| {
+                if tab.kind != TabKind::File { return None; }
+                tab.editor.refresh_document();
+                let editor = &tab.editor;
+                if editor.file_path.as_ref() != Some(&path) || editor.bg_loading || editor.encoding == "Binary" { return None; }
+                Some((editor.save_identity, crate::editor::DiskSaveBaseline {
+                    rope: editor.saved_rope.as_ref()?.clone(), encoding: editor.saved_encoding,
+                }))
+            });
+        let Some((document, baseline)) = snapshot else {
+            // A forced reload can already have recorded the newest metadata.
+            // Without a saved-byte baseline, another stat would then silently
+            // lose it. Clean/loading-error views need an actual read.
+            let reloadable = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+                .any(|tab| tab.reloadable_file_path() == Some(path.as_path()));
+            if reloadable { self.queue_file_reload(path); }
+            else { self.queue_file_disk_checks(std::iter::once(path)); }
+            return;
+        };
+        if !self.pending_file_reloads.insert(path.clone()) {
+            self.pending_file_reload_again.insert(path);
+            return;
+        }
+        let generation = self.workspace_generation;
+        let sender = self.background.sender.clone();
+        let cancel = self.workspace_file_check_token();
+        self.background.read_for_file("file-content-validation", &path.clone(), false, move || {
+            let result = (|| -> std::io::Result<Validation> {
+                let checked = baseline.validate_cancellable(&path, &cancel);
+                let (metadata, changed) = match checked {
+                    Ok(metadata) => (metadata, false),
+                    Err(error) if crate::editor::save::is_conflict(&error) => (std::fs::metadata(&path)?, true),
+                    Err(error) => return Err(error),
+                };
+                Ok(Validation { changed, size: metadata.len(), modified: metadata.modified().ok() })
+            })().map_err(|error| error.to_string());
+            let _ = sender.send(crate::background::BackgroundResult::NativeFileValidated {
+                generation, path, document, baseline, cancel, result,
+            });
+        });
+    }
     pub(crate) fn remote_save_needs_validation(&self, path: &Path) -> bool {
         self.remote_change_warnings.contains(path) || self.remote_changes_deferred.contains(path)
             || self.pending_file_reloads.contains(path)
@@ -115,6 +176,15 @@ impl App {
         baseline: Baseline,
         result: Result<Validation, String>,
     ) -> bool {
+        self.finish_file_validation(generation, path, document, crate::editor::DiskSaveBaseline {
+            rope: baseline.rope, encoding: baseline.encoding,
+        }, result)
+    }
+
+    pub(crate) fn finish_file_validation(
+        &mut self, generation: u64, path: PathBuf, document: u64,
+        baseline: crate::editor::DiskSaveBaseline, result: Result<Validation, String>,
+    ) -> bool {
         if generation != self.workspace_generation {
             return false;
         }
@@ -125,7 +195,7 @@ impl App {
             return false;
         }
         if self.pending_file_reload_again.remove(&path) {
-            self.queue_remote_file_change(path);
+            self.queue_workspace_file_check(path);
             return false;
         }
         let mut reload = false;
@@ -167,7 +237,7 @@ impl App {
             }
         }
         if obsolete {
-            self.queue_remote_file_change(path.clone());
+            self.queue_workspace_file_check(path.clone());
         }
         if !matched {
             return false;
@@ -180,12 +250,7 @@ impl App {
                 if reload {
                     self.queue_file_reload(path.clone());
                 }
-                if dirty && self.remote_change_warnings.insert(path.clone()) {
-                    self.status_message = format!(
-                        "{} changed on disk; your unsaved edits are preserved.",
-                        self.display_path(&path)
-                    );
-                    self.notify_warn(self.status_message.clone());
+                if dirty && self.warn_file_changed_on_disk(&path) {
                     return true;
                 }
             }

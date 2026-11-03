@@ -25,7 +25,7 @@ const STOPPED_ACTIONS: &[crate::ui_side_notice::Action] = &[
     crate::ui_side_notice::Action { label: "Retry", command: "remote_reconnect" },
 ];
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Phase {
     #[default]
     Connected,
@@ -39,6 +39,8 @@ pub(crate) enum Phase {
 }
 
 pub(crate) struct State {
+    pub(crate) shared_follower: bool,
+    pub(crate) shared_attempt: Option<crate::remote::client::Client>,
     pub phase: Phase,
     pub attempt: u32,
     pub serial: u64,
@@ -71,6 +73,8 @@ mod tests;
 impl Default for State {
     fn default() -> Self {
         Self {
+            shared_follower: false,
+            shared_attempt: None,
             phase: Phase::Connected,
             attempt: 0,
             serial: 0,
@@ -94,6 +98,10 @@ impl Default for State {
     }
 }
 impl State {
+    pub(crate) fn take_shared_candidate(&mut self) -> Option<workspace::Workspace> {
+        if self.phase != Phase::Stopped { return None; }
+        self.candidate.take().filter(|remote| remote.client.connected())
+    }
     pub(crate) fn diagnostic_log(&self) -> Option<crate::remote::diagnostics::Log> { self.trace.clone() }
     pub(crate) fn send_key(&mut self, key: crossterm::event::KeyEvent) {
         if let Some(setup) = &self.setup
@@ -119,7 +127,7 @@ impl State {
         if self.drain_pending {
             return Some(Duration::ZERO);
         }
-        self.retry
+        self.retry.filter(|_| !self.shared_follower)
             .into_iter()
             .chain(self.expires)
             .min()
@@ -209,7 +217,7 @@ impl App {
         self.publish_remote_connection_notice(false);
     }
 
-    pub(crate) fn stop_remote_reconnect(&mut self) {
+    pub(crate) fn stop_remote_reconnect_local(&mut self) {
         if self
             .remote_workspace
             .as_ref()
@@ -226,6 +234,8 @@ impl App {
         self.publish_remote_connection_notice(true);
     }
     pub(crate) fn retry_remote_connection(&mut self) {
+        self.remote_connection.shared_attempt = None;
+        self.remote_connection.shared_follower = false;
         if self
             .remote_workspace
             .as_ref()
@@ -258,7 +268,7 @@ impl App {
                 self.remote_connection.phase,
                 Phase::Waiting | Phase::Starting | Phase::Connecting | Phase::Resolving
             ) {
-                self.stop_remote_reconnect();
+                self.stop_remote_reconnect_local();
             }
             return false;
         }
@@ -329,6 +339,7 @@ impl App {
             }
         }
         if self.remote_connection.phase == Phase::Waiting
+            && !self.remote_connection.shared_follower
             && self.remote_connection.retry.is_some_and(|due| now >= due)
         {
             self.start_remote_reconnect();
@@ -337,6 +348,7 @@ impl App {
         changed
     }
     fn begin_remote_disconnect(&mut self) {
+        self.record_workspace_event("Remote connection lost", crate::app_workspaces::Level::Attention);
         self.remote_connection.trace = self.remote_workspace.as_ref().and_then(|remote| remote.diagnostics());
         let auto = self
             .remote_workspace
@@ -482,25 +494,38 @@ impl App {
             }
             return;
         }
-        self.remote_connection.candidate = None;
+        let candidate = self.remote_connection.candidate.take();
         match result {
+            Err(error) if candidate.as_ref().is_some_and(|remote| remote.client.connected()) => {
+                // The transport recovered even if this folder disappeared.
+                // Hand it to the pool instead of repeatedly relaunching SSH
+                // while all the other folders wait behind this one.
+                let candidate = candidate.unwrap();
+                self.remote_connection.shared_attempt = Some(candidate.client.clone());
+                self.remote_connection.candidate = Some(candidate);
+                self.remote_folder_reconnect_failed(error);
+            }
             Err(error) => self.remote_reconnect_failed(error),
             Ok(remote) => self.resume_remote_services(remote),
         }
     }
     pub(crate) fn resume_remote_services(&mut self, remote: workspace::Workspace) {
+        self.resume_remote_services_inner(remote, true);
+    }
+    pub(crate) fn resume_remote_services_inner(&mut self, remote: workspace::Workspace, owned: bool) {
         if self
             .remote_workspace
             .as_ref()
             .is_none_or(|old| old.view_root != remote.view_root)
         {
-            remote.disconnect();
+            if owned { remote.disconnect(); }
             self.remote_reconnect_failed("Remote workspace changed; buffers were retained.".into());
             return;
         }
         remote.client.set_wake(self.background.wake_handle());
         remote.client.set_git_output(&self.logs.git_log());
         self.remote_workspace = Some(remote.clone());
+        self.lsp_manager.remote_workspace = Some(remote.clone());
         self.remote_explorer_error = None;
         self.remote_connection.phase = Phase::Restoring;
         self.remote_connection.error.clear();
@@ -586,8 +611,49 @@ impl App {
             self.remote_connection.restart_history = false;
             self.refresh_git_log_async();
         }
-        let _ = remote.client.notify(crate::remote::Command::Watch);
+        self.start_workspace_watcher();
         self.complete_remote_reconnect_if_ready();
+    }
+
+    pub(crate) fn begin_shared_remote_resume(&mut self, connected: workspace::Workspace) {
+        let Some(old) = self.remote_workspace.clone() else { return; };
+        self.remote_connection.shared_follower = true;
+        if old.take_disconnect() { self.begin_remote_disconnect(); }
+        self.remote_connection.cancel_attempt();
+        self.remote_connection.shared_attempt = Some(connected.client.clone());
+        self.remote_connection.phase = Phase::Resolving;
+        self.remote_connection.message = "Restoring this folder on the shared connection…".into();
+        let generation = self.workspace_generation;
+        let serial = self.remote_connection.serial;
+        let sender = self.background.sender.clone();
+        self.background.spawn("shared-remote-workspace-resume", move || {
+            let result = old.resume_on(connected).map_err(|error| error.to_string());
+            let _ = sender.send(BackgroundResult::SharedRemoteReconnected { generation, serial, result });
+        });
+        self.publish_remote_connection_notice(false);
+    }
+
+    pub(crate) fn finish_shared_remote_reconnect(&mut self, generation: u64, serial: u64, result: Result<workspace::Workspace, String>) {
+        // This result borrows the transport of other live workspaces. A late
+        // result or failed folder resolution must never disconnect that link.
+        if generation != self.workspace_generation || serial != self.remote_connection.serial
+            || self.remote_connection.phase != Phase::Resolving { return; }
+        match result {
+            Ok(remote) => self.resume_remote_services_inner(remote, false),
+            Err(error) => self.remote_folder_reconnect_failed(error),
+        }
+    }
+    fn remote_folder_reconnect_failed(&mut self, error: String) {
+        if let Some(cancel) = self.remote_connection.cancel.take() { cancel.cancel(); }
+        self.remote_connection.retry = None;
+        self.remote_connection.expires = None;
+        self.remote_connection.drain_pending = false;
+        self.remote_connection.details = false;
+        self.remote_connection.phase = Phase::Stopped;
+        self.remote_connection.error = error;
+        self.remote_connection.message = "Connection restored, but this folder could not be reopened. Local edits are retained.".into();
+        self.record_workspace_event(self.remote_connection.message.clone(), crate::app_workspaces::Level::Attention);
+        self.publish_remote_connection_notice(true);
     }
     pub(crate) fn finish_remote_reconnect_file(&mut self, generation: u64, check: FileCheck) {
         if generation != self.workspace_generation

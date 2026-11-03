@@ -2,6 +2,9 @@ use crate::app::{App, GitBranchPickerItem};
 use std::process::Command;
 
 pub(crate) fn checkout_branch(repo: &git2::Repository, branch_name: &str) -> Result<(), String> {
+    if repo.state() != git2::RepositoryState::Clean {
+        return Err("Finish or abort the current Git operation before switching branches.".into());
+    }
     let mut checkout = git2::build::CheckoutBuilder::new();
     checkout.safe();
     let reference = format!("refs/heads/{branch_name}");
@@ -146,6 +149,7 @@ impl App {
         self.git_branch_picker_scroll_offset = self.git_branch_picker_scroll_offset.min(max_scroll);
     }
 
+    #[cfg(test)]
     pub(crate) fn git_branch_picker_filtered_items(&self) -> Vec<GitBranchPickerItem> {
         self.git_branch_picker_filtered_iter().cloned().collect()
     }

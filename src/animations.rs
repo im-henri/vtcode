@@ -318,6 +318,7 @@ pub(crate) struct AnimationState {
     pub(crate) scope_paint: crate::ui_editor_animations::ScopePaintCache,
     pub(crate) diff_geometry: crate::ui_diff_animations::DiffGeometryCache,
     tab_motion: RefCell<TabIndicatorState>,
+    pub(crate) tab_reorder: RefCell<crate::ui_chrome_tabs::ReorderState>,
     fire_samples: Vec<FireParticle>,
 }
 
@@ -718,6 +719,7 @@ impl AnimationState {
         self.diff_geometry = Default::default();
         self.fire_samples.clear();
         *self.tab_motion.get_mut() = TabIndicatorState::default();
+        self.tab_reorder.get_mut().clear();
     }
 
     pub(crate) fn forget_view(&mut self, id: u64) {
@@ -733,6 +735,7 @@ impl AnimationState {
             view.visible = false;
         }
         self.tab_motion.get_mut().visible = false;
+        self.tab_reorder.get_mut().begin_frame();
     }
 
     pub(crate) fn set_active_view(&mut self, id: Option<u64>) {
@@ -1169,7 +1172,8 @@ impl AnimationState {
         }
         let active_tab = {
             let tab = self.tab_motion.borrow();
-            settings.enabled(Effect::TabSlide) && tab.visible && tab.active
+            settings.enabled(Effect::TabSlide)
+                && ((tab.visible && tab.active) || self.tab_reorder.borrow().active())
         };
         if !active_tab
             && !self
@@ -1235,6 +1239,7 @@ impl AnimationState {
         {
             tab.active = false;
         }
+        self.tab_reorder.get_mut().advance(now);
         self.last_frame = Some(now);
         true
     }

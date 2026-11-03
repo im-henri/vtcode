@@ -1325,7 +1325,7 @@ fn remote_git_repositories_stage_and_unstage_use_native_shared_tasks() {
     std::fs::write(dir.path().join("file[1].rs"), "one\n").unwrap();
     let client = connection(dir.path(), Arc::default(), Arc::default());
     let Reply::GitStatus { discovery, scans } = client
-        .call(Command::GitStatus {
+        .call(Command::GitStatus { revalidate: false,
             changed: None,
             include_untracked: true,
             known: None,
@@ -1482,7 +1482,7 @@ fn remote_branch_stash_amend_and_push_share_the_native_repository_implementation
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "two\n");
     action(crate::git_tasks::Task::StageAll);
     action(crate::git_tasks::Task::Amend {
-        message: "amended remotely".into(),
+        message: Some("amended remotely".into()),
     });
     assert_eq!(
         git2::Repository::open(dir.path())

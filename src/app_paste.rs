@@ -228,6 +228,8 @@ impl App {
         self.bulk_paste.job.is_some() || self.bulk_paste.receiving.is_some()
     }
 
+    pub(crate) fn paste_receiving(&self) -> bool { self.bulk_paste.receiving.is_some() }
+
     pub(crate) fn paste_editor_clipboard(&mut self, smart: bool) {
         if self.bulk_paste.job.is_some() {
             self.notify_warn("A paste is already being prepared; wait or cancel it first");

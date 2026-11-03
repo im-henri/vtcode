@@ -665,6 +665,24 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             .dragging_tab
             .and_then(|i| app.tabs.get(i))
             .map(|t| t.editor.navigation_id);
+        // Group membership follows the actual release target, even when the
+        // pointer has not crossed the midpoint needed for a live reorder.
+        if app.drag_has_moved
+            && let Some((pane, area)) = pane
+            && pane == app.active_group
+            && app.dragging_tab_source_group.unwrap_or(app.active_group) == pane
+            && let Some(source) = app.dragging_tab
+            && let Some(view) = view
+            && let Some((index, _, _)) =
+                crate::ui_chrome_tabs::TabBarHits::new(app, area).tab_at(mouse.column)
+        {
+            app.tabs[source].preview = false;
+            if let Some(&group) = app.desks.membership.get(&app.tabs[index].editor.navigation_id) {
+                app.desks.membership.insert(view, group);
+            } else {
+                app.desks.membership.remove(&view);
+            }
+        }
         app.normalize_tab_groups();
         app.dragging_tab =
             view.and_then(|id| app.tabs.iter().position(|t| t.editor.navigation_id == id));

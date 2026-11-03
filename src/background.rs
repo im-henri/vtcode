@@ -351,6 +351,7 @@ pub enum BackgroundResult {
     SaveConflictDiff(crate::app_save_conflict::DiffResult),
     RemoteReconnectStarted { generation: u64, serial: u64, result: Result<crate::remote::launch::Setup, String> },
     RemoteReconnected { generation: u64, serial: u64, result: Result<crate::remote::workspace::Workspace, String> },
+    SharedRemoteReconnected { generation: u64, serial: u64, result: Result<crate::remote::workspace::Workspace, String> },
     RemoteReconnectFile { generation: u64, check: crate::app_remote_connection::FileCheck },
     AgentFileResolved { agent: crate::app_acp::AgentId, handle: vtcode::acp::ClientHandle, id: vtcode::acp::protocol::RequestId, ticket: u64, request: vtcode::acp::FileRequest, aliases: Result<Vec<(PathBuf, Option<PathBuf>)>, vtcode::acp::protocol::Error> },
     RemoteTransferProgress { generation: u64, path: PathBuf, saving: bool, completed: u64, total: u64 },
@@ -526,6 +527,9 @@ pub enum BackgroundResult {
     },
     /// Whether the native watcher for the current workspace started cleanly.
     FileWatcherState { root: PathBuf, active: bool },
+    /// Ignore replies from a subscription stopped during a workspace switch,
+    /// even if a new watcher for the same root has already started.
+    FileWatcherEvent { cancelled: Arc<AtomicBool>, result: Box<BackgroundResult> },
     /// Metadata-only disk check requested by focus/periodic maintenance.
     FileDiskState(WorkspacePathChange),
     /// Stateful, incremental TextMate document slice from a background worker.
@@ -568,6 +572,14 @@ pub enum BackgroundResult {
         path: PathBuf,
         targets: Vec<(u64, u64)>, // document identity and content version at dispatch
         result: Result<crate::editor::LoadedTextFile, String>,
+    },
+    NativeFileValidated {
+        generation: u64,
+        path: PathBuf,
+        document: u64,
+        baseline: crate::editor::DiskSaveBaseline,
+        cancel: CancellationToken,
+        result: Result<crate::remote::workspace::Validation, String>,
     },
     /// Extension command completed in background
     ExtensionCommandDone {
@@ -824,8 +836,13 @@ fn save_pool_size(available_parallelism: usize) -> usize {
 
 #[derive(Clone)]
 struct FileWatcherControl {
+    root: PathBuf,
     sender: mpsc::SyncSender<()>,
     stopped: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+    coverage_lost: Arc<AtomicBool>,
+    delivery: Arc<crate::workspace_watch::Delivery>,
+    repositories: Arc<std::sync::Mutex<Vec<PathBuf>>>,
 }
 
 impl FileWatcherControl {
@@ -991,6 +1008,7 @@ pub struct BackgroundWorkers {
     /// Cancels the watcher for the previous workspace when a folder switch
     /// installs a new root.
     file_watcher_control: Option<FileWatcherControl>,
+    file_watcher_repositories: Vec<PathBuf>,
 }
 
 impl BackgroundWorkers {
@@ -1026,6 +1044,7 @@ impl BackgroundWorkers {
             pending_results,
             wake,
             file_watcher_control: None,
+            file_watcher_repositories: Vec::new(),
         }
     }
 
@@ -1189,6 +1208,13 @@ impl BackgroundWorkers {
     }
 
     #[cfg(test)]
+    pub(crate) fn use_single_save_worker(&mut self) {
+        assert!(self.save_pool_sender.is_none());
+        self.save_pool_sender = Some(BackgroundTaskSender::pool("single-test-save", 1,
+            self.active_jobs.clone(), self.wake.clone()));
+    }
+
+    #[cfg(test)]
     pub(crate) fn use_single_cpu_worker(&mut self) {
         assert_eq!(self.active_job_count(), 0);
         self.pool_sender = BackgroundTaskSender::pool("single-test-worker", 1, self.active_jobs.clone(), self.wake.clone());
@@ -1313,23 +1339,54 @@ impl BackgroundWorkers {
         });
     }
 
-    /// Start a file-system watcher on the given directory.
-    /// Events are filtered, deduplicated, and sent to the UI as one debounced burst.
+    /// Reuse a live subscription. An unchanged warm workspace emits no results.
     pub(crate) fn start_file_watcher(&mut self, root: PathBuf) {
-        if let Some(control) = self.file_watcher_control.take() {
-            control.stop();
+        if let Some(control) = &self.file_watcher_control
+            && control.root == root && !control.finished.load(Ordering::Acquire)
+            && !control.coverage_lost.load(Ordering::Acquire)
+        {
+            control.delivery.resume();
+            let _ = control.sender.try_send(());
+            return;
         }
+        if self.file_watcher_control.as_ref().is_some_and(|control| control.root != root) {
+            self.file_watcher_repositories.clear();
+        }
+        self.stop_file_watcher();
         let sender = self.sender.clone();
         let (watcher_tx, watcher_rx) = std::sync::mpsc::sync_channel(1);
         let control = FileWatcherControl {
+            root: root.clone(),
             sender: watcher_tx.clone(),
             stopped: Arc::new(AtomicBool::new(false)),
+            finished: Arc::new(AtomicBool::new(false)),
+            coverage_lost: Arc::new(AtomicBool::new(false)),
+            delivery: Arc::new(crate::workspace_watch::Delivery::default()),
+            repositories: Arc::new(std::sync::Mutex::new(self.file_watcher_repositories.clone())),
         };
         let stopped = Arc::clone(&control.stopped);
+        let finished = control.finished.clone();
+        let delivery = control.delivery.clone();
+        let repositories = control.repositories.clone();
+        let coverage_lost = control.coverage_lost.clone();
+        let worker_coverage_lost = coverage_lost.clone();
         self.spawn_untracked("file-watcher", move || {
-            use notify::{Config, RecursiveMode, Watcher};
+            use notify::{Config, Watcher};
             use std::time::{Duration, Instant};
-            use crate::workspace_watch::{Burst, NoiseFilter};
+            use crate::workspace_watch::{Burst, NoiseFilter, GitWatches};
+            struct Finished(Arc<AtomicBool>);
+            impl Drop for Finished {
+                fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+            }
+            let _finished = Finished(finished);
+            let send = |result| sender.send(BackgroundResult::FileWatcherEvent {
+                cancelled: stopped.clone(), result: Box::new(result),
+            });
+            if stopped.load(Ordering::Acquire) { return; }
+            let catch_up = || send(BackgroundResult::FilesChanged {
+                root: root.clone(), changes: Vec::new(), structure_changed: true,
+                rescan: true, git_metadata_changed: true,
+            });
 
             let pending = Arc::new(std::sync::Mutex::new(Burst::default()));
             let callback_pending = pending.clone();
@@ -1337,13 +1394,18 @@ impl BackgroundWorkers {
             let coverage_root = root.clone();
             let callback_stopped = stopped.clone();
             let coverage_stopped = stopped.clone();
+            let dependencies = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let callback_dependencies = dependencies.clone();
+            let coverage_dependencies = dependencies.clone();
+            let callback_delivery = delivery.clone();
             let watcher = crate::workspace_watch::native_watcher(
                 move |event| {
                     if callback_stopped.load(Ordering::Acquire) { return; }
                     let mut pending = callback_pending.lock().unwrap();
                     let was_empty = pending.event.is_empty();
-                    pending.push(&callback_root, event);
-                    if was_empty && !pending.event.is_empty() {
+                    pending.push_with_dependencies(&callback_root, event, &callback_dependencies.lock().unwrap());
+                    if pending.event.watcher_failed { coverage_lost.store(true, Ordering::Release); }
+                    if callback_delivery.visible() && was_empty && !pending.event.is_empty() {
                         let _ = watcher_tx.try_send(());
                     }
                 },
@@ -1351,53 +1413,116 @@ impl BackgroundWorkers {
                 // read-only opens merely to discard them in user space.
                 Config::default().with_open_events(false),
                 move |path| !coverage_stopped.load(Ordering::Acquire)
-                    && crate::workspace_watch::directory_is_relevant(&coverage_root, path, &[]),
+                    && crate::workspace_watch::directory_is_relevant(&coverage_root, path, &coverage_dependencies.lock().unwrap()),
             );
             let mut watcher = match watcher.and_then(|mut watcher| {
-                watcher.watch(&root, RecursiveMode::Recursive)?;
+                crate::workspace_watch::watch_root(&mut watcher, &root)?;
                 Ok(watcher)
             }) {
                 Ok(watcher) => watcher,
                 Err(_) => {
-                    stopped.store(true, Ordering::Release);
-                    let _ = sender.send(BackgroundResult::FileWatcherState { root, active: false });
+                    worker_coverage_lost.store(true, Ordering::Release);
+                    let _ = send(BackgroundResult::FileWatcherState { root: root.clone(), active: false });
+                    let _ = catch_up();
                     return;
                 }
             };
-            let _ = sender.send(BackgroundResult::FileWatcherState { root: root.clone(), active: true });
+            let _ = send(BackgroundResult::FileWatcherState { root: root.clone(), active: true });
+            // Cover edits made while recursive subscriptions were being installed.
+            let _ = catch_up();
             let mut noise = NoiseFilter::default();
+            let mut known_repositories = None;
+            let mut git_watches = GitWatches::default();
+            let canonical_root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
+            // Initial setup and explicit discovery changes resolve external Git
+            // stores off the UI thread, never on an unchanged workspace visit.
+            let mut initial = true;
             // Only the first relevant event wakes this worker. Further events
             // merge into bounded state while the fixed 300ms window elapses.
-            while watcher_rx.recv().is_ok() && !stopped.load(Ordering::Acquire) {
+            while (std::mem::take(&mut initial) || watcher_rx.recv().is_ok()) && !stopped.load(Ordering::Acquire) {
+                if !delivery.visible() { continue; }
+                let resumed = delivery.take_resume();
                 let deadline = Instant::now() + Duration::from_millis(300);
-                loop {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() { break; }
-                    match watcher_rx.recv_timeout(remaining) {
-                        Ok(()) if stopped.load(Ordering::Acquire) => break,
-                        Ok(()) => {},
-                        Err(mpsc::RecvTimeoutError::Timeout) => break,
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                if !resumed {
+                    loop {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() { break; }
+                        match watcher_rx.recv_timeout(remaining) {
+                            Ok(()) if stopped.load(Ordering::Acquire) || !delivery.visible() || delivery.take_resume() => break,
+                            Ok(()) => {},
+                            Err(mpsc::RecvTimeoutError::Timeout) => break,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
                     }
                 }
                 if stopped.load(Ordering::Acquire) { break; }
+                if !delivery.visible() { continue; }
+                let git_invalidated = {
+                    let pending = pending.lock().unwrap();
+                    pending.event.git_metadata_changed || pending.event.rescan
+                };
+                let roots = repositories.lock().unwrap().clone();
+                // A gitfile/config repair can redirect metadata without changing
+                // any repository root. Resolve dependencies on actual Git events,
+                // never merely because the workspace became visible.
+                if known_repositories.as_ref() != Some(&roots) || git_invalidated {
+                    let mut paths = Vec::new();
+                    for path in std::iter::once(&root).chain(&roots) {
+                        if let Ok(repo) = git2::Repository::open(path) {
+                            for directory in [repo.path(), repo.commondir()] {
+                                if let Ok(directory) = std::fs::canonicalize(directory)
+                                    && !directory.starts_with(&canonical_root) { paths.push(directory); }
+                            }
+                        }
+                    }
+                    paths.sort(); paths.dedup();
+                    *dependencies.lock().unwrap() = paths.clone();
+                    // Registration may synchronously call the event handler.
+                    // Never hold its burst lock while issuing watcher controls.
+                    let registration = git_watches.sync(&mut watcher, &root, paths);
+                    let mut pending = pending.lock().unwrap();
+                    pending.event.git_metadata_changed |= registration.git_metadata_changed;
+                    pending.event.watcher_failed |= registration.watcher_failed;
+                    pending.event.rescan |= registration.rescan;
+                    known_repositories = Some(roots);
+                }
                 let burst = noise.filter(std::mem::take(&mut *pending.lock().unwrap()));
                 if burst.watcher_failed {
-                    let _ = sender.send(BackgroundResult::FileWatcherState { root: root.clone(), active: false });
+                    worker_coverage_lost.store(true, Ordering::Release);
+                    let _ = send(BackgroundResult::FileWatcherState { root: root.clone(), active: false });
                 }
                 if burst.is_empty() { continue; }
                 let changes = coalesce_workspace_event_paths(&root, burst.paths)
                     .into_iter().map(inspect_workspace_path).collect();
-                if sender.send(BackgroundResult::FilesChanged {
+                let failed = burst.watcher_failed;
+                if send(BackgroundResult::FilesChanged {
                     root: root.clone(), changes, structure_changed: burst.structure_changed,
                     rescan: burst.rescan, git_metadata_changed: burst.git_metadata_changed || burst.rescan,
                 }).is_err() { break; }
+                if failed { break; }
             }
             let _ = watcher.unwatch(&root);
-            stopped.store(true, Ordering::Release);
-            let _ = sender.send(BackgroundResult::FileWatcherState { root, active: false });
+            let _ = send(BackgroundResult::FileWatcherState { root, active: false });
         });
         self.file_watcher_control = Some(control);
+    }
+
+    pub(crate) fn pause_file_watcher(&self) {
+        if let Some(control) = &self.file_watcher_control { control.delivery.pause(); }
+    }
+
+    pub(crate) fn update_file_watcher_repositories(&mut self, mut roots: Vec<PathBuf>) {
+        roots.sort(); roots.dedup();
+        if self.file_watcher_repositories == roots { return; }
+        self.file_watcher_repositories = roots.clone();
+        if let Some(control) = &self.file_watcher_control {
+            *control.repositories.lock().unwrap() = roots;
+            if control.delivery.visible() { let _ = control.sender.try_send(()); }
+        }
+    }
+
+    pub(crate) fn stop_file_watcher(&mut self) {
+        if let Some(control) = self.file_watcher_control.take() { control.stop(); }
     }
 }
 
@@ -1425,41 +1550,53 @@ impl WorkspaceEventBurst {
         self.paths.is_empty() && !self.git_metadata_changed && !self.rescan
     }
 
+    #[cfg(test)]
     pub(crate) fn push(&mut self, root: &std::path::Path, event: notify::Result<notify::Event>) {
         self.push_observing_git(root, event, |_| {});
     }
 
+    /// Return this event's filename/ignore-rule impact, independently of older
+    /// pending events. Content-only writes must not invalidate a filename index.
     pub(crate) fn push_observing_git(&mut self, root: &std::path::Path, event: notify::Result<notify::Event>,
-        mut observe: impl FnMut(&std::path::Path)) {
+        mut observe: impl FnMut(&std::path::Path)) -> bool {
         use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
         use notify::EventKind;
         let Ok(event) = event else {
             self.rescan = true;
             self.watcher_failed = true;
-            return;
+            return true;
         };
-        self.rescan |= event.need_rescan();
+        let mut listing_changed = event.need_rescan();
+        self.rescan |= listing_changed;
+        let content = matches!(event.kind, EventKind::Access(AccessKind::Close(AccessMode::Write))
+            | EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_)));
         let structural = match event.kind {
             EventKind::Access(AccessKind::Close(AccessMode::Write)) => false,
-            EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => return,
+            EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => return listing_changed,
             // Windows reports FILE_ACTION_MODIFIED as Modify(Any). It changes
             // contents/attributes, not names; creates/removes/renames are separate.
             EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_)) => false,
             _ => true,
         };
         self.rescan |= event.paths.is_empty();
+        listing_changed |= event.paths.is_empty();
         for path in event.paths {
+            // The Windows boundary subscription also sees ordinary directory
+            // metadata after child writes. Those are covered by exact events.
+            if path == root && !structural { continue; }
             if path == root && matches!(event.kind,
                 EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))) {
                 // A surviving watcher object no longer guarantees coverage
                 // after its subscription root has been removed or moved.
                 self.rescan = true;
                 self.watcher_failed = true;
+                listing_changed = true;
             }
             if crate::formatters::is_temporary_path(&path) || crate::editor::is_save_temporary_path(&path) {
                 continue;
             }
             if is_git_metadata_event(root, &path) {
+                listing_changed |= (structural || content) && workspace_rules_path(root, &path);
                 self.git_metadata_changed = true;
                 observe(&path);
                 if structural && path.file_name().is_some_and(|name| name == ".git") {
@@ -1470,10 +1607,21 @@ impl WorkspaceEventBurst {
                 || (structural && path.parent().is_some_and(|parent| workspace_path_is_watched(root, parent)))
             {
                 self.structure_changed |= structural;
+                listing_changed |= structural || content && workspace_rules_path(root, &path);
                 self.paths.push(path);
             }
         }
+        listing_changed
     }
+}
+
+fn workspace_rules_path(root: &std::path::Path, path: &std::path::Path) -> bool {
+    if path.file_name().is_some_and(|name| matches!(name.to_str(), Some(".gitignore" | ".ignore"))) { return true; }
+    let Ok(relative) = path.strip_prefix(root) else { return false; };
+    let mut parts = relative.components();
+    if !parts.by_ref().any(|part| part.as_os_str() == ".git") { return false; }
+    parts.next().is_none_or(|part| matches!(part.as_os_str().to_str(),
+        Some("config" | "config.worktree" | "info" | "index" | "commondir" | "gitdir")))
 }
 
 /// A tooltip must not stream a multi-gigabyte file from shared storage. A hard

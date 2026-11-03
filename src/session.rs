@@ -97,6 +97,8 @@ pub struct Session {
     pub show_panel: bool,
     #[serde(default = "default_panel_height")]
     pub panel_height: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_sidebar_width: Option<u16>,
     #[serde(default)]
     pub panel_tab: u8,
     #[serde(default)]

@@ -32,19 +32,12 @@ fn reference_hint(editor: &Editor, line: usize) -> bool {
 }
 
 fn reference_visible(editor: &Editor, from: usize, count: usize) -> Vec<usize> {
-    let mut rows = Vec::new();
-    let mut line = from;
-    while rows.len() < count && line < editor.line_count() {
-        if let Some((_, &end)) = editor.folded_ranges.range(..line).next_back()
-            && line < end
-        {
-            line = end;
-            continue;
-        }
-        rows.push(line);
-        line = editor.folded_ranges.get(&line).copied().unwrap_or(line + 1);
-    }
-    rows
+    // A restored view can contain overlapping folds. Visibility is the union
+    // of their hidden bodies, just as it is for the scroll range.
+    (from..editor.line_count())
+        .filter(|&line| !editor.folded_ranges.iter().any(|(&start, &end)| start < line && line < end))
+        .take(count)
+        .collect()
 }
 
 fn check_hints(editor: &Editor) {

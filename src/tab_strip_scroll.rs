@@ -204,6 +204,7 @@ pub(super) fn hits(
         new_tab: empty,
         after_tabs: empty,
         tab_clips: Vec::new(),
+        tab_widths: Vec::new(),
         group_clips: Vec::new(),
         new_tab_clip: 0,
     };
@@ -250,6 +251,7 @@ pub(super) fn hits(
                 };
                 hits.tabs.push((index, rect, close));
                 hits.tab_clips.push(inset);
+                hits.tab_widths.push(item.width);
             }
             Kind::Group(id) => {
                 hits.groups.push((id, rect));

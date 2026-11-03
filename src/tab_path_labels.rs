@@ -380,7 +380,25 @@ fn format_context(path: &Path, required: usize, shared: usize) -> String {
         result.push('…');
         result.push(std::path::MAIN_SEPARATOR);
     }
-    push_visible(&mut result, middle.as_os_str());
+    if crate::remote::workspace::is_view_key(path) {
+        // Decode components after selecting the suffix: a remote literal
+        // backslash must not turn into a local path separator on Windows.
+        for (index, part) in components[start..components.len() - tail].iter().enumerate() {
+            if index > 0
+                && *part != Component::RootDir
+                && !matches!(components[start + index - 1], Component::RootDir | Component::Prefix(_))
+            {
+                result.push(std::path::MAIN_SEPARATOR);
+            }
+            if let Some(bytes) = crate::remote::workspace::display_component(path, part.as_os_str()) {
+                push_visible_bytes(&mut result, &bytes, true);
+            } else {
+                push_visible(&mut result, part.as_os_str());
+            }
+        }
+    } else {
+        push_visible(&mut result, middle.as_os_str());
+    }
     if tail > 0 {
         let drive_relative = components.len() - tail - start == 1
             && matches!(components[start], Component::Prefix(_))
@@ -396,16 +414,19 @@ fn format_context(path: &Path, required: usize, shared: usize) -> String {
 /// Quote exceptional names so literal ellipses, controls and invalid OS bytes
 /// cannot be confused with omitted directories. Ordinary paths stay unchanged.
 fn push_visible(output: &mut String, value: &OsStr) {
-    if let Some(text) = value.to_str()
+    push_visible_bytes(output, value.as_encoded_bytes(), false);
+}
+
+fn push_visible_bytes(output: &mut String, mut bytes: &[u8], quote_backslash: bool) {
+    if let Ok(text) = std::str::from_utf8(bytes)
         && !text
             .chars()
-            .any(|ch| ch == '"' || ch == '…' || ch.is_control())
+            .any(|ch| ch == '"' || ch == '…' || ch.is_control() || (quote_backslash && ch == '\\'))
     {
         output.push_str(text);
         return;
     }
     output.push('"');
-    let mut bytes = value.as_encoded_bytes();
     while !bytes.is_empty() {
         let (valid, invalid) = match std::str::from_utf8(bytes) {
             Ok(text) => (text, 0),

@@ -45,6 +45,84 @@ fn poll(app: &mut App) {
 }
 
 #[test]
+fn closing_a_workspace_does_not_drop_an_outstanding_format_request() {
+    let (_dir, mut app, _server, _path) = fixture(true);
+    assert!(app.request_lsp_format(false, false));
+    assert!(app.lsp_format_pending);
+    let other = tempfile::tempdir().unwrap();
+    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    assert!(app.switch_workspace(0));
+    app.workspaces.request = Some(crate::app_workspaces::Request::Close);
+    app.poll_workspace_requests();
+    app.start_exit_recovery();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !app.exit_recovery.saved {
+        app.poll_background_results();
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    app.shutdown_anim_active = true;
+    app.advance_workspace_exit();
+    assert_eq!(app.workspace_entries().len(), 2, "pending formatting must complete or closing must be cancelled; it cannot be silently dropped");
+    assert!(app.lsp_format_pending);
+    assert!(app.save_error.is_some());
+}
+
+#[test]
+fn a_hidden_formatter_failure_sets_the_workspaces_attention_badge() {
+    let (_dir, mut app, server, _path) = fixture(true);
+    assert!(app.request_lsp_format(false, false));
+    let id = request(&server.take_messages(), "textDocument/formatting");
+    let other = tempfile::tempdir().unwrap();
+    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    server.respond(json!({"id":id, "error":{"code":-32603,"message":"formatter unavailable"}}));
+    app.service_workspaces_until(crate::ui_work::Service::LanguageServers, Instant::now() + Duration::from_millis(20), || true);
+    let hidden = &app.workspaces.parked[0].app;
+    assert!(hidden.formatting.error.as_ref().unwrap().contains("formatter unavailable"));
+    assert!(hidden.workspace_activity.attention);
+    assert_eq!(hidden.workspace_activity.unread, 1);
+    assert!(app.workspace_needs_attention());
+    assert_eq!(app.workspaces.active, 1);
+}
+
+#[test]
+fn a_parked_workspace_finishes_format_on_save_without_requesting_ui_features() {
+    let (_dir, mut app, server, path) = fixture(false);
+    app.editor_mut().unwrap().open_file(&path).unwrap();
+    app.editor_mut().unwrap().insert_char('A');
+    app.format_on_save = true;
+    app.trim_trailing_on_save = false;
+    app.insert_final_newline = false;
+    let text = app.editor().unwrap().rope.to_string();
+    app.save_current_file();
+    assert!(app.lsp_format_pending);
+    let other = tempfile::tempdir().unwrap();
+    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    server.queue_event(LspEvent::Initialized { capabilities: Box::new(Some(
+        serde_json::from_value(json!({"documentFormattingProvider":true,"textDocumentSync":1})).unwrap())) });
+    let service = |app: &mut App| {
+        for kind in [crate::ui_work::Service::Workers, crate::ui_work::Service::LanguageServers] {
+            app.service_workspaces_until(kind, Instant::now() + Duration::from_millis(20), || true);
+        }
+    };
+    service(&mut app);
+    let messages = server.take_messages();
+    server.respond(json!({"id":request(&messages,"textDocument/formatting"),"result":[]}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        service(&mut app);
+        let hidden = &app.workspaces.parked[0].app;
+        if hidden.pending_file_saves.is_empty() && !hidden.lsp_format_pending && !hidden.editor().unwrap().modified { break; }
+        assert!(Instant::now() < deadline, "hidden format/save did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    assert!(!app.workspaces.parked[0].app.workspace_visible);
+    assert!(!server.take_messages().iter().any(|message| matches!(message["method"].as_str(),
+        Some("textDocument/documentSymbol" | "textDocument/inlayHint" | "textDocument/semanticTokens/full"))));
+}
+
+#[test]
 fn repeated_save_joins_pending_document_formatting_instead_of_writing_unformatted_copies() {
     let (_dir, mut app, server, path) = fixture(false);
     app.editor_mut().unwrap().open_file(&path).unwrap();

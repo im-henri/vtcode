@@ -703,29 +703,63 @@ impl App {
 
     pub(crate) fn swap_tabs(&mut self, left: usize, right: usize) {
         let moving=self.tabs[left].editor.navigation_id;
+        self.animations.tab_reorder.borrow_mut().request(self.active_group, moving);
         let destination=self.desks.membership.get(&self.tabs[right].editor.navigation_id).copied();
         if let Some(group)=destination {self.desks.membership.insert(moving,group);self.tabs[left].preview=false;}
         else {self.desks.membership.remove(&moving);}
         self.tabs.swap(left, right);
         crate::tab_collection::swapped(&mut self.tab_mru_order, left, right);
+        if let Some(anchor) = &mut self.tab_scroll_manual_anchor {
+            crate::tab_collection::swapped(std::slice::from_mut(anchor), left, right);
+        }
+    }
+
+    /// Insert an existing view without disturbing the relative order of the
+    /// other tabs. Keep selection, recency, and manual scrolling on their views.
+    pub(crate) fn move_tab(&mut self, source: usize, target: usize) {
+        if source == target || source >= self.tabs.len() || target >= self.tabs.len() {
+            return;
+        }
+        let moving = self.tabs[source].editor.navigation_id;
+        self.animations.tab_reorder.borrow_mut().request(self.active_group, moving);
+        if let Some(&group) = self.desks.membership.get(&self.tabs[target].editor.navigation_id) {
+            self.desks.membership.insert(moving, group);
+        } else {
+            self.desks.membership.remove(&moving);
+        }
+        self.tabs[source].preview = false;
+        if source < target {
+            self.tabs[source..=target].rotate_left(1);
+        } else {
+            self.tabs[target..=source].rotate_right(1);
+        }
+        let remap = |index: usize| {
+            if index == source {
+                target
+            } else if source < target && index > source && index <= target {
+                index - 1
+            } else if source > target && index >= target && index < source {
+                index + 1
+            } else {
+                index
+            }
+        };
+        self.active_tab = remap(self.active_tab);
+        for index in &mut self.tab_mru_order {
+            *index = remap(*index);
+        }
+        self.tab_scroll_manual_anchor = self.tab_scroll_manual_anchor.map(remap);
     }
 
     /// A drop beyond the tab strip's contents leaves any named group. Move the
     /// existing view without swapping other tabs or changing their membership.
     pub(crate) fn move_tab_to_end(&mut self, index: usize) {
-        let Some(tab) = self.tabs.get_mut(index) else { return; };
-        self.desks.membership.remove(&tab.editor.navigation_id);
-        tab.preview = false;
+        let Some(tab) = self.tabs.get(index) else { return; };
+        let moving = tab.editor.navigation_id;
         let last = self.tabs.len() - 1;
-        self.tabs[index..].rotate_left(1);
-        let remap = |i: usize| {
-            if i == index { last } else { i - usize::from(i > index) }
-        };
-        self.active_tab = remap(self.active_tab);
-        for i in &mut self.tab_mru_order {
-            *i = remap(*i);
-        }
-        self.tab_scroll_manual_anchor = None;
+        self.move_tab(index, last);
+        self.desks.membership.remove(&moving);
+        self.tabs[last].preview = false;
         self.ensure_active_tab_visible();
     }
 
@@ -1145,7 +1179,6 @@ impl App {
         editor.file_size = source_file_size;
         editor.update_large_file_mode(self.large_file_threshold_mb.saturating_mul(1024 * 1024));
         editor.content_version = source_version;
-        editor.cached_visible_line_count = None;
         editor.scroll_offset = source_scroll;
         editor.wrap_scroll_offset = 0;
         editor.word_wrap = false;
@@ -1223,7 +1256,6 @@ impl App {
                         preview_tab.editor.large_file_mode = source_large_file_mode;
                         preview_tab.editor.rich_features_timed_out = source_timed_out;
                         preview_tab.editor.content_version = source_version;
-                        preview_tab.editor.cached_visible_line_count = None;
                         preview_tab.editor.modified = false;
                         preview_tab.editor.read_only = true;
                         changed = true;
@@ -1523,11 +1555,7 @@ impl App {
             self.refresh_source_control_async();
             self.refresh_git_branch_async();
             self.workspace_watcher_active = false;
-            if let Some(remote) = &self.remote_workspace {
-                let _ = remote.client.notify(crate::remote::Command::Watch);
-            } else {
-                self.background.start_file_watcher(path.to_path_buf());
-            }
+            self.start_workspace_watcher();
             if self.quick_open_active {
                 self.update_quick_open();
             }
@@ -1549,13 +1577,13 @@ impl App {
         } else if tab.kind == TabKind::CommitDetails {
             "Commit details".width()
         } else if tab.kind == TabKind::MarkdownPreview {
-            "Preview: ".width() + tab.editor.file_name().width()
+            "Preview: ".width() + tab.editor.file_display_name().width()
         } else if matches!(tab.kind, TabKind::Diff(_)) {
-            tab.editor.file_name().width() + " (Diff)".width()
+            tab.editor.file_display_name().width() + " (Diff)".width()
         } else if tab.kind == TabKind::File {
             tab.editor.display_name().width()
         } else {
-            tab.editor.file_name().width()
+            tab.editor.file_display_name().width()
         };
         let mod_len: usize = if tab.has_unsaved_changes() { 2 } else { 0 };
         let pin_len: usize = if tab.pinned { 4 } else { 0 };

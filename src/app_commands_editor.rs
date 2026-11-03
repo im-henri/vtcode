@@ -121,6 +121,12 @@ impl App {
                     }
                 }
             }
+            "fold_conditional" => {
+                if let Some(ed) = self.editor_mut() { ed.collapse_conditional(ed.cursor_line); }
+            }
+            "fold_conditional_branch" => {
+                if let Some(ed) = self.editor_mut() { ed.collapse_conditional_branch(ed.cursor_line); }
+            }
             "unfold" => {
                 if let Some(ed) = self.editor_mut() {
                     let line = ed.cursor_line;

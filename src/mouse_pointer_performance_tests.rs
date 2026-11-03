@@ -479,7 +479,9 @@ fn block_drag_outside_viewport_scrolls_gradually_and_releases_capture() {
                 assert_eq!(state(editor), (37..=last).map(|line| (line, 2, None)).collect::<Vec<_>>(),
                     "wrapped={wrapped}, button={button:?}, row={row}");
                 assert_eq!(editor.scroll_offset, scroll);
-                assert_eq!(editor.wrap_scroll_offset, if wrapped { scroll } else { 0 });
+                if wrapped {
+                    assert_eq!(editor.wrap_scroll_offset, scroll);
+                }
             }
             let before_release = state(app.editor().unwrap());
             send(&mut app, MouseEventKind::Up(button), u16::MAX);

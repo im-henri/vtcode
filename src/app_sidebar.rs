@@ -96,6 +96,7 @@ impl App {
             || self.resizing_split
             || self.resizing_diff_split
             || self.resizing_panel
+            || self.terminal_sidebar.dragging()
             || self.resizing_sc_graph
             || self.chat.resizing
     }

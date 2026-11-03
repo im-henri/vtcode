@@ -223,3 +223,216 @@ fn sticky_headers_occlude_fold_buttons_instead_of_leaving_invisible_click_target
     draw(&mut app, 100);
     assert_eq!(app.editor().unwrap().fold_buttons.hits.len(), 1);
 }
+
+const CONDITIONAL: &str = "#ifdef FEATURE\n    one();\n    two();\n#elif OTHER\n    other();\n    more();\n#else\n    fallback();\n    last();\n#endif\ntail();\n";
+
+fn conditional_fixture(wrap: bool) -> App {
+    let mut app = fixture("unused", wrap);
+    let mut editor = Editor::test_with_text(CONDITIONAL);
+    editor.file_path = Some("conditional.cpp".into());
+    editor.word_wrap = wrap;
+    editor.cursor_line = 10;
+    app.tabs = vec![Tab::new_file(editor)];
+    app
+}
+
+#[test]
+fn conditional_summaries_and_scope_controls_distinguish_branch_from_entire_tree() {
+    for wrap in [false, true] {
+        let mut app = conditional_fixture(wrap);
+        let editor = app.editor_mut().unwrap();
+        editor.selection_anchor = Some((10, 2));
+        editor.cursor_col = 4;
+        editor.toggle_fold(0);
+        let source = editor.rope.clone();
+        let branch = draw(&mut app, 130);
+        let primary = app.editor().unwrap().fold_buttons.hits[0].0;
+        let label = text(&branch, primary);
+        assert!(label.contains("Branch only"), "{label}");
+        assert!(label.contains("2 lines → #elif"), "{label}");
+        assert!(!app.editor().unwrap().is_line_folded(3));
+        assert!(!app.editor().unwrap().is_line_folded(4));
+        assert!(!app.editor().unwrap().is_line_folded(6));
+        let (button, _, _, action) = app.editor().unwrap().fold_buttons.scope_hits[0];
+        assert_eq!(action, ScopeAction::EntireConditional);
+        assert!(text(&branch, button).contains("Fold all 3 branches"));
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), button.x + 1, button.y);
+        let all = draw(&mut app, 130);
+        let primary = app.editor().unwrap().fold_buttons.hits[0].0;
+        let label = text(&all, primary);
+        assert!(label.contains("All 3 branches"), "{label}");
+        assert!(label.contains("8 lines → #endif"), "{label}");
+        assert_eq!(app.editor().unwrap().visible_lines(0, 3), [0, 9, 10]);
+        let (button, _, _, action) = app.editor().unwrap().fold_buttons.scope_hits[0];
+        assert_eq!(action, ScopeAction::BranchOnly);
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), button.x + 1, button.y);
+        let editor = app.editor().unwrap();
+        assert_eq!(editor.folded_ranges.get(&0), Some(&3));
+        assert!(!editor.is_line_folded(4));
+        assert!(!editor.is_line_folded(7));
+        assert_eq!(editor.rope, source);
+        assert_eq!((editor.cursor_line, editor.cursor_col), (10, 4));
+        assert_eq!(editor.selection_anchor, Some((10, 2)));
+        assert!(!editor.can_undo());
+    }
+}
+
+#[test]
+fn gutter_folding_keeps_alternatives_visible_and_explains_scope_before_clicking() {
+    for wrap in [false, true] {
+        let mut app = conditional_fixture(wrap);
+        draw(&mut app, 110);
+        let gutter = app.gutter_area.unwrap();
+        let (x, y) = (gutter.right() - 1, gutter.y);
+        mouse(&mut app, MouseEventKind::Moved, x, y);
+        let hint = hover_text(&mut app).unwrap().join(" ");
+        assert!(hint.contains("Fold this branch only"), "{hint}");
+        assert!(hint.contains("#elif on line 4 stays visible"), "{hint}");
+        assert!(app.mouse_hover_changed);
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+        assert_eq!(app.editor().unwrap().folded_ranges.get(&0), Some(&3));
+        assert!(!app.editor().unwrap().is_line_folded(6));
+        let buffer = draw(&mut app, 110);
+        let code = app.code_area.unwrap();
+        assert!(text(&buffer, Rect::new(code.x, code.y + 1, code.width, 1)).contains("#elif OTHER"));
+    }
+}
+
+#[test]
+fn narrow_conditional_badges_keep_the_scope_and_expose_full_details_on_hover() {
+    for width in [130, 70, 45, 25, 15] {
+        for wrap in [false, true] {
+            let mut app = conditional_fixture(wrap);
+            app.editor_mut().unwrap().toggle_fold(0);
+            let branch = draw(&mut app, width);
+            let button = app.editor().unwrap().fold_buttons.hits[0].0;
+            let branch_label = text(&branch, button);
+            assert!(branch_label.contains("Branch") || branch_label == "B", "width={width}, label={branch_label}");
+            mouse(&mut app, MouseEventKind::Moved, button.x, button.y);
+            let hint = hover_text(&mut app).unwrap().join(" ");
+            assert!(hint.contains("This branch only"));
+            assert!(hint.contains("#elif on line 4"));
+            app.editor_mut().unwrap().collapse_conditional(0);
+            let all = draw(&mut app, width);
+            let button = app.editor().unwrap().fold_buttons.hits[0].0;
+            let all_label = text(&all, button);
+            assert!(all_label.contains("All") || all_label == "A", "width={width}, label={all_label}");
+            assert_ne!(branch_label, all_label);
+            mouse(&mut app, MouseEventKind::Moved, button.x, button.y);
+            let hint = hover_text(&mut app).unwrap().join(" ");
+            assert!(hint.contains("all 3 branches"), "{hint}");
+            assert!(hint.contains("#elif, #else"), "{hint}");
+            assert!(hint.contains("line 10"), "{hint}");
+        }
+    }
+}
+
+#[test]
+fn scope_button_hover_changes_and_stale_clicks_are_handled_without_editing_source() {
+    let mut app = conditional_fixture(false);
+    app.editor_mut().unwrap().toggle_fold(0);
+    draw(&mut app, 130);
+    let primary = app.editor().unwrap().fold_buttons.hits[0].0;
+    let secondary = app.editor().unwrap().fold_buttons.scope_hits[0].0;
+    mouse(&mut app, MouseEventKind::Moved, primary.x, primary.y);
+    mouse(&mut app, MouseEventKind::Moved, secondary.x, secondary.y);
+    assert!(app.mouse_hover_changed);
+    let hint = hover_text(&mut app).unwrap().join(" ");
+    assert!(hint.contains("entire conditional: all 3 branches"), "{hint}");
+    assert!(app.hovered_editor_pos.is_none());
+    app.editor_mut().unwrap().insert_char('x');
+    assert!(!click(&mut app, secondary.x, secondary.y));
+}
+
+#[test]
+fn conditional_context_menu_offers_named_scopes_on_headers_gutter_and_bodies() {
+    for gutter in [false, true] {
+        let mut app = conditional_fixture(false);
+        draw(&mut app, 130);
+        let code = app.code_area.unwrap();
+        let x = if gutter { app.gutter_area.unwrap().right() - 1 } else { code.x + 2 };
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Right), x, code.y);
+        assert!(app.context_menu_active);
+        assert_eq!(app.context_menu_items[0].id, "fold_conditional_branch");
+        assert!(app.context_menu_items[0].label.contains("to #elif"));
+        let index = app.context_menu_items.iter().position(|item| item.id == "fold_conditional").unwrap();
+        assert!(app.context_menu_items[index].label.contains("3 branches"));
+        app.context_menu_selected = index;
+        crate::input_pickers::handle_context_menu_key(&mut app, crossterm::event::KeyCode::Enter);
+        assert_eq!(app.editor().unwrap().folded_ranges.get(&0), Some(&9));
+        assert!(!app.editor().unwrap().is_line_folded(9));
+    }
+    let mut app = conditional_fixture(false);
+    app.editor_mut().unwrap().cursor_line = 7;
+    app.context_menu_items = App::build_context_menu();
+    add_context_actions(&mut app);
+    app.execute_palette_command("fold_conditional_branch");
+    assert_eq!(app.editor().unwrap().folded_ranges.get(&6), Some(&9));
+}
+
+#[test]
+fn restored_whole_conditionals_are_labeled_explicitly_and_can_switch_to_one_branch() {
+    let mut app = conditional_fixture(false);
+    // Older provider ranges sometimes include #endif itself.
+    app.editor_mut().unwrap().folded_ranges.insert(0, 10);
+    let buffer = draw(&mut app, 130);
+    let button = app.editor().unwrap().fold_buttons.hits[0].0;
+    assert!(text(&buffer, button).contains("All 3 branches"));
+    app.execute_palette_command("fold_conditional_branch");
+    // The caret was in tail(), so select the folded header as a keyboard user.
+    app.editor_mut().unwrap().cursor_line = 0;
+    app.execute_palette_command("fold_conditional_branch");
+    assert_eq!(app.editor().unwrap().folded_ranges.get(&0), Some(&3));
+    assert!(!app.editor().unwrap().is_line_folded(9));
+}
+
+#[test]
+fn conditional_fold_preview_frames_show_expanded_branch_and_whole_states() {
+    for (name, theme) in [("dark", crate::app_theme::EditorTheme::Dark), ("light", crate::app_theme::EditorTheme::Light)] {
+        let mut app = conditional_fixture(false);
+        app.colors = theme.colors();
+        for state in ["expanded", "branch", "whole"] {
+            match state {
+                "branch" => app.editor_mut().unwrap().toggle_fold(0),
+                "whole" => { app.editor_mut().unwrap().collapse_conditional(0); }
+                _ => {}
+            }
+            let buffer = draw(&mut app, 110);
+            if std::env::var_os("VTCODE_CONDITIONAL_PREVIEW").is_some() {
+                let rgb = |color| match color { ratatui::style::Color::Rgb(r,g,b) => [r,g,b], _ => [128,128,128] };
+                let cells: Vec<_> = buffer.content.iter().map(|cell| serde_json::json!({
+                    "text": cell.symbol(), "fg": rgb(cell.fg), "bg": rgb(cell.bg),
+                    "bold": cell.modifier.contains(Modifier::BOLD),
+                })).collect();
+                std::fs::write(format!("target/conditional-fold-{name}-{state}.json"), serde_json::to_vec(&serde_json::json!({
+                    "width": 110, "height": 12, "cells": cells,
+                })).unwrap()).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_wrapped_gutter_actions_target_the_visible_conditional_branch_after_scrolling() {
+    for wrap in [false, true] {
+        let mut app = conditional_fixture(wrap);
+        let mut editor = Editor::test_with_text(&format!("{CONDITIONAL}{}", "tail();\n".repeat(5000)));
+        editor.file_path = Some("conditional.cpp".into());
+        editor.word_wrap = wrap;
+        editor.toggle_fold(0);
+        app.tabs = vec![Tab::new_file(editor)];
+        draw(&mut app, 110);
+        app.editor_mut().unwrap().scroll_down(2);
+        let buffer = draw(&mut app, 110);
+        let code = app.code_area.unwrap();
+        let gutter = app.gutter_area.unwrap();
+        let y = code.y + 2;
+        assert!(text(&buffer, Rect::new(code.x, y, code.width, 1)).contains("#else"));
+        mouse(&mut app, MouseEventKind::Moved, gutter.right() - 1, y);
+        assert_eq!(app.hovered_gutter_line, Some(6));
+        let hint = hover_text(&mut app).unwrap().join(" ");
+        assert!(hint.contains("#endif on line 10 stays visible"), "{hint}");
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), gutter.right() - 1, y);
+        assert_eq!(app.editor().unwrap().folded_ranges.get(&6), Some(&9));
+    }
+}

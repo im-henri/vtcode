@@ -49,3 +49,14 @@ default open-event behavior is tested separately.
 Upstream references:
 - https://github.com/notify-rs/notify/blob/main/notify/src/config.rs
 - https://github.com/notify-rs/notify/blob/main/notify/CHANGELOG.md
+
+Windows now reports failed asynchronous directory reads instead of silently
+retaining stale watch coverage after root deletion or network failure. Fatal
+completion errors report once and stop reading that handle. Successful empty
+completions report overflow with `Flag::Rescan`. Intentional cancellation stays
+silent. VTCode's native and headless hidden-root replacement regressions cover
+rearming these subscriptions without rescanning unchanged workspace visits.
+
+Windows API contract:
+- https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw
+- https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/nc-minwinbase-lpoverlapped_completion_routine

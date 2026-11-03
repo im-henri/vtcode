@@ -511,6 +511,7 @@ impl App {
     /// Only displayed panes may perform I/O; hidden tabs keep their dirty bits.
     pub(crate) fn refresh_dirty_source_control_diffs(&mut self) {
         if self.rendering_inactive_editor || !self.source_control_enabled || self.diff_tabs.refresh_running || self.diff_tabs.dirty.is_empty() { return; }
+        if !self.workspace_visible { return; }
         let mut requests = Vec::new();
         let mut add = |tab: Option<&Tab>| {
             if let Some(tab) = tab {
@@ -1069,7 +1070,7 @@ impl App {
         self.compare_base_content = Some(history.diff.base_content);
         self.diff_labels = Some(DiffLabels::new(history.before_label, history.after_label));
         self.diff_target_path = Some(history.file_path.clone());
-        self.diff_tab_label = Some(format!("{} ({} · {})", history.file_path.file_name().unwrap_or_default().to_string_lossy(),
+        self.diff_tab_label = Some(format!("{} ({} · {})", self.tabs[self.active_tab].editor.file_display_name(),
             history.hash.chars().take(7).collect::<String>(), history.summary));
         self.diff_mode = self.preferred_diff_mode;
         self.apply_prepared_compare_diff(history.diff.diff_lines, history.diff.render_cache, history.diff.target_line_markers);
@@ -1103,7 +1104,7 @@ impl App {
         self.compare_diff_base_revision = Some(DiffBaseRevision::Snapshot);
         self.diff_labels = Some(DiffLabels::new("Before agent edit", "Agent result"));
         self.diff_target_path = Some(diff.path.clone());
-        self.diff_tab_label = Some(format!("{} (Agent diff)", diff.path.file_name().unwrap_or_default().to_string_lossy()));
+        self.diff_tab_label = Some(format!("{} (Agent diff)", self.tabs[self.active_tab].editor.file_display_name()));
         self.diff_mode = self.preferred_diff_mode;
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;

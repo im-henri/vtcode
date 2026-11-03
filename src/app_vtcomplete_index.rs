@@ -71,6 +71,7 @@ impl App {
     /// Called on real event-loop turns. There is no index-specific idle poll.
     /// The worker wakes the UI only when its published status changes.
     pub(crate) fn poll_completion_index(&mut self) -> bool {
+        if !self.workspace_visible { return false; }
         if self.completion_index_sync.settings.is_none() {
             self.completion_index
                 .set_activity(self.vtcomplete_worker.activity().clone());
@@ -356,6 +357,7 @@ impl App {
     }
 
     pub(crate) fn completion_index_next_wait(&self) -> Option<Duration> {
+        if !self.workspace_visible { return None; }
         if let Some(due) = self.completion_index_sync.next_due {
             return Some(due.saturating_duration_since(Instant::now()));
         }

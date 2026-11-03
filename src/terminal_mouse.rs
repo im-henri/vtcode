@@ -1,7 +1,21 @@
 use super::TermGrid;
-use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 impl TermGrid {
+    /// Xterm's alternate-scroll mode (1007) lets full-screen programs without
+    /// mouse reporting receive wheel input as cursor keys. The caller uses
+    /// the ordinary keyboard encoder, including ConPTY's Win32 input mode.
+    pub(crate) fn alternate_scroll_key(&self, kind: MouseEventKind) -> Option<KeyCode> {
+        if !self.alternate_scroll || !self.is_alt_screen() || self.mouse_tracking != 0 {
+            return None;
+        }
+        match kind {
+            MouseEventKind::ScrollUp => Some(KeyCode::Up),
+            MouseEventKind::ScrollDown => Some(KeyCode::Down),
+            _ => None,
+        }
+    }
+
     /// Encode a mouse event whose coordinates are relative to this terminal.
     pub(crate) fn mouse_sequence(&self, event: MouseEvent) -> Option<Vec<u8>> {
         if self.mouse_tracking == 0 {

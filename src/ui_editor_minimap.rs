@@ -221,7 +221,9 @@ pub(crate) fn scrollbar_change_rows_indexed(
         return ChangeRows::default();
     }
     let total_lines = editor.line_count().max(1);
-    ChangeRows::project(height, total_lines, |start, end| {
+    ChangeRows::project(height, editor.overview_total_rows(), |start, end| {
+        let start = editor.overview_source_boundary(start);
+        let end = editor.overview_source_boundary(end);
         if !compare && editor.has_unsaved_change_in_range(start, end) {
             Some('N')
         } else {
@@ -476,14 +478,15 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
     } = p;
     let height = area.height as usize;
     let width = area.width as usize;
-    let total_lines = editor.rope.len_lines();
+    let total_lines = editor.line_count();
+    let visible_total = editor.visible_line_count();
     if height == 0 || total_lines == 0 {
         return;
     }
 
     let layout = MinimapLayout::new(
-        total_lines,
-        scroll,
+        visible_total,
+        editor.visible_row_for_line(scroll),
         visible_lines,
         height,
         editor.scroll_past_end,
@@ -505,9 +508,9 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         colors.ui.bg_minimap_slider
     };
     for row in 0..height {
-        let (source_line, row_end_line) = minimap_source_range(window, row, height);
-        let source_line = source_line.min(total_lines);
-        let row_end_line = row_end_line.min(total_lines);
+        let (source_row, end_row) = minimap_source_range(window, row, height);
+        let source_line = editor.line_for_visible_row(source_row.min(visible_total));
+        let row_end_line = editor.line_for_visible_row(end_row.min(visible_total));
         let in_viewport = row >= view_start_row && row < view_end_row;
         let has_search_match = has_search_match_in_range(search_matches, source_line, row_end_line);
         let has_bookmark = editor
@@ -642,8 +645,13 @@ pub(crate) struct ScrollbarParams<'a> {
     pub(crate) active: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn draw_scrollbar(f: &mut Frame, p: ScrollbarParams) {
-    draw_scrollbar_with_mapping(f, p, None);
+    draw_scrollbar_with_mapping(f, p, None, None);
+}
+
+pub(crate) fn draw_editor_scrollbar(f: &mut Frame, p: ScrollbarParams, editor: &crate::editor::Editor) {
+    draw_scrollbar_with_mapping(f, p, None, Some(editor));
 }
 
 /// Query original source indexes without projecting every provider item into
@@ -655,13 +663,14 @@ pub(crate) fn draw_mapped_scrollbar(
     p: ScrollbarParams,
     source_to_display: &[usize],
 ) {
-    draw_scrollbar_with_mapping(f, p, Some(source_to_display));
+    draw_scrollbar_with_mapping(f, p, Some(source_to_display), None);
 }
 
 fn draw_scrollbar_with_mapping(
     f: &mut Frame,
     p: ScrollbarParams,
     source_to_display: Option<&[usize]>,
+    editor: Option<&crate::editor::Editor>,
 ) {
     let ScrollbarParams {
         area,
@@ -697,7 +706,7 @@ fn draw_scrollbar_with_mapping(
     let thumb_size = thumb_size.min(height);
     let max_scroll = total_lines.saturating_sub(visible_lines);
     let thumb_pos = if max_scroll > 0 {
-        ((scroll as f64 / max_scroll as f64) * (height - thumb_size) as f64) as usize
+        ((scroll.min(max_scroll) as f64 / max_scroll as f64) * (height - thumb_size) as f64) as usize
     } else {
         0
     };
@@ -714,7 +723,9 @@ fn draw_scrollbar_with_mapping(
             .min(total_lines);
         let in_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
         let (query_start, query_end) =
-            source_to_display.map_or((source_start, source_end), |mapping| {
+            source_to_display.map_or_else(|| editor.map_or((source_start, source_end), |editor| {
+                (editor.overview_source_boundary(source_start), editor.overview_source_boundary(source_end))
+            }), |mapping| {
                 (
                     mapping.partition_point(|&row| row < source_start),
                     mapping.partition_point(|&row| row < source_end),

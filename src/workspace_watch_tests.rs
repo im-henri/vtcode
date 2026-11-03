@@ -2,6 +2,46 @@ use super::*;
 use notify::{Event, EventKind, event::{DataChange, ModifyKind}};
 
 #[test]
+fn filename_invalidation_reports_new_events_independently_of_the_buffered_burst() {
+    let root = Path::new("workspace");
+    let mut burst = Burst::default();
+    let create = Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(root.join("new.rs"));
+    assert!(burst.push_with_dependencies(root, Ok(create), &[]));
+    let data = |path| Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(path));
+    assert!(!burst.push_with_dependencies(root, data(root.join("new.rs")), &[]));
+    assert!(!burst.push_with_dependencies(root, data(root.join(".git/objects/object")), &[]));
+    assert!(!burst.push_with_dependencies(root, data(root.join(".git/HEAD")), &[]));
+    assert!(burst.push_with_dependencies(root, data(root.join(".gitignore")), &[]));
+    assert!(burst.push_with_dependencies(root, data(root.join(".git/info/exclude")), &[]));
+    let outside = PathBuf::from("metadata");
+    assert!(!burst.push_with_dependencies(root, data(outside.join("HEAD")), &[outside.clone()]));
+    assert!(burst.push_with_dependencies(root, data(outside.join("info/exclude")), &[outside]));
+    // A recorded overflow must not turn unrelated subsequent events into new
+    // invalidations every time an agent asks for its already-rebuilt file list.
+    burst.event.rescan = true;
+    assert!(!burst.push_with_dependencies(root, data(root.join(".git/objects/another")), &[]));
+}
+
+#[test]
+fn replacing_or_removing_git_ignore_rules_invalidates_agent_file_lists() {
+    use notify::event::{CreateKind, RemoveKind, RenameMode};
+    let root = Path::new("workspace");
+    let outside = PathBuf::from("metadata");
+    for kind in [EventKind::Create(CreateKind::File), EventKind::Remove(RemoveKind::File),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both))] {
+        for path in [root.join(".git/info/exclude"), root.join(".git/config"),
+            outside.join("info/exclude"), outside.join("config")] {
+            let mut burst = Burst::default();
+            assert!(burst.push_with_dependencies(root, Ok(Event::new(kind).add_path(path.clone())),
+                std::slice::from_ref(&outside)), "{kind:?}: {path:?}");
+        }
+        let mut burst = Burst::default();
+        assert!(!burst.push_with_dependencies(root,
+            Ok(Event::new(kind).add_path(root.join(".git/HEAD"))), &[]));
+    }
+}
+
+#[test]
 fn private_git_storage_is_pruned_without_excluding_project_directory_names() {
     let root = Path::new("workspace");
     for path in ["build/generated", "target/debug", "node_modules/package", ".cache/data",

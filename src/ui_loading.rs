@@ -164,7 +164,7 @@ pub(crate) fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         SidebarView::Search => app.bg_global_search_running || app.bg_global_replace_running,
         SidebarView::SourceControl => {
             app.source_control_enabled
-                && (app.bg_git_status_running
+                && ((app.bg_git_status_running && !app.bg_git_status_passive)
                     || app.bg_git_action_running
                     || app.bg_git_remote_running
                     || app.bg_git_log_running

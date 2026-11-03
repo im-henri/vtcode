@@ -10,6 +10,10 @@ impl App {
     ) -> bool {
         let mut has_visual_changes = false;
         if root != self.explorer.root { return false; }
+        if !self.workspace_visible {
+            self.workspace_observation.pending.merge(changes, structure_changed, rescan, git_metadata_changed);
+            return false;
+        }
         self.completion_index_files_changed(&changes, rescan);
         if rescan || (structure_changed && changes.iter().any(|change| change.path.file_name().is_some_and(|name| name == ".git"))) {
             self.repositories.rescan = true;
@@ -42,12 +46,10 @@ impl App {
                 .chain(self.groups.iter().flat_map(|group| &group.tabs))
                 .filter(|tab| tab.kind == TabKind::File)
                 .filter_map(|tab| tab.editor.file_path.clone()).collect();
-            if self.remote_workspace.is_some() {
-                // Overflow means path-level events were lost. Check
-                // bytes for open models; metadata alone can miss a
-                // replacement which retained its size and mtime.
-                for path in paths { self.queue_remote_file_change(path); }
-            } else { self.queue_file_disk_checks(paths); }
+            // Overflow or a paused subscription loses path-level events.
+            // Compare saved bytes on both native and remote filesystems;
+            // replacements may retain their original size and timestamp.
+            for path in paths { self.queue_workspace_file_check(path); }
         } else if !changes.is_empty() {
             self.refresh_explorer_changed_path_states(
                 changes.iter().map(|change| (change.path.as_path(), Some(change.is_dir))),
@@ -59,16 +61,12 @@ impl App {
             // ignored decorations, without changing directory lists.
             self.refresh_explorer_tree_async();
         }
-        if git_metadata_changed {
-            if rescan { self.refresh_source_control_async(); }
-            else { self.refresh_source_control_git_changed_paths(changes.iter().map(|change| change.path.clone())); }
-        } else {
-            self.refresh_source_control_changed_paths(changes.iter().map(|change| change.path.clone()));
-        }
-        if git_metadata_changed {
-            self.refresh_git_log_async();
-            self.refresh_git_branch_async();
-        }
+        // Overflow loses worktree paths as well as Git metadata events. A
+        // metadata-only invalidation would keep stale bytes in open diff tabs.
+        if rescan { self.refresh_source_control_diffs_for_paths(None); }
+        self.refresh_source_control_from_watcher(
+            changes.iter().map(|change| change.path.clone()).collect(), git_metadata_changed,
+        );
         if blame_inputs_changed {
             self.blame_requested_path = None;
             self.blame_documents.retain(|_, document| document.revision.is_some());
@@ -89,6 +87,7 @@ impl App {
         let mut deleted_names: Vec<String> = Vec::new();
         let mut changed_unsaved = rustc_hash::FxHashSet::default();
         let mut reload_paths = rustc_hash::FxHashSet::default();
+        let mut validate_paths = rustc_hash::FxHashSet::default();
         let mut compare_base_changed = false;
         let mut native_changes = rustc_hash::FxHashMap::default();
         let native_documents = self.remote_workspace.is_none()
@@ -169,6 +168,10 @@ impl App {
                     tab.editor.publish_document();
                     if tab.editor.modified { changed_unsaved.insert(change.path.clone()); }
                     else { reload_paths.insert(change.path.clone()); }
+                } else {
+                    // A replacement can preserve both size and mtime. The
+                    // precise event warrants checking this file, not all tabs.
+                    validate_paths.insert(change.path.clone());
                 }
             }
         }
@@ -181,16 +184,14 @@ impl App {
         for path in reload_paths {
             self.queue_file_reload(path);
         }
+        for path in validate_paths { self.queue_workspace_file_check(path); }
         for path in structural_descendants {
             // A directory can be atomically replaced by another
             // tree (or a regular file) without child-level events.
-            if crate::remote::workspace::is_view_key(&path) { self.queue_remote_file_change(path); }
-            else { self.queue_file_disk_checks(std::iter::once(path)); }
+            self.queue_workspace_file_check(path);
         }
         for path in changed_unsaved {
-            self.status_message = format!("{} changed on disk; your unsaved edits are preserved.", path.display());
-            self.notify_warn(self.status_message.clone());
-            has_visual_changes = true;
+            has_visual_changes |= self.warn_file_changed_on_disk(&path);
         }
 
         // Deduplicate notifications when a file is open in multiple groups.

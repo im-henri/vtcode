@@ -1273,19 +1273,36 @@ pub struct KeyBinding {
     pub code: KeyCode,
     pub default_modifiers: KeyModifiers,
     pub default_code: KeyCode,
+    pub chord: Option<(KeyModifiers, KeyCode)>,
+    pub default_chord: Option<(KeyModifiers, KeyCode)>,
+    pub built_in_handler: bool,
+    pub editor_only: bool,
 }
 
 impl KeyBinding {
     pub(crate) fn display(&self) -> String {
-        if self.code == KeyCode::Null {
+        let first = self.display_first();
+        self.chord.map_or(first.clone(), |(modifiers, code)| {
+            format!("{first}, {}", crate::app_shortcuts::display_stroke(modifiers, code))
+        })
+    }
+
+    fn display_first(&self) -> String {
+        let (modifiers, code) = crate::app_shortcuts::normalize((self.modifiers, self.code));
+        if code == KeyCode::Null {
             return "Unassigned".into();
         }
         let mut parts = Vec::new();
-        if self.modifiers.contains(KeyModifiers::CONTROL) { parts.push("Ctrl"); }
-        if self.modifiers.contains(KeyModifiers::ALT) { parts.push("Alt"); }
-        if self.modifiers.contains(KeyModifiers::SHIFT) { parts.push("Shift"); }
-        let key_name = match self.code {
-            KeyCode::Char(c) => c.to_uppercase().to_string(),
+        if modifiers.contains(KeyModifiers::CONTROL) { parts.push("Ctrl"); }
+        if modifiers.contains(KeyModifiers::ALT) { parts.push("Alt"); }
+        if modifiers.contains(KeyModifiers::SHIFT) { parts.push("Shift"); }
+        if modifiers.contains(KeyModifiers::SUPER) { parts.push("Super"); }
+        if modifiers.contains(KeyModifiers::HYPER) { parts.push("Hyper"); }
+        if modifiers.contains(KeyModifiers::META) { parts.push("Meta"); }
+        let key_name = match code {
+            KeyCode::Char(' ') => "Space".into(),
+            KeyCode::Char('+') => "Plus".into(),
+            KeyCode::Char(c) => if c.is_ascii_alphabetic() { c.to_ascii_uppercase().to_string() } else { c.to_string() },
             KeyCode::F(n) => format!("F{n}"),
             KeyCode::Enter => "Enter".into(),
             KeyCode::Esc => "Esc".into(),
@@ -1293,6 +1310,7 @@ impl KeyBinding {
             KeyCode::BackTab => "BackTab".into(),
             KeyCode::Backspace => "Backspace".into(),
             KeyCode::Delete => "Delete".into(),
+            KeyCode::Insert => "Insert".into(),
             KeyCode::Up => "Up".into(),
             KeyCode::Down => "Down".into(),
             KeyCode::Left => "Left".into(),
@@ -1308,12 +1326,20 @@ impl KeyBinding {
     }
 
     pub(crate) fn is_modified(&self) -> bool {
-        self.modifiers != self.default_modifiers || self.code != self.default_code
+        crate::app_shortcuts::normalize((self.modifiers, self.code)) != crate::app_shortcuts::normalize((self.default_modifiers, self.default_code))
+            || self.chord.map(crate::app_shortcuts::normalize) != self.default_chord.map(crate::app_shortcuts::normalize)
     }
 
     pub(crate) fn reset(&mut self) {
         self.modifiers = self.default_modifiers;
         self.code = self.default_code;
+        self.chord = self.default_chord;
+    }
+
+    pub(crate) fn assign(&mut self, modifiers: KeyModifiers, code: KeyCode, chord: Option<(KeyModifiers, KeyCode)>) {
+        self.modifiers = modifiers;
+        self.code = code;
+        self.chord = if code == KeyCode::Null { None } else { chord };
     }
 }
 
@@ -1322,8 +1348,9 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         id, label, modifiers, code,
         default_modifiers: modifiers,
         default_code: code,
+        chord: None, default_chord: None, built_in_handler: false, editor_only: false,
     };
-    vec![
+    let mut bindings = vec![
         make("save", "Save File", KeyModifiers::CONTROL, KeyCode::Char('s')),
         make("find", "Find", KeyModifiers::CONTROL, KeyCode::Char('f')),
         make("find_replace", "Find & Replace", KeyModifiers::CONTROL, KeyCode::Char('h')),
@@ -1384,7 +1411,11 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         make("prev_tab", "Previous Tab", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Tab),
         make("next_tab_page", "Next Tab", KeyModifiers::CONTROL, KeyCode::PageDown),
         make("prev_tab_page", "Previous Tab", KeyModifiers::CONTROL, KeyCode::PageUp),
-    ]
+        make("workspace_next", "Next Workspace", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageDown),
+        make("workspace_previous", "Previous Workspace", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageUp),
+    ];
+    crate::app_shortcuts::append_builtins(&mut bindings);
+    bindings
 }
 
 use fuzzy_matcher::FuzzyMatcher;

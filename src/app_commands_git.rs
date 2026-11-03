@@ -3,6 +3,14 @@ use crate::app::App;
 impl App {
     /// Dispatch git-related commands.
     pub(crate) fn execute_git_command(&mut self, id: &str) -> bool {
+        match id {
+            "git_rebase" => { self.start_git_operation_dialog(crate::git_operation::Kind::Rebase); return true; }
+            "git_cherry_pick" => { self.start_git_operation_dialog(crate::git_operation::Kind::CherryPick); return true; }
+            "git_operation_continue" => { self.continue_git_operation(); return true; }
+            "git_operation_skip" => { self.confirm_git_operation_action(crate::ui_git_operation::Choice::Skip); return true; }
+            "git_operation_abort" => { self.confirm_git_operation_action(crate::ui_git_operation::Choice::Abort); return true; }
+            _ => {}
+        }
         if let Some(action) = id.strip_prefix("merge_conflict_") {
             self.merge_action(action, None);
             return true;

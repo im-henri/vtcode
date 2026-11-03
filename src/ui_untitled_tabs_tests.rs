@@ -11,6 +11,7 @@ fn contents(buffer: &Buffer) -> String {
 fn untitled_names_update_rendering_and_mouse_targets_in_plain_and_grouped_tab_bars() {
     for grouped in [false, true] {
         let mut app = App::test_new();
+        app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, false);
         let mut neighbor = Editor::test_with_text("saved\n");
         neighbor.file_path = Some("neighbor.rs".into());
         app.tabs = vec![Tab::new_file(Editor::new()), Tab::new_file(neighbor)];

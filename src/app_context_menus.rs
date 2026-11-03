@@ -240,6 +240,8 @@ impl App {
                 ("Pull", "git_pull", false),
                 ("Push", "git_push", true),
                 ("Switch / Create Branch…", "git_checkout", true),
+                ("Rebase Current Branch…", "git_rebase", false),
+                ("Cherry-pick Commit…", "git_cherry_pick", true),
                 (if self.sc_visibility.untracked { "✓ Show untracked files" } else { "  Show untracked files" },
                     "git_show_untracked", true),
                 ("Disable Source Control", "source_control_toggle", false),
@@ -251,6 +253,13 @@ impl App {
                 id: "source_control_toggle", separator_after: false }]
         };
         if self.source_control_enabled && self.source_control_action_menu_items() {
+            if let Some(operation) = self.current_git_operation() {
+                let label = operation.kind.continue_label();
+                let actions = [(label, "git_operation_continue"), ("Skip Current Commit…", "git_operation_skip"), ("Abort Operation…", "git_operation_abort")];
+                for (index, (label, id)) in actions.into_iter().enumerate() {
+                    self.context_menu_items.insert(index, ContextMenuItem { label: label.into(), shortcut: String::new(), id, separator_after: index == 2 });
+                }
+            }
             let mut index = self.context_menu_items.len().saturating_sub(1);
             let mut add = |label: &str, id: &'static str| {
                 self.context_menu_items.insert(index, ContextMenuItem {
@@ -295,8 +304,13 @@ impl App {
     }
 
     pub(crate) fn source_control_menu_command_disabled(&self, id: &str) -> bool {
+        if self.source_control_action_menu_items() {
+            if id == "git_operation_continue" { return self.current_git_operation().is_none() || self.git_operation_blocker().is_some(); }
+            if matches!(id, "git_rebase" | "git_cherry_pick" | "git_checkout" | "git_pull" | "git_push")
+                && self.current_git_operation().is_some() { return true; }
+        }
         self.source_control_action_menu_items()
-            && matches!(id, "git_fetch" | "git_pull" | "git_push" | "git_checkout")
+            && matches!(id, "git_fetch" | "git_pull" | "git_push" | "git_checkout" | "git_rebase" | "git_cherry_pick" | "git_operation_skip" | "git_operation_abort")
             && (self.source_control_repository_state != crate::app::SourceControlRepositoryState::Available
                 || self.bg_git_remote_running || self.bg_git_action_running)
     }
@@ -672,11 +686,13 @@ mod tests {
         let mut app = make_app();
         app.open_source_control_action_menu(5, 5);
         assert!(app.source_control_action_menu_open());
-        assert_eq!(app.context_menu_items.len(), 7);
+        assert_eq!(app.context_menu_items.len(), 9);
         assert_eq!(app.context_menu_items[0].id, "git_refresh");
         assert_eq!(app.context_menu_items[4].id, "git_checkout");
-        assert_eq!(app.context_menu_items[5].id, "git_show_untracked");
-        assert_eq!(app.context_menu_items[6].id, "source_control_toggle");
+        assert_eq!(app.context_menu_items[5].id, "git_rebase");
+        assert_eq!(app.context_menu_items[6].id, "git_cherry_pick");
+        assert_eq!(app.context_menu_items[7].id, "git_show_untracked");
+        assert_eq!(app.context_menu_items[8].id, "source_control_toggle");
     }
 
     // --- source_control_context_menu_items ---

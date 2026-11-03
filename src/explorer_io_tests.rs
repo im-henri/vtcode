@@ -92,7 +92,10 @@ fn compiler_style_burst_updates_closed_directory_without_rebuilding_the_explorer
     assert!(!app.bg_explorer_refresh_running && !app.bg_explorer_refresh_pending);
     assert_eq!(app.explorer.directory_cache.read_count(), reads);
     assert!(!app.repositories.rescan, "build output must not rediscover repositories");
-    assert_eq!(app.pending_git_status_paths.as_ref().unwrap().iter().collect::<Vec<_>>(), vec![&output]);
+    assert!(app.pending_git_status_paths.is_none(), "watcher work stays coalesced while Git is busy");
+    let mut pending = Some(rustc_hash::FxHashSet::default());
+    assert!(!app.absorb_git_watcher_refresh(&mut pending));
+    assert_eq!(pending.as_ref().unwrap().iter().collect::<Vec<_>>(), vec![&output]);
     eprintln!("watcher stress: 50000 notifications, {inspections} directory inspection, 0 Explorer rebuilds, 0 directory reads, {:?}", started.elapsed());
     // Invalidations remain useful: opening that folder reads its new contents.
     app.explorer.expanded_dirs.insert(output);

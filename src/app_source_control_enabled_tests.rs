@@ -73,6 +73,7 @@ fn queued_and_late_results_cannot_revive_disabled_or_reenabled_state() {
             workspace: app.explorer.root.clone(), roots: vec![app.explorer.root.clone()], parent: None,
         },
         scans: vec![crate::git_repositories::Scan {
+            operation: None,
             root: app.explorer.root.clone(), branch: String::new(),
             files: vec![crate::app::GitFileChange { directory: false, path: "obsolete.txt".into(), status: '?', staged: false, original_path: None }],
             worktree_paths: None, include_untracked: true,

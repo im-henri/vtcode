@@ -38,6 +38,8 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    if crate::ui_workspaces::handle_mouse(app, mouse) { return; }
+    if crate::app_shortcuts::handle_mouse(app, mouse) { return; }
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.chord_pending = false;
         app.terminal_clicks.press();
@@ -52,6 +54,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_)) {
         app.copy_animation.clear();
     }
+    if crate::terminal_sidebar::captured_mouse(app, mouse) { return; }
     if crate::ui_panels::captured_mouse(app, mouse) { return; }
     if crate::ui_side_notice::handle_mouse(app, mouse) { return; }
     if crate::ui_logs::mouse(app, mouse) { return; }
@@ -116,6 +119,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         .and_then(crate::ui_chrome::agent_chat_button_area)
         .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_navigation = crate::ui_chrome::navigation_button_at(app, prev_mouse_col, prev_mouse_row).is_some();
+    let was_over_workspace_sets = crate::ui_chrome::saved_workspace_sets_area(app).is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_source_control = app.show_explorer
         && app.sidebar_view == crate::app::SidebarView::SourceControl
         && (app.source_control_detail_area().is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
@@ -271,6 +275,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     }
     if crate::ui_search_dialog::handle_vtcomplete_mouse(app, mouse) { return; }
     if crate::ui_inline_blame::handle_mouse(app, mouse) { return; }
+    if crate::terminal_sidebar::begin_resize(app, mouse) { return; }
     if app.handle_terminal_selection_mouse(mouse) { return; }
     if app.handle_chat_mouse(mouse) { return; }
     if mouse.kind == MouseEventKind::Moved
@@ -387,6 +392,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 || app.hovered_terminal_tab.is_some()
                 || app.hovered_terminal_close.is_some()
                 || app.hovered_terminal_sidebar_toggle || app.outline_hovered.is_some()
+                || app.terminal_sidebar.handle.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
                 || app.hovered_problem_row.is_some()
                 || app.hovered_scrollbar
                 || app.hovered_minimap
@@ -400,10 +406,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 app.hovered_gutter_line = None;
                 app.hovered_editor_pos = None;
             } else if in_gutter {
-                if let (Some(ga), Some(editor)) = (app.gutter_area, app.editor()) {
+                if let (Some(ga), Some(editor)) = (app.gutter_area, app.editor_mut()) {
                     let rel_row = (row - ga.y) as usize;
-                    let line = editor.scroll_offset + rel_row;
-                    app.hovered_gutter_line = if line < editor.rope.len_lines() { Some(line) } else { None };
+                    app.hovered_gutter_line = editor.source_line_at_screen(rel_row).map(|(line, _)| line);
                 }
                 app.hovered_editor_pos = None;
             } else {
@@ -431,7 +436,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // follows the pointer. Modifier/decorated/custom surfaces retain
             // their existing route, including removal of a previous hover.
             let changed = modifiers_changed || had_chrome_hover || was_over_search_control || was_over_zen_exit || was_over_source_control
-                || was_over_agent_chat || was_over_navigation
+                || was_over_agent_chat || was_over_navigation || was_over_workspace_sets
+                || crate::ui_chrome::saved_workspace_sets_area(app).is_some_and(|area| area.contains((col, row).into()))
                 || was_over_performance
                 || extension_hover || app.lsp_hover_active
                 || mouse.modifiers.contains(KeyModifiers::CONTROL)
@@ -439,6 +445,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 || app.chat.area.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
                 || app.hovered_gutter_line != old_gutter
                 || fold_hover != old_fold_hover
+                || (fold_hover.is_some() && (col, row) != (prev_mouse_col, prev_mouse_row))
+                || crate::ui_editor_folds::gutter_at(app, col, row) != crate::ui_editor_folds::gutter_at(app, prev_mouse_col, prev_mouse_row)
                 || ((app.vtcomplete_active || app.lsp_completion_active)
                     && (col != prev_mouse_col || row != prev_mouse_row));
             app.mouse_hover_changed = changed;
@@ -659,13 +667,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 && row >= gutter.y && row < gutter.y + gutter.height
             {
                 let rel_row = (row - gutter.y) as usize;
-                if let Some(editor) = app.editor() {
-                    let line = editor.scroll_offset + rel_row;
-                    if line < editor.rope.len_lines() {
-                        app.hovered_gutter_line = Some(line);
-                    } else {
-                        app.hovered_gutter_line = None;
-                    }
+                if let Some(editor) = app.editor_mut() {
+                    app.hovered_gutter_line = editor.source_line_at_screen(rel_row).map(|(line, _)| line);
                 }
             } else {
                 app.hovered_gutter_line = None;
@@ -711,6 +714,20 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if forward { app.navigate_forward(); } else { app.navigate_back(); }
                         }
                         return;
+                    }
+                    if crate::ui_chrome::saved_workspace_sets_area(app).is_some_and(|area| area.contains((col, row).into())) {
+                        crate::ui_workspace_sets::open(app);
+                        return;
+                    }
+                    if let Some((picker, plus)) = crate::ui_chrome::workspace_controls(app) {
+                        if picker.contains((col, row).into()) {
+                            crate::ui_workspaces::open(app);
+                            return;
+                        }
+                        if plus.contains((col, row).into()) {
+                            crate::ui_workspaces::add(app);
+                            return;
+                        }
                     }
                     if crate::ui_chrome::agent_chat_button_area(menu_area)
                         .is_some_and(|area| area.contains((col, row).into()))
@@ -1222,7 +1239,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     let reset_w = UnicodeWidthStr::width(reset_label) as u16;
                                     let unassign_w = UnicodeWidthStr::width(unassign_label) as u16;
                                     let buttons_w = reset_w + 1 + unassign_w;
-                                    if settings_area.width > buttons_w + 1 {
+                                    if settings_area.width >= 34 {
                                         let buttons_x = settings_area
                                             .x
                                             + settings_area.width.saturating_sub(buttons_w);
@@ -1250,8 +1267,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                                     if kb.code != KeyCode::Null
                                                         || !kb.modifiers.is_empty()
                                                     {
-                                                        kb.modifiers = KeyModifiers::empty();
-                                                        kb.code = KeyCode::Null;
+                                                        kb.assign(KeyModifiers::empty(), KeyCode::Null, None);
                                                         unassign_msg =
                                                             Some(format!("Unassigned {}", kb.label));
                                                     }
@@ -1268,7 +1284,14 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                             return;
                                         }
                                     }
+                                    if settings_area.width < 34 || col < settings_area.right().saturating_sub(buttons_w) {
+                                        if let Some(index) = id.strip_prefix("kb_").and_then(|index| index.parse().ok()) {
+                                            app.begin_shortcut_edit(index, true);
+                                        }
+                                    }
                                 }
+                                app.ensure_settings_selection_visible();
+                                return;
                             }
                             if kind == "exclusions" {
                                 let offset = relative_row.saturating_sub(item.control);
@@ -1561,6 +1584,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if let Some(hit) = app.global_search_results.row_at(clicked_row) {
                                 match hit {
                                     SearchRow::Header(idx) => {
+                                        app.global_search_active = false;
                                         let path = app.global_search_results[idx].file_path.clone();
                                         app.toggle_global_search_file_collapsed(&path);
                                     }
@@ -1617,6 +1641,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             return;
                         }
                         if app.repositories.discovered && !app.repositories.expanded { return; }
+                        if crate::ui_git_operation::click(app, col, row) { return; }
                         let hits = |area: Rect| {
                             col >= area.x
                                 && col < area.x.saturating_add(area.width)
@@ -1631,13 +1656,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             }
                             app.sc_amend_mode = amend;
                             if amend {
-                                if app.source_control_commit_msg.is_empty() {
-                                    if let Some(last) = app.git_log.first() {
-                                        app.source_control_commit_msg = last.message.clone();
-                                        app.source_control_commit_cursor = app.source_control_commit_msg.len();
-                                        app.source_control_commit_selection_anchor = None;
-                                    }
-                                }
                                 app.git_amend_commit();
                             } else {
                                 app.git_commit();
@@ -2068,13 +2086,14 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
         return true;
     }
     let Some((index, rect, close)) = hits.tab_at(col) else { return false; };
-    app.tab_scroll_manual_anchor = None;
-    app.tab_strip_scroll = None;
     if TabBarHits::contains(close, col) {
+        app.tab_scroll_manual_anchor = None;
+        app.tab_strip_scroll = None;
         reconcile_dragging_tab_after_close(app, index);
         app.close_tab(index);
         app.ensure_active_tab_visible();
     } else {
+        let scroll = crate::ui_chrome_tabs::strip_scroll_position(app, app.active_group);
         let double_click = std::time::Instant::now()
             .duration_since(app.last_click_time).as_millis() < 400
             && app.last_click_pos.1 == tab_area.y
@@ -2090,6 +2109,13 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
         }
         app.active_pane = ActivePane::Editor;
         app.validate_diff_state_for_active_tab();
+        // A pointer selection already identifies a visible tab. Keep the
+        // viewport, including partial labels, anchored to the new selection.
+        app.tab_scroll_manual_anchor = Some(index);
+        app.tab_strip_scroll = scroll.map(|scroll| crate::ui_chrome_tabs::StripScroll {
+            anchor: app.tabs[index].editor.navigation_id,
+            ..scroll
+        });
         app.ensure_active_tab_visible();
         app.refresh_git_line_status_async();
     }
@@ -2103,6 +2129,10 @@ pub(crate) fn find_tab_at_col(app: &App, col: u16, tab_area: ratatui::layout::Re
 #[cfg(test)]
 #[path = "mouse_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tab_interaction_tests.rs"]
+mod tab_interaction_tests;
 
 #[cfg(test)]
 #[path = "mouse_context_geometry_tests.rs"]

@@ -29,6 +29,9 @@ fn comparison(mode: DiffMode, compact: bool, commit: bool) -> (App, String, Stri
     );
     let target = format!("{prefix}new_value\nanchor_text_abcdefghijklmnop\n{suffix}");
     let mut app = App::test_new();
+    for effect in AnimationEffect::ALL {
+        app.animation_settings.set(effect, false);
+    }
     let mut editor = Editor::test_with_text(&target);
     editor.file_path = Some("diff-animation.txt".into());
     editor.read_only = true;

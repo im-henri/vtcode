@@ -28,6 +28,7 @@ mod actions_tests;
 
 pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) {
     use crossterm::event::{KeyCode, KeyModifiers};
+    if crate::ui_git_operation::handle_key(app, code, modifiers) { return; }
     if !app.source_control_enabled {
         if matches!(code, KeyCode::Enter | KeyCode::Char(' ')) && modifiers.is_empty() {
             app.toggle_workspace_source_control();
@@ -102,10 +103,14 @@ pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifie
                 app.sc_graph_focused = !reverse;
                 app.sc_graph_collapsed = false;
             } else {
-                app.source_control_input_mode = true;
+                if app.current_git_operation().is_some() { app.git_operation_ui.focus = Some(0); app.sc_graph_focused = false; }
+                else { app.source_control_input_mode = true; }
             }
         }
-        KeyCode::Char('m') => { app.source_control_input_mode = true; }
+        KeyCode::Char('m') => {
+            if app.current_git_operation().is_some() { app.git_operation_ui.focus = Some(0); app.sc_graph_focused = false; }
+            else { app.source_control_input_mode = true; }
+        }
         KeyCode::Char('f') if modifiers.is_empty() => { app.execute_git_command("git_filter_changes"); }
         KeyCode::Char('r') | KeyCode::F(5) => { app.repositories.rescan = true; app.refresh_source_control_async(); app.refresh_git_log_async(); }
         KeyCode::Enter => {
@@ -278,6 +283,7 @@ pub(crate) fn source_control_split_heights(
 }
 
 pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
+    app.git_operation_ui.buttons.clear();
     let bg = app.colors.bg_sidebar;
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
@@ -748,7 +754,9 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         area.width,
         input_h.min(area.height.saturating_sub(1)),
     );
-    if input_area.height > 0 {
+    let operation = crate::ui_git_operation::draw_card(f, app,
+        Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1).min(5)));
+    if input_area.height > 0 && !operation {
         draw_sc_commit_input(f, app, input_area);
     }
 
@@ -760,7 +768,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
     // ── Commit / Amend buttons ─────────────────────────────────────────────
     let btn_area = Rect::new(area.x, after_input_y, area.width, 1.min(remaining_h));
-    if btn_area.height > 0 {
+    if btn_area.height > 0 && !operation {
         let gap = u16::from(area.width > 2);
         let commit_w = if area.width <= 2 {
             area.width
@@ -1010,6 +1018,18 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
         || app.sc_context_active || app.context_menu_active || app.menu_active || app.palette.active
         || crate::ui_modal::active(app).is_some() { return; }
     let point = (app.mouse_col, app.mouse_row).into();
+    if let Some((area, index, _, _)) = app.git_operation_ui.buttons.iter().find(|(area, _, _, _)| area.contains(point)) {
+        let mut lines = Vec::new();
+        if let Some(state) = app.current_git_operation() {
+            lines.push(Line::raw(format!("{} · {}", state.kind.name(), state.branch)));
+            lines.push(Line::raw(state.current.clone()));
+        }
+        lines.push(Line::raw(if *index == 0 { app.git_operation_blocker().unwrap_or_else(|| "Continue with the saved, staged resolution.".into()) }
+            else if *index == 1 { "Skip the current commit after confirmation.".into() }
+            else { "Abort and return to the starting point after confirmation.".into() }));
+        crate::ui_widgets::Tooltip::hover(lines, &app.colors).prefer_below().render(f, area.x, area.y);
+        return;
+    }
     if let Some((area, root)) = app.repositories.closes.iter().find(|(area, _)| area.contains(point)) {
         crate::ui_widgets::Tooltip::hover(vec![Line::raw("Close Repository"), Line::raw(app.display_path(root))], &app.colors)
             .prefer_below().render(f, area.x, area.y);

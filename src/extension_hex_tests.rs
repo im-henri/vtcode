@@ -8,6 +8,74 @@ use std::time::Duration;
 const WASM: &[u8] = include_bytes!("../tests/fixtures/hex-editor/hex-editor.wasm");
 
 #[test]
+fn workspace_switch_keeps_queued_hex_edits_undo_and_close_recovery() {
+    use crate::ui_work::Service;
+    use std::time::Instant;
+
+    let root = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let path = root.path().join("sample.bin");
+    std::fs::write(&path, [0u8; 16]).unwrap();
+    let mut app = app(root.path());
+    app.source_control_enabled = false;
+    open(&mut app, &path);
+    let view_id = app.active_extension_view().unwrap().view_id.clone();
+    let recovery_dir = crate::extension_recovery::directory(&app.extension_manager.settings_file);
+    for ch in "CAFE".chars() {
+        key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+    }
+    let mut next = App::new_startup(other.path().to_owned(), app.background.wake_handle());
+    next.source_control_enabled = false;
+    app.insert_workspace(next);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        for service in [Service::Workers, Service::Extensions] {
+            app.service_workspaces_until(service, Instant::now() + Duration::from_millis(20), || true);
+        }
+        let hidden = &app.workspaces.parked[0].app;
+        if !hidden.extension_manager.has_busy_runtimes()
+            && hidden.extension_manager.pending_view_events.is_empty()
+            && text(hidden).contains("CA FE") { break; }
+        assert!(Instant::now() < deadline, "parked custom-editor input must drain");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(app.switch_workspace(0));
+    assert_eq!(app.active_extension_view().unwrap().view_id, view_id);
+    let edited = text(&app);
+    key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
+    drain(&mut app);
+    assert_ne!(text(&app), edited);
+    key(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL);
+    drain(&mut app);
+    assert_eq!(text(&app), edited);
+    assert!(app.tabs[app.active_tab].has_unsaved_changes());
+
+    app.workspaces.request = Some(crate::app_workspaces::Request::Close);
+    app.poll_workspace_requests();
+    assert!(app.start_custom_exit(true));
+    drain(&mut app);
+    assert!(!app.custom_exit_failed);
+    app.start_exit_recovery();
+    app.wait_for_background(Duration::from_secs(15), |app| app.exit_recovery.saved);
+    app.shutdown_anim_active = true;
+    assert!(app.advance_workspace_exit());
+    assert_eq!(app.explorer.root, other.path());
+    assert!(app.workspaces.parked.is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), [0u8; 16]);
+    let records = crate::extension_recovery::read(&recovery_dir);
+    assert_eq!(records.len(), 1);
+    let mut restored = self::app(root.path());
+    restored.pending_custom_recoveries = records;
+    restored.restore_pending_custom_documents();
+    drain(&mut restored);
+    assert!(text(&restored).contains("CA FE"));
+    assert!(restored.tabs[restored.active_tab].has_unsaved_changes());
+    restored.execute_palette_command("save_all");
+    drain(&mut restored);
+    assert_eq!(&std::fs::read(&path).unwrap()[..2], [0xCA, 0xFE]);
+}
+
+#[test]
 fn remote_hex_wasm_keeps_edits_and_undo_local_and_saves_at_remote_node() {
     let local = tempfile::tempdir().unwrap();
     let remote_dir = tempfile::tempdir().unwrap();

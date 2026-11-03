@@ -249,12 +249,8 @@ impl App {
             .strip_prefix("kb_")
             .and_then(|value| value.parse::<usize>().ok())
         {
-            let command = self.keybindings.get(index).map(|binding| binding.id);
             return settings.keybindings.as_ref().is_some_and(|entries| {
-                entries.iter().any(|entry| {
-                    command.is_some_and(|command| entry.command.as_deref() == Some(command))
-                        || (entry.command.is_none() && entry.index == Some(index))
-                })
+                entries.iter().any(|entry| Self::shortcut_entry_index(&self.keybindings, entry) == Some(index))
             });
         }
         let Some(key) = Self::setting_json_key(setting_id) else {
@@ -376,43 +372,8 @@ impl App {
         let Some(overrides) = settings.keybindings.as_ref() else {
             return bindings;
         };
-        for entry in overrides {
-            if let (Some(command), Some(key)) = (entry.command.as_deref(), entry.key.as_deref()) {
-                if let Some((modifiers, code)) = Self::keybinding_from_settings_text(key) {
-                    if let Some(binding) = bindings.iter_mut().find(|binding| binding.id == command)
-                    {
-                        binding.modifiers = modifiers;
-                        binding.code = code;
-                        continue;
-                    }
-                }
-            }
-            if let (Some(index), Some(modifiers), Some(key_code)) =
-                (entry.index, entry.modifiers, entry.key_code.as_deref())
-            {
-                if let Some(code) = Self::keycode_from_settings_token(key_code) {
-                    if let Some(binding) = bindings.get_mut(index) {
-                        binding.modifiers =
-                            crossterm::event::KeyModifiers::from_bits_truncate(modifiers);
-                        binding.code = code;
-                    }
-                }
-            }
-        }
+        Self::apply_shortcut_overrides(&mut bindings, overrides);
         bindings
-    }
-
-    fn scoped_keybinding_value(&self, setting_id: &str, fallback: &str) -> String {
-        let Some(index) = setting_id
-            .strip_prefix("kb_")
-            .and_then(|value| value.parse::<usize>().ok())
-        else {
-            return fallback.to_string();
-        };
-        Self::keybindings_for_settings(&self.selected_scope_settings())
-            .get(index)
-            .map(crate::app::KeyBinding::display)
-            .unwrap_or_else(|| fallback.to_string())
     }
 
     pub(crate) fn setting_description(setting_id: &str) -> &'static str {
@@ -444,7 +405,7 @@ impl App {
             "lsp_servers" => "Set up language servers (LSP) for completion, diagnostics, navigation, and formatting. Add an executable, language ID, file patterns, arguments, and initialization options. Install the server separately. Saved servers override extension defaults for the same language.",
             "lsp_enabled" => "Enable language servers (LSP) from settings and extensions. Changes apply to open files immediately.",
             "source_control_enabled" => "Enable Git changes, history, blame and file decorations. Turn off to stop background Git work on slow or shared disks. Editing, saving and undo still work.",
-            "source_control_show_untracked" => "Show untracked files in Source Control, include them in its change count, and show their Git badges and colors in Explorer. Turn off to skip untracked-file scanning on local and SSH workspaces. Tracked changes stay visible. Remembered across restarts.",
+            "source_control_show_untracked" => "Show untracked files in Source Control, include them in its change count, and show their Git badges in Explorer and change markers in the editor. Turn off to skip untracked-file scanning and automatic diffs on local and SSH workspaces. Tracked changes stay visible. Remembered across restarts.",
             "lsp_diagnostic_delay_ms" => "Wait this many milliseconds after the last edit before displaying updated LSP problems, underlines, and error messages. Completion stays responsive. Default: 1000. Set to 0 for immediate updates (maximum 10000).",
             "tab_size" => "Number of spaces a tab character visually uses in the editor.",
             "animation_duration_ms" => {
@@ -658,7 +619,7 @@ impl App {
             return items
                 .iter()
                 .enumerate()
-                .filter(|(_, (label, _, id))| {
+                .filter(|(_, (label, value, id))| {
                     if id.starts_with("heading_") {
                         return false;
                     }
@@ -670,6 +631,10 @@ impl App {
                     let child = Self::settings_section_for_id(id).unwrap_or("");
                     let searchable_id = id.replace('_', " ");
                     crate::app::contains_ignore_case(label, query)
+                        || (id.starts_with("kb_") && (crate::app::contains_ignore_case(value, query)
+                            || id.strip_prefix("kb_").and_then(|index| index.parse::<usize>().ok())
+                                .and_then(|index| self.keybindings.get(index))
+                                .is_some_and(|binding| crate::app::contains_ignore_case(binding.id, query))))
                         || Self::setting_json_key(id).is_some_and(|key| crate::app::contains_ignore_case(key, query))
                         || crate::app::contains_ignore_case(Self::setting_description(id), query)
                         || crate::app::contains_ignore_case(&searchable_id, query)
@@ -944,10 +909,14 @@ impl App {
         for (label, value, setting_id) in &self.keybinding_settings_cache {
             items.push((label.clone(), value.clone(), setting_id.clone()));
         }
-        let scoped = serde_json::to_value(self.selected_scope_settings()).ok();
+        let selected_scope = self.selected_scope_settings();
+        let scoped_bindings = Self::keybindings_for_settings(&selected_scope);
+        let scoped = serde_json::to_value(selected_scope).ok();
         for (_, value, id) in &mut items {
             if id.starts_with("kb_") {
-                *value = self.scoped_keybinding_value(id, value);
+                if let Some(binding) = id.strip_prefix("kb_").and_then(|index| index.parse::<usize>().ok()).and_then(|index| scoped_bindings.get(index)) {
+                    *value = binding.display();
+                }
                 continue;
             }
             let Some(key) = Self::setting_json_key(id) else {
@@ -998,7 +967,7 @@ mod tests {
     }
 
     #[test]
-    fn animations_have_their_own_category_with_copy_on_and_decorative_effects_off() {
+    fn animations_have_their_own_category_with_copy_and_sliding_tabs_on() {
         let mut app = App::test_new();
         app.settings_category_selected = 7;
         assert_eq!(App::settings_categories()[7], "Animations");
@@ -1020,7 +989,7 @@ mod tests {
             assert_eq!(App::setting_description(effect.id()), effect.description());
             let index = items.iter().position(|(_, _, id)| id == effect.id()).unwrap();
             assert!(filtered.contains(&index));
-            assert_eq!(items[index].1, "Off");
+            assert_eq!(items[index].1, if effect == AnimationEffect::TabSlide { "On" } else { "Off" });
             for id in [effect.duration_id(), effect.intensity_id()] {
                 assert_eq!(App::setting_field_kind(id), "number");
                 assert_eq!(App::settings_category_for_id(id), 7);

@@ -48,6 +48,8 @@ fn open_roots(discovery: &Discovery, parent_open: bool, closed: &[RemotePath]) -
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Scan {
+    #[serde(default)]
+    pub operation: Option<crate::git_operation::State>,
     pub root: RemotePath,
     pub files: Vec<crate::app::GitFileChange<RemotePath>>,
     pub branch: String,
@@ -201,7 +203,7 @@ pub(crate) fn status(
     parent_open: bool,
     closed: Vec<RemotePath>,
     include_untracked: bool,
-    changed: Option<Vec<RemotePath>>,
+    (changed, revalidate): (Option<Vec<RemotePath>>, bool),
     cancel: &crate::background::CancellationToken,
 ) -> io::Result<Reply> {
     if cancel.is_cancelled() {
@@ -232,6 +234,7 @@ pub(crate) fn status(
     let changed = if scoped {
         changed.map(|paths| paths.iter().map(|path| path.resolve(root)).collect::<io::Result<_>>()).transpose()?
     } else { None };
+    let changed = changed.map(|paths| crate::app_git::refresh::WorktreeEvents { paths, revalidate });
     let scans = crate::app_git::refresh::collect_with_paths(&mut discovery, roots, changed, root,
         cancel, include_untracked, Path::to_path_buf);
     let errors = discovery.errors.into_iter().map(|error| {
@@ -258,6 +261,7 @@ pub(crate) fn status(
             })
         }).transpose()?;
         Ok(Scan {
+            operation: scan.operation,
             root: from_native(&scan.root, root)?,
             files: scan.files.into_iter().map(|file| file.try_map_paths(relative_native_path)).collect::<io::Result<_>>()?,
             branch: scan.branch,
@@ -409,23 +413,28 @@ impl workspace::Workspace {
         let mut refreshed = std::collections::HashMap::new();
         let mut previous = std::collections::HashMap::new();
         let mut delta_safe = partial.is_some();
+        let mut revalidate = false;
         if let Some(roots) = &roots {
             for root in roots {
                 let cached = snapshots.get(root).filter(|snapshot| {
                     snapshot.scan.include_untracked == include_untracked
-                        && snapshot.checked.elapsed() < std::time::Duration::from_secs(30)
                 });
+                let expired = cached.is_some_and(|snapshot| snapshot.checked.elapsed() >= std::time::Duration::from_secs(30));
                 let unaffected = partial.is_some_and(|paths| {
                     paths.iter().all(|path| {
                         !repository_contains(root, path) && !repository_contains(path, root)
                     })
                 });
-                if let Some(snapshot) = cached.filter(|_| unaffected).map(|snapshot| snapshot.scan.clone())
+                if let Some(snapshot) = cached.filter(|_| unaffected && !expired).map(|snapshot| snapshot.scan.clone())
                 {
                     skipped.push(root.clone());
                     refreshed.insert(root.clone(), snapshot);
                 } else {
-                    delta_safe &= cached.is_some();
+                    // Keep event hints when only the deadline expired. The node
+                    // can reject ignored/hidden output before a full traversal.
+                    // Navigation and missing baselines still require full reads.
+                    delta_safe &= cached.is_some() && !(unaffected && expired);
+                    revalidate |= expired;
                     selected.push(root.clone());
                 }
             }
@@ -447,6 +456,7 @@ impl workspace::Workspace {
                     closed: excluded,
                     include_untracked,
                     changed: if delta_safe { partial.cloned() } else { None },
+                    revalidate: delta_safe && revalidate,
                 },
                 cancel,
             )?
@@ -491,6 +501,7 @@ impl workspace::Workspace {
             files.sort_unstable_by(|a, b| crate::source_control_rows::Group::of(a)
                 .cmp(&crate::source_control_rows::Group::of(b)).then(a.path.cmp(&b.path)));
             let mut merged = crate::git_repositories::Scan {
+                operation: scan.operation,
                 root: key.clone(),
                 files,
                 branch: scan.branch,
