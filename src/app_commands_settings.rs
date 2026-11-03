@@ -1089,7 +1089,7 @@ mod tests {
                 app.begin_numeric_setting_edit(id, "0");
                 app.settings_value_buffer = input;
                 assert!(app.commit_numeric_setting_edit());
-                assert_eq!(app.setting_source_label(id), "Workspace");
+                assert_eq!(app.setting_source_label(id), "Folder");
             }
             assert_eq!(app.animation_settings.duration(effect), duration);
             assert_eq!(app.animation_settings.intensity(effect), intensity);
@@ -1599,7 +1599,7 @@ mod tests {
         assert!(app.commit_numeric_setting_edit());
         assert_eq!(app.settings_workspace.tab_size, Some(5));
         assert_eq!(app.default_tab_size, 5);
-        assert_eq!(app.setting_source_label("tab_size"), "Workspace");
+        assert_eq!(app.setting_source_label("tab_size"), "Folder");
 
         assert!(app.reset_setting_in_selected_scope("tab_size"));
         assert_eq!(app.settings_workspace.tab_size, None);
@@ -1746,7 +1746,7 @@ mod tests {
         assert_eq!(app.setting_source_label("kb_0"), "Inherited · Global");
         assert_eq!(
             app.setting_source_label(&format!("kb_{copy_index}")),
-            "Workspace"
+            "Folder"
         );
     }
 

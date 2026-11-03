@@ -302,7 +302,7 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
             "Pictures" => "▧",
             "Music" => "♪",
             "Videos" => "▷",
-            "Workspace" => "◇",
+            "Current folder" => "◇",
             _ => "▰",
         };
         f.render_widget(
@@ -342,7 +342,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     label(
         f,
         layout.title,
-        if app.folder_browser.save_as_return { "  ▰  Choose Save Location" } else if app.folder_browser.add_workspace { "  ▰  Add Workspace" } else { "  ▰  Open Folder" },
+        if app.folder_browser.save_as_return { "  ▰  Choose Save Location" } else if app.folder_browser.add_workspace { "  ▰  Add Folder" } else { "  ▰  Open Folder" },
         Style::default()
             .bg(bg)
             .fg(app.colors.ui.widget_text_color(bg))
@@ -686,7 +686,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let hint = if !app.folder_browser.search.is_empty() {
             "Clear the search to see all folders."
         } else if app.folder_browser.add_workspace {
-            "Use Add workspace to add this folder."
+            "Use Add folder to add this folder."
         } else {
             "Use Select folder to open this location."
         };
@@ -806,7 +806,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else if app.folder_browser.save_as_return {
         " Use folder "
     } else if app.folder_browser.add_workspace {
-        if area.width >= 45 { " Add workspace " } else { " Add " }
+        if area.width >= 45 { " Add folder " } else { " Add " }
     } else if area.width >= 45 {
         " Select folder "
     } else {

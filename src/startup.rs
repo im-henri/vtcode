@@ -20,6 +20,7 @@ impl Target {
     pub(crate) fn resolve(raw: Option<OsString>) -> Self {
         let mut line = None;
         let mut column = None;
+        let raw = raw.filter(|arg| !arg.is_empty());
         let mut path = raw.as_ref().map(PathBuf::from);
         let mut metadata = path.as_ref().and_then(|path| std::fs::metadata(path).ok());
         if metadata.is_none()
@@ -44,12 +45,9 @@ impl Target {
             }
         }
         let (root, file) = match path {
-            Some(path) if metadata.is_some_and(|meta| meta.is_dir()) => (path, None),
+            Some(path) if metadata.is_some_and(|meta| meta.is_dir()) => (crate::folder_browser::normalized_path(&path), None),
             Some(path) => (crate::startup_file_directory(&path), Some(path)),
-            None => (
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-                None,
-            ),
+            None => (PathBuf::new(), None),
         };
         Self {
             root,
@@ -89,8 +87,11 @@ impl Prepared {
     pub(crate) fn load(raw: Option<OsString>) -> Self {
         let target = Target::resolve(raw);
         let mut global = crate::settings::load_from_file(&crate::settings::global_settings_path());
-        let mut workspace =
-            crate::settings::load_from_file(&crate::settings::project_settings_path(&target.root));
+        let mut workspace = if target.root.as_os_str().is_empty() {
+            Settings::default()
+        } else {
+            crate::settings::load_from_file(&crate::settings::project_settings_path(&target.root))
+        };
         global.validate();
         workspace.validate();
         let session = crate::session::load_session(&target.root);
@@ -121,7 +122,7 @@ impl Prepared {
     pub(crate) fn into_app_with_remote(self, wake: UiWake, remote: Option<crate::remote::workspace::Workspace>) -> App {
         let mut app = App::new_startup(self.target.root, wake);
         app.remote_workspace = remote;
-        app.git_output();
+        if app.has_open_folder() { app.git_output(); }
         if app.remote_workspace.is_some() { app.refresh_palette_commands(); }
         app.lsp_manager.remote_workspace = app.remote_workspace.clone();
         if let Some(remote) = &app.remote_workspace { remote.client.set_wake(app.background.wake_handle()); }

@@ -66,7 +66,7 @@ fn reply<T>(receiver: &mpsc::Receiver<Result<T, String>>) -> Option<Result<T, St
     match receiver.try_recv() {
         Ok(result) => Some(result),
         Err(mpsc::TryRecvError::Empty) => None,
-        Err(mpsc::TryRecvError::Disconnected) => Some(Err("Workspace set worker stopped".into())),
+        Err(mpsc::TryRecvError::Disconnected) => Some(Err("Workspace worker stopped".into())),
     }
 }
 
@@ -124,12 +124,12 @@ impl App {
     fn write_workspace_sets(&mut self, mutation: Mutation) {
         if self.workspace_set_switching() {
             self.workspaces.sets.error =
-                Some("Finish or cancel opening the workspace set first".into());
+                Some("Finish or cancel opening the workspace first".into());
             return;
         }
         if self.workspace_sets_busy() {
             self.workspaces.sets.error =
-                Some("Wait for workspace sets to finish saving or loading".into());
+                Some("Wait for saved workspaces to finish saving or loading".into());
             return;
         }
         let path = self.workspaces.sets.path.clone();
@@ -150,7 +150,7 @@ impl App {
                 || self.workspace_set_switching()
                 || self.workspaces.exit.is_some()
             {
-                return Err("Finish opening or closing workspaces before saving a set".into());
+                return Err("Finish opening or closing folders before saving a workspace".into());
             }
             let base = crate::portable::base_dir();
             let scope = self.workspace_sets_scope();
@@ -161,17 +161,19 @@ impl App {
                         .iter()
                         .map(|parked| (parked.id, &*parked.app)),
                 )
+                .filter(|(_, app)| app.has_open_folder())
                 .collect();
+            if roots.is_empty() { return Err("Open a folder before saving a workspace".into()); }
             roots.sort_by_key(|(id, _)| *id);
             let active = roots
                 .iter()
                 .position(|(id, _)| *id == self.workspaces.active)
-                .unwrap();
+                .unwrap_or(0);
             let roots = roots
                 .into_iter()
                 .map(|(_, app)| {
                     if app.workspace_sets_scope() != scope {
-                        return Err("A set cannot mix different connections".into());
+                        return Err("A workspace cannot mix different connections".into());
                     }
                     Ok(if let Some(remote) = &app.remote_workspace {
                         Location::Remote {
@@ -224,7 +226,7 @@ impl App {
         let close = self
             .workspace_entries()
             .into_iter()
-            .filter(|entry| !keep.contains(&entry.id))
+            .filter(|entry| !entry.path.is_empty() && !keep.contains(&entry.id))
             .collect();
         Some((staged.set.name.clone(), staged.roots.len(), close))
     }
@@ -245,7 +247,7 @@ impl App {
             let result = (|| -> Result<Staged, String> {
                 for root in &staged.roots {
                     if cancel.is_cancelled() {
-                        return Err("Opening workspace set was cancelled".into());
+                        return Err("Opening the workspace was cancelled".into());
                     }
                     if root.existing.is_some() {
                         continue;
@@ -259,14 +261,14 @@ impl App {
                             .open_workspace(&root.root)
                             .map_err(|error| error.to_string())?;
                         if checked.view_root != root.root || !checked.client.connected() {
-                            return Err("A remote folder changed while confirming the set".into());
+                            return Err("A remote folder changed while confirming the workspace".into());
                         }
                     } else if std::fs::canonicalize(&root.root).ok().as_ref()
                         != root.canonical.as_ref()
                         || !root.root.is_dir()
                     {
                         return Err(format!(
-                            "{} is no longer the saved folder; current workspaces were kept open",
+                            "{} is no longer the saved folder; current folders were kept open",
                             root.root.display()
                         ));
                     }
@@ -282,7 +284,7 @@ impl App {
     }
     pub(super) fn prepare_workspace_set(&mut self, id: u64) {
         if self.workspaces.opening.is_some() || self.workspace_sets_busy() {
-            self.notify_warn("Wait for workspaces or saved sets to finish loading");
+            self.notify_warn("Wait for folders or saved workspaces to finish loading");
             return;
         }
         let Some(set) = self
@@ -290,7 +292,7 @@ impl App {
             .into_iter()
             .find(|set| set.id == id)
         else {
-            self.notify_error("Workspace set was not found for this connection");
+            self.notify_error("Saved workspace was not found for this connection");
             return;
         };
         let opened: Vec<_> = std::iter::once((self.workspaces.active, self.explorer.root.clone()))
@@ -300,6 +302,7 @@ impl App {
                     .iter()
                     .map(|parked| (parked.id, parked.app.explorer.root.clone())),
             )
+            .filter(|(_, root)| !root.as_os_str().is_empty())
             .collect();
         let remote = self.remote_workspace.clone();
         let base = crate::portable::base_dir();
@@ -332,12 +335,12 @@ impl App {
                 let mut roots: Vec<StagedRoot> = vec![];
                 let mut active = 0;
                 for (index, location) in set.roots.iter().enumerate() {
-                    if cancel.is_cancelled() { return Err("Opening workspace set was cancelled".into()); }
+                    if cancel.is_cancelled() { return Err("Opening the workspace was cancelled".into()); }
                     let known = match location { Location::Remote { uri } => remote_roots.iter().find(|(_, opened, _)| opened == uri), _ => None };
                     let root = if let Some((_, _, root)) = known { root.clone() } else { match (location, &remote) {
                         (Location::Local { .. }, None) => location.local_path(&base).map_err(|error| error.to_string())?,
                         (Location::Remote { uri }, Some(remote)) => remote.target_key(uri).map_err(|error| error.to_string())?,
-                        _ => return Err("Workspace set uses a different connection".into()),
+                        _ => return Err("Workspace uses a different connection".into()),
                     }};
                     let canonical = if remote.is_none() { std::fs::canonicalize(&root).ok() } else { None };
                     let mut existing = opened.iter().find(|(_, path)| same_workspace(path, &root)
@@ -349,9 +352,9 @@ impl App {
                         let prepared = existing.is_none().then(|| Prepared { startup: crate::startup::Prepared::load_remote(workspace.view_root.clone()), remote: Some(workspace.clone()), equivalent_roots: vec![] });
                         (workspace.view_root.clone(), prepared)
                     } else {
-                        if canonical.is_none() || !root.is_dir() { return Err(format!("{} is not an available directory; current workspaces were kept open", root.display())); }
+                        if canonical.is_none() || !root.is_dir() { return Err(format!("{} is not an available directory; current folders were kept open", root.display())); }
                         let startup = crate::startup::Prepared::load(Some(root.clone().into_os_string()));
-                        if !same_workspace(&startup.target.root, &root) { return Err("A workspace folder changed during loading".into()); }
+                        if !same_workspace(&startup.target.root, &root) { return Err("A folder changed during loading".into()); }
                         (root, Some(Prepared { startup, remote: None, equivalent_roots: vec![] }))
                     };
                     if let Some(duplicate) = roots.iter().position(|previous| same_workspace(&previous.root, &root)
@@ -366,7 +369,7 @@ impl App {
             })();
             let _ = sender.send(result); wake.notify();
         });
-        self.notify("Preparing workspace set…");
+        self.notify("Preparing workspace…");
     }
 
     pub(super) fn poll_workspace_sets(&mut self) -> bool {
@@ -400,7 +403,7 @@ impl App {
                         {
                             crate::ui_workspace_sets::show_list(self);
                         }
-                        self.notify("Workspace sets saved");
+                        self.notify("Workspaces saved");
                     }
                 }
                 Err(error) => {
@@ -418,7 +421,7 @@ impl App {
             self.workspaces.sets.plan = match result {
                 Ok(staged) => Some(Plan::Ready(staged)),
                 Err(error) => {
-                    self.notify_error(format!("Could not open workspace set: {error}"));
+                    self.notify_error(format!("Could not open workspace: {error}"));
                     None
                 }
             };
@@ -435,6 +438,7 @@ impl App {
                 let mut current: Vec<_> = self
                     .workspace_entries()
                     .iter()
+                    .filter(|entry| !entry.path.is_empty())
                     .map(|entry| entry.id)
                     .collect();
                 current.sort_unstable();
@@ -442,7 +446,7 @@ impl App {
                 expected.sort_unstable();
                 if current != expected {
                     self.notify_warn(
-                        "Open workspaces changed while preparing the set. Try opening it again.",
+                        "Open folders changed while preparing the workspace. Try opening it again.",
                     );
                     return true;
                 }
@@ -473,7 +477,7 @@ impl App {
                         .and_then(|prepared| prepared.remote.as_ref())
                         .is_some_and(|remote| !remote.client.connected())
                 }) {
-                    self.notify_error("Remote connection was lost while opening the set. Current workspaces were kept open.");
+                    self.notify_error("Remote connection was lost while opening the workspace. Current folders were kept open.");
                     return true;
                 }
                 let mut target = vec![];
@@ -510,22 +514,22 @@ impl App {
                     if self.workspaces.exit.is_none() {
                         self.cancel_workspace_set_switch();
                         self.notify_warn(
-                            "Workspace set switch stopped; remaining workspaces were kept open",
+                            "Opening the workspace stopped; remaining folders were kept open",
                         );
                     }
                 } else {
                     if self
                         .workspace_entries()
                         .iter()
-                        .any(|entry| !transition.target.contains(&entry.id))
+                        .any(|entry| !entry.path.is_empty() && !transition.target.contains(&entry.id))
                     {
                         self.notify_warn(
-                            "Workspace set switch stopped because the open folders changed",
+                            "Opening the workspace stopped because the open folders changed",
                         );
                         return true;
                     }
                     self.switch_workspace(transition.active);
-                    self.notify(format!("Opened workspace set: {}", transition.name));
+                    self.notify(format!("Opened workspace: {}", transition.name));
                 }
                 true
             }

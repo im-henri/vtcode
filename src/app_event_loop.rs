@@ -579,6 +579,9 @@ fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
     }
     if !app.accept_terminal_paste() { return; }
     let text = value.as_ref();
+    if crate::ui_remote_targets::connection_has_focus(app)
+        && app.tabs[app.active_tab].kind != crate::app::TabKind::RemoteConnection(0)
+        && app.paste_remote_target_login(text) { return; }
     if crate::ui_remote_connection::handle_paste(app, text) { return; }
     crate::clipboard::receive_terminal_paste(text);
     if crate::ui_desks::paste(app, text) || crate::ui_logs::paste(app, text) { return; }
@@ -628,7 +631,13 @@ pub(crate) fn handle_keyboard_input(
     let mut quit = false;
     for processed in 1..=MAX_NAVIGATION_BATCH {
         note_user_activity(app);
-        if app.macro_recording {
+        // Authentication keystrokes must follow SSH's hidden-input behavior,
+        // including when macro recording or the screencast overlay is enabled.
+        let private_input = crate::ui_remote_targets::connection_has_focus(app)
+            && if app.tabs[app.active_tab].kind == crate::app::TabKind::RemoteConnection(0) {
+                app.remote_connection.phase == crate::app_remote_connection::Phase::Connecting
+            } else { app.remote_targets.attempt.as_ref().is_some_and(|attempt| attempt.error.is_none()) };
+        if app.macro_recording && !private_input {
             let is_macro_toggle = key.modifiers.contains(KeyModifiers::CONTROL)
                 && key.modifiers.contains(KeyModifiers::SHIFT)
                 && matches!(key.code, KeyCode::Char('R' | 'r'));
@@ -636,7 +645,7 @@ pub(crate) fn handle_keyboard_input(
                 app.macro_buffer.push(key);
             }
         }
-        if app.screencast_mode {
+        if app.screencast_mode && !private_input {
             app.screencast_keys.push_back((key, std::time::Instant::now()));
             while app.screencast_keys.len() > 5 {
                 app.screencast_keys.pop_front();
@@ -859,7 +868,7 @@ fn editor_selection_drag_state(
         || app.dragging_diff_left_h_scrollbar || app.dragging_minimap
         || app.alt_cursor_mouse_down_active || app.desks.popup.mode.is_some() || app.workspaces.popup.open
         || app.hunk_peek.is_some() || app.hunk_popup_active
-        || app.side_notice.visible() || app.remote_connection.details || app.inline_blame_hover.is_some()
+        || app.side_notice.visible() || app.inline_blame_hover.is_some()
         || app.background.activity.details_open || app.file_deletion.is_some()
         || app.completion_index_ui.open
         || app.terminal_mouse_capture.is_some() || app.terminal_selection_drag.is_some()
@@ -3646,7 +3655,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 }
                 // Only start optional services once the editor is visible and
                 // input is running. File/recovery loads use a separate I/O queue.
-                app.initialize_extensions();
+                if app.has_open_folder() { app.initialize_extensions(); }
                 app.start_visible_workspace_services();
                 startup_assets_requested = true;
             }

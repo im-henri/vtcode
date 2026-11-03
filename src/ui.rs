@@ -414,7 +414,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // until the browser closes.
     if app.change_dir_active {
         ui_pickers::draw_change_dir(f, app);
-        crate::ui_remote_connection::draw(f, app);
         crate::ui_side_notice::draw(f, app);
         app.logs.finish_frame(app.background.wake_handle());
         crate::ui_modal::draw_active(f, app);
@@ -564,6 +563,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             crate::app::SidebarView::Outline => {
                 draw_static_chrome(f, app, sidebar_area, ChromeRegion::Outline);
             }
+            crate::app::SidebarView::Remote => crate::ui_remote_targets::draw_sidebar(f, app, sidebar_area),
         }
         crate::ui_loading::draw_sidebar(f, app, sidebar_area);
         app.editor_gradient_area = Some(editor_area);
@@ -719,7 +719,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
 
     // Global search popup (hidden when sidebar search is active)
-    if app.global_search_active
+    if app.global_search_active && app.has_open_folder()
         && !(app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search)
     {
         ui_search_dialog::draw_global_search(f, app);
@@ -1054,7 +1054,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         }
     }
     crate::ui_performance::draw(f, app);
-    crate::ui_remote_connection::draw(f, app);
     crate::ui_side_notice::draw(f, app);
     app.logs.finish_frame(app.background.wake_handle());
     crate::ui_logs::draw_dropdown(f, app);

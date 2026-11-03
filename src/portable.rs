@@ -43,6 +43,9 @@ fn normalized_path(path: &Path) -> PathBuf {
 }
 
 fn workspace_dir_in(base: &Path, project_root: &Path) -> PathBuf {
+    if project_root.as_os_str().is_empty() {
+        return normalized_path(base).join(".vtcode").join("empty-window");
+    }
     // Do not depend on existence: recovery for a deleted/offline workspace
     // must retain the same key. Lexical normalization also handles '.'/'..'.
     let remote = crate::remote::workspace::is_view_key(project_root);
@@ -74,7 +77,8 @@ mod tests {
         assert_eq!(base_dir(), executable.parent().unwrap());
         assert!(workspace_dir(Path::new(".")).starts_with(data_dir()));
         assert_eq!(theme_extensions_dir(), data_dir().join("theme-extensions"));
-        assert_eq!(workspace_dir(Path::new("")), workspace_dir(Path::new(".")));
+        assert_eq!(workspace_dir(Path::new("")), data_dir().join("empty-window"));
+        assert_ne!(workspace_dir(Path::new("")), workspace_dir(Path::new(".")));
     }
 
     #[test]

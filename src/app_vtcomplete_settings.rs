@@ -193,7 +193,7 @@ fn display(settings: &IndexSettings, id: &str) -> String {
 impl App {
     pub(crate) fn completion_dropdown_options(&self, id: &str) -> Option<&'static [&'static str]> {
         let id = canonical_id(id);
-        if id == "vtcomplete_sources" && self.remote_workspace.is_some() {
+        if id == "vtcomplete_sources" && (self.remote_workspace.is_some() || !self.has_open_folder()) {
             Some(&["Files you open"])
         } else {
             dropdown_options(id)
@@ -260,7 +260,7 @@ impl App {
     pub(crate) fn set_completion_dropdown(&mut self, id: &str, value: &str) -> bool {
         let id = canonical_id(id);
         if id == "vtcomplete_sources"
-            && self.remote_workspace.is_some()
+            && (self.remote_workspace.is_some() || !self.has_open_folder())
             && value != "Files you open"
         {
             return false;

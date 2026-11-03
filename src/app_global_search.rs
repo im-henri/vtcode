@@ -116,7 +116,7 @@ impl App {
 
     fn schedule_global_search_at(&mut self, now: Instant) {
         self.reset_global_search_request();
-        if self.global_search_query.is_empty() { return; }
+        if self.global_search_query.is_empty() || !self.has_open_folder() { return; }
         if self.search_debounce_ms == 0 {
             self.start_global_search();
         } else {
@@ -145,6 +145,11 @@ impl App {
     }
 
     fn start_global_search(&mut self) {
+        if !self.has_open_folder() {
+            self.bg_global_search_running = false;
+            self.global_search_pending_since = None;
+            return;
+        }
         if !self.workspace_visible {
             self.global_search_pending_since = (!self.global_search_query.is_empty()).then(Instant::now);
             if self.global_search_query.is_empty() { self.bg_global_search_running = false; }

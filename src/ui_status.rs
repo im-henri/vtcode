@@ -186,6 +186,7 @@ enum HoverTarget {
     Status(&'static str),
     Activity(usize),
     Panel(u8),
+    Remote(crate::app_remote_targets::Action),
 }
 
 #[derive(Default)]
@@ -1243,7 +1244,7 @@ fn draw_details(f: &mut Frame, app: &mut App) {
     let subtitle = if customize {
         "Pinned items show when available."
     } else {
-        editor(app).map_or("Workspace status", Editor::file_name)
+        editor(app).map_or(if app.has_open_folder() { "Folder status" } else { "Editor status" }, Editor::file_name)
     };
     f.render_widget(
         Paragraph::new(clip_middle(
@@ -1416,7 +1417,8 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
                 .iter()
                 .find(|(area, _)| area.contains(point))
                 .map(|(_, tab)| HoverTarget::Panel(*tab))
-        });
+        })
+        .or_else(|| crate::ui_remote_targets::hover_action(app).map(HoverTarget::Remote));
     if target != app.chrome_hover.target {
         app.chrome_hover = HoverState {
             target,
@@ -1492,6 +1494,7 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             let (label, command) = match index {
                 0 => ("Explorer".into(), "toggle_explorer"),
                 1 => ("Search".into(), "global_search"),
+                2 if !app.has_open_folder() => ("Source Control · No folder open".into(), "source_control"),
                 2 => (
                     format!(
                         "Source Control · {} changes",
@@ -1500,6 +1503,7 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
                     "source_control",
                 ),
                 4 => ("Extensions".into(), "extensions"),
+                3 => ("Remote".into(), "remote"),
                 5 => ("Outline".into(), "outline"),
                 6 => ("Settings".into(), "settings"),
                 _ => return,
@@ -1510,9 +1514,11 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             .get(index as usize)
             .unwrap_or(&"")
             .to_string(),
+        HoverTarget::Remote(action) => crate::ui_remote_targets::hover_text(app, action),
     };
     app.chrome_hover.shown = true;
-    crate::ui_widgets::Tooltip::hover(vec![Line::raw(text)], &app.colors)
+    let lines = text.lines().flat_map(|line| App::wrap_setting_text_for_width(line, 60)).map(Line::raw).collect();
+    crate::ui_widgets::Tooltip::hover(lines, &app.colors)
         .max_width(64)
         .render(f, app.mouse_col.saturating_add(1), app.mouse_row);
 }

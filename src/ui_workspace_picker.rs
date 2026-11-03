@@ -88,10 +88,9 @@ pub(crate) fn surface(f: &mut Frame, app: &mut App, title: &str, desired: usize)
     if screen.width < 4 || screen.height < 4 {
         return None;
     }
-    let width = screen.width.min(60);
+    let width = screen.width.min(72);
     let height = desired.min(screen.height.saturating_sub(1) as usize).max(3) as u16;
-    let anchor = crate::ui_chrome::saved_workspace_sets_area(app)
-        .or_else(|| crate::ui_chrome::workspace_controls(app).map(|(rect, _)| rect));
+    let anchor = crate::ui_chrome::workspace_controls(app).map(|(rect, _)| rect);
     let x = anchor
         .map_or(screen.x + (screen.width - width) / 2, |rect| rect.x)
         .clamp(screen.x, screen.right().saturating_sub(width));
@@ -101,15 +100,17 @@ pub(crate) fn surface(f: &mut Frame, app: &mut App, title: &str, desired: usize)
         .min(screen.bottom().saturating_sub(height))
         .max(screen.y);
     let area = Rect::new(x, y, width, height);
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(format!(
-            " {} ",
-            crate::ui_workspaces::clipped(title, width.saturating_sub(8) as usize)
-        ))
         .style(base(app))
         .border_style(secondary(app));
+    if !title.is_empty() {
+        block = block.title(format!(
+            " {} ",
+            crate::ui_workspaces::clipped(title, width.saturating_sub(8) as usize)
+        ));
+    }
     let inner = block.inner(area);
     f.render_widget(Clear, area);
     f.render_widget(block, area);
@@ -126,6 +127,7 @@ pub(crate) struct ListLayout {
     pub choices: Rect,
     pub actions: Rect,
     pub detail: Rect,
+    pub row_height: u16,
 }
 pub(crate) fn list(
     f: &mut Frame,
@@ -133,14 +135,31 @@ pub(crate) fn list(
     saved: bool,
     count: usize,
     actions: usize,
+    detail_rows: usize,
 ) -> Option<ListLayout> {
-    let detail_rows = if saved { 1 } else { 2 };
-    let inner = surface(f, app, "", count.clamp(1, 8) + actions + detail_rows + 5)?;
+    let row_height = if !saved && f.area().height >= 12 {
+        2
+    } else {
+        1
+    };
+    let inner = surface(
+        f,
+        app,
+        "",
+        count.clamp(1, 6) * row_height + actions + detail_rows + 5,
+    )?;
     let mut top = inner.y;
     let mut space = inner.height;
-    if space >= 5 {
+    if space >= 4 {
         let mut x = inner.x;
-        for (index, label) in [" Workspaces ", " Saved sets "].into_iter().enumerate() {
+        let labels = if inner.width >= 32 {
+            [" Open folders ", " Saved workspaces "]
+        } else if inner.width >= 21 {
+            [" Folders ", " Workspaces "]
+        } else {
+            ["Folders ", "Workspaces"]
+        };
+        for (index, label) in labels.into_iter().enumerate() {
             let rect = Rect::new(
                 x,
                 top,
@@ -172,9 +191,9 @@ pub(crate) fn list(
                 .selection_range(App::inline_selection_range(search.cursor, search.anchor))
                 .cursor_marker("│")
                 .placeholder_text(if saved {
-                    "Find a saved set…"
+                    "Find a saved workspace…"
                 } else {
-                    "Find a workspace…"
+                    "Find an open folder…"
                 })
                 .theme_colors(&app.colors)
                 .render(f, rect),
@@ -194,19 +213,30 @@ pub(crate) fn list(
     let action_height =
         (actions as u16).min(space.saturating_sub(detail + separator + u16::from(!action_focus)));
     let choice_height = space.saturating_sub(action_height + detail + separator);
+    let row_height = (row_height as u16).min(choice_height.max(1));
+    let choice_height = choice_height / row_height * row_height;
     let choices = Rect::new(inner.x, top, inner.width, choice_height);
-    let action_y = choices.bottom() + separator;
+    let detail_area = Rect::new(inner.x, choices.bottom(), inner.width, detail);
+    let action_y = detail_area.bottom() + separator;
     if separator > 0 {
-        f.render_widget(
-            Paragraph::new("─".repeat(inner.width as usize)).style(secondary(app)),
-            Rect::new(inner.x, choices.bottom(), inner.width, 1),
+        self::separator(
+            f,
+            app,
+            Rect::new(inner.x, detail_area.bottom(), inner.width, 1),
         );
     }
     Some(ListLayout {
         choices,
         actions: Rect::new(inner.x, action_y, inner.width, action_height),
-        detail: Rect::new(inner.x, inner.bottom() - detail, inner.width, detail),
+        detail: detail_area,
+        row_height,
     })
+}
+pub(crate) fn separator(f: &mut Frame, app: &App, rect: Rect) {
+    f.render_widget(
+        Paragraph::new("─".repeat(rect.width as usize)).style(secondary(app)),
+        rect,
+    );
 }
 
 pub(crate) fn scroll(scroll: &mut usize, selected: usize, count: usize, visible: u16) -> usize {
@@ -273,6 +303,23 @@ pub(crate) fn detail(f: &mut Frame, app: &App, rect: Rect, text: &str) {
         ),
     );
 }
+pub(crate) fn subtitle(f: &mut Frame, app: &App, rect: Rect, text: &str, active: bool) {
+    let style = if active {
+        selected(app)
+    } else {
+        secondary(app)
+    };
+    f.render_widget(Block::default().style(style), rect);
+    f.render_widget(
+        Paragraph::new(text).style(style),
+        Rect::new(
+            rect.x + 3,
+            rect.y,
+            rect.width.saturating_sub(4),
+            rect.height,
+        ),
+    );
+}
 /// Primary action is visually last. Return primary, cancel hit regions.
 pub(crate) fn buttons(
     f: &mut Frame,
@@ -286,10 +333,27 @@ pub(crate) fn buttons(
     if row.is_empty() {
         return [Rect::default(); 2];
     }
-    let primary_width = ((primary.width() + 4) as u16).min(row.width.saturating_sub(1).max(1));
-    let cancel_width = 10.min(row.width.saturating_sub(primary_width));
+    let compact = (row.width as usize) < primary.width() + 15;
+    let primary = if compact {
+        match primary {
+            "Save workspace" => "Save",
+            "Open workspace" => "Open",
+            "Update workspace" => "Update",
+            "Delete workspace" => "Delete",
+            "Close folder" => "Close",
+            _ => primary,
+        }
+    } else {
+        primary
+    };
+    let padding = if compact { 2 } else { 4 };
+    let primary_width =
+        ((primary.width() + padding) as u16).min(row.width.saturating_sub(1).max(1));
+    let cancel_width = if compact { 8 } else { 10 };
+    let gap = u16::from(row.width > primary_width + cancel_width);
+    let cancel_width = cancel_width.min(row.width.saturating_sub(primary_width + gap));
     let primary_rect = Rect::new(row.right() - primary_width, row.y, primary_width, 1);
-    let cancel_rect = Rect::new(primary_rect.x - cancel_width, row.y, cancel_width, 1);
+    let cancel_rect = Rect::new(primary_rect.x - gap - cancel_width, row.y, cancel_width, 1);
     for (rect, label, focused, primary) in [
         (cancel_rect, "Cancel", cancel_selected, false),
         (primary_rect, primary, primary_selected, true),
@@ -311,7 +375,11 @@ pub(crate) fn buttons(
         };
         f.render_widget(
             Paragraph::new(crate::ui_workspaces::clipped(
-                &format!("[ {label} ]"),
+                &if compact {
+                    format!("[{label}]")
+                } else {
+                    format!("[ {label} ]")
+                },
                 rect.width as usize,
             ))
             .style(style),

@@ -63,7 +63,7 @@ enum Input {
     Key(crossterm::event::KeyEvent, bool, bool),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Launch {
     program: OsString,
     args: Vec<OsString>,
@@ -76,6 +76,17 @@ pub(crate) struct Recipe {
     pub(crate) diagnostics: super::diagnostics::Log,
 }
 impl Recipe {
+    pub(crate) fn matches(&self, launch: &Launch) -> bool { self.launch == *launch }
+    pub(crate) fn target(&self) -> Option<crate::remote_targets::Target> {
+        let split = self.launch.args.len().checked_sub(2)?;
+        let host = self.launch.args[split].to_str()?.to_string();
+        let remote = self.launch.args[split + 1].to_str()?;
+        let prefix: Vec<_> = std::iter::once(self.launch.program.to_str()?)
+            .chain(self.launch.args[..split].iter().map(|arg| arg.to_str()).collect::<Option<Vec<_>>>()?).collect();
+        let ssh_command = if prefix == ["ssh", "-e", "none", "-tt"] { String::new() } else { shell_words::join(prefix) };
+        Some(crate::remote_targets::Target { name: host.clone(), host, folder: String::new(),
+            remote_command: if remote == "vtcode --headless" { String::new() } else { remote.into() }, ssh_command })
+    }
     pub(crate) fn start(&self, size: ratatui::layout::Size, wake: UiWake) -> io::Result<Setup> {
         self.launch.clone().start_with_log(size, wake, &self.cwd, self.diagnostics.clone())
     }
@@ -373,6 +384,7 @@ pub(crate) struct Setup {
     recipe: Option<Arc<Recipe>>,
 }
 impl Setup {
+    pub(crate) fn diagnostics(&self) -> super::diagnostics::Log { self.owned.trace.log.clone() }
     pub(crate) fn poll_client(&self) -> Option<io::Result<client::Client>> {
         match self.endpoint.try_recv() {
             Ok(client) => Some(client.map_err(|error| self.owned.trace.error(error))),
@@ -381,6 +393,11 @@ impl Setup {
         }
     }
     pub(crate) fn take_output(&self) -> Option<Vec<u8>> { self.incoming.try_recv().ok() }
+    pub(crate) fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
+        self.owned.master.lock().unwrap().resize(portable_pty::PtySize {
+            cols: cols.max(2), rows: rows.max(2), pixel_width: 0, pixel_height: 0,
+        }).map_err(io::Error::other)
+    }
     pub(crate) fn send_key(&self, key: crossterm::event::KeyEvent, grid: &crate::terminal::TermGrid) -> io::Result<()> {
         self.keys.try_send(Input::Key(key, grid.application_cursor_keys, grid.win32_input_mode)).map_err(io::Error::other)
     }

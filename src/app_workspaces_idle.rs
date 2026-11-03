@@ -25,6 +25,7 @@ pub(crate) enum GitWork { Branch, Lines, History, MoreHistory }
 
 impl App {
     pub(crate) fn defer_explorer_refresh(&mut self, full: bool) -> bool {
+        if !self.has_open_folder() { return true; }
         if self.workspace_visible { return false; }
         let work = &mut self.workspace_observation.work;
         work.explorer_full |= full;
@@ -49,6 +50,7 @@ impl App {
     }
 
     pub(crate) fn defer_git_status(&mut self, paths: Option<&FxHashSet<PathBuf>>, passive: bool) -> bool {
+        if !self.has_open_folder() { return true; }
         if self.workspace_visible { return false; }
         let pending = self.workspace_observation.work.status.get_or_insert_with(|| Status {
             paths: Some(FxHashSet::default()), passive: true,
@@ -66,6 +68,7 @@ impl App {
     }
 
     pub(crate) fn defer_git_work(&mut self, kind: GitWork) -> bool {
+        if !self.has_open_folder() { return true; }
         if self.workspace_visible { return false; }
         let work = &mut self.workspace_observation.work;
         match kind {
@@ -78,7 +81,7 @@ impl App {
     }
 
     pub(crate) fn start_workspace_watcher(&mut self) {
-        if !self.workspace_visible {
+        if !self.workspace_visible || !self.has_open_folder() {
             return;
         }
         self.workspace_observation.started = true;
@@ -97,9 +100,28 @@ impl App {
         if !self.workspace_observation.assets_started {
             self.workspace_observation.assets_started = true;
             self.request_external_themes_async();
-            self.request_syntax_assets_async();
+            if self.has_open_folder() { self.request_syntax_assets_async(); }
+        }
+        if self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(|tab| matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::ExtensionView))
+            || !self.pending_custom_recoveries.is_empty()
+        {
+            self.start_empty_window_document_services();
         }
         self.start_workspace_watcher();
+    }
+
+    pub(crate) fn start_empty_window_document_services(&mut self) {
+        if self.has_open_folder() || self.workspace_observation.document_services_started { return; }
+        self.workspace_observation.document_services_started = true;
+        self.request_syntax_assets_async();
+        self.start_empty_window_extension_services();
+    }
+
+    pub(crate) fn start_empty_window_extension_services(&mut self) {
+        if self.has_open_folder() || self.workspace_observation.extension_services_started { return; }
+        self.workspace_observation.extension_services_started = true;
+        self.initialize_extensions();
     }
 
     pub(super) fn suspend_workspace_observation(&mut self) {

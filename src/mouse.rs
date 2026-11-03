@@ -119,7 +119,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         .and_then(crate::ui_chrome::agent_chat_button_area)
         .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_navigation = crate::ui_chrome::navigation_button_at(app, prev_mouse_col, prev_mouse_row).is_some();
-    let was_over_workspace_sets = crate::ui_chrome::saved_workspace_sets_area(app).is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_source_control = app.show_explorer
         && app.sidebar_view == crate::app::SidebarView::SourceControl
         && (app.source_control_detail_area().is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
@@ -135,6 +134,10 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     // Track mouse position for hover effects during rendering
     app.mouse_row = row;
     app.mouse_col = col;
+    let empty_folder_hover_changed = mouse.kind == MouseEventKind::Moved
+        && crate::ui_empty_folder::button_at(app, prev_mouse_col, prev_mouse_row)
+            != crate::ui_empty_folder::button_at(app, col, row);
+    app.mouse_hover_changed |= empty_folder_hover_changed;
     let sidebar_visibility_changed = mouse.kind == MouseEventKind::Moved
         && app.update_sidebar_auto_hide(mouse);
     crate::ui_inline_blame::leave(app, col, row);
@@ -345,6 +348,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if app.handle_background_text_input_mouse(mouse.kind, col, row, mouse.modifiers) {
         return;
     }
+    if crate::ui_remote_targets::handle_mouse(app, mouse) { return; }
+    if crate::ui_remote_targets::connection_mouse(app, mouse) { return; }
     if crate::ui_explorer_find::handle_mouse(app, mouse) { return; }
 
     // Focus is owned by the terminal only after an explicit click in its panel.
@@ -436,8 +441,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // follows the pointer. Modifier/decorated/custom surfaces retain
             // their existing route, including removal of a previous hover.
             let changed = modifiers_changed || had_chrome_hover || was_over_search_control || was_over_zen_exit || was_over_source_control
-                || was_over_agent_chat || was_over_navigation || was_over_workspace_sets
-                || crate::ui_chrome::saved_workspace_sets_area(app).is_some_and(|area| area.contains((col, row).into()))
+                || was_over_agent_chat || was_over_navigation || empty_folder_hover_changed
                 || was_over_performance
                 || extension_hover || app.lsp_hover_active
                 || mouse.modifiers.contains(KeyModifiers::CONTROL)
@@ -715,10 +719,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         }
                         return;
                     }
-                    if crate::ui_chrome::saved_workspace_sets_area(app).is_some_and(|area| area.contains((col, row).into())) {
-                        crate::ui_workspace_sets::open(app);
-                        return;
-                    }
                     if let Some((picker, plus)) = crate::ui_chrome::workspace_controls(app) {
                         if picker.contains((col, row).into()) {
                             crate::ui_workspaces::open(app);
@@ -876,6 +876,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     app.refresh_source_control_async();
                                     app.refresh_git_log_async();
                                 }
+                            }
+                            3 => {
+                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Remote {
+                                    app.show_explorer = false;
+                                } else { app.open_remote_sidebar(); }
                             }
                             4 => {
                                 // Extensions: toggle sidebar view
@@ -1226,7 +1231,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if relative_row == 0 && !id.starts_with("kb_") && settings_area.width >= 32
                                 && col >= settings_area.right().saturating_sub(8)
                                 && col < settings_area.right().saturating_sub(1)
-                                && matches!(app.setting_source_label(id), "Global" | "Workspace")
+                                && [crate::settings::SettingsScope::Global.label(), crate::settings::SettingsScope::Workspace.label()]
+                                    .contains(&app.setting_source_label(id))
                             {
                                 app.reset_setting_in_selected_scope(id);
                                 return;
@@ -1528,6 +1534,13 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     && row >= exp_area.y
                     && row < exp_area.y + exp_area.height
                 {
+                    if crate::ui_empty_folder::click(app, col, row) { return; }
+                    if !app.has_open_folder() && (matches!(app.sidebar_view,
+                        crate::app::SidebarView::Search | crate::app::SidebarView::SourceControl)
+                        || (app.sidebar_view == crate::app::SidebarView::Explorer && app.tabs.is_empty())) {
+                        app.active_pane = ActivePane::Explorer;
+                        return;
+                    }
                     // Handle search panel clicks
                     if app.sidebar_view == crate::app::SidebarView::Search {
                         app.active_pane = ActivePane::Explorer;
@@ -1812,9 +1825,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
                     // Explorer view clicks
                     app.active_pane = ActivePane::Explorer;
-
                     // Refresh button in explorer header
-                    if row == exp_area.y {
+                    if app.has_open_folder() && row == exp_area.y {
                         let header_label_w = UnicodeWidthStr::width(" EXPLORER") as u16;
                         let collapse_w = UnicodeWidthStr::width(" ⤒ ") as u16;
                         let refresh_w = UnicodeWidthStr::width(" ↻ ") as u16;

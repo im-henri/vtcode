@@ -167,6 +167,7 @@ mod editorconfig;
 mod explorer;
 mod explorer_find;
 mod ui_explorer_find;
+mod ui_empty_folder;
 mod folder_browser;
 mod external_open;
 mod extension_handlers;
@@ -220,6 +221,9 @@ mod terminal_output;
 mod terminal_shell;
 mod ui_terminal_rows;
 mod remote;
+mod remote_targets;
+mod app_remote_targets;
+mod ui_remote_targets;
 mod git_tasks;
 mod git_operation;
 mod ui_git_operation;
@@ -396,6 +400,10 @@ fn run_main() -> io::Result<()> {
         }
         cli::Command::Editor(path) => (path, None),
         cli::Command::Remote { program, args } => (None, Some(remote::launch::Launch::new(program, args))),
+        cli::Command::RemoteTarget(name) => {
+            let store = remote_targets::Store::load(&remote_targets::path()).map_err(io::Error::other)?;
+            (None, Some(store.find(&name).map_err(io::Error::other)?.launch().map_err(io::Error::other)?))
+        }
     };
     let mut startup_timings = startup::Timings::new();
     let _clipboard_guard = clipboard::ClipboardGuard;

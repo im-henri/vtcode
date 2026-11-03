@@ -73,7 +73,7 @@ pub(crate) fn handle_exit_confirm_key(app: &mut App, key: KeyEvent) -> Option<bo
         _ => None,
     };
     if app.exit_confirm_active && choice.is_some() && app.workspace_sets_saving() {
-        app.modal.error = Some("Wait for workspace sets to finish saving before quitting".into());
+        app.modal.error = Some("Wait for workspaces to finish saving before quitting".into());
         return Some(false);
     }
     if app.exit_confirm_active && app.workspaces.exit.is_none() && !app.workspaces.parked.is_empty() {
@@ -576,7 +576,7 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
     {
         app.settings_scope = match key.code {
             KeyCode::Left => crate::settings::SettingsScope::Global,
-            KeyCode::Right => crate::settings::SettingsScope::Workspace,
+            KeyCode::Right if app.has_open_folder() => crate::settings::SettingsScope::Workspace,
             _ => app.settings_scope,
         };
         app.settings_editor_scroll = 0;

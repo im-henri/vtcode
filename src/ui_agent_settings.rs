@@ -845,7 +845,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let scope = if app.agent_settings.scope == SettingsScope::Global {
         "User"
     } else {
-        "Workspace"
+        SettingsScope::Workspace.label()
     };
     let title = if let Some(draft) = &app.agent_settings.draft {
         if draft.index.is_some() {

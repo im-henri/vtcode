@@ -84,12 +84,12 @@ pub(crate) struct ExtensionManager {
 
 impl ExtensionManager {
     pub(crate) fn new(project_root: &Path) -> Self {
-        let search_roots = vec![
-            crate::portable::data_dir().join("extensions"),
+        let mut search_roots = vec![crate::portable::data_dir().join("extensions")];
+        if !project_root.as_os_str().is_empty() { search_roots.extend([
             crate::portable::workspace_dir(project_root).join("extensions"),
             project_root.join("extensions"),
             project_root.join(".vtcode").join("extensions"),
-        ];
+        ]); }
         let settings_file =
             crate::portable::workspace_dir(project_root).join("extension-settings.json");
         Self::with_paths(search_roots, settings_file)

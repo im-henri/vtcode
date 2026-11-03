@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -89,6 +89,32 @@ fn explorer_tree_raw_area(app: &App, area: Rect) -> Rect {
 
 pub(crate) fn explorer_tree_content_area(app: &App, area: Rect) -> Rect {
     explorer_scroll::tree_layout(app, area).content
+}
+
+pub(crate) fn empty_folder_state_area(app: &App, area: Rect) -> Option<Rect> {
+    if app.has_open_folder() { return None; }
+    Some(match app.sidebar_view {
+        crate::app::SidebarView::Explorer => {
+            let (_, tree) = explorer_sections(app, area);
+            explorer_section_area(app, tree)
+        }
+        crate::app::SidebarView::Search | crate::app::SidebarView::SourceControl => {
+            let inset = u16::from(area.width > 1);
+            let top = 2.min(area.height);
+            Rect::new(area.x + if app.sidebar_right { inset } else { 0 }, area.y + top,
+                area.width.saturating_sub(inset), area.height - top)
+        }
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn empty_folder_button_area(app: &App, area: Rect) -> Option<Rect> {
+    crate::ui_empty_folder::open_area(app, area)
+}
+
+pub(crate) fn draw_empty_folder_state(f: &mut Frame, app: &mut App, area: Rect) {
+    crate::ui_empty_folder::draw(f, app, area);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -342,10 +368,10 @@ struct TitleBarCenterLayout {
     navigation: Option<[Rect; 2]>,
     workspace: Option<Rect>,
     add_workspace: Option<Rect>,
-    saved_sets: Option<Rect>,
 }
 
 fn workspace_name(app: &App) -> String {
+    if !app.has_open_folder() { return "No folder".into(); }
     crate::ui_workspaces::escaped(&crate::remote::workspace::display_name(&app.explorer.root)
         .unwrap_or_else(|| app.explorer.root.file_name().and_then(|name| name.to_str()).unwrap_or("VTCode").to_owned())).into_owned()
 }
@@ -374,29 +400,24 @@ fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
         used + TITLE_BAR_CLOSE_BTN_WIDTH + agent_chat_reserved_width(area.width));
     let center = Rect::new(area.x.saturating_add(used as u16), area.y, remaining as u16, area.height.min(1));
     let nav_width = navigation_reserved_width(area.width);
-    let sets_width = if remaining >= nav_width + 18 { 6 } else { 3 };
     let workspace_width = workspace_label(app, usize::MAX / 2).width()
-        .min(remaining.saturating_sub(nav_width + sets_width + 3)).min(40);
+        .min(remaining.saturating_sub(nav_width + 3)).min(40);
     let show_workspace = workspace_width >= 5 && area.height > 0;
-    let content_width = nav_width + if show_workspace { workspace_width + sets_width + 3 } else { 0 };
+    let content_width = nav_width + if show_workspace { workspace_width + 3 } else { 0 };
     let x = center.x + remaining.saturating_sub(content_width) as u16 / 2;
     TitleBarCenterLayout {
         area: center,
         navigation: (nav_width > 0 && area.height > 0).then(|| [
             Rect::new(x, area.y, 3, 1), Rect::new(x + 3, area.y, 3, 1),
         ]),
-        saved_sets: show_workspace.then(|| Rect::new(x + nav_width as u16, area.y, sets_width as u16, 1)),
-        workspace: show_workspace.then(|| Rect::new(x + nav_width as u16 + sets_width as u16, area.y, workspace_width as u16, 1)),
-        add_workspace: show_workspace.then(|| Rect::new(x + nav_width as u16 + sets_width as u16 + workspace_width as u16, area.y, 3, 1)),
+        workspace: show_workspace.then(|| Rect::new(x + nav_width as u16, area.y, workspace_width as u16, 1)),
+        add_workspace: show_workspace.then(|| Rect::new(x + nav_width as u16 + workspace_width as u16, area.y, 3, 1)),
     }
 }
 
 pub(crate) fn workspace_controls(app: &App) -> Option<(Rect, Rect)> {
     let layout = title_bar_center_layout(app, app.menu_bar_area?);
     Some((layout.workspace?, layout.add_workspace?))
-}
-pub(crate) fn saved_workspace_sets_area(app: &App) -> Option<Rect> {
-    title_bar_center_layout(app, app.menu_bar_area?).saved_sets
 }
 
 pub(crate) fn navigation_button_at(app: &App, col: u16, row: u16) -> Option<(Rect, bool)> {
@@ -410,12 +431,8 @@ pub(crate) fn draw_navigation_tooltip(f: &mut Frame, app: &App) {
     if app.palette.active || app.menu_active || app.change_dir_active
         || app.context_menu_active || app.explorer_context_active || app.sc_context_active
         || app.workspaces.popup.open || crate::ui_modal::active(app).is_some() { return; }
-    if let Some(area) = saved_workspace_sets_area(app).filter(|area| area.contains((app.mouse_col, app.mouse_row).into())) {
-        crate::ui_widgets::Tooltip::hover(vec![Line::raw("Saved workspace sets")], &app.colors).prefer_below().render(f, area.x, area.y);
-        return;
-    }
     if let Some((workspace, add)) = workspace_controls(app) {
-        for (area, label) in [(workspace, "Switch workspace"), (add, "Add workspace")] {
+        for (area, label) in [(workspace, "Folders and saved workspaces"), (add, if app.open_folder_count() == 0 { "Open folder" } else { "Add folder" })] {
             if area.contains((app.mouse_col, app.mouse_row).into()) {
                 crate::ui_widgets::Tooltip::hover(vec![Line::raw(label)], &app.colors).prefer_below().render(f, area.x, area.y);
                 return;
@@ -457,6 +474,7 @@ const ACTIVITY_LABEL_SEARCH: ActivityLabel = ActivityLabel(["SEAR", "CH", ""]);
 const ACTIVITY_LABEL_SOURCE_CONTROL: ActivityLabel = ActivityLabel(["SRC", "CTRL", ""]);
 const ACTIVITY_LABEL_EXTENSIONS: ActivityLabel = ActivityLabel(["", "EXTS", ""]);
 const ACTIVITY_LABEL_OUTLINE: ActivityLabel = ActivityLabel(["OUTL", "INE", ""]);
+const ACTIVITY_LABEL_REMOTE: ActivityLabel = ActivityLabel(["REMO", "TE", ""]);
 const ACTIVITY_LABEL_SETTINGS: ActivityLabel = ActivityLabel(["SETT", "INGS", ""]);
 
 fn git_status_color(status: GitStatus, colors: &crate::app_theme::ThemeColors, surface: Color) -> Color {
@@ -574,10 +592,11 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     } else if app.remote_workspace.is_some() && app.remote_explorer_error.is_some() {
         " Explorer · error"
     } else { " Explorer" };
-    let header_label = crate::ui_pickers::truncate_to_width(header_label, area.width.saturating_sub(6) as usize);
+    let controls_width = if app.has_open_folder() { 6 } else { 0 };
+    let header_label = crate::ui_pickers::truncate_to_width(header_label, area.width.saturating_sub(controls_width) as usize);
     let header_label = header_label.as_str();
-    let collapse_btn = " ⤒ ";
-    let refresh_btn = " ↻ ";
+    let collapse_btn = if app.has_open_folder() { " ⤒ " } else { "" };
+    let refresh_btn = if app.has_open_folder() { " ↻ " } else { "" };
     let header_label_w = UnicodeWidthStr::width(header_label);
     let collapse_w = UnicodeWidthStr::width(collapse_btn) as u16;
     let refresh_w = UnicodeWidthStr::width(refresh_btn) as u16;
@@ -617,6 +636,11 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         Span::styled(refresh_btn, button_style(hover_refresh)),
     ]);
     f.render_widget(Paragraph::new(header_line), header_area);
+
+    if !app.has_open_folder() && app.tabs.is_empty() {
+        draw_empty_folder_state(f, app, area);
+        return;
+    }
 
     // Split explorer into: Open Editors + File Tree
     let (oe_area, raw_tree_area) = explorer_sections(app, area);
@@ -735,10 +759,15 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         return;
     }
 
+    if !app.has_open_folder() {
+        draw_empty_folder_state(f, app, area);
+        return;
+    }
+
     // Folder name header
     let folder_name = app.explorer.root.file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("Workspace");
+        .unwrap_or("Folder");
     let ws_hovered = app.mouse_row == tree_area.y
         && app.mouse_col >= tree_area.x && app.mouse_col < tree_area.x + tree_area.width;
     let badge_visibility = app.explorer_git_badge_visibility();
@@ -1091,7 +1120,10 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
         app.editor_area = Some(area);
         app.viewport = Some(pane_layout[2]);
         app.refresh_file_search_view(group_id);
-        if let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {
+        if let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
+            app.settings_editor_active = false;
+            crate::ui_remote_targets::draw_connection_tab(f, app, pane_layout[2], id);
+        } else if let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {
             app.settings_editor_active = false;
             crate::ui_chat::queue_editor(app, key, group_id, pane_layout[2]);
         } else if current_tab_kind == Some(crate::app::TabKind::CommitDetails) {
@@ -1224,6 +1256,10 @@ fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode,
 }
 
 pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
+    app.remote_targets.connection_area = Rect::default();
+    app.remote_targets.connection_hits.clear();
+    app.remote_connection.area = None;
+    app.remote_connection.buttons.clear();
     app.keybindings_ui.begin_frame();
     crate::ui_extension_info::begin_frame(app);
     app.sync_diff_tab();
@@ -1294,7 +1330,12 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // Settings/Keyboard Shortcuts tab view
-    if !is_split && let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {
+    if !is_split && let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
+        app.settings_editor_active = false;
+        app.editor_area = Some(layout[2]);
+        crate::ui_remote_targets::draw_connection_tab(f, app, layout[2], id);
+        return;
+    } else if !is_split && let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {
         app.settings_editor_active = false;
         app.editor_area = Some(layout[2]);
         crate::ui_chat::queue_editor(app, key, app.active_group, layout[2]);
@@ -1526,7 +1567,7 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
     // Render from the same layout used by mouse hit testing and tooltips.
     let center = title_bar_center_layout(app, area);
     let content_start = center.navigation.map(|buttons| buttons[0].x)
-        .or(center.saved_sets.map(|sets| sets.x)).or(center.workspace.map(|workspace| workspace.x)).unwrap_or(center.area.x);
+        .or(center.workspace.map(|workspace| workspace.x)).unwrap_or(center.area.x);
     spans.push(Span::styled(crate::helpers::spaces((content_start - center.area.x) as usize), Style::default().bg(bg)));
     let mut content_end = content_start;
     if let Some(buttons) = center.navigation {
@@ -1544,17 +1585,12 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
             content_end = button.right();
         }
     }
-    if let Some(sets) = center.saved_sets {
-        spans.push(Span::styled(if sets.width == 6 { " Sets " } else { " ▤ " }, app.colors.ui.toolbar_style(fg, bg,
-            sets.contains((app.mouse_col, app.mouse_row).into()), app.workspaces.popup.sets.mode.is_some(), false)));
-        content_end = sets.right();
-    }
     if let Some(workspace) = center.workspace {
         spans.push(Span::styled(
             workspace_label(app, workspace.width as usize),
             app.colors.ui.command_center_style(bg, app.terminal_has_focus,
                 workspace.contains((app.mouse_col, app.mouse_row).into())
-                    || app.workspaces.popup.open && app.workspaces.popup.sets.mode.is_none()),
+                    || app.workspaces.popup.open),
         ));
         content_end = workspace.right();
     }
@@ -1632,14 +1668,16 @@ pub(crate) fn draw_outline(f: &mut Frame, app: &App, area: Rect) {
     if items.is_empty() {
         f.render_widget(
             Paragraph::new(Span::styled(
-                if app.source_symbol_work.outline_pending() {
+                if app.editor().is_none() {
+                    " Open a file to see symbols"
+                } else if app.source_symbol_work.outline_pending() {
                     " Reading source symbols…"
                 } else {
                     " No symbols found"
                 },
                 Style::default().fg(app.colors.ui.description_color(sidebar_bg)).bg(sidebar_bg),
-            )),
-            Rect::new(list_area.x, list_area.y, list_area.width, 1),
+            )).wrap(Wrap { trim: true }),
+            Rect::new(list_area.x, list_area.y, list_area.width, list_area.height.min(3)),
         );
         return;
     }
@@ -1749,7 +1787,7 @@ pub(crate) fn draw_outline(f: &mut Frame, app: &App, area: Rect) {
 
 pub(crate) fn activity_item_regions(area: Rect) -> Vec<(Rect, usize)> {
     if area.is_empty() { return Vec::new(); }
-    let primary: &[usize] = &[0, 1, 2, 4, 5];
+    let primary: &[usize] = &[0, 1, 2, 3, 4, 5];
     let height = (area.height / (primary.len() as u16 + 1)).clamp(1, 3);
     let visible = primary.len().min(area.height.saturating_sub(height) as usize / height as usize);
     let mut regions: Vec<_> = primary.iter().take(visible).enumerate().map(|(position, &index)|
@@ -1765,6 +1803,7 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
         let label = match index {
             0 => ACTIVITY_LABEL_EXPLORER, 1 => ACTIVITY_LABEL_SEARCH,
             2 => ACTIVITY_LABEL_SOURCE_CONTROL, 4 => ACTIVITY_LABEL_EXTENSIONS,
+            3 => ACTIVITY_LABEL_REMOTE,
             5 => ACTIVITY_LABEL_OUTLINE, 6 => ACTIVITY_LABEL_SETTINGS,
             _ => continue,
         };
@@ -1813,12 +1852,14 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
             let y = item_area.bottom() - 1;
             f.render_widget(Paragraph::new(badge).style(Style::default().fg(badge_fg).bg(badge_bg).add_modifier(Modifier::BOLD)),
                 Rect::new(x, y, width, 1));
-        } else if (failed || unknown_count) && item_area.width >= 2 {
-            // Short activity bars have no spare row; keep the unknown count
+        } else if (failed || unknown_count || count > 0) && item_area.width >= 2 {
+            // Short activity bars have no spare row; keep the count/status
             // in the right padding without displacing SRC / CTRL or its border.
             let badge_bg = app.colors.ui.bg_activity_badge;
             let badge_fg = app.colors.ui.readable_foreground(app.colors.ui.fg_activity_badge, badge_bg, 4.5);
-            f.render_widget(Paragraph::new(if failed { "!" } else { "?" }).style(Style::default().fg(badge_fg).bg(badge_bg).add_modifier(Modifier::BOLD)),
+            let badge = if failed { "!".into() } else if unknown_count { "?".into() }
+                else if count > 9 { "+".into() } else { count.to_string() };
+            f.render_widget(Paragraph::new(badge).style(Style::default().fg(badge_fg).bg(badge_bg).add_modifier(Modifier::BOLD)),
                 Rect::new(item_area.right() - 1, item_area.bottom() - 1, 1, 1));
         }
     }
@@ -2263,9 +2304,11 @@ mod tests {
         assert!(row(4).contains("CH"));
         assert!(row(6).contains("SRC"));
         assert!(row(7).contains("CTRL"));
-        assert!(row(10).contains("EXTS"));
-        assert!(row(12).contains("OUTL"));
-        assert!(row(13).contains("INE"));
+        assert!(row(9).contains("REMO"));
+        assert!(row(10).contains("TE"));
+        assert!(row(13).contains("EXTS"));
+        assert!(row(15).contains("OUTL"));
+        assert!(row(16).contains("INE"));
         assert!((0..18).all(|y| !row(y).contains("RUN")));
         assert!(row(18).contains("SETT"));
         assert!(row(19).contains("INGS"), "settings action stays at the bottom");
@@ -2285,12 +2328,14 @@ mod tests {
                 .map(|cell| cell.symbol())
                 .collect::<String>()
         };
-        assert!(row(10).contains("EXTS"));
-        assert!(row(12).contains("OUTL"));
-        assert!(row(13).contains("INE"));
+        assert!(row(6).contains("REMO"));
+        assert!(row(7).contains("TE"));
+        assert!(row(8).contains("EXTS"));
+        assert!(row(10).contains("OUTL"));
+        assert!(row(11).contains("INE"));
         assert!((0..18).all(|y| !row(y).contains("CHAT")));
-        assert!(row(15).contains("SETT"));
-        assert!(row(16).contains("INGS"));
+        assert!(row(16).contains("SETT"));
+        assert!(row(17).contains("INGS"));
     }
 
     #[test]
@@ -2301,6 +2346,7 @@ mod tests {
             ACTIVITY_LABEL_SOURCE_CONTROL,
             ACTIVITY_LABEL_EXTENSIONS,
             ACTIVITY_LABEL_OUTLINE,
+            ACTIVITY_LABEL_REMOTE,
             ACTIVITY_LABEL_SETTINGS,
         ] {
             assert!(label.0.iter().all(|line| UnicodeWidthStr::width(*line) <= 4));

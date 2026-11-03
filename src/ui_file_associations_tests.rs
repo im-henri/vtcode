@@ -357,7 +357,7 @@ fn association_is_discoverable_from_language_selector_and_settings() {
     for label in [
         "File Associations",
         "User",
-        "Workspace",
+        "Folder",
         "Item",
         "Value",
         "Add Item",

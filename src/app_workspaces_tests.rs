@@ -292,7 +292,7 @@ fn opening_is_async_deduplicates_roots_and_keeps_current_workspace_on_failure() 
             .last()
             .unwrap()
             .0
-            .contains("Could not open workspace")
+            .contains("Could not open folder")
     );
 }
 
@@ -324,7 +324,7 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
         crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
         let popup = draw(&mut app, width, 30);
         let text: String = popup.content.iter().map(|cell| cell.symbol()).collect();
-        assert!(text.contains("Workspaces"));
+        assert!(text.contains("Open folders"));
         assert!(text.contains("Build finished"));
         crate::ui_control_visibility_tests::snapshot(&buffer, &format!("Workspaces title {width}"));
         crate::ui_control_visibility_tests::snapshot(&popup, &format!("Workspaces picker {width}"));

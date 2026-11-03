@@ -108,10 +108,35 @@ impl App {
     }
 
     fn execute_palette_command_inner(&mut self, id: &str) -> bool {
+        if !self.has_open_folder() {
+            match id {
+                "new_folder" | "goto_workspace_symbol" => { crate::ui_workspaces::add(self); return true; }
+                "open_workspace_settings_json" => { self.notify_warn("Open a folder to edit Folder settings"); return true; }
+                _ => {}
+            }
+        }
         if crate::ui_logs::command(self, id) { return true; }
         if self.route_explorer_edit_command(id) { return true; }
         match id {
             "about" => { self.show_about(); return true; }
+            "remote" | "remote_connect" => { self.open_remote_sidebar(); return true; }
+            "remote_target_add" => { self.open_remote_sidebar(); self.edit_remote_target(None, false); return true; }
+            "remote_target_save_current" => { self.open_remote_sidebar(); self.save_current_remote_target(); return true; }
+            "remote_targets_refresh" => { self.reload_remote_targets(); return true; }
+            "remote_targets_config" => { self.open_remote_targets_config(); return true; }
+            "remote_target_edit" | "remote_target_duplicate" | "remote_target_remove" => {
+                self.open_remote_sidebar();
+                if let Some(index) = self.remote_targets.selected_index() {
+                    let action = match id {
+                        "remote_target_edit" => crate::app_remote_targets::Action::Edit(index),
+                        "remote_target_duplicate" => crate::app_remote_targets::Action::Duplicate(index),
+                        _ => crate::app_remote_targets::Action::Remove(index),
+                    };
+                    crate::ui_remote_targets::activate(self, action);
+                }
+                return true;
+            }
+            "remote_disconnect" => { self.workspaces.request = Some(crate::app_workspaces::Request::CloseRemote); return true; }
             "remote_connection_status" => {
                 if self.remote_workspace.is_some() {
                     if self.remote_connection.phase == crate::app_remote_connection::Phase::Connected {

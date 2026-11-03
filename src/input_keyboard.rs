@@ -97,7 +97,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         return false;
     }
     if crate::ui_logs::key(app, key) { return false; }
-    if crate::ui_remote_connection::handle_key(app, key) { return false; }
     if crate::ui_desks::handle_key(app, key) { return false; }
     app.sync_text_input_sessions();
     if let Some(quit) = crate::ui_modal::handle_key(app, key) {
@@ -158,6 +157,16 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     // tab navigation follows the popup, field, and terminal handlers below.
     if app.keybindings_editing && crate::ui_keybindings::handle_key(app, key) {
         return false;
+    }
+
+    if crate::ui_remote_targets::connection_has_focus(app) {
+        let workbench = terminal_workbench_shortcut(app, key)
+            || app.lookup_keybinding(key.modifiers, key.code)
+                .is_some_and(|id| matches!(id, "close_tab" | "quit" | "navigate_back" | "navigate_forward"))
+            || (!app.shortcut_default_overridden((key.modifiers, key.code), None)
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('w' | 'W' | 'q' | 'Q' | 'p' | 'P')));
+        if !workbench && crate::ui_remote_targets::connection_key(app, key) { return false; }
     }
 
     // Source control commit message input (sidebar mode)
@@ -266,6 +275,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     if app.handle_focused_text_input_shortcut(key.code, key.modifiers) {
         return false;
     }
+    if crate::ui_remote_targets::handle_shortcut(app, key) { return false; }
 
     if !terminal_has_focus(app) || terminal_workbench_shortcut(app, key)
         || (app.zen_mode && !app.focused_terminal_is_fullscreen()

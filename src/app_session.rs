@@ -1466,6 +1466,7 @@ impl App {
             SidebarView::Settings => "settings",
             SidebarView::Extensions => "extensions",
             SidebarView::Outline => "outline",
+            SidebarView::Remote => "remote",
         };
         crate::session::Session {
             remote_checkpoints: self.remote_workspace.as_ref().map(|_| std::sync::Arc::new(self.tabs.iter()
@@ -1635,6 +1636,7 @@ impl App {
                 "settings" => SidebarView::Settings,
                 "extensions" => SidebarView::Extensions,
                 "outline" => SidebarView::Outline,
+                "remote" => SidebarView::Remote,
                 _ => SidebarView::Explorer,
             };
         }
@@ -2129,6 +2131,7 @@ mod tests {
             ("settings", SidebarView::Settings, usize::MAX),
             ("extensions", SidebarView::Extensions, 4),
             ("outline", SidebarView::Outline, 5),
+            ("remote", SidebarView::Remote, 3),
             ("explorer", SidebarView::Explorer, 0),
             ("unknown", SidebarView::Explorer, 0),
         ] {

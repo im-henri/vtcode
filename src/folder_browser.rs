@@ -130,7 +130,7 @@ fn locations(workspace: PathBuf) -> Vec<(String, PathBuf)> {
             }
         }
     }
-    result.push(("Workspace".into(), workspace));
+    if !workspace.as_os_str().is_empty() { result.push(("Current folder".into(), workspace)); }
     #[cfg(windows)]
     result.extend(crate::filesystem_roots::list().unwrap_or_default());
     #[cfg(not(windows))]

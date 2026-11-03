@@ -75,11 +75,12 @@ fn workbench_symbol_membership_matches_skim_smart_case_and_unicode() {
     }
 }
 
-fn reference_palette(commands: &[PaletteCommand], query: &str) -> Vec<usize> {
+fn reference_palette(app: &App, query: &str) -> Vec<usize> {
     let query = query.to_ascii_lowercase();
-    let mut ranked: Vec<_> = commands
+    let mut ranked: Vec<_> = app.palette.commands
         .iter()
         .enumerate()
+        .filter(|(_, command)| command.id != "workspace_close" || crate::ui_workspaces::can_close(app))
         .filter_map(|(index, command)| {
             SkimMatcherV2::default()
                 .fuzzy_match(&command.name, &query)
@@ -150,7 +151,7 @@ fn workbench_palette_reuses_scores_without_changing_rank_or_ties() {
         "not a real command",
         "file",
     ] {
-        let expected = reference_palette(&app.palette.commands, query);
+        let expected = reference_palette(&app, query);
         app.palette.query = query.into();
         app.filter_palette_commands();
         assert_eq!(app.palette.filtered, expected, "query {query:?}");
@@ -320,7 +321,7 @@ fn benchmark_workbench_palette_filter() {
     }
     for query in ["open", "file", "epe", "not_present"] {
         app.palette.query = query.into();
-        let expected = reference_palette(&app.palette.commands, query);
+        let expected = reference_palette(&app, query);
         app.filter_palette_commands();
         assert_eq!(app.palette.filtered, expected);
         let mut before = Vec::new();

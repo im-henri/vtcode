@@ -203,6 +203,13 @@ impl App {
 
     fn execute_explorer_action(&mut self, action: &str) -> bool {
         self.explorer_context_active = false;
+        if !self.has_open_folder() && self.explorer_context_target.as_ref().is_none_or(|path| path.as_os_str().is_empty()) {
+            match action {
+                "New File" => { self.new_file(); return false; }
+                "New Folder" => { crate::ui_workspaces::add(self); return false; }
+                _ => {}
+            }
+        }
         match action {
             "Find by Name…" => self.open_explorer_find(),
             "Find in Folder…" => {

@@ -257,7 +257,7 @@ pub(crate) fn close_panel(app: &mut App) {
 pub(crate) fn draw_tooltip(frame: &mut Frame, app: &App) {
     let terminal_resize = !app.terminal_sidebar.dragging() && app.terminal_sidebar.handle
         .is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()));
-    if (!app.show_panel && !terminal_resize) || app.menu_active || app.remote_connection.details
+    if (!app.show_panel && !terminal_resize) || app.menu_active
         || app.side_notice.area.is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()))
         || crate::ui_modal::active(app).is_some() || crate::ui_quick_picker::active(app).is_some() { return; }
     let point = (app.mouse_col, app.mouse_row).into();

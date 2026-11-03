@@ -336,8 +336,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let mut x = inner.x;
     for (scope, text) in [
         (SettingsScope::Global, "User"),
-        (SettingsScope::Workspace, "Workspace"),
+        (SettingsScope::Workspace, SettingsScope::Workspace.label()),
     ] {
+        if scope == SettingsScope::Workspace && !app.has_open_folder() { continue; }
         let width = (UnicodeWidthStr::width(text) as u16 + 2).min(inner.right().saturating_sub(x));
         let rect = Rect::new(x, inner.y + 2, width, 1);
         let action = Action::Scope(scope);

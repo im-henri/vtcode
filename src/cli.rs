@@ -8,13 +8,15 @@ pub(crate) const HELP: &str = concat!(
     "Usage:\n",
     "  vtcode [FILE[:LINE[:COLUMN]] | DIRECTORY]\n\n",
     "  vtcode --remote HOST [--remote-command COMMAND] [--ssh-command COMMAND]\n\n",
+    "  vtcode --remote-target NAME\n\n",
     "  vtcode --headless [DIRECTORY]\n\n",
     "  vtcode --install-theme SOURCE\n\n",
     "Arguments:\n",
     "  FILE                         Open a file, or create it when saved.\n\n",
     "  FILE:LINE[:COLUMN]           Open at a location (line/column start at 1).\n\n",
     "  DIRECTORY                    Open a project directory.\n",
-    "                               With no path, open the current directory.\n\n",
+    "                               With no path, open an empty editor window.\n",
+    "                               Use '.' to open the current directory.\n\n",
     "Options:\n",
     "  -h, --help                   Show this help and exit without opening the UI.\n\n",
     "  -V, --version                Show the version and exit without opening the UI.\n\n",
@@ -24,6 +26,8 @@ pub(crate) const HELP: &str = concat!(
     "  --remote-command COMMAND    Replace 'vtcode --headless' with this remote\n",
     "                               shell command, including any job submission.\n",
     "                               Specify the remote folder in this command.\n\n",
+    "  --remote-target NAME        Connect to a target saved in the Remote sidebar.\n",
+    "                               Uses .vtcode/remote-targets.json beside vtcode.\n\n",
     "  --ssh-command COMMAND       Replace the entire local SSH command prefix.\n",
     "                               Default: 'ssh -e none -tt'. HOST and the remote\n",
     "                               command are appended as separate arguments.\n",
@@ -43,6 +47,7 @@ pub(crate) const HELP: &str = concat!(
     "  vtcode src/main.rs:42:5\n\n",
     "  vtcode -- -notes.txt\n\n",
     "  vtcode --remote user@host\n\n",
+    "  vtcode --remote-target development\n\n",
     "  vtcode --remote user@host --remote-command 'vtcode --headless /path/to/project'\n\n",
     "  vtcode --remote user@login-host --remote-command 'submitcmd vtcode --headless /path/to/project'\n\n",
     "  vtcode --remote user@host --ssh-command 'ssh -e none -tt -vv -p 2222'\n",
@@ -63,6 +68,7 @@ pub(crate) enum Command {
         program: OsString,
         args: Vec<OsString>,
     },
+    RemoteTarget(String),
     #[cfg(windows)]
     ConsoleHost(Vec<OsString>),
 }
@@ -73,6 +79,20 @@ enum Mode {
     InstallTheme,
     Headless,
     Remote,
+    RemoteTarget,
+}
+
+pub(crate) fn remote_command(
+    host: &str,
+    command: Option<&str>,
+    ssh: Option<&str>,
+) -> Result<Command, String> {
+    RemoteOptions {
+        host: Some(host.into()),
+        command: command.map(Into::into),
+        ssh: ssh.map(Into::into),
+    }
+    .finish()
 }
 
 #[derive(Default)]
@@ -196,13 +216,20 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
                 }
                 *slot = Some(option_value(flag, inline, &mut args)?);
             }
-            "--remote" => {
+            "--remote" | "--remote-target" => {
                 if mode != Mode::Editor || value.is_some() {
                     return Err(format!(
                         "argument {flag} cannot be combined with another command or path"
                     ));
                 }
-                mode = Mode::Remote;
+                if flag == "--remote-target" && remote.has_overrides() {
+                    return Err("--remote-target cannot be combined with --remote-command or --ssh-command; edit the saved target instead".into());
+                }
+                mode = if flag == "--remote" {
+                    Mode::Remote
+                } else {
+                    Mode::RemoteTarget
+                };
                 // Missing hosts are deferred until after --help/--version.
                 if inline.is_some() || args.peek().is_some_and(|arg| !is_option(arg)) {
                     remote.host = Some(option_value(flag, inline, &mut args)?);
@@ -259,6 +286,20 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
     }
     match mode {
         Mode::Editor => Ok(Command::Editor(value)),
+        Mode::RemoteTarget => {
+            if value.is_some() {
+                return Err("--remote-target cannot be combined with a path".into());
+            }
+            let name = remote
+                .host
+                .ok_or("missing NAME for --remote-target")?
+                .into_string()
+                .map_err(|_| "the remote target name must be valid Unicode")?;
+            if name.trim().is_empty() || name.chars().any(char::is_control) {
+                return Err("invalid NAME for --remote-target".into());
+            }
+            Ok(Command::RemoteTarget(name))
+        }
         Mode::Remote => {
             if let Some(value) = value {
                 return Err(format!(
@@ -309,6 +350,40 @@ mod tests {
         ] {
             assert_eq!(parsed(&[path]), Command::Editor(Some(path.into())));
         }
+    }
+
+    #[test]
+    fn saved_remote_target_arguments_are_validated_without_loading_configuration() {
+        assert_eq!(
+            parsed(&["--remote-target", "Development"]),
+            Command::RemoteTarget("Development".into())
+        );
+        assert_eq!(
+            parsed(&["--remote-target=My server"]),
+            Command::RemoteTarget("My server".into())
+        );
+        assert_eq!(parsed(&["--remote-target", "--help"]), Command::Help);
+        assert_eq!(
+            parsed(&["--remote-target", "Missing", "--version"]),
+            Command::Version
+        );
+        for args in [
+            vec!["--remote-target"],
+            vec!["--remote-target", "one", "--remote", "host"],
+            vec!["--remote", "host", "--remote-target", "one"],
+            vec!["--remote-target", "one", "path"],
+            vec!["--remote-target", "one", "--remote-command", "custom"],
+            vec!["--ssh-command", "ssh", "--remote-target", "one"],
+            vec!["--remote-target=  "],
+            vec!["--remote-target", "line\nbreak"],
+            vec!["--headless", "--remote-target", "one"],
+        ] {
+            assert!(parse(args.iter().map(OsString::from)).is_err(), "{args:?}");
+        }
+        assert_eq!(
+            remote_command("host", None, None).unwrap(),
+            parsed(&["--remote", "host"])
+        );
     }
     #[test]
     fn help_and_version_do_not_launch_remote_commands() {

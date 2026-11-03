@@ -97,7 +97,7 @@ impl Location {
         };
         if *windows != cfg!(windows) && !(*relative && matches!(path, NativePath::Utf8(_))) {
             return Err(invalid(
-                "This workspace set contains folders saved on a different operating system",
+                "This workspace contains folders saved on a different operating system",
             ));
         }
         let path = match path {
@@ -186,7 +186,7 @@ fn invalid(message: impl Into<String>) -> io::Error {
 pub(crate) fn valid_name(name: &str) -> io::Result<String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(invalid("Enter a workspace set name"));
+        return Err(invalid("Enter a workspace name"));
     }
     if name.chars().any(char::is_control) || name.chars().count() > 80 {
         return Err(invalid(
@@ -205,10 +205,10 @@ pub(crate) fn load(path: &Path) -> io::Result<Catalog> {
     let mut data = Vec::new();
     file.take(MAX_BYTES + 1).read_to_end(&mut data)?;
     if data.len() as u64 > MAX_BYTES {
-        return Err(invalid("Workspace set catalog is too large"));
+        return Err(invalid("Saved workspace catalog is too large"));
     }
     let catalog: Catalog = serde_json::from_slice(&data)
-        .map_err(|error| invalid(format!("Could not read workspace sets: {error}")))?;
+        .map_err(|error| invalid(format!("Could not read saved workspaces: {error}")))?;
     validate(&catalog)?;
     Ok(catalog)
 }
@@ -216,11 +216,11 @@ pub(crate) fn load(path: &Path) -> io::Result<Catalog> {
 fn validate(catalog: &Catalog) -> io::Result<()> {
     if catalog.version != VERSION {
         return Err(invalid(
-            "This workspace set catalog requires a different VTCode version",
+            "These saved workspaces require a different VTCode version",
         ));
     }
     if catalog.sets.len() > 512 {
-        return Err(invalid("Too many saved workspace sets"));
+        return Err(invalid("Too many saved workspaces"));
     }
     let mut ids = std::collections::HashSet::new();
     let mut names = std::collections::HashSet::new();
@@ -230,12 +230,12 @@ fn validate(catalog: &Catalog) -> io::Result<()> {
             || set.roots.len() > MAX_ROOTS
             || set.active >= set.roots.len()
         {
-            return Err(invalid("Invalid saved workspace set"));
+            return Err(invalid("Invalid saved workspace"));
         }
         valid_name(&set.name)?;
         let scope = serde_json::to_string(&set.scope).map_err(io::Error::other)?;
         if !names.insert((scope, set.name.to_lowercase())) {
-            return Err(invalid("Duplicate workspace set names"));
+            return Err(invalid("Duplicate workspace names"));
         }
         if set.roots.iter().any(|root| {
             !matches!(
@@ -245,7 +245,7 @@ fn validate(catalog: &Catalog) -> io::Result<()> {
             )
         }) {
             return Err(invalid(
-                "A workspace set cannot mix local and remote folders",
+                "A workspace cannot mix local and remote folders",
             ));
         }
     }
@@ -255,7 +255,7 @@ fn validate(catalog: &Catalog) -> io::Result<()> {
 pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
     let parent = path
         .parent()
-        .ok_or_else(|| invalid("Invalid workspace set catalog path"))?;
+        .ok_or_else(|| invalid("Invalid saved workspace catalog path"))?;
     std::fs::create_dir_all(parent)?;
     let lock = OpenOptions::new()
         .read(true)
@@ -269,7 +269,7 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
             Ok(()) => break,
             Err(error) if std::time::Instant::now() >= deadline => {
                 return Err(io::Error::other(format!(
-                    "Could not lock workspace sets: {error}"
+                    "Could not lock saved workspaces: {error}"
                 )));
             }
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
@@ -286,7 +286,7 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
         } => {
             let name = valid_name(&name)?;
             if roots.is_empty() || roots.len() > MAX_ROOTS || active >= roots.len() {
-                return Err(invalid("A set must contain between 1 and 128 workspaces"));
+                return Err(invalid("A workspace must contain between 1 and 128 folders"));
             }
             if catalog.sets.iter().any(|set| {
                 set.scope == scope
@@ -294,7 +294,7 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
                     && Some(set.id) != replace
             }) {
                 return Err(invalid(
-                    "A workspace set already has this name. Select it and choose Update selected set, or use another name.",
+                    "A workspace already has this name. Choose another name or update the existing workspace.",
                 ));
             }
             if let Some(id) = replace {
@@ -302,7 +302,7 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
                     .sets
                     .iter_mut()
                     .find(|set| set.id == id && set.scope == scope)
-                    .ok_or_else(|| invalid("This workspace set was removed; refresh the list"))?;
+                    .ok_or_else(|| invalid("This workspace was removed; refresh the list"))?;
                 *set = SavedSet {
                     id,
                     name,
@@ -312,7 +312,7 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
                 };
             } else {
                 if catalog.sets.len() >= 512 {
-                    return Err(invalid("Too many saved workspace sets"));
+                    return Err(invalid("Too many saved workspaces"));
                 }
                 let id = catalog
                     .sets
@@ -321,11 +321,11 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
                     .max()
                     .unwrap_or(0)
                     .checked_add(1)
-                    .ok_or_else(|| invalid("Workspace set IDs exhausted"))?
+                    .ok_or_else(|| invalid("Saved workspace IDs exhausted"))?
                     .max(catalog.next_id);
                 catalog.next_id = id
                     .checked_add(1)
-                    .ok_or_else(|| invalid("Workspace set IDs exhausted"))?;
+                    .ok_or_else(|| invalid("Saved workspace IDs exhausted"))?;
                 catalog.sets.push(SavedSet {
                     id,
                     name,
@@ -340,13 +340,13 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
             if catalog.sets.iter().any(|set| {
                 set.id != id && set.scope == scope && set.name.to_lowercase() == name.to_lowercase()
             }) {
-                return Err(invalid("A workspace set already has this name"));
+                return Err(invalid("A workspace already has this name"));
             }
             catalog
                 .sets
                 .iter_mut()
                 .find(|set| set.id == id && set.scope == scope)
-                .ok_or_else(|| invalid("This workspace set was removed; refresh the list"))?
+                .ok_or_else(|| invalid("This workspace was removed; refresh the list"))?
                 .name = name;
         }
         Mutation::Delete { id, scope } => catalog
@@ -356,7 +356,7 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
     validate(&catalog)?;
     let data = serde_json::to_vec_pretty(&catalog).map_err(io::Error::other)?;
     if data.len() as u64 > MAX_BYTES {
-        return Err(invalid("Workspace set catalog is too large"));
+        return Err(invalid("Saved workspace catalog is too large"));
     }
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     temporary.write_all(&data)?;

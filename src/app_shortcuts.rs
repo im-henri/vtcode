@@ -665,7 +665,7 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
             if edit.scope == crate::settings::SettingsScope::Global {
                 "User"
             } else {
-                "Workspace"
+                crate::settings::SettingsScope::Workspace.label()
             },
             edit.current
         )),

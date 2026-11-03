@@ -1,227 +1,285 @@
-//! Explicit authentication details during reconnect. The compact workbench
-//! notice lives in `ui_side_notice`; only this opt-in view captures typing.
-use crate::{app::App, app_remote_connection::Phase};
+//! Reconnect details and authentication live in an ordinary editor tab.
+use crate::{
+    app::{ActivePane, App, TabKind},
+    app_remote_connection::Phase,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Margin, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, Wrap},
+    widgets::{Block, Paragraph, Wrap},
 };
 use unicode_width::UnicodeWidthStr;
 
-pub(crate) fn draw(frame: &mut Frame, app: &mut App) {
-    let state = &mut app.remote_connection;
-    state.area = None;
-    state.buttons.clear();
-    if !state.details {
-        return;
+fn actions(app: &App) -> Vec<(&'static str, &'static str)> {
+    let mut actions = vec![("Connection Log", "diagnostics")];
+    match app.remote_connection.phase {
+        Phase::Connected | Phase::Restored | Phase::Restoring | Phase::Resolving => {}
+        Phase::Stopped => actions.push(("Reconnect", "retry")),
+        Phase::Waiting | Phase::Starting | Phase::Connecting => {
+            actions.push(("Retry Now", "retry"));
+            actions.push(("Stop Reconnecting", "stop"));
+        }
     }
-    let screen = frame.area();
-    if screen.width < 5 || screen.height < 5 {
-        return;
+    actions.push(("Close Tab", "dismiss"));
+    actions
+}
+
+pub(crate) fn draw_in_area(frame: &mut Frame, app: &mut App, area: Rect) {
+    let focused = crate::ui_remote_targets::connection_has_focus(app);
+    let interactive = !app.rendering_inactive_editor;
+    if interactive {
+        app.remote_connection.area = Some(area);
+        app.remote_connection.buttons.clear();
     }
-    let width = if state.details { 76 } else { 56 }.min(screen.width.saturating_sub(2).max(3));
-    let height = if state.details {
-        24
-    } else if state.error.is_empty() {
-        8
-    } else {
-        10
-    }
-    .min(screen.height.saturating_sub(2).max(3));
-    let area = Rect::new(
-        screen.right().saturating_sub(width + 1),
-        screen.y + 1,
-        width,
-        height,
-    );
-    state.area = Some(area);
     let style = Style::default()
         .fg(app.colors.fg_text)
-        .bg(app.colors.bg_sidebar);
-    let block = Block::bordered().title(" Remote connection ").style(style);
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
-    let title = match state.phase {
-        Phase::Connected => "Connected",
-        Phase::Restored => "Connection restored",
-        Phase::Stopped => "Disconnected",
-        Phase::Restoring => "Reconnected — checking files",
-        _ => "Connection lost — reconnecting",
+        .bg(app.colors.bg_editor);
+    frame.render_widget(Paragraph::new("").style(style), area);
+    let content = area.inner(Margin::new(
+        u16::from(area.width > 4) * 2,
+        u16::from(area.height > 10),
+    ));
+    if content.is_empty() {
+        return;
+    }
+    let choices = actions(app);
+    let mut controls = Vec::new();
+    let (mut x, mut y) = (0u16, 0u16);
+    for &(label, id) in &choices {
+        let width = (label.width() as u16 + 4).min(content.width);
+        if x > 0 && x + width > content.width {
+            x = 0;
+            y += 1;
+        }
+        controls.push((Rect::new(content.x + x, y, width, 1), label, id));
+        x += width + 1;
+    }
+    let footer = content.bottom().saturating_sub(y + 1).max(content.y);
+    let title = match app.remote_connection.phase {
+        Phase::Connected => "SSH connected",
+        Phase::Restored => "SSH connection restored",
+        Phase::Stopped => "SSH disconnected",
+        Phase::Restoring | Phase::Resolving => "Restoring remote workspace",
+        _ => "Reconnecting to SSH",
     };
     frame.render_widget(
         Paragraph::new(title).style(style.add_modifier(Modifier::BOLD)),
-        Rect::new(inner.x, inner.y, inner.width, 1),
+        Rect::new(content.x, content.y, content.width, 1),
     );
-    if inner.height < 4 {
-        frame.render_widget(
-            Paragraph::new(state.message.as_str()).style(style),
-            Rect::new(
-                inner.x,
-                inner.y + 1,
-                inner.width,
-                inner.height.saturating_sub(1),
-            ),
-        );
-        return;
-    }
-    let mut text = state.message.clone();
-    if !state.error.is_empty() {
-        text.push('\n');
-        text.push_str(&state.error);
-    }
-    frame.render_widget(
-        Paragraph::new(text).style(style).wrap(Wrap { trim: false }),
-        Rect::new(
-            inner.x,
-            inner.y + 2,
-            inner.width,
-            if state.details {
-                3.min(inner.height.saturating_sub(3))
-            } else {
-                inner.height.saturating_sub(3)
-            },
-        ),
-    );
-    if state.details
-        && inner.height > 7
-        && let Some(login) = &state.login
+    let authenticating = app.remote_connection.phase == Phase::Connecting;
+    let message = if let Some(error) = app
+        .remote_connection
+        .login
+        .as_ref()
+        .and_then(|login| login.input_error.as_ref())
     {
-        let rows = inner.height.saturating_sub(7) as usize;
-        let lines: Vec<_> = login
-            .grid
-            .cells
-            .iter()
-            .take(rows)
-            .map(|row| {
-                Line::from(
-                    row.iter()
-                        .map(|cell| {
-                            Span::styled(
-                                cell.ch.to_string(),
-                                Style::default().fg(cell.fg).bg(cell.bg),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
-        frame.render_widget(
-            Paragraph::new(lines).style(style),
-            Rect::new(inner.x, inner.y + 5, inner.width, rows as u16),
-        );
-    }
-    let buttons: &[(&str, &str)] = if matches!(
-        state.phase,
-        Phase::Connected | Phase::Restored | Phase::Restoring
-    ) {
-        &[("Diagnostics", "diagnostics"), ("Dismiss", "dismiss")]
-    } else if state.phase == Phase::Stopped {
-        &[
-            ("Diagnostics", "diagnostics"),
-            ("Reconnect", "retry"),
-            ("Details", "details"),
-            ("Dismiss", "dismiss"),
-        ]
-    } else {
-        &[
-            ("Diagnostics", "diagnostics"),
-            ("Details", "details"),
-            ("Retry now", "retry"),
-            ("Stop", "stop"),
-            ("Dismiss", "dismiss"),
-        ]
-    };
-    let mut x = inner.x;
-    for &(label, id) in buttons {
-        let label = if id == "details" && state.details {
-            "Back to editor"
+        error.clone()
+    } else if authenticating {
+        if app
+            .remote_connection
+            .login
+            .as_ref()
+            .is_some_and(|login| login.input_sent)
+        {
+            "Input sent to SSH. Password characters stay hidden.".into()
         } else {
-            label
-        };
-        let width = (label.width() as u16 + 2).min(inner.right().saturating_sub(x));
-        if width < 3 {
-            break;
+            "SSH sign-in · click the terminal and type".into()
         }
-        let button = Rect::new(x, inner.bottom().saturating_sub(1), width, 1);
-        let hovered = button.contains((app.mouse_col, app.mouse_row).into());
-        frame.render_widget(
-            Paragraph::new(format!(" {label} ")).style(if hovered {
-                style.add_modifier(Modifier::REVERSED)
+    } else {
+        app.remote_connection.message.clone()
+    };
+    let help = if authenticating {
+        "Passwords and passphrases are hidden by SSH. Type, then Enter. Ctrl+V pastes; Esc closes this tab."
+    } else {
+        "Local files and unsaved edits stay open while the connection recovers."
+    };
+    let mut top = content.y + 2;
+    let mut paragraphs = vec![(message, style)];
+    if !app.remote_connection.error.is_empty() {
+        paragraphs.push((
+            app.remote_connection.error.clone(),
+            style.fg(app.colors.ui.error_text_color(app.colors.bg_editor)),
+        ));
+    }
+    paragraphs.push((
+        help.into(),
+        style.fg(app.colors.ui.description_color(app.colors.bg_editor)),
+    ));
+    for (text, text_style) in paragraphs {
+        let rows =
+            App::wrap_setting_text_for_width(&text, content.width.max(1) as usize).len() as u16;
+        let height = rows.min(footer.saturating_sub(top + 4));
+        if height > 0 {
+            frame.render_widget(
+                Paragraph::new(text)
+                    .style(text_style)
+                    .wrap(Wrap { trim: false }),
+                Rect::new(content.x, top, content.width, height),
+            );
+            top += height + 1;
+        }
+    }
+    if footer > top {
+        let terminal = Rect::new(content.x, top, content.width, footer - top);
+        let bg = app.colors.ui.bg_terminal;
+        let block = Block::bordered()
+            .title(if authenticating && focused {
+                " SSH · type here "
             } else {
-                style
-            }),
+                " SSH output "
+            })
+            .style(Style::default().fg(app.colors.ui.fg_terminal).bg(bg))
+            .border_style(
+                Style::default()
+                    .fg(if authenticating && focused {
+                        app.colors.fg_accent_blue
+                    } else {
+                        app.colors.fg_dim
+                    })
+                    .bg(bg),
+            );
+        let viewport = block.inner(terminal);
+        frame.render_widget(block, terminal);
+        if interactive {
+            app.remote_connection
+                .resize_login(viewport.width, viewport.height);
+        }
+        if let Some(login) = &mut app.remote_connection.login {
+            let first_row = (login.grid.cursor_row + 1).saturating_sub(viewport.height as usize);
+            let first_col = (login.grid.cursor_col + 1).saturating_sub(viewport.width as usize);
+            login.rows.paint_viewport(
+                frame.buffer_mut(),
+                &login.grid,
+                viewport,
+                &app.colors.ui,
+                first_row,
+                first_col,
+            );
+            if focused && authenticating && login.grid.cursor_visible && !viewport.is_empty() {
+                frame.set_cursor_position((
+                    viewport.x
+                        + (login.grid.cursor_col - first_col).min(viewport.width as usize - 1)
+                            as u16,
+                    viewport.y
+                        + (login.grid.cursor_row - first_row).min(viewport.height as usize - 1)
+                            as u16,
+                ));
+            }
+        }
+    }
+    for (index, (mut button, label, id)) in controls.into_iter().enumerate() {
+        button.y = footer.saturating_add(button.y);
+        if button.y >= content.bottom() {
+            continue;
+        }
+        crate::ui_widgets::draw_dialog_button_with_hover(
+            frame,
             button,
+            label,
+            &app.colors,
+            id == "retry",
+            focused && !authenticating && app.remote_connection.focus == index,
+            button.contains((app.mouse_col, app.mouse_row).into()),
+            false,
+            true,
         );
-        state.buttons.push((button, id));
-        x = x.saturating_add(width + 1);
+        if interactive {
+            app.remote_connection.buttons.push((button, id));
+        }
     }
 }
+
+fn activate(app: &mut App, id: &str) {
+    match id {
+        "diagnostics" => app.show_remote_diagnostics(),
+        "retry" => {
+            app.retry_remote_connection();
+            app.remote_connection.details = true;
+        }
+        "stop" => app.stop_remote_reconnect(),
+        "dismiss" => app.close_remote_connection_tabs(0),
+        _ => {}
+    }
+}
+
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if crate::ui_modal::active(app).is_some() || app.palette.active || app.quick_open_active {
         return false;
     }
-    if !app.remote_connection.details { return false; }
-    let state = &mut app.remote_connection;
-    if !state.details
-        || !state
+    if app.tabs.get(app.active_tab).map(|tab| tab.kind) != Some(TabKind::RemoteConnection(0))
+        || !app
+            .remote_connection
             .area
             .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
     {
         return false;
     }
-    app.mouse_col = mouse.column;
-    app.mouse_row = mouse.row;
     if mouse.kind == MouseEventKind::Moved {
         app.mouse_hover_changed = true;
     }
     if let MouseEventKind::Down(button) = mouse.kind {
-        let action = state
-            .buttons
-            .iter()
-            .find(|(area, _)| area.contains((mouse.column, mouse.row).into()))
-            .map(|(_, id)| *id);
+        app.active_pane = ActivePane::Editor;
+        app.terminal_panel_focused = false;
+        app.remote_targets.filter_focused = false;
         crate::ui_panels::capture_pointer(app, button);
-        if button != MouseButton::Left { return true; }
-        match action {
-            Some("diagnostics") => app.show_remote_diagnostics(),
-            Some("retry") => app.retry_remote_connection(),
-            Some("stop") => app.stop_remote_reconnect(),
-            Some("details") => app.remote_connection.details = !app.remote_connection.details,
-            Some("dismiss") => {
-                app.remote_connection.details = false;
+        if button == MouseButton::Left {
+            let action = app
+                .remote_connection
+                .buttons
+                .iter()
+                .find(|(area, _)| area.contains((mouse.column, mouse.row).into()))
+                .map(|(_, id)| *id);
+            if let Some(id) = action {
+                activate(app, id);
+            }
+        }
+    }
+    true
+}
+
+pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    if !crate::ui_remote_targets::connection_has_focus(app)
+        || app.tabs[app.active_tab].kind != TabKind::RemoteConnection(0)
+    {
+        return false;
+    }
+    if app.remote_connection.phase == Phase::Connecting {
+        if (key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('v' | 'V')))
+            || (key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Insert)
+        {
+            match crate::clipboard::get_text() {
+                Ok(text) => app.remote_connection.send_paste(&text),
+                Err(error) => app.notify_warn(format!("Could not paste into SSH: {error}")),
+            }
+        } else {
+            app.remote_connection.send_key(key);
+        }
+    } else {
+        let choices = actions(app);
+        let count = choices.len();
+        match key.code {
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                let reverse = matches!(key.code, KeyCode::BackTab | KeyCode::Left)
+                    || key.modifiers.contains(KeyModifiers::SHIFT);
+                app.remote_connection.focus = (app.remote_connection.focus.min(count - 1)
+                    + if reverse { count - 1 } else { 1 })
+                    % count;
+            }
+            KeyCode::Enter if key.kind != crossterm::event::KeyEventKind::Repeat => {
+                activate(app, choices[app.remote_connection.focus.min(count - 1)].1)
             }
             _ => {}
         }
     }
     true
 }
-pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    if !app.remote_connection.details
-        || crate::ui_modal::active(app).is_some()
-        || app.palette.active
-        || app.quick_open_active
-        || key.code == KeyCode::F(1)
-        || (key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('q' | 'Q' | 'p' | 'P')))
-    {
-        return false;
-    }
-    if key.code == KeyCode::Esc {
-        app.remote_connection.details = false;
-        return true;
-    }
-    app.remote_connection.send_key(key);
-    true
-}
+
 pub(crate) fn handle_paste(app: &mut App, text: &str) -> bool {
-    if !app.remote_connection.details
-        || crate::ui_modal::active(app).is_some()
-        || app.palette.active
-        || app.quick_open_active
+    if !crate::ui_remote_targets::connection_has_focus(app)
+        || app.tabs[app.active_tab].kind != TabKind::RemoteConnection(0)
     {
         return false;
     }

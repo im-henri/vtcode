@@ -3,6 +3,10 @@ use crate::app::App;
 impl App {
     /// Dispatch git-related commands.
     pub(crate) fn execute_git_command(&mut self, id: &str) -> bool {
+        if !self.has_open_folder() && (id.starts_with("git_") || id == "source_control_toggle") {
+            self.notify("Open a folder to use Source Control.");
+            return true;
+        }
         match id {
             "git_rebase" => { self.start_git_operation_dialog(crate::git_operation::Kind::Rebase); return true; }
             "git_cherry_pick" => { self.start_git_operation_dialog(crate::git_operation::Kind::CherryPick); return true; }

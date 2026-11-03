@@ -472,8 +472,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let mut x = inner.x;
     for (scope, text) in [
         (SettingsScope::Global, "User"),
-        (SettingsScope::Workspace, "Workspace"),
+        (SettingsScope::Workspace, SettingsScope::Workspace.label()),
     ] {
+        if scope == SettingsScope::Workspace && !app.has_open_folder() { continue; }
         let rect = Rect::new(
             x,
             inner.y + 1,

@@ -204,6 +204,7 @@ impl App {
     }
 
     fn open_file_with_source(&mut self, path: &Path, preview: bool, mut loaded: Option<crate::editor::LoadedTextFile>) {
+        self.start_empty_window_document_services();
         self.cancel_remote_location();
         self.record_navigation();
         self.open_file_with_preview_inner(path, preview, &mut loaded);
@@ -845,6 +846,7 @@ impl App {
     }
 
     pub(crate) fn new_file(&mut self) {
+        self.start_empty_window_document_services();
         self.record_navigation();
         let editor = self.new_editor();
         self.tabs.push(Tab::new_file(editor));
@@ -1606,6 +1608,12 @@ impl App {
         if let TabKind::Chat(key) = tab.kind {
             let title = self.chat.editor_tab_title(key);
             title.width() + 6 + if tab.pinned { 4 } else { 0 }
+        } else if let TabKind::RemoteConnection(id) = tab.kind {
+            let width = if id == 0 { "SSH: Reconnect".width() } else {
+                "SSH: ".width() + self.remote_targets.attempt.as_ref().filter(|attempt| attempt.id == id)
+                    .map_or("Connection".width(), |attempt| attempt.target.name.width())
+            };
+            width + 7 + if tab.pinned { 4 } else { 0 }
         } else { Self::tab_ui_width(tab) }
     }
 

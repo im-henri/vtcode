@@ -332,7 +332,6 @@ pub(crate) fn begin_frame(app: &mut App) {
 }
 fn blocked(app: &App) -> bool {
     crate::ui_modal::active(app).is_some()
-        || app.remote_connection.details
         || app.palette.active
         || app.quick_open_active
         || app.menu_active

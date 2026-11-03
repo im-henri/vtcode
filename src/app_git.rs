@@ -569,7 +569,7 @@ impl App {
     }
 
     pub(crate) fn refresh_source_control_for_paths(&mut self, paths: Option<rustc_hash::FxHashSet<std::path::PathBuf>>) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled || !self.has_open_folder() { return; }
         self.refresh_source_control_diffs_for_paths(paths.as_ref());
         self.start_source_control_status_refresh(paths);
     }

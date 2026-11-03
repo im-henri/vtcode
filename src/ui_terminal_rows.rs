@@ -13,6 +13,35 @@ use ratatui::{
 const MAX_CACHED_CELLS: usize = 256 * 1024;
 const MAX_CACHED_ROWS: usize = 2_048;
 
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+
+    #[test]
+    fn offset_viewport_shows_the_prompt_and_preserves_terminal_colors() {
+        let mut grid = TermGrid::new(30, 8);
+        let mut parser = vte::Parser::new();
+        for &byte in b"\x1b[6;10H\x1b[31mPassword:" {
+            parser.advance(&mut grid, byte);
+        }
+        let palette = crate::app::App::test_new().colors.ui;
+        let area = Rect::new(2, 1, 12, 2);
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 4));
+        let mut cache = RowCache::default();
+        cache.paint_viewport(&mut buffer, &grid, area, &palette, 5, 8);
+        let text: String = (area.x..area.right())
+            .map(|x| buffer[(x, area.y)].symbol())
+            .collect();
+        assert_eq!(text, " Password:  ");
+        assert_eq!(
+            buffer[(area.x + 1, area.y)].fg,
+            palette.terminal_color(Color::Indexed(1), true)
+        );
+        cache.paint_viewport(&mut buffer, &grid, area, &palette, 0, 0);
+        assert!((area.x..area.right()).all(|x| buffer[(x, area.y)].symbol() == " "));
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct Context {
     foreground: Color,
@@ -75,11 +104,23 @@ impl RowCache {
         area: Rect,
         palette: &WorkbenchColors,
     ) {
+        self.paint_viewport(buffer, grid, area, palette, 0, 0);
+    }
+
+    pub(crate) fn paint_viewport(
+        &mut self,
+        buffer: &mut Buffer,
+        grid: &TermGrid,
+        area: Rect,
+        palette: &WorkbenchColors,
+        first_row: usize,
+        first_column: usize,
+    ) {
         let clipped = area.intersection(buffer.area);
         if clipped.is_empty() {
             return;
         }
-        let first = (clipped.x - area.x) as usize;
+        let first = first_column + (clipped.x - area.x) as usize;
         let width = clipped.width as usize;
         let context = Context {
             foreground: palette.fg_terminal,
@@ -108,7 +149,7 @@ impl RowCache {
             .has_selection()
             .then(|| crate::ui_colors::TerminalSelectionStyle::new(palette));
         for y in clipped.y..clipped.bottom() {
-            let visual = (y - area.y) as usize;
+            let visual = first_row + (y - area.y) as usize;
             let source = grid.display_row(visual);
             let identity = source.map_or(0, TermRow::identity);
             let generation = source.map_or(0, TermRow::generation);

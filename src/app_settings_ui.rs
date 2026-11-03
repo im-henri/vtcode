@@ -276,14 +276,14 @@ impl App {
         match self.settings_scope {
             crate::settings::SettingsScope::Global => {
                 if self.setting_is_defined_in_layer(setting_id, &self.settings_global) {
-                    "Global"
+                    crate::settings::SettingsScope::Global.label()
                 } else {
                     "Default"
                 }
             }
             crate::settings::SettingsScope::Workspace => {
                 if self.setting_is_defined_in_layer(setting_id, &self.settings_workspace) {
-                    "Workspace"
+                    crate::settings::SettingsScope::Workspace.label()
                 } else if self.setting_is_defined_in_layer(setting_id, &self.settings_global) {
                     "Inherited · Global"
                 } else {
@@ -399,13 +399,13 @@ impl App {
             return "";
         }
         match setting_id {
-            "files_exclude" => "Configure glob patterns for files and folders to hide in Explorer. Search inherits these patterns. Settings patterns are relative to the workspace root.",
-            "search_exclude" => "Configure glob patterns to exclude from workspace text search and Quick Open. Inherits all patterns from Files: Exclude. Disable a pattern here to override an inherited exclusion.",
+            "files_exclude" => "Configure glob patterns for files and folders to hide in Explorer. Search inherits these patterns. Settings patterns are relative to the open folder's root.",
+            "search_exclude" => "Configure glob patterns to exclude from folder text search and Quick Open. Inherits all patterns from Files: Exclude. Disable a pattern here to override an inherited exclusion.",
             "acp_agents" => "Add, edit, or remove local ACP agents. Configure names, executables, arguments, environment variables, and request timeouts with a form.",
             "lsp_servers" => "Set up language servers (LSP) for completion, diagnostics, navigation, and formatting. Add an executable, language ID, file patterns, arguments, and initialization options. Install the server separately. Saved servers override extension defaults for the same language.",
             "lsp_enabled" => "Enable language servers (LSP) from settings and extensions. Changes apply to open files immediately.",
             "source_control_enabled" => "Enable Git changes, history, blame and file decorations. Turn off to stop background Git work on slow or shared disks. Editing, saving and undo still work.",
-            "source_control_show_untracked" => "Show untracked files in Source Control, include them in its change count, and show their Git badges in Explorer and change markers in the editor. Turn off to skip untracked-file scanning and automatic diffs on local and SSH workspaces. Tracked changes stay visible. Remembered across restarts.",
+            "source_control_show_untracked" => "Show untracked files in Source Control, include them in its change count, and show their Git badges in Explorer and change markers in the editor. Turn off to skip untracked-file scanning and automatic diffs on local and SSH folders. Tracked changes stay visible. Remembered across restarts.",
             "lsp_diagnostic_delay_ms" => "Wait this many milliseconds after the last edit before displaying updated LSP problems, underlines, and error messages. Completion stays responsive. Default: 1000. Set to 0 for immediate updates (maximum 10000).",
             "tab_size" => "Number of spaces a tab character visually uses in the editor.",
             "animation_duration_ms" => {
@@ -419,7 +419,7 @@ impl App {
             "animation_intensity" => {
                 "Strength of animation highlights, from subtle (5) to vivid (100)."
             }
-            "animation_scope_bubble_languages" => "Choose parsing styles and delimiter pairs for custom or built-in languages. Workspace rules override the same User language.",
+            "animation_scope_bubble_languages" => "Choose parsing styles and delimiter pairs for custom or built-in languages. Folder rules override the same User language.",
             "animation_scope_bubble_tight" => {
                 "Follow indentation and line endings closely. Turn off to keep each side outside the code without entering its internal whitespace."
             }
@@ -427,7 +427,7 @@ impl App {
                 "After the full scope outline is drawn, animate a subtle background color inward across the code. Uses Scope Bubble Duration and Intensity. The fill stays visible inside the scope and fades when leaving it. Off by default."
             }
             "animation_scope_bubble_disabled_languages" => {
-                "Disable Scope Bubble for comma-separated language names or IDs, such as python, cpp, or JavaScript. Names are case-insensitive; an empty list allows every language. Workspace values replace the Global list."
+                "Disable Scope Bubble for comma-separated language names or IDs, such as python, cpp, or JavaScript. Names are case-insensitive; an empty list allows every language. Folder values replace the Global list."
             }
             "use_tabs" => "Insert tab characters instead of spaces when indenting.",
             "word_wrap" => "Wrap long lines so they stay visible without horizontal scrolling.",
@@ -471,16 +471,16 @@ impl App {
             "search_whole_word" => "Match complete words in in-file Find.",
             "search_regex" => "Interpret in-file Find text as a regular expression.",
             "search_preserve_case" => "Preserve the capitalization pattern of each match when replacing within a file.",
-            "global_search_case_sensitive" => "Use case-sensitive matching in workspace search.",
-            "global_search_whole_word" => "Match complete words in workspace search.",
-            "global_search_regex" => "Interpret workspace search text as a regular expression.",
+            "global_search_case_sensitive" => "Use case-sensitive matching in folder search.",
+            "global_search_whole_word" => "Match complete words in folder search.",
+            "global_search_regex" => "Interpret folder search text as a regular expression.",
             "global_search_preserve_case" => "Preserve the capitalization pattern of each match when replacing across files.",
-            "search_debounce_ms" => "Delay in milliseconds after typing in workspace search or its include/exclude fields before searching. Set to 0 to search immediately. Find within a file stays instant.",
+            "search_debounce_ms" => "Delay in milliseconds after typing in folder search or its include/exclude fields before searching. Set to 0 to search immediately. Find within a file stays instant.",
             "rulers" => "Choose visible column rulers (for example 80 and 120).",
             "trim_trailing" => "Remove trailing whitespace when saving files.",
             "format_on_save" => "Run the selected formatter before saving. Choose a formatter the first time you format each language.",
             "formatters" => "Choose and remember a formatter for each language: Language Server, External Command, or Disabled. Independent of completion and diagnostics. Configure the executable and arguments here.",
-            "language_associations" => "Associate a filename or extension with a file type for file icons, syntax highlighting, language servers, and formatting. Supports *.py, *.d.ts, *.{c,h}, Dockerfile.*, and exact filenames. Exact filenames take priority over patterns; explicit associations override built-in file types. Save globally or for this workspace; remove a rule to restore the inherited or automatic type.",
+            "language_associations" => "Associate a filename or extension with a file type for file icons, syntax highlighting, language servers, and formatting. Supports *.py, *.d.ts, *.{c,h}, Dockerfile.*, and exact filenames. Exact filenames take priority over patterns; explicit associations override built-in file types. Save globally or for this folder; remove a rule to restore the inherited or automatic type.",
             "final_newline" => "Ensure a newline exists at the end of saved files.",
             "indent_guides" => "Show vertical guides at indentation levels.",
             "breadcrumbs" => "Show breadcrumbs navigation above the editor.",
@@ -806,10 +806,10 @@ impl App {
             ("Find: Match Whole Word".into(), on_off(self.search_whole_word), "search_whole_word".into()),
             ("Find: Use Regular Expression".into(), on_off(self.search_regex), "search_regex".into()),
             ("Find: Preserve Case on Replace".into(), on_off(self.search_preserve_case), "search_preserve_case".into()),
-            ("Workspace Search: Match Case".into(), on_off(self.global_search_case_sensitive), "global_search_case_sensitive".into()),
-            ("Workspace Search: Match Whole Word".into(), on_off(self.global_search_whole_word), "global_search_whole_word".into()),
-            ("Workspace Search: Use Regular Expression".into(), on_off(self.global_search_regex), "global_search_regex".into()),
-            ("Workspace Search: Preserve Case on Replace".into(), on_off(self.global_search_preserve_case), "global_search_preserve_case".into()),
+            ("Folder Search: Match Case".into(), on_off(self.global_search_case_sensitive), "global_search_case_sensitive".into()),
+            ("Folder Search: Match Whole Word".into(), on_off(self.global_search_whole_word), "global_search_whole_word".into()),
+            ("Folder Search: Use Regular Expression".into(), on_off(self.global_search_regex), "global_search_regex".into()),
+            ("Folder Search: Preserve Case on Replace".into(), on_off(self.global_search_preserve_case), "global_search_preserve_case".into()),
             ("Search: Debounce (ms)".into(), self.search_debounce_ms.to_string(), "search_debounce_ms".into()),
             ("Search: Exclude".into(), String::new(), "search_exclude".into()),
             ("Files: Exclude".into(), String::new(), "files_exclude".into()),
@@ -1254,7 +1254,7 @@ mod tests {
         app.settings_scope = crate::settings::SettingsScope::Workspace;
         assert_eq!(app.setting_source_label("tab_size"), "Inherited · Global");
         app.settings_workspace.tab_size = Some(8);
-        assert_eq!(app.setting_source_label("tab_size"), "Workspace");
+        assert_eq!(app.setting_source_label("tab_size"), "Folder");
     }
 
     // ── setting_description ──────────────────────────────────────────

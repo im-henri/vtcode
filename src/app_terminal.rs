@@ -486,7 +486,10 @@ impl App {
             return;
         }
 
-        let cwd = tab.terminal_cwd.clone();
+        let cwd = if tab.terminal_cwd.as_os_str().is_empty() {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        } else { tab.terminal_cwd.clone() };
+        self.terminals[index].terminal_cwd = cwd.clone();
         self.terminals[index].is_placeholder = false;
         let wake = self.background.wake_handle();
         let result = if let Some(remote) = &self.remote_workspace {

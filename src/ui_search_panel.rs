@@ -85,6 +85,14 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let fg = app.colors.ui.sidebar_text_color(bg);
     let dim = app.colors.ui.description_color(bg);
     f.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    if !app.has_open_folder() {
+        app.remove_text_input_regions(|id| matches!(id, TextInputId::GlobalSearch(_)));
+        f.render_widget(Paragraph::new(" Search").style(Style::default()
+            .fg(fg).bg(bg).add_modifier(Modifier::BOLD)),
+            Rect::new(area.x, area.y, area.width, area.height.min(1)));
+        crate::ui_chrome::draw_empty_folder_state(f, app, area);
+        return;
+    }
     if area.height < 5 || area.width < 12 {
         return;
     }

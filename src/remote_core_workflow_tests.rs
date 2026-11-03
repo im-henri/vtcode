@@ -306,6 +306,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
     scans.join().unwrap();
     assert_eq!(app.editor().unwrap().rope.to_string(), discarded);
     assert!(!app.editor().unwrap().modified);
+    assert!(app.git_output().report().contains("Stage hunk"), "Remote hunk actions belong in Git output");
     samples.sort_by(f64::total_cmp);
     serde_json::json!({"discovery_ms": discovery_ms, "explorer_ms": explorer_ms, "input_draw_p95_ms": samples[samples.len()*95/100], "input_draw_max_ms": samples[samples.len()-1], "samples": samples.len(), "wall_ms": started.elapsed().as_secs_f64()*1000.})
 }
@@ -506,6 +507,7 @@ pub(super) fn raw_git_paths(workspace: &workspace::Workspace) {
     wait(&mut app, |app| !app.bg_git_action_running);
     assert!(indexed(&renamed_key).is_none());
     assert_eq!(indexed(&keys[0]).as_deref(), Some("original 0\n"));
+    assert!(app.git_output().report().contains("Git stage files"), "Remote staging belongs in Git output");
     println!(
         "VTCODE_RAW_GIT_PATHS: distinct raw/Unicode names, stage/unstage, staged and untracked discard, rename and neighbouring file preservation passed"
     );

@@ -16,10 +16,10 @@ impl App {
                 .is_some_and(|remote| remote.same_family(source))
                 && parked.app.remote_connection.phase == Phase::Connecting
         }) {
-            parked.app.remote_connection.details = true;
+            parked.app.open_remote_reconnect_tab();
             self.workspaces.request = Some(Request::Switch(parked.id));
         } else if self.remote_connection.phase == Phase::Connecting {
-            self.remote_connection.details = true;
+            self.open_remote_reconnect_tab();
         }
     }
     pub(crate) fn coordinate_workspace_connections(&mut self) {

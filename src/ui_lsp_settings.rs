@@ -510,7 +510,7 @@ fn rows(state: &LspSettingsState, width: usize) -> Vec<Row> {
         if state.inherited {
             note(
                 &mut rows,
-                "Inherited from User settings. Saving here creates a Workspace server list.",
+                "Inherited from User settings. Saving here creates a server list for this folder.",
                 width,
             );
         }
@@ -862,7 +862,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let scope = if app.lsp_settings.scope == SettingsScope::Global {
         "User"
     } else {
-        "Workspace"
+        "Folder"
     };
     let title = if let Some(draft) = &app.lsp_settings.draft {
         if draft.index.is_some() {

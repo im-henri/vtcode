@@ -122,6 +122,7 @@ impl App {
     }
 
     pub(crate) fn toggle_workspace_source_control(&mut self) {
+        if !self.has_open_folder() { return; }
         self.save_source_control_enabled(crate::settings::SettingsScope::Workspace, !self.source_control_enabled);
     }
 
@@ -138,7 +139,11 @@ impl App {
         // the effective preference did not change.
         self.explorer.set_source_control_enabled(enabled);
         if self.source_control_enabled == enabled {
-            if !enabled { self.source_control_repository_state = crate::app::SourceControlRepositoryState::Disabled; }
+            if !self.has_open_folder() {
+                self.source_control_repository_state = crate::app::SourceControlRepositoryState::NoFolder;
+            } else if !enabled {
+                self.source_control_repository_state = crate::app::SourceControlRepositoryState::Disabled;
+            }
             return;
         }
         self.source_control_enabled = enabled;
@@ -194,7 +199,9 @@ impl App {
             tab.editor.blame.history_loading = false;
             tab.editor.blame.history_request = tab.editor.blame.history_request.wrapping_add(1);
         }
-        self.source_control_repository_state = if enabled {
+        self.source_control_repository_state = if !self.has_open_folder() {
+            crate::app::SourceControlRepositoryState::NoFolder
+        } else if enabled {
             crate::app::SourceControlRepositoryState::Checking
         } else {
             crate::app::SourceControlRepositoryState::Disabled

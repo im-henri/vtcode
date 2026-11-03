@@ -35,7 +35,9 @@ fn windows_ssh_git_explorer_and_editor_combination_keeps_hunks_saves_and_undo_co
     workspace.client.notify(Command::Close { path: RemotePath::new("core-workflow/file[1] λ.rs".as_bytes().to_vec()).unwrap() }).unwrap();
     workspace.client.call(Command::Ping).unwrap();
     let log = workspace.diagnostics().unwrap().report();
-    for operation in ["Read file", "Save document", "Close file", "Refresh Explorer", "Git stage", "Stage hunk"] {
+    // The shared workflows check Git actions in the Git output channel. The
+    // SSH connection log retains file/transport operations without duplicates.
+    for operation in ["Read file", "Save document", "Close file", "Refresh Explorer"] {
         assert!(log.contains(operation), "Missing operation diagnostics: {operation}\n{log}");
     }
     assert!(log.contains("Completed") && log.contains("Awaiting response"));

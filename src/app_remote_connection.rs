@@ -47,6 +47,7 @@ pub(crate) struct State {
     pub message: String,
     pub error: String,
     pub details: bool,
+    pub focus: usize,
     trace: Option<crate::remote::diagnostics::Log>,
     pub area: Option<Rect>,
     pub buttons: Vec<(Rect, &'static str)>,
@@ -64,6 +65,9 @@ pub(crate) struct State {
 
 pub(crate) struct LoginOutput {
     pub grid: crate::terminal::TermGrid,
+    pub rows: crate::ui_terminal_rows::RowCache,
+    pub input_sent: bool,
+    pub input_error: Option<String>,
     parser: vte::Parser,
 }
 
@@ -81,6 +85,7 @@ impl Default for State {
             message: String::new(),
             error: String::new(),
             details: false,
+            focus: 0,
             trace: None,
             area: None,
             buttons: Vec::new(),
@@ -105,22 +110,30 @@ impl State {
     pub(crate) fn diagnostic_log(&self) -> Option<crate::remote::diagnostics::Log> { self.trace.clone() }
     pub(crate) fn send_key(&mut self, key: crossterm::event::KeyEvent) {
         if let Some(setup) = &self.setup
-            && let Some(login) = &self.login
-            && let Err(error) = setup.send_key(key, &login.grid)
+            && let Some(login) = &mut self.login
         {
-            self.error = error.to_string();
+            match setup.send_key(key, &login.grid) {
+                Ok(()) => { login.input_sent = true; login.input_error = None; }
+                Err(error) => login.input_error = Some(format!("Could not send input: {error}")),
+            }
         }
     }
     pub(crate) fn send_paste(&mut self, text: &str) {
-        if let Some(setup) = &self.setup
-            && let Err(error) = setup.send_paste(
-                text,
-                self.login
-                    .as_ref()
-                    .is_some_and(|login| login.grid.bracketed_paste),
-            )
+        if let Some(setup) = &self.setup && let Some(login) = &mut self.login
         {
-            self.error = error.to_string();
+            match setup.send_paste(text, login.grid.bracketed_paste) {
+                Ok(()) => { login.input_sent = true; login.input_error = None; }
+                Err(error) => login.input_error = Some(format!("Could not send input: {error}")),
+            }
+        }
+    }
+    pub(crate) fn resize_login(&mut self, width: u16, height: u16) {
+        let Some(login) = &mut self.login else { return; };
+        let width = width.max(2) as usize;
+        let height = height.max(2) as usize;
+        if login.grid.width != width || login.grid.height != height {
+            if let Some(setup) = &self.setup { let _ = setup.resize(width as u16, height as u16); }
+            login.grid.resize(width, height);
         }
     }
     pub(crate) fn next_wait(&self) -> Option<Duration> {
@@ -187,6 +200,10 @@ pub(crate) struct FileCheck {
 }
 
 impl App {
+    pub(crate) fn open_remote_reconnect_tab(&mut self) {
+        self.remote_connection.details = true;
+        self.open_remote_connection_tab(0);
+    }
     /// Refresh only at lifecycle transitions, never on rendering or idle polls.
     /// The shared notice preserves dismissal through retries of this outage.
     pub(crate) fn publish_remote_connection_notice(&mut self, reveal: bool) {
@@ -427,6 +444,9 @@ impl App {
         state.login = Some(LoginOutput {
             grid: crate::terminal::TermGrid::new(72, 16),
             parser: vte::Parser::new(),
+            rows: Default::default(),
+            input_sent: false,
+            input_error: None,
         });
         let serial = state.serial;
         let generation = self.workspace_generation;
@@ -470,6 +490,9 @@ impl App {
         }
         match result {
             Ok(setup) => {
+                if let Some(login) = &self.remote_connection.login {
+                    let _ = setup.resize(login.grid.width as u16, login.grid.height as u16);
+                }
                 self.remote_connection.setup = Some(setup);
                 self.remote_connection.phase = Phase::Connecting;
             }
@@ -531,6 +554,7 @@ impl App {
         self.remote_connection.error.clear();
         self.remote_connection.message = "Connected. Checking open files…".into();
         self.remote_connection.details = false;
+        self.close_remote_connection_tabs(0);
         self.publish_remote_connection_notice(false);
         let mut files = rustc_hash::FxHashMap::default();
         for tab in self

@@ -188,7 +188,9 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
         crate::editor_blame::header(f, app, layout[1]);
     }
     crate::ui_loading::draw_editor_header(f, app, layout[0], layout[1]);
-    if current_tab_kind == Some(crate::app::TabKind::CommitDetails) {
+    if let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
+        crate::ui_remote_targets::draw_connection_tab(f, app, layout[2], id);
+    } else if current_tab_kind == Some(crate::app::TabKind::CommitDetails) {
         app.swap_group_highlight_requests(group_idx);
         crate::ui_commit_details::draw_in_area(f, app, layout[2]);
         app.swap_group_highlight_requests(group_idx);

@@ -113,7 +113,7 @@ fn formatter_settings_mouse_keyboard_scroll_and_validation() {
         "python",
         "Language Server",
         "User",
-        "Workspace",
+        "Folder",
         "Save",
         "Cancel",
     ] {

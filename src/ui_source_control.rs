@@ -28,6 +28,10 @@ mod actions_tests;
 
 pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) {
     use crossterm::event::{KeyCode, KeyModifiers};
+    if !app.has_open_folder() {
+        crate::ui_empty_folder::key(app, code, modifiers);
+        return;
+    }
     if crate::ui_git_operation::handle_key(app, code, modifiers) { return; }
     if !app.source_control_enabled {
         if matches!(code, KeyCode::Enter | KeyCode::Char(' ')) && modifiers.is_empty() {
@@ -319,8 +323,17 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.repositories.detail_area = None;
     app.repositories.recovery_buttons.clear();
     app.repositories.recovery_root = None;
-    draw_sc_actions(f, app, content_area);
+    if app.source_control_repository_state != crate::app::SourceControlRepositoryState::NoFolder {
+        draw_sc_actions(f, app, content_area);
+    }
     match app.source_control_repository_state {
+        crate::app::SourceControlRepositoryState::NoFolder => {
+            f.render_widget(Paragraph::new(" Source Control").style(Style::default()
+                .fg(app.colors.ui.sidebar_text_color(bg)).bg(bg).add_modifier(Modifier::BOLD)),
+                Rect::new(content_area.x, content_area.y, content_area.width, content_area.height.min(1)));
+            crate::ui_chrome::draw_empty_folder_state(f, app, area);
+            return;
+        }
         crate::app::SourceControlRepositoryState::Disabled => {
             draw_sc_disabled(f, app, content_area);
             return;
@@ -1048,7 +1061,7 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
     file_actions::draw_tooltip(f, app);
     for (area, label) in [
         (app.source_control_refresh_area, "Refresh Source Control"),
-        (app.source_control_toggle_area, if app.source_control_enabled { "Disable Source Control for this workspace" } else { "Enable Source Control for this workspace" }),
+        (app.source_control_toggle_area, if app.source_control_enabled { "Disable Source Control for this folder" } else { "Enable Source Control for this folder" }),
         (app.source_control_stage_all_area, "Stage All Unstaged Changes"),
         (app.source_control_unstage_all_area, "Unstage All Changes"),
         (app.source_control_discard_all_area, "Discard All Unstaged Changes"),

@@ -1,4 +1,4 @@
-//! Compact workspace switcher; management lives in the saved-sets tab.
+//! Switch between open folders and manage saved workspaces.
 use crate::{app::App, app_workspaces::Request, ui_workspace_picker as picker};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -55,7 +55,7 @@ pub(crate) struct Popup {
 }
 pub(crate) fn open(app: &mut App) {
     if app.paste_receiving() {
-        app.notify_warn("Finish or cancel the incoming paste before switching workspaces");
+        app.notify_warn("Finish or cancel the incoming paste before switching folders");
         return;
     }
     if crate::ui_modal::active(app).is_some()
@@ -92,7 +92,7 @@ pub(crate) fn dismiss(app: &mut App) {
 }
 pub(crate) fn add(app: &mut App) {
     if app.paste_receiving() {
-        app.notify_warn("Finish or cancel the incoming paste before adding a workspace");
+        app.notify_warn("Finish or cancel the incoming paste before adding a folder");
         return;
     }
     if crate::ui_modal::active(app).is_some() || app.workspaces.exit.is_some() {
@@ -103,16 +103,32 @@ pub(crate) fn add(app: &mut App) {
     app.folder_browser.add_workspace = true;
 }
 pub(crate) fn close(app: &mut App) {
+    if !can_close(app) {
+        return;
+    }
     open(app);
     if app.workspaces.popup.open {
         app.workspaces.popup.close = true;
         app.workspaces.popup.selected = 1;
     }
 }
+pub(crate) fn can_close(app: &App) -> bool {
+    app.has_open_folder() && app.open_folder_count() > 1
+}
+fn actions(app: &App) -> &'static [&'static str] {
+    if app.open_folder_count() == 0 {
+        &["+ Open folder…"]
+    } else if can_close(app) {
+        &["+ Add folder…", "Save workspace…", "Close current folder…"]
+    } else {
+        &["+ Add folder…", "Save workspace…"]
+    }
+}
 fn entries(app: &App) -> Vec<crate::app_workspaces::Entry> {
     let query = app.workspaces.popup.search.text.trim();
     app.workspace_entries()
         .into_iter()
+        .filter(|entry| !entry.path.is_empty() || app.open_folder_count() > 0)
         .filter(|entry| {
             query.is_empty()
                 || crate::app::contains_ignore_case(&entry.name, query)
@@ -122,7 +138,7 @@ fn entries(app: &App) -> Vec<crate::app_workspaces::Entry> {
 }
 fn activate(app: &mut App, index: usize) {
     if app.workspaces.popup.close {
-        if index == 0 {
+        if index == 0 && can_close(app) {
             dismiss(app);
             app.workspaces.request = Some(Request::Close);
         } else {
@@ -140,7 +156,7 @@ fn activate(app: &mut App, index: usize) {
         add(app);
     } else if index == choices + 1 {
         crate::ui_workspace_sets::save(app);
-    } else if index == choices + 2 {
+    } else if index == choices + 2 && can_close(app) {
         close(app);
     }
 }
@@ -218,7 +234,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     let count = if app.workspaces.popup.close {
         2
     } else {
-        entries(app).len().max(1) + 3
+        entries(app).len().max(1) + actions(app).len()
     };
     match key.code {
         KeyCode::Esc => dismiss(app),
@@ -250,35 +266,23 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         let saved = app.workspaces.popup.tabs[1].contains(point);
         let workspaces = app.workspaces.popup.tabs[0].contains(point);
-        let sets_button = crate::ui_chrome::saved_workspace_sets_area(app)
-            .is_some_and(|rect| rect.contains(point));
         let controls = crate::ui_chrome::workspace_controls(app);
         let directory_button = controls.is_some_and(|(rect, _)| rect.contains(point));
         if app.workspaces.popup.dismiss.contains(point) {
             dismiss(app);
             return true;
         }
-        if sets_button || saved {
-            if sets_button
-                && matches!(
-                    app.workspaces.popup.sets.mode,
-                    Some(crate::ui_workspace_sets::Mode::List)
-                )
-            {
-                dismiss(app);
-            } else {
+        if saved {
+            if app.workspaces.popup.sets.mode.is_none() {
                 dismiss(app);
                 crate::ui_workspace_sets::open(app);
             }
             return true;
         }
         if directory_button || workspaces {
-            if directory_button
-                && app.workspaces.popup.sets.mode.is_none()
-                && !app.workspaces.popup.close
-            {
+            if directory_button {
                 dismiss(app);
-            } else {
+            } else if app.workspaces.popup.sets.mode.is_some() || app.workspaces.popup.close {
                 dismiss(app);
                 open(app);
             }
@@ -311,7 +315,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     let count = if app.workspaces.popup.close {
         2
     } else {
-        entries(app).len().max(1) + 3
+        entries(app).len().max(1) + actions(app).len()
     };
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
@@ -346,14 +350,19 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     app.workspaces.popup.hits.clear();
+    if app.workspaces.popup.close && !can_close(app) {
+        open(app);
+    }
     if app.workspaces.popup.close {
         draw_close(f, app);
         return;
     }
     let entries = entries(app);
     let count = entries.len().max(1);
-    app.workspaces.popup.selected = app.workspaces.popup.selected.min(count + 2);
-    let Some(layout) = picker::list(f, app, false, count, 3) else {
+    let actions = actions(app);
+    app.workspaces.popup.selected = app.workspaces.popup.selected.min(count + actions.len() - 1);
+    let detail_rows = usize::from(entries.iter().any(|entry| !entry.last.is_empty()));
+    let Some(layout) = picker::list(f, app, false, count, actions.len(), detail_rows) else {
         return;
     };
     let selected = app.workspaces.popup.selected;
@@ -361,15 +370,15 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         &mut app.workspaces.popup.scroll,
         selected,
         count,
-        layout.choices.height,
+        layout.choices.height / layout.row_height,
     );
     for (offset, index) in (start..count)
-        .take(layout.choices.height as usize)
+        .take((layout.choices.height / layout.row_height) as usize)
         .enumerate()
     {
         let row = Rect::new(
             layout.choices.x,
-            layout.choices.y + offset as u16,
+            layout.choices.y + offset as u16 * layout.row_height,
             layout.choices.width,
             1,
         );
@@ -384,11 +393,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             } else {
                 String::new()
             };
-            let duplicate = entries
-                .iter()
-                .filter(|other| other.name == entry.name)
-                .count()
-                > 1;
+            let duplicate = layout.row_height == 1
+                && entries
+                    .iter()
+                    .filter(|other| other.name == entry.name)
+                    .count()
+                    > 1;
             let label = if duplicate {
                 let room = row.width as usize;
                 let path = crate::ui_performance::clip_middle(
@@ -400,15 +410,30 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 format!("{marker} {}", entry.name)
             };
             picker::choice(f, app, row, &label, &badge, selected == index, true);
-            app.workspaces.popup.hits.push((row, index));
+            if layout.row_height > 1 {
+                let path_row = Rect::new(row.x, row.y + 1, row.width, 1);
+                let path = crate::ui_performance::clip_middle(
+                    &escaped(if entry.path.is_empty() { "Open files and tools" } else { &entry.path }),
+                    row.width.saturating_sub(4) as usize,
+                );
+                picker::subtitle(f, app, path_row, &path, selected == index);
+            }
+            app.workspaces.popup.hits.push((
+                Rect {
+                    height: layout.row_height,
+                    ..row
+                },
+                index,
+            ));
         } else {
-            picker::choice(f, app, row, "No matching workspaces", "", false, false);
+            let label = if app.workspaces.popup.search.text.is_empty() { "No folder open" } else { "No matching folders" };
+            picker::choice(f, app, row, label, "", false, false);
         }
     }
     let action_start = selected
         .saturating_sub(count)
         .saturating_sub(layout.actions.height.saturating_sub(1) as usize);
-    for (offset, (index, label)) in ["+ Add workspace…", "Save as set…", "Close workspace…"]
+    for (offset, (index, label)) in actions
         .iter()
         .enumerate()
         .skip(action_start)
@@ -425,25 +450,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         app.workspaces.popup.hits.push((row, count + index));
     }
     if let Some(entry) = entries.get(selected) {
-        picker::detail(
-            f,
-            app,
-            Rect::new(
-                layout.detail.x,
-                layout.detail.y,
-                layout.detail.width,
-                layout.detail.height.min(1),
-            ),
-            &entry.path,
-        );
-        if layout.detail.height > 1 {
-            picker::detail(
-                f,
-                app,
-                Rect::new(layout.detail.x, layout.detail.y + 1, layout.detail.width, 1),
-                &entry.last,
-            );
-        }
+        picker::detail(f, app, layout.detail, &entry.last);
     }
 }
 fn draw_close(f: &mut Frame, app: &mut App) {
@@ -451,8 +458,7 @@ fn draw_close(f: &mut Frame, app: &mut App) {
         .workspace_entries()
         .into_iter()
         .find(|entry| entry.active)
-        .map_or("workspace".into(), |entry| entry.name);
-    let quitting = app.workspaces.parked.is_empty();
+        .map_or("folder".into(), |entry| entry.name);
     let jobs = app.chat.any_agent_running()
         || app
             .terminals
@@ -465,16 +471,7 @@ fn draw_close(f: &mut Frame, app: &mut App) {
     if app.unsaved_file_count() > 0 {
         lines.push("Unsaved edits will be kept.".into());
     }
-    let Some(inner) = picker::surface(
-        f,
-        app,
-        if quitting {
-            "Quit VTCode"
-        } else {
-            "Close workspace"
-        },
-        lines.len() + 4,
-    ) else {
+    let Some(inner) = picker::surface(f, app, "Close folder", lines.len() + 4) else {
         return;
     };
     f.render_widget(
@@ -491,7 +488,7 @@ fn draw_close(f: &mut Frame, app: &mut App) {
         f,
         app,
         Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
-        if quitting { "Quit" } else { "Close" },
+        "Close folder",
         selected == 0,
         selected == 1,
         true,

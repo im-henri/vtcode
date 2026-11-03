@@ -27,7 +27,7 @@ impl SettingsScope {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Global => "Global",
-            Self::Workspace => "Workspace",
+            Self::Workspace => "Folder",
         }
     }
 }

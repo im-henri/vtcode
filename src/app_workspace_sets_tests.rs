@@ -242,18 +242,22 @@ fn title_button_directory_menu_name_input_and_small_frames_share_hit_geometry() 
     app.workspaces.sets.path = project.path().join("sets.json");
     for width in [48, 80, 140] {
         draw(&mut app, width, 28);
-        let button = crate::ui_chrome::saved_workspace_sets_area(&app).unwrap();
         let (directory, _) = crate::ui_chrome::workspace_controls(&app).unwrap();
-        assert!(button.right() <= directory.x);
         crate::mouse::handle_mouse(
             &mut app,
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: button.x,
-                row: button.y,
+                column: directory.x,
+                row: directory.y,
                 modifiers: KeyModifiers::NONE,
             },
         );
+        draw(&mut app, width, 28);
+        let saved_tab = app.workspaces.popup.tabs[1];
+        crate::mouse::handle_mouse(&mut app, MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left), column: saved_tab.x, row: saved_tab.y,
+            modifiers: KeyModifiers::NONE,
+        });
         assert!(matches!(
             app.workspaces.popup.sets.mode,
             Some(crate::ui_workspace_sets::Mode::List)
@@ -267,7 +271,7 @@ fn title_button_directory_menu_name_input_and_small_frames_share_hit_geometry() 
     crate::ui_workspaces::open(&mut app);
     let buffer = draw(&mut app, 120, 28);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-    assert!(text.contains("Saved sets") && text.contains("Save as set"));
+    assert!(text.contains("Saved workspaces") && text.contains("Save workspace"));
     crate::ui_control_visibility_tests::snapshot(&buffer, "Workspace sets directory menu");
     crate::ui_workspace_sets::save(&mut app);
     crate::app_event_loop::handle_paste_input(&mut app, "Engineering λ🦀");
@@ -577,12 +581,12 @@ fn hovering_a_set_redraws_its_row_and_management_targets_that_set() {
     assert!(app.mouse_hover_changed);
     let buffer = draw(&mut app, 120, 28);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-    assert!(!text.contains("Update with current workspaces"));
+    assert!(!text.contains("Update from open folders"));
     crate::mouse::handle_mouse(&mut app, MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left), column: area.right() - 3, row,
         modifiers: KeyModifiers::NONE,
     });
     let buffer = draw(&mut app, 120, 28);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-    assert!(text.contains("Beta") && text.contains("Update with current workspaces"));
+    assert!(text.contains("Beta") && text.contains("Update from open folders"));
 }

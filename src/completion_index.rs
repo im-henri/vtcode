@@ -472,7 +472,11 @@ impl CompletionIndex {
             .parent()
             .unwrap()
             .to_owned();
-        Self::new_in(root, directory)
+        if root.as_os_str().is_empty() {
+            Self::new_with_mode(root, directory, IndexSettings::default(), true)
+        } else {
+            Self::new_in(root, directory)
+        }
     }
 
     /// Remote sources come from loaded buffers; their bounded learned cache is

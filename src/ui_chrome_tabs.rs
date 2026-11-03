@@ -247,6 +247,12 @@ fn tab_display_name_with_duplicates<'a>(
     duplicates: Option<&TabNameDuplicates>,
 ) -> std::borrow::Cow<'a, str> {
     let name = tab.editor.file_display_name();
+    if let crate::app::TabKind::RemoteConnection(id) = tab.kind {
+        return std::borrow::Cow::Owned(if id == 0 { "SSH: Reconnect".into() } else {
+            app.remote_targets.attempt.as_ref().filter(|attempt| attempt.id == id)
+                .map_or_else(|| "SSH: Connection".into(), |attempt| format!("SSH: {}", attempt.target.name))
+        });
+    }
     if tab.kind == crate::app::TabKind::ExtensionInfo {
         let id = crate::ui_extension_info::tab_extension_id(tab);
         let name = app.extension_views().into_iter().find(|ext| Some(ext.id.as_str()) == id.as_deref())

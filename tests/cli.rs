@@ -80,6 +80,7 @@ fn help_lists_arguments_without_starting_the_editor() {
             "--install-theme",
             "--headless",
             "--remote HOST",
+            "--remote-target NAME",
             "--remote-command",
             "--ssh-command",
             "--version",
@@ -97,6 +98,8 @@ fn command_help_never_launches_a_service_or_connection() {
         vec!["--headless", "not-a-directory", "--help"],
         vec!["--install-theme", "--help"],
         vec!["--remote", "--help"],
+        vec!["--remote-target", "--help"],
+        vec!["--remote-target", "must-not-load-configuration", "--help"],
         vec!["--remote", "user@host", "-h"],
         vec![
             "--remote",
@@ -190,6 +193,16 @@ fn version_exits_without_starting_the_editor() {
         );
         assert!(stderr.is_empty(), "{stderr}");
     }
+}
+
+#[test]
+fn unknown_saved_remote_target_fails_without_opening_a_terminal() {
+    let name = format!("__vtcode_missing_target_test_{}", std::process::id());
+    let (status, stdout, stderr) = run(&["--remote-target", &name]);
+    assert_eq!(status, 1);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("No saved remote target named"), "{stderr}");
+    assert!(stderr.contains("Remote sidebar"), "{stderr}");
 }
 
 #[cfg(windows)]

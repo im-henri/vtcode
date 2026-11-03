@@ -390,7 +390,11 @@ fn loading_labels_and_unknown_badges_distinguish_detection_scan_and_completion()
         assert!(!rendered.contains("Checking for a Git repository"));
         let badge_text = text(
             buffer,
-            Rect::new(source_control.x + 1, source_control.bottom() - 1, 4, 1),
+            if source_control.height >= 3 {
+                Rect::new(source_control.x + 1, source_control.bottom() - 1, source_control.width - 2, 1)
+            } else {
+                Rect::new(source_control.right() - 1, source_control.bottom() - 1, 1, 1)
+            },
         );
         assert_eq!(badge_text.trim(), badge, "{state:?}");
         if matches!(state, State::Checking | State::Loading) {
@@ -414,14 +418,14 @@ fn loading_labels_and_unknown_badges_distinguish_detection_scan_and_completion()
 #[test]
 fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
     use crate::source_control_rows::Group;
-    let bar = Rect::new(0, 0, 6, 18);
+    let bar = Rect::new(0, 0, 6, 21);
     let region = crate::ui_chrome::activity_item_regions(bar)
         .into_iter()
         .find(|(_, index)| *index == 2)
         .unwrap()
         .0;
     let badge = Rect::new(region.x + 1, region.bottom() - 1, 4, 1);
-    let mut terminal = Terminal::new(TestBackend::new(6, 18)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(6, 21)).unwrap();
     for counts in [[1, 1, 1, 1], [1, 1, 1, 150], [0, 0, 0, 3], [1, 0, 0, 0], [0, 0, 0, 0]] {
         for collapsed in [false, true] {
             let mut app = App::test_new();
@@ -506,6 +510,13 @@ fn compact_activity_bars_keep_the_unknown_count_beside_the_label() {
         if region.height >= 2 {
             assert!(rendered.contains("CTRL"));
         }
+        for count in [1, 10] {
+            app.source_control_repository_state = State::Available;
+            app.source_control_files = (0..count).map(|index| GitFileChange { path: format!("file-{index}"), ..change() }).collect();
+            terminal.draw(|frame| crate::ui_chrome::draw_activity_bar(frame, &app, bar)).unwrap();
+            assert!(text(terminal.backend().buffer(), region).contains(if count == 1 { "1" } else { "+" }));
+        }
+        app.source_control_repository_state = State::Loading;
     }
 }
 

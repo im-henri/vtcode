@@ -1662,8 +1662,25 @@ impl App {
         let sender = self.background.sender.clone();
         self.quick_open_selected = 0;
         let remote = self.remote_workspace.clone();
-        let recent = self.quick_open_query.is_empty().then(|| self.recent_files.clone());
+        let recent = (self.quick_open_query.is_empty() || !self.has_open_folder()).then(|| self.recent_files.clone());
         let token = index.submit_latest(&mut self.background, move |index, cancel| {
+            if root.as_os_str().is_empty() {
+                let mut paths = recent.unwrap_or_default();
+                let direct = PathBuf::from(query.trim());
+                if !query.trim().is_empty() && direct.is_file() {
+                    if let Ok(path) = std::path::absolute(&direct) {
+                        if !paths.contains(&path) { paths.push(path); }
+                    }
+                }
+                let entries = std::sync::Arc::new(paths.into_iter().map(|path| QuickOpenEntry {
+                    name: path.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
+                    relative: path.to_string_lossy().to_lowercase().replace('\\', "/"), path,
+                }).collect());
+                if let Some(files) = index.rank_files(&entries, &query, &cancel) {
+                    if !cancel.is_cancelled() { let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles { files, generation }); }
+                }
+                return;
+            }
             if let Some(paths) = recent {
                 let files = if let Some(remote) = &remote {
                     let indices = remote.search_history_scope(&paths, &excludes, &cancel).unwrap_or_default();

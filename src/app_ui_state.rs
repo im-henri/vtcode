@@ -263,6 +263,7 @@ impl App {
             SidebarView::SourceControl => 2,
             SidebarView::Extensions => 4,
             SidebarView::Outline => 5,
+            SidebarView::Remote => 3,
             SidebarView::Settings => usize::MAX,
         };
     }
@@ -406,6 +407,20 @@ impl App {
                 .collect();
             scored.sort_by(|a, b| b.1.cmp(&a.1));
             self.palette.filtered = scored.into_iter().map(|(i, _)| i).collect();
+        }
+        if !crate::ui_workspaces::can_close(self) {
+            self.palette.filtered.retain(|&index| self.palette.commands[index].id != "workspace_close");
+        }
+        if self.open_folder_count() == 0 {
+            self.palette.filtered.retain(|&index| !matches!(self.palette.commands[index].id.as_ref(),
+                "workspace_set_save" | "workspace_add" | "workspace_switch"));
+        }
+        if !self.has_open_folder() {
+            self.palette.filtered.retain(|&index| {
+                let id = self.palette.commands[index].id.as_ref();
+                !id.starts_with("git_") && !matches!(id, "source_control_toggle" | "open_parent"
+                    | "goto_workspace_symbol" | "open_workspace_settings_json" | "new_folder" | "replace_all_in_files")
+            });
         }
         if self.palette.selected >= self.palette.filtered.len() {
             self.palette.selected = 0;
@@ -1654,12 +1669,13 @@ mod tests {
     // ── update_palette_filter ────────────────────────────────────────
 
     #[test]
-    fn update_palette_filter_empty_query_shows_all() {
+    fn update_palette_filter_empty_query_shows_available_commands() {
         let mut app = App::test_new();
         app.open_palette();
         app.palette.query.clear();
         app.update_palette_filter();
-        assert_eq!(app.palette.filtered.len(), app.palette.commands.len());
+        assert_eq!(app.palette.filtered.len(), app.palette.commands.len() - 1);
+        assert!(app.palette.filtered.iter().all(|&index| app.palette.commands[index].id != "workspace_close"));
     }
 
     #[test]

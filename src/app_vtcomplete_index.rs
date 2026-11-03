@@ -71,6 +71,8 @@ impl App {
     /// Called on real event-loop turns. There is no index-specific idle poll.
     /// The worker wakes the UI only when its published status changes.
     pub(crate) fn poll_completion_index(&mut self) -> bool {
+        if !self.has_open_folder() && !self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(|tab| tab.kind == TabKind::File && tab.editor.file_path.is_some()) { return false; }
         if !self.workspace_visible { return false; }
         if self.completion_index_sync.settings.is_none() {
             self.completion_index

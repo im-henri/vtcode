@@ -56,13 +56,13 @@ impl App {
         syntax_names: &[String],
     ) -> Vec<PaletteCommand> {
         let mut cmds = vec![
-            PaletteCommand { name: "Workspaces: Add Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_add") },
-            PaletteCommand { name: "Workspaces: Switch Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_switch") },
-            PaletteCommand { name: "Workspaces: Saved Workspace Sets…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_sets") },
-            PaletteCommand { name: "Workspaces: Save Workspace Set…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_set_save") },
-            PaletteCommand { name: "Workspaces: Next Workspace".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_next") },
-            PaletteCommand { name: "Workspaces: Previous Workspace".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_previous") },
-            PaletteCommand { name: "Workspaces: Close Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_close") },
+            PaletteCommand { name: "Folders: Add Folder…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_add") },
+            PaletteCommand { name: "Folders: Switch Folder…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_switch") },
+            PaletteCommand { name: "Workspaces: Saved Workspaces…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_sets") },
+            PaletteCommand { name: "Workspaces: Save Workspace…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_set_save") },
+            PaletteCommand { name: "Folders: Next Folder".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_next") },
+            PaletteCommand { name: "Folders: Previous Folder".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_previous") },
+            PaletteCommand { name: "Folders: Close Current Folder…".into(), shortcut: String::new(), id: Cow::Borrowed("workspace_close") },
             PaletteCommand { name: "Desks: New Desk…".into(), shortcut: String::new(), id: Cow::Borrowed("desk_new") },
             PaletteCommand { name: "Desks: Switch Desk…".into(), shortcut: String::new(), id: Cow::Borrowed("desk_switch") },
             PaletteCommand { name: "Desks: Previous Desk".into(), shortcut: String::new(), id: Cow::Borrowed("desk_previous") },
@@ -140,6 +140,14 @@ impl App {
             PaletteCommand { name: "File: Open Folder...".into(), shortcut: String::new(), id: Cow::Borrowed("change_dir") },
             PaletteCommand { name: "File: Open Parent Folder".into(), shortcut: String::new(), id: Cow::Borrowed("open_parent") },
             PaletteCommand { name: "Git: Open Source Control".into(), shortcut: "Ctrl+Shift+G".into(), id: Cow::Borrowed("source_control") },
+            PaletteCommand { name: "View: Open Remote".into(), shortcut: String::new(), id: Cow::Borrowed("remote") },
+            PaletteCommand { name: "Remote: Connect to Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_connect") },
+            PaletteCommand { name: "Remote: Add Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_target_add") },
+            PaletteCommand { name: "Remote: Edit Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_target_edit") },
+            PaletteCommand { name: "Remote: Duplicate Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_target_duplicate") },
+            PaletteCommand { name: "Remote: Remove Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_target_remove") },
+            PaletteCommand { name: "Remote: Refresh Targets".into(), shortcut: String::new(), id: Cow::Borrowed("remote_targets_refresh") },
+            PaletteCommand { name: "Remote: Open Targets Configuration".into(), shortcut: String::new(), id: Cow::Borrowed("remote_targets_config") },
             PaletteCommand { name: "Git: Filter Uncommitted Changes...".into(), shortcut: String::new(), id: Cow::Borrowed("git_filter_changes") },
             PaletteCommand { name: "Git: Refresh".into(), shortcut: String::new(), id: Cow::Borrowed("git_refresh") },
             PaletteCommand { name: "Merge Conflict: Accept Current Change".into(), shortcut: String::new(), id: Cow::Borrowed("merge_conflict_current") },
@@ -150,7 +158,7 @@ impl App {
             PaletteCommand { name: "Merge Conflict: Previous Conflict".into(), shortcut: String::new(), id: Cow::Borrowed("merge_conflict_previous_conflict") },
             PaletteCommand { name: "Merge Conflict: Resolve in Merge Editor".into(), shortcut: String::new(), id: Cow::Borrowed("merge_conflict_merge_editor") },
             PaletteCommand { name: "Merge Conflict: Back to Inline".into(), shortcut: String::new(), id: Cow::Borrowed("merge_conflict_close_merge_editor") },
-            PaletteCommand { name: "Source Control: Enable / Disable for Workspace".into(), shortcut: String::new(), id: Cow::Borrowed("source_control_toggle") },
+            PaletteCommand { name: "Source Control: Enable / Disable for Folder".into(), shortcut: String::new(), id: Cow::Borrowed("source_control_toggle") },
             PaletteCommand { name: "Git: Toggle File Blame".into(), shortcut: String::new(), id: Cow::Borrowed("git_toggle_blame") },
             PaletteCommand { name: "Git: Stage File".into(), shortcut: String::new(), id: Cow::Borrowed("git_stage") },
             PaletteCommand { name: "Git: Unstage File".into(), shortcut: String::new(), id: Cow::Borrowed("git_unstage") },
@@ -194,7 +202,7 @@ impl App {
             PaletteCommand { name: "Search: Replace All in Files".into(), shortcut: String::new(), id: Cow::Borrowed("replace_all_in_files") },
             PaletteCommand { name: "Go to Line".into(), shortcut: "Ctrl+G".into(), id: Cow::Borrowed("goto_line") },
             PaletteCommand { name: "Go to Symbol".into(), shortcut: "Ctrl+Shift+O".into(), id: Cow::Borrowed("goto_symbol") },
-            PaletteCommand { name: "Go to Symbol in Workspace".into(), shortcut: "Ctrl+T".into(), id: Cow::Borrowed("goto_workspace_symbol") },
+            PaletteCommand { name: "Go to Symbol in Folder".into(), shortcut: "Ctrl+T".into(), id: Cow::Borrowed("goto_workspace_symbol") },
             PaletteCommand { name: "Go Back".into(), shortcut: "Alt+Left".into(), id: Cow::Borrowed("navigate_back") },
             PaletteCommand { name: "Go Forward".into(), shortcut: "Alt+Right".into(), id: Cow::Borrowed("navigate_forward") },
             PaletteCommand { name: "Go to Definition".into(), shortcut: "F12".into(), id: Cow::Borrowed("go_to_definition") },
@@ -252,7 +260,7 @@ impl App {
             PaletteCommand { name: "LSP: Restart Language Servers".into(), shortcut: String::new(), id: Cow::Borrowed("restart_language_servers") },
             PaletteCommand { name: "Preferences: Open Selected Settings (JSON)".into(), shortcut: String::new(), id: Cow::Borrowed("open_settings_json") },
             PaletteCommand { name: "Preferences: Open Global Settings (JSON)".into(), shortcut: String::new(), id: Cow::Borrowed("open_global_settings_json") },
-            PaletteCommand { name: "Preferences: Open Workspace Settings (JSON)".into(), shortcut: String::new(), id: Cow::Borrowed("open_workspace_settings_json") },
+            PaletteCommand { name: "Preferences: Open Folder Settings (JSON)".into(), shortcut: String::new(), id: Cow::Borrowed("open_workspace_settings_json") },
         ];
         cmds.push(PaletteCommand { name: "Preferences: Reload Color Themes".into(), shortcut: String::new(), id: Cow::Borrowed("reload_color_themes") });
         cmds.push(PaletteCommand { name: "Preferences: Install Color Theme from File or Link".into(), shortcut: String::new(), id: Cow::Borrowed("install_color_theme") });
@@ -429,11 +437,11 @@ impl App {
                 ("─", "", ""),
                 ("Open File…", "Ctrl+P", "quick_open"),
                 ("Open Folder…", "", "change_dir"),
-                ("Add Workspace…", "", "workspace_add"),
-                ("Switch Workspace…", "", "workspace_switch"),
-                ("Saved Workspace Sets…", "", "workspace_sets"),
-                ("Save Workspace Set…", "", "workspace_set_save"),
-                ("Close Workspace…", "", "workspace_close"),
+                ("Add Folder…", "", "workspace_add"),
+                ("Switch Folder…", "", "workspace_switch"),
+                ("Saved Workspaces…", "", "workspace_sets"),
+                ("Save Workspace…", "", "workspace_set_save"),
+                ("Close Current Folder…", "", "workspace_close"),
                 ("Open Recent…", "", "open_recent_menu"),
                 ("─", "", ""),
                 ("Save", "", "save"),
@@ -497,6 +505,7 @@ impl App {
                 ("Source Control", "", "source_control"),
                 ("Agent Chat", "", "acp_chat"),
                 ("Extensions", "", "extensions"),
+                ("Remote", "", "remote"),
                 ("─", "", ""),
                 ("Problems", "", "toggle_problems"),
                 ("Output", "", "show_output"),
@@ -519,7 +528,7 @@ impl App {
                 ("Go to File…", "Ctrl+P", "quick_open"),
                 ("Go to Line…", "", "goto_line"),
                 ("Go to Symbol in File…", "Ctrl+Shift+O", "goto_symbol"),
-                ("Go to Symbol in Workspace…", "Ctrl+T", "goto_workspace_symbol"),
+                ("Go to Symbol in Folder…", "Ctrl+T", "goto_workspace_symbol"),
                 ("─", "", ""),
                 ("Go to Definition", "", "go_to_definition"),
                 ("Go to Type Definition", "", "go_to_type_definition"),
@@ -555,7 +564,11 @@ impl App {
             _ => vec![],
         };
 
-        raw.into_iter().map(|(label, default_shortcut, command)| {
+        let visible = raw.into_iter()
+            .filter(|(_, _, command)| (*command != "workspace_close" || crate::ui_workspaces::can_close(self))
+                && (!matches!(*command, "workspace_set_save" | "workspace_add" | "workspace_switch") || self.open_folder_count() > 0)
+                && (*command != "new_folder" || self.has_open_folder()));
+        visible.map(|(label, default_shortcut, command)| {
             let checked = match command {
                 "toggle_sidebar" => Some(self.sidebar_is_visible()),
                 "toggle_sidebar_auto_hide" => Some(self.sidebar_auto_hide.enabled),
@@ -613,6 +626,10 @@ impl App {
 
     /// Check if a menu command should be disabled given current app state
     pub(crate) fn is_menu_cmd_disabled(&self, cmd_id: &str) -> bool {
+        if !self.has_open_folder() && (cmd_id.starts_with("git_") || matches!(cmd_id,
+            "source_control_toggle" | "open_parent" | "goto_workspace_symbol" | "replace_all_in_files")) {
+            return true;
+        }
         let output = crate::ui_logs::focused(self);
         let has_editor = !output && self.tabs.get(self.active_tab)
             .is_some_and(|tab| tab.kind == crate::app::TabKind::File);

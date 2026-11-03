@@ -75,6 +75,7 @@ fn sidebar_hover_reveals_every_view_and_restores_editor_space_without_taking_foc
         SidebarView::Settings,
         SidebarView::Extensions,
         SidebarView::Outline,
+        SidebarView::Remote,
     ] {
         for right in [false, true] {
             for activity_bar in [false, true] {

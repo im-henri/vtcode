@@ -1205,6 +1205,7 @@ impl<P: AsRef<Path>> GitFileChange<P> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceControlRepositoryState {
+    NoFolder,
     Disabled,
     Checking,
     Loading,
@@ -1411,8 +1412,8 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         make("prev_tab", "Previous Tab", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Tab),
         make("next_tab_page", "Next Tab", KeyModifiers::CONTROL, KeyCode::PageDown),
         make("prev_tab_page", "Previous Tab", KeyModifiers::CONTROL, KeyCode::PageUp),
-        make("workspace_next", "Next Workspace", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageDown),
-        make("workspace_previous", "Previous Workspace", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageUp),
+        make("workspace_next", "Next Folder", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageDown),
+        make("workspace_previous", "Previous Folder", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageUp),
     ];
     crate::app_shortcuts::append_builtins(&mut bindings);
     bindings
@@ -1542,6 +1543,7 @@ pub enum SidebarView {
     Settings,
     Extensions,
     Outline,
+    Remote,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1571,6 +1573,8 @@ pub enum TabKind {
     ExtensionView,
     ExtensionInfo,
     Terminal,
+    /// Ephemeral SSH sign-in view. Zero identifies the workspace reconnect.
+    RemoteConnection(u64),
     Chat(u64),
 }
 

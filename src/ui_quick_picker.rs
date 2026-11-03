@@ -428,7 +428,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         ),
         Kind::Symbols => (
             if app.symbol_list_workspace {
-                "Workspace Symbols"
+                "Folder Symbols"
             } else {
                 "Go to Symbol"
             },

@@ -26,7 +26,7 @@ impl App {
     pub(crate) fn extension_editor_context_snapshot(&self) -> EditorContextSnapshot {
         let mut context = EditorContext {
             remote_workspace: self.remote_workspace.clone(),
-            workspace_root: Some(self.explorer.root.to_string_lossy().into_owned()),
+            workspace_root: self.has_open_folder().then(|| self.explorer.root.to_string_lossy().into_owned()),
             modified_file_paths: self.tabs.iter().chain(self.groups.iter().flat_map(|group| group.tabs.iter()))
                 .filter(|tab| tab.kind == TabKind::File && tab.editor.modified)
                 .filter_map(|tab| tab.editor.file_path.clone()).collect(),
@@ -210,6 +210,8 @@ impl App {
                 ("Remote: Capture Headless CPU (10 seconds)", "remote_capture_cpu"),
                 ("Remote: Reconnect", "remote_reconnect"),
                 ("Remote: Stop Reconnecting", "remote_reconnect_stop"),
+                ("Remote: Close Remote Connection", "remote_disconnect"),
+                ("Remote: Save Current Connection…", "remote_target_save_current"),
             ] {
                 commands.push(PaletteCommand { name: name.into(), shortcut: String::new(), id: id.into() });
             }

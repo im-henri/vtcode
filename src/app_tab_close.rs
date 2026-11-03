@@ -29,6 +29,15 @@ impl ClosedTab {
 }
 
 impl App {
+    pub(crate) fn close_remote_connection_tabs(&mut self, id: u64) {
+        let kind = TabKind::RemoteConnection(id);
+        let plan = std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group)).map(|group| {
+            let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
+            (group, tabs.iter().enumerate().filter_map(|(index, tab)| (tab.kind == kind).then_some(index)).collect())
+        }).collect();
+        self.close_tab_batch(plan);
+    }
+
     pub(crate) fn tab_operation_pending(&self, tab: &Tab) -> bool {
         self.pending_save_as.contains_key(&tab.editor.save_identity) || tab.editor.file_path.as_ref().is_some_and(|path| {
             self.pending_file_saves.contains_key(path) || self.deferred_file_saves.contains_key(path)
@@ -232,6 +241,17 @@ impl App {
             self.desks.selected_tabs.remove(&tab.navigation_id);
             let still_open = self.tabs.iter().chain(self.groups.iter().flat_map(|g|&g.tabs)).any(|t|t.kind==tab.kind);
             match tab.kind {
+                TabKind::RemoteConnection(id) if !still_open => {
+                    if id == 0 {
+                        self.remote_connection.details = false;
+                        self.remote_connection.area = None;
+                        self.remote_connection.buttons.clear();
+                    } else if self.remote_targets.attempt.as_ref().is_some_and(|attempt| attempt.id == id) {
+                        self.remote_targets.attempt = None;
+                    }
+                    self.remote_targets.connection_hits.clear();
+                    self.remote_targets.connection_area = Default::default();
+                }
                 TabKind::Chat(key) if !still_open => {
                     self.chat.layout.editors.remove(&key);
                     if self.chat.layout.active == Some(key) {

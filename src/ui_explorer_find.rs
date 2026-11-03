@@ -112,6 +112,7 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
 
 impl App {
     pub(crate) fn open_explorer_find(&mut self) {
+        if !self.has_open_folder() { crate::ui_workspaces::add(self); return; }
         self.show_explorer = true;
         self.sidebar_view = SidebarView::Explorer;
         self.global_search_active = false;

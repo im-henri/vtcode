@@ -405,11 +405,13 @@ fn activity_bar_toggling_search_off_clears_global_search_popup() {
 fn activity_bar_toggling_source_control_off_hides_sidebar() {
     let mut app = App::new(PathBuf::from("."));
     app.activity_bar_area = Some(Rect::new(0, 0, 2, 20));
+    let source_control_area = crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap())
+        .into_iter().find(|(_, index)| *index == 2).unwrap().0;
 
     let source_control_click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: 0,
-        row: 6,
+        row: source_control_area.y,
         modifiers: KeyModifiers::NONE,
     };
 
@@ -431,9 +433,10 @@ fn activity_item_hit_test_rejects_rows_outside_the_bar() {
     assert_eq!(activity_item_at(area, 26), None);
     assert_eq!(activity_item_at(area, 2), Some(0));
     assert_eq!(activity_item_at(area, 8), Some(2));
-    assert_eq!(activity_item_at(area, 11), Some(4));
-    assert_eq!(activity_item_at(area, 14), Some(5));
-    assert_eq!(activity_item_at(area, 17), None);
+    assert_eq!(activity_item_at(area, 11), Some(3));
+    assert_eq!(activity_item_at(area, 14), Some(4));
+    assert_eq!(activity_item_at(area, 17), Some(5));
+    assert_eq!(activity_item_at(area, 20), None);
     assert_eq!(activity_item_at(area, 25), Some(ACTIVITY_SETTINGS_INDEX));
 
     let compact = Rect::new(0, 2, 5, 15);

@@ -35,6 +35,7 @@ pub(crate) fn tab_icon(tab: &crate::app::Tab) -> &'static str {
         crate::app::TabKind::KeyboardShortcuts => "Kb ",
         crate::app::TabKind::ExtensionView | crate::app::TabKind::ExtensionInfo => "Ex ",
         crate::app::TabKind::Terminal => ">_ ",
+        crate::app::TabKind::RemoteConnection(_) => "↗ ",
         crate::app::TabKind::Chat(_) => "◇ ",
     }
 }
@@ -846,7 +847,7 @@ mod tests {
 
         let text = render(&mut terminal, &mut app);
         assert_eq!(app.unsaved_file_count(), 0);
-        assert!(text.contains("Close 1 workspace and quit?"));
+        assert!(text.contains("Close 1 folder and quit?"));
         assert!(!text.contains("unsaved file"));
         assert_eq!(app.exit_confirm_buttons.len(), 2);
 
@@ -868,7 +869,7 @@ mod tests {
         assert_eq!(app.unsaved_file_count(), 0);
         assert_eq!(app.workspace_unsaved_file_count(), 1);
         assert!(text.contains("1 unsaved document"));
-        assert!(text.contains("2 workspaces"));
+        assert!(text.contains("2 folders"));
         assert_eq!(app.exit_confirm_buttons.len(), 4);
     }
 

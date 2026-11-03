@@ -59,6 +59,7 @@ pub(crate) struct App {
     pub(crate) workspace_observation: crate::app_workspaces::Observation,
     pub(crate) remote_workspace: Option<crate::remote::workspace::Workspace>,
     pub(crate) remote_connection: crate::app_remote_connection::State,
+    pub(crate) remote_targets: crate::app_remote_targets::State,
     pub(crate) side_notice: crate::ui_side_notice::State,
     pub(crate) logs: crate::ui_logs::State,
     pub(crate) loading: crate::ui_loading::State,
@@ -752,8 +753,9 @@ pub(crate) struct App {
     pub(crate) menu_dropdown_scroll: usize,
     pub(crate) menu_rendered: Option<usize>,
     // Activity bar
-    pub activity_bar_selected: usize, // 0=Explorer, 1=Search, 2=SourceControl, 4=Extensions, 5=Outline, usize::MAX=None
+    pub activity_bar_selected: usize, // 0=Explorer, 1=Search, 2=SourceControl, 3=Remote, 4=Extensions, 5=Outline, usize::MAX=None
     pub activity_bar_area: Option<ratatui::layout::Rect>,
+    pub(crate) empty_folder: crate::ui_empty_folder::State,
     pub menu_bar_area: Option<ratatui::layout::Rect>,
     pub zen_exit_area: Option<ratatui::layout::Rect>,
     // Tab context menu (right-click)
@@ -1109,6 +1111,7 @@ impl App {
             workspace_observation: Default::default(),
             remote_workspace: None,
             remote_connection: Default::default(),
+            remote_targets: Default::default(),
             side_notice: Default::default(),
             logs: Default::default(),
             remote_explorer_error: None,
@@ -1715,6 +1718,7 @@ impl App {
             menu_rendered: None,
             activity_bar_selected: 0,
             activity_bar_area: None,
+            empty_folder: Default::default(),
             menu_bar_area: None,
             zen_exit_area: None,
             tab_context_active: false,
@@ -1911,6 +1915,10 @@ impl App {
         defaults.search_exclude = crate::settings::default_search_exclude();
         app.settings_defaults = defaults.clone();
         app.settings_effective = defaults;
+        if !app.has_open_folder() {
+            app.repositories.discovered = true;
+            app.source_control_repository_state = SourceControlRepositoryState::NoFolder;
+        }
         app
     }
 
@@ -1922,7 +1930,7 @@ impl App {
 
     pub(crate) fn poll_background_results_until(&mut self, deadline: std::time::Instant) -> bool {
         if let Some(remote) = &self.remote_workspace { remote.apply_notifications(&self.background.sender, self.workspace_generation); }
-        let disconnected = self.poll_remote_connection(deadline);
+        let disconnected = self.poll_remote_connection(deadline) | self.poll_remote_target(deadline);
         if self.workspace_visible { self.sync_diff_tab(); }
         let mut budget = crate::background::ResultBudget::until(deadline);
         // A worker reply is not necessarily a visual change. Periodic disk,

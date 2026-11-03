@@ -22,6 +22,7 @@ pub(crate) enum Kind {
     AgentSettings,
     LspSettings,
     FormatterSettings,
+    RemoteTargets,
     FileAssociations,
     ExclusionSettings,
     ScopeBubbleSettings,
@@ -120,6 +121,8 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::FileAssociations)
     } else if app.formatter_settings.active {
         Some(Kind::FormatterSettings)
+    } else if app.remote_targets.modal() {
+        Some(Kind::RemoteTargets)
     } else if app.lsp_settings.active {
         Some(Kind::LspSettings)
     } else if app.agent_settings.active {
@@ -196,6 +199,7 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         Kind::ScopeBubbleSettings => vec!["Done"],
         Kind::ExclusionSettings | Kind::FileAssociations => vec!["Done"],
         Kind::FormatterSettings => vec!["Done"],
+        Kind::RemoteTargets => vec!["Cancel"],
         Kind::AgentSettings => vec!["Done"],
         Kind::LspSettings => vec!["Done"],
         Kind::CloseAgent => vec!["Close agent", "Cancel"],
@@ -235,7 +239,7 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         Kind::StageAllCommit => vec!["Stage all & commit", "Cancel"],
         Kind::GitOperationTarget | Kind::GitOperationConfirm => vec![crate::ui_git_operation::primary(app), "Cancel"],
         Kind::Exit if app.closing_workspace_only() && app.exit_unsaved_file_count() > 0 => vec!["Save & close", "Discard & close", "Keep unsaved & close", "Cancel"],
-        Kind::Exit if app.closing_workspace_only() => vec!["Close workspace", "Cancel"],
+        Kind::Exit if app.closing_workspace_only() => vec!["Close folder", "Cancel"],
         Kind::Exit if app.workspace_unsaved_file_count() > 0 => vec![
             "Save & quit",
             "Discard & quit",
@@ -262,6 +266,7 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::ExclusionSettings => crate::ui_exclusion_settings::activate(app, crate::ui_exclusion_settings::Action::Close),
         Kind::FileAssociations => crate::ui_file_associations::activate(app, crate::ui_file_associations::Action::Close),
         Kind::FormatterSettings => crate::ui_formatter_settings::activate(app, crate::ui_formatter_settings::Action::Close),
+        Kind::RemoteTargets => app.cancel_remote_target_dialog(),
         Kind::AgentSettings => crate::ui_agent_settings::activate(app, crate::ui_agent_settings::Action::Close),
         Kind::LspSettings => crate::ui_lsp_settings::activate(app, crate::ui_lsp_settings::Action::Close),
         Kind::CloseAgent => app.chat.confirm_close_agent = None,
@@ -323,7 +328,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
             app.formatting.error = None;
             app.open_formatter_settings(None);
         }
-        Kind::FormatterSettings | Kind::FileAssociations | Kind::ExclusionSettings | Kind::ScopeBubbleSettings => {},
+        Kind::FormatterSettings | Kind::RemoteTargets | Kind::FileAssociations | Kind::ExclusionSettings | Kind::ScopeBubbleSettings => {},
         Kind::ThemeInstall if index == 1 => app.show_theme_vsix_link(),
         Kind::ThemeInstall => app.start_theme_install(),
         Kind::ThemeVsixLink if index == 0 => app.copy_theme_vsix_link(),
@@ -420,6 +425,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     }
     if kind == Kind::FormatterSettings {
         crate::ui_formatter_settings::handle_key(app, key);
+        return Some(false);
+    }
+    if kind == Kind::RemoteTargets {
+        crate::ui_remote_targets::modal_key(app, key);
         return Some(false);
     }
     if kind == Kind::LspSettings {
@@ -529,6 +538,10 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     }
     if kind == Kind::FormatterSettings {
         crate::ui_formatter_settings::handle_mouse(app, mouse);
+        return true;
+    }
+    if kind == Kind::RemoteTargets {
+        crate::ui_remote_targets::modal_mouse(app, mouse);
         return true;
     }
     if kind == Kind::LspSettings {
@@ -727,6 +740,9 @@ fn copy(app: &App, kind: Kind) -> Copy {
         Kind::FormatterSettings => Copy {
             title: "Formatters", message: String::new(), context: Vec::new(), help: String::new(), field: "",
         },
+        Kind::RemoteTargets => Copy {
+            title: "Remote Target", message: String::new(), context: Vec::new(), help: String::new(), field: "",
+        },
         Kind::CloseAgent => {
             let agent = app.chat.confirm_close_agent.unwrap_or(app.chat.active_agent);
             let state = app.chat.agent_state(agent);
@@ -818,9 +834,9 @@ fn copy(app: &App, kind: Kind) -> Copy {
                     "Document   {}",
                     app.editor().map_or("Untitled".into(), document_name)
                 ),
-                format!("Workspace  {}", app.explorer.root.display()),
+                format!("Folder     {}", app.explorer.root.display()),
             ],
-            help: "Relative paths are saved inside this workspace.".into(),
+            help: "Relative paths are saved inside the current folder.".into(),
             field: "File name or full path",
         },
         Kind::Rename => Copy {
@@ -936,7 +952,7 @@ fn copy(app: &App, kind: Kind) -> Copy {
             context: app.sc_stage_all_commit_request.as_ref().map_or_else(
                 Vec::new,
                 |request| vec![
-                    format!("Workspace  {}", request.root.display()),
+                    format!("Folder     {}", request.root.display()),
                     format!("Message    {}", request.message.lines().next().unwrap_or_default()),
                 ],
             ),
@@ -963,7 +979,7 @@ fn copy(app: &App, kind: Kind) -> Copy {
         }
         Kind::ExitRecovery => Copy {
             title: "Backing up unsaved files…",
-            message: if app.closing_workspace_only() { "Writing recovery data on this computer. This workspace will close when the backup is complete." } else { "Writing recovery data on this computer. VTCode will quit when the backup is complete." }.into(),
+            message: if app.closing_workspace_only() { "Writing recovery data on this computer. This folder will close when the backup is complete." } else { "Writing recovery data on this computer. VTCode will quit when the backup is complete." }.into(),
             context: Vec::new(),
             help: "Your edits will stay open if the backup cannot be completed.".into(),
             field: "",
@@ -975,21 +991,24 @@ fn copy(app: &App, kind: Kind) -> Copy {
                     .filter(|t| t.has_unsaved_changes()).take(3)
                     .map(|t| document_name(&t.editor).to_string()).collect()
             } else {
-                app.workspace_entries().iter().map(|entry| entry.path.clone()).collect()
+                app.workspace_entries().iter().map(|entry| if entry.path.is_empty() { entry.name.clone() } else { entry.path.clone() }).collect()
             };
             if count > 3 {
                 context.push(format!("… and {} more documents", count - 3));
             }
             Copy {
-                title: if app.closing_workspace_only() { "Close Workspace" } else { "Quit VT Code" },
+                title: if app.closing_workspace_only() { "Close Folder" } else { "Quit VT Code" },
                 message: if app.closing_workspace_only() {
-                    format!("Close this workspace with {count} unsaved document{}?", if count == 1 { "" } else { "s" })
+                    format!("Close this folder with {count} unsaved document{}?", if count == 1 { "" } else { "s" })
                 } else if count == 0 {
-                    format!("Close {} workspace{} and quit?", app.workspaces.parked.len() + 1,
-                        if app.workspaces.parked.is_empty() { "" } else { "s" })
+                    if app.open_folder_count() == 0 { "Quit VTCode?".into() }
+                    else { format!("Close {} folder{} and quit?", app.open_folder_count(),
+                        if app.open_folder_count() == 1 { "" } else { "s" }) }
+                } else if app.open_folder_count() != app.workspaces.parked.len() + 1 {
+                    format!("You have {count} unsaved document{}.", if count == 1 { "" } else { "s" })
                 } else {
                     format!(
-                        "You have {count} unsaved document{} across {} workspace{}.",
+                        "You have {count} unsaved document{} across {} folder{}.",
                         if count == 1 { "" } else { "s" },
                         app.workspaces.parked.len() + 1,
                         if app.workspaces.parked.is_empty() { "" } else { "s" }
@@ -997,9 +1016,10 @@ fn copy(app: &App, kind: Kind) -> Copy {
                 },
                 context,
                 help: if app.closing_workspace_only() {
-                    "Only this workspace will close. Keep unsaved & close preserves its edits for next time; its terminals and agents will stop.".into()
+                    "Only this folder will close. Keep unsaved & close preserves its edits for next time; its terminals and agents will stop.".into()
                 } else if count == 0 {
-                    "All workspaces will close. Terminals and agents will stop.".into()
+                    if app.open_folder_count() == 0 { "Terminals and agents will stop.".into() }
+                    else { "All folders will close. Terminals and agents will stop.".into() }
                 } else {
                     "Keep unsaved & quit preserves your edits in the session for next time.".into()
                 },
@@ -1074,6 +1094,7 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::ExclusionSettings) => crate::ui_exclusion_settings::draw(f, app),
         Some(Kind::FileAssociations) => crate::ui_file_associations::draw(f, app),
         Some(Kind::FormatterSettings) => crate::ui_formatter_settings::draw(f, app),
+        Some(Kind::RemoteTargets) => crate::ui_remote_targets::draw_dialog(f, app),
         Some(Kind::CloseAgent) => draw(f, app, Kind::CloseAgent),
         Some(Kind::ThemeInstall) => draw(f, app, Kind::ThemeInstall),
         Some(Kind::ThemeVsixLink) => draw(f, app, Kind::ThemeVsixLink),
@@ -1575,6 +1596,7 @@ mod tests {
             Kind::ExclusionSettings => app.open_exclusion_settings("files_exclude", None, false),
             Kind::FileAssociations => app.open_file_associations(),
             Kind::FormatterSettings => app.open_formatter_settings(None),
+            Kind::RemoteTargets => { app.remote_targets.path = Some(std::env::temp_dir().join("vtcode-modal-remote-test.json")); app.edit_remote_target(None, false); }
             Kind::CloseAgent => app.chat.confirm_close_agent = Some(app.chat.active_agent),
             Kind::ThemeInstall => app.open_theme_install_prompt(),
             Kind::ThemeDelete => {

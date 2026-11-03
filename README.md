@@ -11,7 +11,8 @@ Built in Rust for Windows and Linux. Under active development.
 ## Features
 
 - **Edit:** desks and collapsible tab groups, split panes, multiple cursors, snippets, folding, minimaps, bracket colors, sticky scroll, and keyboard macros.
-- **Workspaces:** keep several folders open in one instance, each with its own desks, files, terminals, and Agent Chat. Switch from the directory title; background jobs keep running, with unread activity badges for completed commands, agent replies, and permission requests. Works locally and over a headless SSH connection.
+- **Open folders and saved workspaces:** keep several folders open in one instance, each with its own desks, files, terminals, and Agent Chat. Switch from the directory title and save folder collections as named workspaces. Background jobs keep running, with unread activity badges for completed commands, agent replies, and permission requests. Works locally and over a headless SSH connection.
+- **Remote Explorer:** save named SSH targets in the **Remote** sidebar, search and connect to them, and switch between local and remote folders. Saved targets also open with `vtcode --remote-target NAME`.
 - **Find and navigate:** quick file/symbol search, back/forward history, and find/replace across files. Explorer's **Find by Name…** filters filenames with substring, fuzzy, or regex matching; **Find in Folder…** searches file contents.
 - **Delete files:** larger deletions show preparation, item counts, and a **Cancel** button while the editor stays usable. **File: Cancel Deletion** is also available in the Command Palette. Cancellation stops remaining items; it does not restore items already deleted.
 - **VTComplete:** built-in suggestions learned from your code, with no language server required.
@@ -89,45 +90,53 @@ Keep `settings.json` and `.vtcode/` beside the executable when updating.
 | `Shift+Alt+F` | Format document |
 | `Ctrl+Shift+G` | Source Control |
 | `Ctrl+Shift+I` | Agent Chat |
-| `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` | Previous / next workspace |
+| `Ctrl+Alt+PageUp` / `Ctrl+Alt+PageDown` | Previous / next folder |
 
-Click the directory name at the top to switch workspaces, or the adjacent **+**
-to add a folder. **File → Open Folder…** also adds a workspace and selects it;
-adding an already open folder returns to its live session. Each workspace keeps
+Running `vtcode` without a path opens an empty editor with no folder attached.
+It does not load the launch directory's settings or session, scan its Git
+repository, or start its file watcher and project index. Use `vtcode .` to open
+the current directory explicitly, or choose **Open folder…** in the empty window.
+Loose files and tools can remain open while folders are added; their window state
+is stored separately from folder sessions.
+
+Click the directory name at the top and use **Open folders** to switch folders,
+or the adjacent **+** to add a folder. **File → Open Folder…** also adds a folder
+and selects it; adding an already open folder returns to its live session. Each folder keeps
 its unsaved documents, undo history, desks, splits, searches, Git state, terminals,
-and agent conversations while another workspace is selected. User settings are
-shared, and each folder keeps its own Workspace overrides.
+and agent conversations while another folder is selected. User settings are
+shared, and each folder keeps its own Folder settings overrides.
 
-Inactive workspaces pause filesystem watching, completion indexing, Git refreshes,
-and searches, and defer editor UI work. Returning to a workspace refreshes its
-files and repository state after its watcher is ready. Terminals, agents, pending
+Inactive folders defer completion indexing, Git refreshes, searches, and editor UI
+work. Switching back reuses cached state and processes pending changes. Terminals, agents, pending
 saves, and background extension tasks keep running locally and over headless SSH.
 
-A badge beside the title counts unread activity from other workspaces. Open the
+A badge beside the title counts unread activity from other folders. Open the
 picker to see each folder's latest event and whether it is working or needs
-attention. Visiting a workspace clears its workspace badge; terminal and chat
+attention. Visiting a folder clears its folder badge; terminal and chat
 views retain their own unread indicators until viewed. Terminal command completion
 uses shell integration (OSC 133/633); terminal process exits are also reported.
 
-Use **Workspaces: Close Workspace…** in the Command Palette or the workspace
-picker to close a folder. Closing preserves unsaved edits for reopening and stops
-that workspace's terminals and agents. Quitting applies Save, Discard, or Keep
-Unsaved to all open workspaces. Live processes are retained while switching
+Use **Folders: Close Current Folder…** in the Command Palette or **Close current
+folder…** in the directory picker to close a folder. This action appears only when
+more than one folder is open. Closing preserves unsaved edits for reopening and stops
+that folder's terminals and agents. Quitting applies Save, Discard, or Keep
+Unsaved to all open folders. Live processes are retained while switching
 within the running instance; closing the application ends them. Over SSH, added
 folders are on the same remote host and use the existing headless connection.
-Update the local and headless binaries together; multi-workspace watcher cleanup
-uses SSH protocol 28. Closing the last workspace quits VTCode.
+Update the local and headless binaries together; multi-folder watcher cleanup
+uses SSH protocol 28. Use Quit to exit VTCode when only one folder is open.
 
-**Saved workspace sets:** click **▤** immediately left of the directory title,
-or use **Saved workspace sets…** / **Save current workspace set…** in the title
-dropdown. Name a set containing one or more open folders, then reopen it from
-the list. Opening a set switches to exactly its folders and restores its active
-workspace. Matching live workspaces keep their files, undo, terminals, and chat.
-Before other workspaces close, a confirmation lists them; unsaved edits are
+**Saved workspaces:** a workspace is a named collection of one or more folders.
+Choose **Save workspace…** in the directory picker to save the open folders.
+Use the **Saved workspaces** tab to inspect a workspace, with each folder on its
+own line, then choose **Open workspace**. Opening switches to exactly those folders
+and restores the starting folder. Matching open folders keep their files, undo, terminals, and chat.
+Before other folders close, a confirmation lists them; unsaved edits are
 preserved for next time and their terminals and agents stop. Missing folders
-leave the current workspaces open. Each folder restores its latest saved session.
-Use the list’s Update, Rename, and Delete actions to manage sets. Sets persist in
-the portable `.vtcode/workspace-sets.json`; remote sets belong to the current SSH
+leave the current folders open. Each folder restores its latest saved session.
+Use **Update from open folders…**, **Rename workspace…**, and **Delete workspace…**
+to manage saved workspaces. They persist in the portable `.vtcode/workspace-sets.json`;
+remote workspaces belong to the current SSH
 connection and can be reopened after connecting with the same launch command.
 
 Reopening a closed file during the same workspace session restores its cursor
@@ -213,6 +222,53 @@ slow connection, launch
 for a direct connection). `--ssh-command 'ssh -e none -tt -vv'` overrides the SSH
 executable and flags. No second terminal is needed; the job's input/output stays
 attached to this SSH connection.
+
+Open **Remote** in the left activity bar (or run **View: Open Remote** from `F1`)
+to manage saved targets. Choose **+ Add**, enter a name and SSH host or config
+alias, and optionally enter a remote folder. **Save & Connect** opens it;
+**Save** keeps it for later. SSH authentication appears inside VTCode. Both
+machines need matching VTCode builds, with `vtcode` on the remote host's PATH
+unless you supply a custom command.
+
+Targets open as live workspaces. Your previous folder, open buffers and tools
+remain available through the directory title's workspace switcher. Connecting
+to an already open target switches to that workspace. The current connection
+appears above the target list; **Save Target** also saves a connection opened
+using `--remote`.
+Use **Close** in that section to close the remote workspace. When no other
+workspace is open, VTCode returns to a local editor window.
+
+Search by name, host or folder. Press `Enter` to connect, `F2` to edit, `N` to
+add, `Delete` to remove, and `F5` to refresh. Right-click a target or choose
+**⋯** for Connect, Edit, Duplicate and Remove. Removing a saved target keeps
+its open workspaces connected. Forms support `Tab` / `Shift+Tab`, clipboard
+editing, `Ctrl+S` to save, and `Esc` to cancel.
+
+SSH sign-in opens in a full editor tab. Type at the prompt, then press `Enter`;
+SSH deliberately hides password and passphrase characters. `Ctrl+V` pastes
+into the prompt. Switch tabs to keep working while it connects, or close the
+sign-in tab to cancel. Reconnect sign-in also uses an editor tab.
+
+**Advanced connection options** accepts the same remote and SSH commands as
+the command line. A custom remote command replaces the default command and
+the Folder field; include the folder in that command, for example
+`submitcmd vtcode --headless /path/to/project`. The SSH command is the local
+executable and flags, such as `ssh -e none -tt -p 2222`. SSH keys, config and
+the SSH agent work as usual.
+
+Targets are saved in `.vtcode/remote-targets.json` beside the local executable,
+shared by all of its workspaces. Keep this file when moving or updating VTCode.
+Manual edits take effect after **Refresh**. Invalid files show an error while
+keeping the last loaded targets visible. Changes to different targets merge;
+if the same target changes elsewhere, reload it or save your draft as a copy.
+
+```sh
+vtcode --remote-target development
+vtcode --remote-target "My server"
+```
+
+The flag uses the saved target as configured. Use `--remote HOST` for an ad hoc
+connection with `--remote-command` or `--ssh-command` overrides.
 Use `F1` for the command palette if its other shortcut is intercepted.
 
 Over SSH, copying reaches your local clipboard through OSC 52 when your terminal

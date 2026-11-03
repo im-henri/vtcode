@@ -1321,7 +1321,7 @@ fn draw_list(f: &mut Frame, app: &mut App, body: Rect, p: Palette, now: Instant)
                 if entry.count > 1 {
                     format!("{} tasks", entry.count)
                 } else {
-                    "Workspace".into()
+                    "Folder".into()
                 }
             });
         let duration = if entry.id == 0 {
@@ -1401,7 +1401,7 @@ fn draw_list(f: &mut Frame, app: &mut App, body: Rect, p: Palette, now: Instant)
         let path = entry
             .path
             .map(clean_path)
-            .unwrap_or_else(|| "Workspace activity · no file attached".into());
+            .unwrap_or_else(|| "Folder activity · no file attached".into());
         let timing_row = u16::from(detail.height >= 4);
         if timing_row > 0 {
             let timing = if entry.id == 0 {
@@ -1669,7 +1669,7 @@ fn draw_card(f: &mut Frame, app: &mut App, area: Rect) {
                 "Overview".into(),
                 format!("Running {}", app.background.activity.job_count()),
                 format!("Recent {}", app.background.activity.recent.len()),
-                "Workspace".into(),
+                "Folder".into(),
                 "Timings".into(),
             ]
         } else if inner.width >= 54 {
@@ -1677,7 +1677,7 @@ fn draw_card(f: &mut Frame, app: &mut App, area: Rect) {
                 "Overview".into(),
                 "Running".into(),
                 "Recent".into(),
-                "Workspace".into(),
+                "Folder".into(),
                 "Timings".into(),
             ]
         } else {

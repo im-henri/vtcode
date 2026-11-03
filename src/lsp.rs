@@ -330,7 +330,10 @@ impl LspClient {
         workspace_root: &Path,
         wake: crate::background::UiWake,
     ) -> Result<Self, String> {
-        let mut command = vtcode::acp::local_command(&config.command, workspace_root, std::iter::empty());
+        let working_directory = if workspace_root.as_os_str().is_empty() {
+            std::env::current_dir().map_err(|error| error.to_string())?
+        } else { workspace_root.to_path_buf() };
+        let mut command = vtcode::acp::local_command(&config.command, &working_directory, std::iter::empty());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -551,15 +554,16 @@ impl LspClient {
     // ── LSP Lifecycle ─────────────────────────────────────────────
 
     fn send_initialize(&mut self, root: &Path, init_options: Option<Value>) -> Result<i64, String> {
-        let root_uri = Url::from_file_path(root).map_err(|_| "Invalid root path")?;
+        let root_uri = if root.as_os_str().is_empty() { None }
+            else { Some(Url::from_file_path(root).map_err(|_| "Invalid root path")?) };
         // root_path is deprecated in the LSP spec (root_uri is preferred) but
         // InitializeParams still carries the field; suppress the warning.
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id()),
             client_info: Some(ClientInfo { name: "VTCode".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }),
-            workspace_folders: Some(vec![WorkspaceFolder { uri: root_uri.clone(), name: root.file_name().unwrap_or_default().to_string_lossy().into_owned() }]),
-            root_uri: Some(root_uri),
+            workspace_folders: root_uri.as_ref().map(|uri| vec![WorkspaceFolder { uri: uri.clone(), name: root.file_name().unwrap_or_default().to_string_lossy().into_owned() }]),
+            root_uri,
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
                     position_encodings: Some(vec![PositionEncodingKind::UTF16]),

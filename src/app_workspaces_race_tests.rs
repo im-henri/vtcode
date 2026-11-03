@@ -43,6 +43,8 @@ fn queued_workspace_close_waits_for_an_intervening_save_dialog() {
 fn close_confirmation_keeps_actions_reachable_in_short_terminals() {
     let project = Project::new();
     let mut app = project.app(Default::default());
+    let other = Project::new();
+    app.insert_workspace(other.app(Default::default()));
     for height in 4..=9 {
         crate::ui_workspaces::close(&mut app);
         let buffer = draw(&mut app, 48, height);
@@ -52,8 +54,8 @@ fn close_confirmation_keeps_actions_reachable_in_short_terminals() {
         let buffer = draw(&mut app, 48, height);
         let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
         assert!(
-            text.contains("[ Quit ]"),
-            "Quit action missing at height {height}"
+            text.contains("[ Close folder ]"),
+            "Close folder action missing at height {height}"
         );
     }
 }

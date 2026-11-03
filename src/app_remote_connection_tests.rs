@@ -329,14 +329,14 @@ fn remote_reconnect_side_popup_is_modeless_and_quit_confirmation_keeps_priority(
         KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
     );
     assert_eq!(f.app.editor().unwrap().rope, "xbefore\n");
-    f.app.remote_connection.details = true;
-    assert!(crate::ui_remote_connection::handle_key(
+    f.app.open_remote_reconnect_tab();
+    assert!(crate::ui_remote_targets::connection_key(
         &mut f.app,
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
     ));
     assert!(!f.app.remote_connection.details);
     f.app.exit_confirm_active = true;
-    f.app.remote_connection.details = true;
+    f.app.open_remote_reconnect_tab();
     assert!(!crate::ui_remote_connection::handle_key(
         &mut f.app,
         KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)
@@ -344,7 +344,7 @@ fn remote_reconnect_side_popup_is_modeless_and_quit_confirmation_keeps_priority(
     for (width, height) in [(1, 1), (3, 3), (18, 7)] {
         Terminal::new(TestBackend::new(width, height))
             .unwrap()
-            .draw(|frame| crate::ui_remote_connection::draw(frame, &mut f.app))
+            .draw(|frame| crate::ui::draw(frame, &mut f.app))
             .unwrap();
     }
 }

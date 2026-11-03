@@ -1053,8 +1053,6 @@ fn activity_navigation_keeps_settings_reachable_in_short_terminals() {
             assert!(item.height > 0 && item.y >= end && item.bottom() <= area.bottom());
             end = item.bottom();
         }
-        if height >= 6 {
-            assert_eq!(items.len(), 6);
-        }
+        assert_eq!(items.len(), height.min(7) as usize);
     }
 }

@@ -30,6 +30,8 @@ pub(crate) enum TextInputId {
     AgentSetting(usize),
     LspSetting(usize),
     FormatterSetting(usize),
+    RemoteTarget(usize),
+    RemoteFilter,
     FileAssociation(usize),
     Exclusion(usize),
     ScopeBubbleLanguage,
@@ -703,6 +705,14 @@ impl App {
                 let field = &mut self.formatter_settings.fields[id];
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
             }
+            TextInputId::RemoteTarget(id) => {
+                let field = &mut self.remote_targets.form.as_mut().expect("remote target form is open").fields[id];
+                (&mut field.text, &mut field.cursor, &mut field.anchor)
+            }
+            TextInputId::RemoteFilter => {
+                let field = &mut self.remote_targets.filter;
+                (&mut field.text, &mut field.cursor, &mut field.anchor)
+            }
             TextInputId::FolderAddress => (
                 &mut self.change_dir_query,
                 &mut self.folder_browser.address_cursor,
@@ -823,6 +833,14 @@ impl App {
                 self.formatter_settings.focus = crate::ui_formatter_settings::Action::Field(id);
                 self.formatter_settings.reveal_focus = true;
             }
+            TextInputId::RemoteTarget(id) => {
+                if let Some(form) = &mut self.remote_targets.form { form.focus = id; form.reveal = true; }
+            }
+            TextInputId::RemoteFilter => {
+                self.remote_targets.filter_focused = true;
+                self.active_pane = crate::app::ActivePane::Explorer;
+                self.reveal_sidebar();
+            }
             TextInputId::ScopeBubbleLanguage => {
                 self.scope_bubble_settings.focus = crate::ui_scope_bubble_settings::Action::Language;
                 self.scope_bubble_settings.reveal_focus = true;
@@ -904,6 +922,9 @@ impl App {
             if kind == crate::ui_modal::Kind::FormatterSettings {
                 return self.formatter_settings.focused_input();
             }
+            if kind == crate::ui_modal::Kind::RemoteTargets {
+                return self.remote_targets.form.as_ref().filter(|form| form.focus < 5).map(|form| TextInputId::RemoteTarget(form.focus));
+            }
             if kind == crate::ui_modal::Kind::ScopeBubbleSettings {
                 return self.scope_bubble_settings.focused_input();
             }
@@ -944,6 +965,10 @@ impl App {
         }
         let sidebar_search_active =
             self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search;
+        if self.sidebar_is_visible() && self.sidebar_view == crate::app::SidebarView::Remote
+            && self.active_pane == crate::app::ActivePane::Explorer && self.remote_targets.filter_focused {
+            return Some(TextInputId::RemoteFilter);
+        }
         if self.global_search_active
             && (!sidebar_search_active || self.active_pane == crate::app::ActivePane::Explorer)
         {
@@ -1025,6 +1050,8 @@ impl App {
                 TextInputId::AgentSetting(_) => self.agent_settings.active && self.agent_settings.draft.is_some(),
                 TextInputId::LspSetting(_) => self.lsp_settings.active && self.lsp_settings.draft.is_some(),
                 TextInputId::FormatterSetting(_) => self.formatter_settings.active,
+                TextInputId::RemoteTarget(_) => self.remote_targets.form.is_some(),
+                TextInputId::RemoteFilter => self.sidebar_view == crate::app::SidebarView::Remote,
                 TextInputId::ScopeBubbleLanguage => self.scope_bubble_settings.active && self.scope_bubble_settings.editing,
                 TextInputId::Exclusion(_) => self.exclusion_settings.active && self.exclusion_settings.editing,
                 TextInputId::FileAssociation(_) => self.file_associations.active && self.file_associations.editing,
@@ -1102,6 +1129,8 @@ impl App {
             TextInputId::FormatterSetting(_) => {
                 crate::ui_formatter_settings::input_changed(self);
             }
+            TextInputId::RemoteTarget(_) => { if let Some(form) = &mut self.remote_targets.form { if !form.conflict { form.error = None; } form.reveal = true; } }
+            TextInputId::RemoteFilter => { self.remote_targets.selected = 0; self.remote_targets.scroll = 0; self.remote_targets.clamp(); }
             TextInputId::ScopeBubbleLanguage => crate::ui_scope_bubble_settings::input_changed(self),
             TextInputId::Exclusion(_) => { self.exclusion_settings.error = None; }
             TextInputId::FileAssociation(_) => {
@@ -1234,7 +1263,7 @@ impl App {
 
     fn text_input_is_overlay(&self, id: TextInputId) -> bool {
         match id {
-            TextInputId::AgentSetting(_) | TextInputId::LspSetting(_) | TextInputId::FormatterSetting(_) | TextInputId::FileAssociation(_) | TextInputId::Exclusion(_) | TextInputId::ScopeBubbleLanguage => true,
+            TextInputId::AgentSetting(_) | TextInputId::LspSetting(_) | TextInputId::FormatterSetting(_) | TextInputId::RemoteTarget(_) | TextInputId::FileAssociation(_) | TextInputId::Exclusion(_) | TextInputId::ScopeBubbleLanguage => true,
             TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => true,
             TextInputId::SearchFind
             | TextInputId::SearchReplace
@@ -1255,6 +1284,7 @@ impl App {
             | TextInputId::SettingsValue
             | TextInputId::Chat
             | TextInputId::ExtensionsFilter
+            | TextInputId::RemoteFilter
             | TextInputId::ExplorerRename
             | TextInputId::SourceControlCommit => false,
         }
@@ -1542,6 +1572,12 @@ mod tests {
         TextInputId::AgentSetting(0),
         TextInputId::LspSetting(0),
         TextInputId::FormatterSetting(0),
+        TextInputId::RemoteTarget(0),
+        TextInputId::RemoteTarget(1),
+        TextInputId::RemoteTarget(2),
+        TextInputId::RemoteTarget(3),
+        TextInputId::RemoteTarget(4),
+        TextInputId::RemoteFilter,
         TextInputId::ScopeBubbleLanguage,
         TextInputId::FileAssociation(0),
         TextInputId::FileAssociation(1),
@@ -1568,6 +1604,13 @@ mod tests {
                 app.open_formatter_settings(None);
                 app.focus_text_input(id);
             }
+            TextInputId::RemoteTarget(_) => {
+                app.remote_targets.path = Some(std::env::temp_dir().join("vtcode-shared-fields-remote-targets.json"));
+                app.edit_remote_target(None, false);
+                app.remote_targets.form.as_mut().unwrap().advanced = true;
+                app.focus_text_input(id);
+            }
+            TextInputId::RemoteFilter => { app.open_remote_sidebar(); app.focus_text_input(id); }
             TextInputId::ScopeBubbleLanguage => {
                 app.open_scope_bubble_settings();
                 crate::ui_scope_bubble_settings::activate(app, crate::ui_scope_bubble_settings::Action::New);
@@ -1785,6 +1828,8 @@ mod tests {
                 TextInputId::AgentSetting(_) => crate::ui_agent_settings::draw(frame, app),
                 TextInputId::LspSetting(_) => crate::ui_lsp_settings::draw(frame, app),
                 TextInputId::FormatterSetting(_) => crate::ui_formatter_settings::draw(frame, app),
+                TextInputId::RemoteTarget(_) => crate::ui_remote_targets::draw_dialog(frame, app),
+                TextInputId::RemoteFilter => crate::ui_remote_targets::draw_sidebar(frame, app, area),
                 TextInputId::ScopeBubbleLanguage => crate::ui_scope_bubble_settings::draw(frame, app),
                 TextInputId::Exclusion(_) => crate::ui_exclusion_settings::draw(frame, app),
                 TextInputId::FileAssociation(_) => crate::ui_file_associations::draw(frame, app),

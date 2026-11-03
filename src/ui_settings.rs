@@ -366,7 +366,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
 
     let scope_y = area.y.saturating_add(3);
     let global_label = " User ";
-    let workspace_label = " Workspace ";
+    let workspace_label = if app.has_open_folder() { " Folder " } else { "" };
     let global_width = UnicodeWidthStr::width(global_label) as u16;
     let workspace_width = UnicodeWidthStr::width(workspace_label) as u16;
     let global_area = Rect::new(search_x, scope_y, global_width.min(search_w), 1);
@@ -381,7 +381,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         ),
         1,
     );
-    app.settings_scope_areas = [Some(global_area), Some(workspace_area)];
+    app.settings_scope_areas = [Some(global_area), app.has_open_folder().then_some(workspace_area)];
     let scope_style = |selected: bool, rect: Rect| {
         let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
         let style = app.colors.ui.toolbar_style(fg_text, bg, hovered, false, selected);
@@ -685,7 +685,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             match selected_category {
                 0 => "Your most frequently used preferences",
                 1 => "Writing, navigating, and formatting code",
-                2 => "Appearance and workspace layout",
+                2 => "Appearance and editor layout",
                 3 => "Code assistance, navigation, and search",
                 4 => "Saving, file types, and large files",
                 5 => "Choose shortcuts for your workflow",
@@ -795,7 +795,9 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             label.clone()
         };
         let source_label = app.setting_source_label(id);
-        let modified = matches!(source_label, "Global" | "Workspace" | "Project");
+        let modified = source_label == crate::settings::SettingsScope::Global.label()
+            || source_label == crate::settings::SettingsScope::Workspace.label()
+            || source_label == "Project";
         let source_note = if source_label == "Project" || source_label == "Project default" {
             "This project"
         } else if modified {
@@ -1602,7 +1604,7 @@ mod tests {
 
         assert!(rendered.contains("Search settings"));
         assert!(rendered.contains("User"));
-        assert!(rendered.contains("Workspace"));
+        assert!(rendered.contains("Folder"));
         assert!(!rendered.contains("Precedence"));
         assert!(!rendered.contains("Alt+Delete reset"));
         assert!(rendered.contains("Open Settings (JSON)"));
@@ -1859,8 +1861,10 @@ mod tests {
 
     #[test]
     fn settings_mouse_targets_follow_wrapping_and_leave_titles_and_spacing_inert() {
-        for width in [46, 80, 140] {
+        let scopes = [crate::settings::SettingsScope::Global, crate::settings::SettingsScope::Workspace];
+        for (scope, width) in scopes.into_iter().flat_map(|scope| [46, 80, 140].map(|width| (scope, width))) {
             let mut app = App::test_new();
+            app.settings_scope = scope;
             app.settings_editor_active = true;
             app.active_pane = crate::app::ActivePane::Editor;
             app.settings_editor_search = "Show Activity Bar".into();
@@ -1894,7 +1898,7 @@ mod tests {
                 app.show_activity_bar, before,
                 "checkbox description at {width}"
             );
-            assert_eq!(app.setting_source_label("activity_bar"), "Global");
+            assert_eq!(app.setting_source_label("activity_bar"), scope.label());
 
             if area.width >= 32 {
                 app.text_input_regions.clear();
@@ -1903,7 +1907,8 @@ mod tests {
                     .unwrap();
                 click(&mut app, area.right() - 5, area.y);
                 assert_eq!(app.show_activity_bar, before, "reset at {width}");
-                assert_eq!(app.setting_source_label("activity_bar"), "Default");
+                let expected = if scope == crate::settings::SettingsScope::Global { "Default" } else { "Inherited · Default" };
+                assert_eq!(app.setting_source_label("activity_bar"), expected);
             }
         }
     }

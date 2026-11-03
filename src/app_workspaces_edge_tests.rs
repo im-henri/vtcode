@@ -27,6 +27,7 @@ fn ready_open(app: &mut App, root: &Path) {
     app.workspaces.opening = Some(Opening {
         receiver,
         foreground: true,
+        close_remote: None,
     });
 }
 
@@ -593,6 +594,7 @@ fn completed_open_on_a_dead_remote_transport_is_rejected() {
     app.workspaces.opening = Some(Opening {
         receiver,
         foreground: true,
+        close_remote: None,
     });
     first.disconnect();
     app.poll_workspace_requests();

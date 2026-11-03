@@ -319,7 +319,9 @@ pub(crate) fn discover(workspace: &Path, cancel: &CancellationToken) -> Discover
 
 impl App {
     pub(crate) fn update_source_control_repository_state(&mut self) {
-        self.source_control_repository_state = if !self.source_control_enabled {
+        self.source_control_repository_state = if !self.has_open_folder() {
+            SourceControlRepositoryState::NoFolder
+        } else if !self.source_control_enabled {
             SourceControlRepositoryState::Disabled
         } else if self.repositories.failure().is_some() {
             SourceControlRepositoryState::Failed

@@ -279,6 +279,7 @@ impl FileExplorer {
     }
 
     pub(crate) fn refresh(&mut self) {
+        if self.root.as_os_str().is_empty() { self.entries.clear(); self.git_statuses.clear(); return; }
         self.invalidate_directory_cache();
         self.canonical_root = self.directory_cache.canonical_root(&self.root);
         // Collect currently expanded dirs before clearing entries

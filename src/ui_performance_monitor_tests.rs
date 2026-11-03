@@ -328,7 +328,7 @@ fn overview_reports_real_values_scope_and_tail_latency_without_document_contents
         "over 16.7ms",
         "updates every 10s",
         "Pin",
-        "Workspace",
+        "Folder",
     ] {
         assert!(shown.contains(value), "missing {value}");
     }

@@ -80,6 +80,10 @@ pub(crate) fn handle_inline_edit_key(
 }
 
 pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if !app.has_open_folder() {
+        crate::ui_empty_folder::key(app, code, modifiers);
+        return;
+    }
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let alt = modifiers.contains(KeyModifiers::ALT);
     let replace_hidden = app.show_explorer
@@ -276,6 +280,11 @@ pub(crate) fn handle_search_key(app: &mut App, code: KeyCode, modifiers: KeyModi
 }
 
 pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if !app.has_open_folder() && matches!(app.sidebar_view,
+        crate::app::SidebarView::Search | crate::app::SidebarView::Explorer) {
+        crate::ui_empty_folder::key(app, code, modifiers);
+        return;
+    }
     if app.sidebar_view == crate::app::SidebarView::Search {
         match code {
             KeyCode::Up => {
@@ -311,6 +320,10 @@ pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyMo
         }
     }
     // Extensions sidebar keyboard handling
+    if app.sidebar_view == crate::app::SidebarView::Remote {
+        crate::ui_remote_targets::sidebar_key(app, code, modifiers);
+        return;
+    }
     if app.sidebar_view == crate::app::SidebarView::Extensions {
         crate::ui_extensions::handle_key(app, code, modifiers);
         return;

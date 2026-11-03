@@ -148,6 +148,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     if area.is_empty() {
         return;
     }
+    app.start_empty_window_extension_services();
     let bg = app.colors.bg_sidebar;
     let fg = app.colors.ui.sidebar_text_color(bg);
     let dim = app.colors.ui.description_color(bg);
@@ -351,7 +352,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     if filtered.is_empty() {
-        let empty = if views.is_empty() {
+        let empty = if views.is_empty() && app.bg_extension_scan_running {
+            "Loading extensions…"
+        } else if views.is_empty() {
             "Build your workspace\n\nInstall an extension from a tagged GitHub release to add tools and language support."
         } else {
             "No extensions found\n\nTry another search or clear your filters."
