@@ -143,7 +143,9 @@ fn assert_single_terminal_view(app: &App, terminal: &Terminal<TestBackend>, outp
     assert_eq!(app.tabs[app.active_tab].kind, crate::app::TabKind::Terminal);
     assert_eq!(app.tabs[app.active_tab].terminal_idx, Some(0));
     assert_terminal_log(app, terminal, output);
-    let area = app.editor_area.unwrap();
+    let area = app.terminal_surfaces.iter()
+        .find(|surface| surface.index == 0 && surface.group == Some(app.active_group))
+        .expect("the live PTY viewport excludes terminal chrome").area;
     let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
     assert_eq!((grid.width, grid.height), (area.width as usize, area.height as usize));
     assert!(app.code_area.is_none());

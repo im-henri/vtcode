@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
+    widgets::{Block, Paragraph},
 };
 
 use crate::{
@@ -183,7 +184,11 @@ pub(crate) fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 pub(crate) fn editor_label(app: &App, editor: &Editor) -> Option<&'static str> {
-    if editor.bg_loading {
+    if app.git_compare_pending_for_active_editor()
+        && app.editor().is_some_and(|active| active.navigation_id == editor.navigation_id)
+    {
+        Some("Loading diff…")
+    } else if editor.bg_loading {
         Some("Opening file…")
     } else if app.paste_pending_for(editor.navigation_id) {
         Some("Preparing paste…")
@@ -200,6 +205,34 @@ pub(crate) fn editor_label(app: &App, editor: &Editor) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// Keep an unfinished comparison distinct from a file with no changes.
+pub(crate) fn draw_diff(f: &mut Frame, app: &mut App, area: Rect) {
+    if !app.rendering_inactive_editor { app.editor_area = Some(area); }
+    app.code_area = None;
+    app.gutter_area = None;
+    app.gutter_width = 0;
+    app.minimap_area = None;
+    app.scrollbar_area = None;
+    app.h_scrollbar_area = None;
+    app.diff_split_area = None;
+    app.diff_divider_area = None;
+    app.diff_left_code_area = None;
+    app.diff_left_h_scrollbar_area = None;
+    if let Some(editor) = app.editor_mut() { editor.fold_buttons.clear(); }
+    let area = area.intersection(f.area());
+    if area.is_empty() { return; }
+    f.render_widget(Block::default().style(Style::default().bg(app.colors.bg_editor)), area);
+    let width = area.width.min(24);
+    let notice = Rect::new(area.x + (area.width - width) / 2, area.y + area.height / 2, width, 1);
+    f.render_widget(
+        Paragraph::new("Loading diff…")
+            .style(Style::default().fg(app.colors.fg_text).bg(app.colors.bg_editor))
+            .alignment(Alignment::Center),
+        notice,
+    );
+    draw_header(f, app, notice);
 }
 
 pub(crate) fn draw_editor_header(f: &mut Frame, app: &mut App, tabs: Rect, breadcrumbs: Rect) {

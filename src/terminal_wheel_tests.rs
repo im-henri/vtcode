@@ -4,6 +4,7 @@ use crate::{
     editor::Editor,
     terminal::TerminalEmulator,
 };
+use crossterm::event::KeyCode;
 use std::sync::{Arc, Mutex};
 
 fn fixture(output: &str, surface_kind: usize) -> (App, Arc<Mutex<Vec<u8>>>) {
@@ -64,6 +65,181 @@ fn output(app: &mut App, bytes: &[u8]) {
     let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
     pty.test_queue_output(bytes);
     pty.process();
+}
+
+fn view(app: &App) -> String {
+    let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
+    (0..grid.height)
+        .flat_map(|row| grid.display_line(row).iter().map(|cell| cell.ch))
+        .collect()
+}
+
+fn history() -> String {
+    (0..20)
+        .map(|index| format!("line {index:02}\r\n"))
+        .collect()
+}
+
+fn select_history(app: &mut App) {
+    let grid = &mut app.terminals[0].terminal_pty.as_mut().unwrap().grid;
+    grid.begin_selection(0, 0);
+    grid.extend_selection(0, 6);
+    grid.finish_selection();
+    assert!(grid.has_selection());
+}
+
+#[test]
+fn scrolling_back_to_bottom_resumes_following_after_repeated_scrollback_visits() {
+    for surface_kind in 0..4 {
+        let (mut app, input) = fixture(&history(), surface_kind);
+        for _ in 0..3 {
+            wheel(&mut app, MouseEventKind::ScrollUp, KeyModifiers::NONE);
+            let before = view(&app);
+            output(&mut app, b"\x1b[32mnew output\x1b[0m\r\nmore output\r\n");
+            assert_eq!(
+                view(&app),
+                before,
+                "reading history must survive incoming output"
+            );
+            for _ in 0..10 {
+                wheel(&mut app, MouseEventKind::ScrollDown, KeyModifiers::NONE);
+            }
+            assert_eq!(
+                app.terminals[0]
+                    .terminal_pty
+                    .as_ref()
+                    .unwrap()
+                    .grid
+                    .scroll_view,
+                0
+            );
+            output(&mut app, b"following again\r\n");
+            assert_eq!(
+                app.terminals[0]
+                    .terminal_pty
+                    .as_ref()
+                    .unwrap()
+                    .grid
+                    .scroll_view,
+                0
+            );
+            assert!(view(&app).contains("following again"));
+        }
+        assert!(input.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn returning_to_bottom_releases_the_selection_that_would_pin_new_output() {
+    for surface_kind in 0..4 {
+        let (mut app, _) = fixture(&history(), surface_kind);
+        wheel(&mut app, MouseEventKind::ScrollUp, KeyModifiers::NONE);
+        select_history(&mut app);
+        let selected = app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .grid
+            .selected_text();
+        let before = view(&app);
+        output(&mut app, b"new output\r\n");
+        assert_eq!(view(&app), before);
+        assert_eq!(
+            app.terminals[0]
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .grid
+                .selected_text(),
+            selected
+        );
+        for _ in 0..10 {
+            wheel(&mut app, MouseEventKind::ScrollDown, KeyModifiers::NONE);
+        }
+        assert!(
+            !app.terminals[0]
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .grid
+                .has_selection()
+        );
+        for _ in 0..3 {
+            output(&mut app, b"following selection\r\n");
+            assert_eq!(
+                app.terminals[0]
+                    .terminal_pty
+                    .as_ref()
+                    .unwrap()
+                    .grid
+                    .scroll_view,
+                0
+            );
+            assert!(view(&app).contains("following selection"));
+        }
+    }
+}
+
+#[test]
+fn shift_page_down_reaching_the_bottom_resumes_output_following() {
+    for surface_kind in [0, 2] {
+        let (mut app, input) = fixture(&history(), surface_kind);
+        app.terminals[0].terminal_pty.as_mut().unwrap().scroll_up(4);
+        select_history(&mut app);
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::SHIFT),
+        );
+        output(&mut app, b"keyboard following\r\n");
+        let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
+        assert_eq!(grid.scroll_view, 0);
+        assert!(!grid.has_selection());
+        assert!(view(&app).contains("keyboard following"));
+        assert!(input.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn dragging_a_selection_to_the_bottom_keeps_it_until_the_user_resumes_following() {
+    let (mut app, _) = fixture(&history(), 0);
+    app.terminals[0].terminal_pty.as_mut().unwrap().scroll_up(5);
+    wheel(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        KeyModifiers::NONE,
+    );
+    let mut drag = event(MouseEventKind::Drag(MouseButton::Left), KeyModifiers::NONE);
+    drag.column += 5;
+    crate::mouse::handle_mouse(&mut app, drag);
+    for _ in 0..3 {
+        wheel(&mut app, MouseEventKind::ScrollDown, KeyModifiers::NONE);
+    }
+    let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
+    assert_eq!(grid.scroll_view, 0);
+    assert!(
+        grid.has_selection(),
+        "selection autoscrolling must preserve the active drag"
+    );
+    wheel(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        KeyModifiers::NONE,
+    );
+    output(&mut app, b"keep selection stable\r\n");
+    assert!(
+        app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .grid
+            .has_selection()
+    );
+    wheel(&mut app, MouseEventKind::ScrollDown, KeyModifiers::NONE);
+    output(&mut app, b"following after drag\r\n");
+    let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
+    assert_eq!(grid.scroll_view, 0);
+    assert!(!grid.has_selection());
+    assert!(view(&app).contains("following after drag"));
 }
 
 #[test]

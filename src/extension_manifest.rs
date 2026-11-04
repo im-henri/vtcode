@@ -361,7 +361,7 @@ pub(crate) fn discover_extensions(
                 ));
                 continue;
             }
-            if let Err(error) = crate::extension_install::validate_manifest(&manifest) {
+            if let Err(error) = crate::extension_install::validate_local_manifest(&manifest) {
                 notices.push(format!("Extension {}: {error}", manifest.name));
                 continue;
             }
@@ -602,6 +602,23 @@ mod tests {
         assert_eq!(exts.len(), 1);
         assert_eq!(exts[0].manifest.id, "my-ext");
         assert!(notices.is_empty());
+    }
+
+    #[test]
+    fn unpublished_local_extension_can_omit_repository_but_release_cannot() {
+        let temporary = tempfile::tempdir().unwrap();
+        let ext_dir = temporary.path().join("engineer-buddy");
+        std::fs::create_dir(&ext_dir).unwrap();
+        std::fs::write(ext_dir.join("extension.json"),
+            r#"{"id":"vtcode.engineer-buddy","name":"Engineer Buddy","version":"0.1.0","main":"buddy.wasm","apiVersion":"2"}"#).unwrap();
+        std::fs::write(ext_dir.join("buddy.wasm"), b"fake wasm").unwrap();
+        let (extensions, notices) = discover_extensions(&[temporary.path().to_path_buf()]);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(extensions.len(), 1);
+        assert!(crate::extension_install::validate_manifest(&extensions[0].manifest).is_err());
+        let mut invalid = extensions[0].manifest.clone();
+        invalid.repository = "not a repository".into();
+        assert!(crate::extension_install::validate_local_manifest(&invalid).is_err());
     }
 
     #[test]

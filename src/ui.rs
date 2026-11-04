@@ -386,6 +386,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.settings_scroll_areas.clear();
     app.settings_category_area = None;
     app.terminal_surfaces.clear();
+    app.terminal_scrollbar.areas.clear();
     app.search_control_regions.clear();
     app.search_bar_area = None;
     crate::file_search::begin_frame(app);
@@ -417,6 +418,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         crate::ui_side_notice::draw(f, app);
         app.logs.finish_frame(app.background.wake_handle());
         crate::ui_modal::draw_active(f, app);
+        app.draw_text_input_context_menu(f);
         crate::ui_loading::finish_frame(app, std::time::Instant::now());
         return;
     }
@@ -1064,6 +1066,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_vtcomplete_index::draw(f, app);
     crate::ui_modal::draw_active(f, app);
     crate::app_shortcuts::draw_editor(f, app);
+    app.draw_text_input_context_menu(f);
     crate::ui_loading::finish_frame(app, std::time::Instant::now());
 }
 

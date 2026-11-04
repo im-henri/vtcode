@@ -305,6 +305,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     let action_width = result_area.width.min(3);
     let text_area = Rect::new(result_area.x, result_area.y, result_area.width.saturating_sub(action_width), result_area.height);
     let revision = app.global_search_results.revision();
+    let selected_row = app.global_search_selected_row();
     for (visual_row, hit) in app.global_search_results.visible_rows(viewport) {
         let (index, header) = match hit {
             crate::search_results::SearchRow::Header(index) => (index, true),
@@ -315,9 +316,10 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             let row_area = Rect::new(result_area.x,
                 result_area.y + (visual_row - scroll) as u16, result_area.width, 1);
             let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
+            let selected = selected_row == Some(hit);
             let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                if hovered { bg } else { header_bg }, false, active, hovered);
-            actions.push((hit, row_area, row_style, hovered));
+                if hovered { bg } else { header_bg }, selected, active, hovered);
+            actions.push((hit, row_area, row_style, hovered || (selected && active && !app.global_search_active)));
             let row_bg = row_style.bg.unwrap_or(bg);
             let dim = app.colors.ui.description_color(row_bg);
             let collapsed = app.is_global_search_file_collapsed(&result.file_path);
@@ -358,7 +360,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             );
             continue;
         }
-        let selected = index == app.global_search_selected;
+        let selected = selected_row == Some(hit);
         let row_area = Rect::new(result_area.x,
             result_area.y + (visual_row - scroll) as u16, result_area.width, 1);
         let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());

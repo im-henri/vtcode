@@ -829,6 +829,22 @@ impl Reader {
             find.update(&self.editor);
         }
     }
+    pub(super) fn find_hit_map(&self) -> Option<TextInputHitMap> {
+        self.find.open.then(|| self.find.hit.clone()).flatten()
+    }
+    pub(super) fn find_input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
+        (&mut self.find.query, &mut self.find.cursor, &mut self.find.anchor)
+    }
+    pub(super) fn focus_find(&mut self) {
+        self.find.focused = true;
+        self.cancel_capture();
+    }
+    pub(super) fn edit_find_input(&mut self, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+        let find = &mut self.find;
+        let result = find.history.edit(TextInput::new(&mut find.query, &mut find.cursor, &mut find.anchor), code, modifiers, paste);
+        if result.changed { find.update(&self.editor); }
+        result
+    }
     pub fn key(&mut self, key: KeyEvent) {
         if self.find.open && key.code == KeyCode::Esc {
             self.find.open = false;

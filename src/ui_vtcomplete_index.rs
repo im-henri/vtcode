@@ -475,6 +475,23 @@ pub(crate) fn handle_paste(app: &mut App, text: &str) {
         app.completion_index_ui.edit_error = None;
     }
 }
+pub(crate) fn focused_input(app: &App) -> Option<crate::text_input::TextInputId> {
+    (app.completion_index_ui.open && app.completion_index_ui.editing.is_some())
+        .then_some(crate::text_input::TextInputId::CompletionNumber)
+}
+pub(crate) fn input_state(app: &mut App) -> (&mut String, &mut usize, &mut Option<usize>) {
+    let edit = app.completion_index_ui.editing.as_mut().expect("completion number is being edited");
+    (&mut edit.text, &mut edit.cursor, &mut edit.anchor)
+}
+pub(crate) fn edit_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+    let edit = app.completion_index_ui.editing.as_mut().expect("completion number is being edited");
+    let result = edit.history.edit(
+        crate::text_input::TextInput::new(&mut edit.text, &mut edit.cursor, &mut edit.anchor)
+            .filter(|ch| ch.is_ascii_digit()), code, modifiers, paste,
+    );
+    if result.changed { app.completion_index_ui.edit_error = None; }
+    result
+}
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if !app.completion_index_ui.open {
         return false;
@@ -601,6 +618,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.completion_index_ui.open {
         return false;
+    }
+    if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+        && app.text_input_area(crate::text_input::TextInputId::CompletionNumber)
+            .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
+        && app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
+        return true;
     }
     let point = (mouse.column, mouse.row).into();
     let previous = (app.mouse_col, app.mouse_row).into();

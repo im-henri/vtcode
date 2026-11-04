@@ -160,7 +160,7 @@ pub(crate) fn button_at(app: &App, col: u16, row: u16) -> Option<Action> {
 fn activate(app: &mut App, action: Action) {
     app.empty_folder.focused = action;
     match action {
-        Action::OpenFolder => crate::ui_workspaces::add(app),
+        Action::OpenFolder => crate::ui_workspaces::open_folder(app),
         Action::SavedWorkspaces => crate::ui_workspace_sets::open(app),
     }
 }

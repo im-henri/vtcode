@@ -181,12 +181,14 @@ impl App {
                         {
                             match mouse.kind {
                                 MouseEventKind::ScrollUp => pty.scroll_up(self.scroll_speed),
-                                MouseEventKind::ScrollDown => pty.scroll_down(self.scroll_speed),
+                                MouseEventKind::ScrollDown => {
+                                    pty.scroll_down_while_selecting(self.scroll_speed)
+                                }
                                 MouseEventKind::Drag(_) if mouse.row < drag.area.y => {
                                     pty.scroll_up(1)
                                 }
                                 MouseEventKind::Drag(_) if mouse.row >= drag.area.bottom() => {
-                                    pty.scroll_down(1)
+                                    pty.scroll_down_while_selecting(1)
                                 }
                                 _ => {}
                             }

@@ -70,10 +70,11 @@ impl Notice {
     }
 
     pub(crate) fn acknowledge(&mut self) -> bool {
-        if !std::mem::take(&mut self.unread) { return false; }
+        let changed = self.unread || self.blink_started.is_some() || self.last_pulse;
+        self.unread = false;
         self.blink_started = None;
         self.last_pulse = false;
-        true
+        changed
     }
 
     pub(crate) fn visible(&self, now: Instant) -> bool {
@@ -183,10 +184,10 @@ mod tests {
         commands.osc(&[b"633", b"D", b"0"]);
         notice.update(commands, true, later);
         assert!(!notice.unread, "watching the terminal acknowledges completion");
-        assert!(notice.visible(later));
+        assert!(!notice.visible(later), "a focused terminal must never show completion feedback");
         assert!(!notice.pulse(later, false), "respect disabled animations");
-        assert_eq!(notice.next_wait(later, false), Some(BLINK_DURATION));
-        notice.advance(later + BLINK_DURATION, false);
+        assert_eq!(notice.next_wait(later, false), None);
+        assert!(!notice.advance(later + BLINK_DURATION, false));
         assert!(!notice.visible(later + BLINK_DURATION));
         assert_eq!(notice.next_wait(later + BLINK_DURATION, false), None);
 

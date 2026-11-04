@@ -1,16 +1,26 @@
-//! Ephemeral, per-session hooks. Existing shell profiles remain in control;
-//! nothing is installed in the user's configuration or on the SSH client.
-use std::{ffi::OsString, io};
+//! Shared, versioned hooks beside the executable on the machine running the
+//! shell. Existing shell profiles remain in control.
+use std::{ffi::OsString, io, path::Path};
+
+#[path = "terminal_shell_storage.rs"]
+mod storage;
+
+#[cfg(test)]
+#[path = "terminal_shell_storage_tests.rs"]
+mod storage_tests;
 
 #[derive(Default)]
 pub(crate) struct Integration {
     pub(crate) args: Vec<OsString>,
     pub(crate) env: Vec<(OsString, OsString)>,
-    directory: Option<tempfile::TempDir>,
 }
 
 impl Integration {
     pub(crate) fn prepare(program: &str, args: &[String]) -> io::Result<Self> {
+        Self::prepare_in(program, args, &storage::directory())
+    }
+
+    fn prepare_in(program: &str, args: &[String], directory: &Path) -> io::Result<Self> {
         let mut launch = Self::default();
         // Explicit commands and noninteractive tools must retain their arguments.
         if !args.is_empty() {
@@ -19,32 +29,29 @@ impl Integration {
         let name = program.rsplit(['/', '\\']).next().unwrap_or(program).to_ascii_lowercase();
         match name.trim_end_matches(".exe") {
             "pwsh" | "powershell" => {
-                launch.args = ["-NoLogo", "-NoExit", "-Command", include_str!("terminal_shell/powershell.ps1")]
+                let script = storage::install_in(directory, "powershell.ps1", include_str!("terminal_shell/powershell.ps1"))?;
+                launch.args = ["-NoLogo", "-NoExit", "-Command", &powershell_command(&script)?]
                     .map(OsString::from).into();
             }
             "bash" => {
-                let directory = tempfile::Builder::new().prefix("vtcode-shell-").tempdir()?;
-                let rc = directory.path().join("bashrc");
-                std::fs::write(&rc, include_str!("terminal_shell/bash.sh"))?;
+                let rc = storage::install_in(directory, "bashrc", include_str!("terminal_shell/bash.sh"))?;
                 launch.args = vec!["--rcfile".into(), rc.into_os_string(), "-i".into()];
-                launch.directory = Some(directory);
             }
             "zsh" => {
-                let directory = tempfile::Builder::new().prefix("vtcode-shell-").tempdir()?;
-                std::fs::write(directory.path().join(".zshenv"), include_str!("terminal_shell/zshenv"))?;
-                std::fs::write(directory.path().join(".zshrc"), include_str!("terminal_shell/zshrc"))?;
+                storage::install_in(directory, ".zshenv", include_str!("terminal_shell/zshenv"))?;
+                storage::install_in(directory, ".zshrc", include_str!("terminal_shell/zshrc"))?;
                 if let Some(original) = std::env::var_os("ZDOTDIR") {
                     launch.env.push(("VTCODE_ZDOTDIR_SET".into(), "1".into()));
                     launch.env.push(("VTCODE_ZDOTDIR".into(), original));
                 } else {
                     launch.env.push(("VTCODE_ZDOTDIR_SET".into(), "0".into()));
                 }
-                launch.env.push(("ZDOTDIR".into(), directory.path().as_os_str().into()));
+                launch.env.push(("ZDOTDIR".into(), directory.as_os_str().into()));
                 launch.args.push("-i".into());
-                launch.directory = Some(directory);
             }
             "fish" => {
-                launch.args = ["-i", "--init-command", include_str!("terminal_shell/fish.fish")]
+                let script = storage::install_in(directory, "fish.fish", include_str!("terminal_shell/fish.fish"))?;
+                launch.args = ["-i", "--init-command", &fish_command(&script)?]
                     .map(OsString::from).into();
             }
             _ => {}
@@ -60,6 +67,22 @@ impl Integration {
     }
 }
 
+fn script_path(path: &Path) -> io::Result<&str> {
+    path.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Shell integration path is not valid Unicode"))
+}
+
+fn powershell_command(path: &Path) -> io::Result<String> {
+    let path = script_path(path)?.replace('\'', "''");
+    // Keep the existing interactive-command loading behavior and language-mode
+    // guard; loading a file must not require changing execution policy.
+    Ok(format!("if ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') {{ . ([scriptblock]::Create([System.IO.File]::ReadAllText('{path}'))) }}"))
+}
+
+fn fish_command(path: &Path) -> io::Result<String> {
+    let path = script_path(path)?.replace('\\', "\\\\").replace('\'', "\\'");
+    Ok(format!("source '{path}'"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,7 +90,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::time::{Duration, Instant};
 
-    fn wait_for(terminal: &mut TerminalEmulator, mut ready: impl FnMut(&TerminalEmulator) -> bool) {
+    pub(super) fn wait_for(terminal: &mut TerminalEmulator, mut ready: impl FnMut(&TerminalEmulator) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             terminal.process();
@@ -78,7 +101,7 @@ mod tests {
         }
     }
 
-    fn enter(terminal: &mut TerminalEmulator, command: &str) {
+    pub(super) fn enter(terminal: &mut TerminalEmulator, command: &str) {
         // PSReadLine restores/re-enables Win32 input mode between commands.
         // Let its asynchronous ConPTY mode frame arrive before encoding keys.
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -108,7 +131,7 @@ mod tests {
     fn terminal_completion_preserves_explicit_commands_and_unknown_shells() {
         for (program, args) in [("pwsh.exe", vec!["-Command".into(), "exit 7".into()]), ("bash", vec!["-c".into(), "true".into()]), ("custom-shell", vec![])] {
             let launch = Integration::prepare(program, &args).unwrap();
-            assert!(launch.args.is_empty() && launch.env.is_empty() && launch.directory.is_none());
+            assert!(launch.args.is_empty() && launch.env.is_empty());
         }
     }
 
@@ -170,7 +193,7 @@ mod tests {
                     "PROMPT_COMMAND='printf \"VTCode_Status:%s\\n\" \"$?\"'"
                 };
                 std::fs::write(home.path().join(".bashrc"), format!("PS1='VTCode_Ready> '\n{prompt}\n")).unwrap();
-                let launch = Integration::prepare(bash.to_str().unwrap(), &[]).unwrap();
+                let mut launch = Integration::prepare(bash.to_str().unwrap(), &[]).unwrap();
                 if legacy {
                     // Run the history-based path on machines with modern Bash
                     // as well, without changing the user's shell or environment.
@@ -178,7 +201,9 @@ mod tests {
                     let script = std::fs::read_to_string(rc).unwrap()
                         .replace("if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then", "if true; then")
                         .replace("if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then", "if false; then");
-                    std::fs::write(rc, script).unwrap();
+                    let private_rc = home.path().join("legacy bashrc");
+                    std::fs::write(&private_rc, script).unwrap();
+                    launch.args[1] = private_rc.into_os_string();
                 }
                 let mut args = vec![format!("HOME={}", home.path().to_string_lossy().replace('\\', "/")), bash.to_string_lossy().into_owned()];
                 args.extend(launch.args.iter().map(|arg| arg.to_string_lossy().into_owned()));

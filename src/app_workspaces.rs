@@ -82,7 +82,7 @@ struct Prepared {
 struct Opening {
     receiver: mpsc::Receiver<Result<Prepared, String>>,
     foreground: bool,
-    close_remote: Option<u64>,
+    close_after: Option<u64>,
 }
 
 #[derive(Default)]
@@ -106,9 +106,15 @@ pub(crate) struct Workspaces {
 
 pub(crate) enum Request {
     Switch(u64),
+    // Exercise the shared loader in the foreground in lifecycle tests.
+    #[cfg(test)]
     Open(PathBuf),
+    Add(PathBuf),
+    Replace(PathBuf),
     CloseRemote,
+    #[cfg(test)]
     Close,
+    CloseFolder(u64),
     Exit(char),
     OpenSet(u64),
 }
@@ -119,6 +125,7 @@ pub(crate) struct Exit {
     close: bool,
     completed: Vec<(u64, ExitStamp)>,
     ready: bool,
+    return_to: Option<u64>,
 }
 
 #[derive(PartialEq)]
@@ -137,6 +144,9 @@ pub(crate) struct Entry {
     pub attention: bool,
     pub running: bool,
     pub last: String,
+    pub tabs: usize,
+    pub unsaved: usize,
+    pub terminals: usize,
 }
 
 fn same_workspace(a: &Path, b: &Path) -> bool {
@@ -219,6 +229,9 @@ impl App {
                         .is_some_and(|pty| pty.grid.commands.running())
                 }),
             last: app.workspace_activity.last.clone(),
+            tabs: app.tabs.len() + app.groups.iter().map(|group| group.tabs.len()).sum::<usize>(),
+            unsaved: app.unsaved_file_count(),
+            terminals: (0..app.terminals.len()).filter(|&index| app.terminal_is_open(index)).count(),
         };
         let mut entries = vec![entry(self.workspaces.active, self, true)];
         entries.extend(
@@ -307,10 +320,7 @@ impl App {
                 return false;
             }
             if self.workspaces.sets.plan.is_some()
-                && matches!(
-                    request,
-                    Request::Open(_) | Request::CloseRemote | Request::Close | Request::OpenSet(_)
-                )
+                && !matches!(request, Request::Switch(_) | Request::Exit(_))
             {
                 self.notify_warn("Finish or cancel opening the workspace first");
                 return changed;
@@ -323,17 +333,29 @@ impl App {
                     }
                     changed |= self.switch_workspace(id);
                 }
+                #[cfg(test)]
                 Request::Open(path) => {
                     for (_, foreground) in &mut self.workspaces.remote_ready { *foreground = false; }
                     changed |= self.begin_open_workspace(path);
                 }
+                Request::Add(path) => {
+                    for (_, foreground) in &mut self.workspaces.remote_ready { *foreground = false; }
+                    changed |= self.begin_open_workspace_in(path, false);
+                }
+                Request::Replace(path) => self.prepare_folder_replacement(path),
                 Request::CloseRemote => {
                     if self.remote_workspace.is_some() {
-                        if self.workspaces.parked.is_empty() { changed |= self.prepare_local_window_for_disconnect(); }
+                        if self.workspaces.parked.is_empty() { changed |= self.prepare_empty_window_for_close(); }
                         else { self.begin_workspace_exit('k', true); }
                     }
                 }
-                Request::Close => self.begin_workspace_exit('k', true),
+                #[cfg(test)]
+                Request::Close => self.begin_close_folder(self.workspaces.active),
+                Request::CloseFolder(id) => {
+                    let previous = self.workspaces.active;
+                    self.begin_close_folder(id);
+                    changed |= previous != self.workspaces.active;
+                }
                 Request::Exit(choice) => self.begin_workspace_exit(choice, false),
                 Request::OpenSet(id) => self.prepare_workspace_set(id),
             }
@@ -344,10 +366,14 @@ impl App {
         {
             changed |= self.begin_open_remote_target(remote, foreground);
         }
-        let blocked = self.workspace_transition_blocked();
+        let adding_in_background = self.workspaces.opening.as_ref()
+            .is_some_and(|opening| !opening.foreground && opening.close_after.is_none());
+        let blocked = self.workspace_transition_blocked()
+            && !(adding_in_background && self.workspaces.popup.open
+                && crate::ui_modal::active(self).is_none() && !self.change_dir_active && !self.paste_receiving());
         if !blocked && let Some(opening) = &self.workspaces.opening {
             let foreground = opening.foreground;
-            let close_remote = opening.close_remote;
+            let close_after = opening.close_after;
             let result = match opening.receiver.try_recv() {
                 Ok(result) => Some(result),
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -391,10 +417,11 @@ impl App {
                                 self.insert_workspace(next);
                             } else {
                                 self.park_new_workspace(next);
+                                if close_after.is_none() { self.notify("Folder added"); }
                             }
                             changed = true;
                         }
-                        if close_remote == Some(self.workspaces.active) && self.remote_workspace.is_some() {
+                        if close_after == Some(self.workspaces.active) {
                             self.begin_workspace_exit('k', true);
                         }
                     }
@@ -422,12 +449,17 @@ impl App {
         self.workspaces.opening.is_some() || self.workspace_set_loading()
     }
 
+    #[cfg(test)]
     fn begin_open_workspace(&mut self, path: PathBuf) -> bool {
+        self.begin_open_workspace_in(path, true)
+    }
+
+    fn begin_open_workspace_in(&mut self, path: PathBuf, foreground: bool) -> bool {
         if let Some(id) = self.find_open_workspace(&path) {
             if let Some(opening) = &mut self.workspaces.opening {
                 opening.foreground = false;
             }
-            return self.switch_workspace(id);
+            return foreground && self.switch_workspace(id);
         }
         if self.workspaces.opening.is_some() {
             self.notify("A folder is already opening");
@@ -447,8 +479,8 @@ impl App {
         let wake = self.background.wake_handle();
         self.workspaces.opening = Some(Opening {
             receiver,
-            foreground: true,
-            close_remote: None,
+            foreground,
+            close_after: None,
         });
         self.background.spawn("open-live-workspace", move || {
             let result = (|| -> io::Result<Prepared> {
@@ -491,7 +523,7 @@ impl App {
         if let Some(id) = self.find_open_workspace(&remote.view_root) { return foreground && self.switch_workspace(id); }
         let (sender, receiver) = mpsc::channel();
         let wake = self.background.wake_handle();
-        self.workspaces.opening = Some(Opening { receiver, foreground, close_remote: None });
+        self.workspaces.opening = Some(Opening { receiver, foreground, close_after: None });
         self.background.spawn("open-remote-target", move || {
             let prepared = Prepared { startup: crate::startup::Prepared::load_remote(remote.view_root.clone()),
                 remote: Some(remote), equivalent_roots: Vec::new() };
@@ -501,11 +533,11 @@ impl App {
         true
     }
 
-    fn prepare_local_window_for_disconnect(&mut self) -> bool {
+    fn prepare_empty_window_for_close(&mut self) -> bool {
         if self.workspaces.opening.is_some() { self.notify("Wait for the folder to finish opening before disconnecting"); return false; }
         let (sender, receiver) = mpsc::channel();
         let wake = self.background.wake_handle();
-        self.workspaces.opening = Some(Opening { receiver, foreground: false, close_remote: Some(self.workspaces.active) });
+        self.workspaces.opening = Some(Opening { receiver, foreground: false, close_after: Some(self.workspaces.active) });
         self.background.spawn("prepare-local-window", move || {
             let _ = sender.send(Ok(Prepared { startup: crate::startup::Prepared::load(None), remote: None, equivalent_roots: Vec::new() }));
             wake.notify();
@@ -766,6 +798,31 @@ impl App {
     // Exit sequencing is shared by Close Workspace and application quit. Each
     // workbench uses its existing asynchronous custom-document/save/recovery
     // path, so no hidden unsaved document can disappear at shutdown.
+    fn begin_close_folder(&mut self, id: u64) {
+        let Some(entry) = self.workspace_entries().into_iter().find(|entry| entry.id == id && !entry.path.is_empty()) else { return; };
+        let target = if id == self.workspaces.active { Some(&*self) }
+            else { self.workspaces.parked.iter().find(|parked| parked.id == id).map(|parked| &*parked.app) };
+        if target.is_some_and(|app| app.paste_in_progress() || !app.pending_file_saves.is_empty() || !app.deferred_file_saves.is_empty()) {
+            self.notify_error("Wait for pending saves or paste to finish before closing this folder");
+            return;
+        }
+        if self.workspaces.opening.is_some() {
+            self.notify_warn("Wait for the folder to finish opening before closing a folder");
+            return;
+        }
+        let previous = self.workspaces.active;
+        if self.workspaces.parked.is_empty() {
+            self.prepare_empty_window_for_close();
+            self.notify(format!("Closing folder: {}", entry.name));
+            return;
+        }
+        if id != previous && !self.switch_workspace(id) { return; }
+        self.begin_workspace_exit('k', true);
+        if let Some(exit) = &mut self.workspaces.exit {
+            exit.return_to = (previous != id).then_some(previous);
+        }
+    }
+
     fn begin_workspace_exit(&mut self, choice: char, close: bool) {
         if self.paste_in_progress()
             || (!close
@@ -809,6 +866,7 @@ impl App {
             close,
             completed: Vec::new(),
             ready: false,
+            return_to: None,
         });
         self.apply_workspace_exit_choice(choice);
     }
@@ -876,15 +934,19 @@ impl App {
                 self.show_save_error(error.to_string());
                 return true;
             }
-            if let Some(id) = self.workspaces.parked.first().map(|parked| parked.id) {
+            if let Some(id) = exit.return_to.filter(|id| self.workspaces.parked.iter().any(|parked| parked.id == *id))
+                .or_else(|| self.workspaces.parked.first().map(|parked| parked.id)) {
                 let old = self.workspaces.active;
                 self.switch_workspace(id);
-                let index = self
+                let Some(index) = self
                     .workspaces
                     .parked
                     .iter()
                     .position(|parked| parked.id == old)
-                    .unwrap();
+                else {
+                    // Switching already saved and discarded an empty window.
+                    return true;
+                };
                 let mut parked = self.workspaces.parked.remove(index);
                 if let Some(remote) = &parked.app.remote_workspace {
                     let _ = remote.client.notify(crate::remote::Command::Unwatch);
@@ -900,6 +962,7 @@ impl App {
                 self.background
                     .spawn("closed-workspace-lsp-shutdown", move || drop(lsp));
                 drop(parked);
+                if self.open_folder_count() == 0 { self.workspaces.sets.active = None; }
             } else {
                 self.shutdown_anim_active = true;
                 self.shutdown_anim_start = Instant::now();

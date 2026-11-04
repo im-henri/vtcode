@@ -1287,6 +1287,10 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
 }
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.git_compare_pending_for_active_editor() {
+        crate::ui_loading::draw_diff(f, app, area);
+        return;
+    }
     crate::editor_blame::draw(f, app, area);
 }
 

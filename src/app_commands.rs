@@ -110,7 +110,7 @@ impl App {
     fn execute_palette_command_inner(&mut self, id: &str) -> bool {
         if !self.has_open_folder() {
             match id {
-                "new_folder" | "goto_workspace_symbol" => { crate::ui_workspaces::add(self); return true; }
+                "new_folder" | "goto_workspace_symbol" => { crate::ui_workspaces::open_folder(self); return true; }
                 "open_workspace_settings_json" => { self.notify_warn("Open a folder to edit Folder settings"); return true; }
                 _ => {}
             }
@@ -461,7 +461,7 @@ impl App {
                 }
             }
             "change_dir" => {
-                crate::ui_workspaces::add(self);
+                crate::ui_workspaces::open_folder(self);
             }
             "workspace_add" => crate::ui_workspaces::add(self),
             "workspace_switch" => crate::ui_workspaces::open(self),
@@ -482,7 +482,7 @@ impl App {
             "open_parent" => {
                 if let Some(parent) = self.explorer.root.parent() {
                     let parent = parent.to_path_buf();
-                    self.workspaces.request = Some(crate::app_workspaces::Request::Open(parent));
+                    self.workspaces.request = Some(crate::app_workspaces::Request::Replace(parent));
                 }
             }
             "source_control" => {

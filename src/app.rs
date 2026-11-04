@@ -67,12 +67,14 @@ pub(crate) struct App {
     pub(crate) explorer_expanding: rustc_hash::FxHashSet<PathBuf>,
     pub(crate) remote_navigation: crate::app_remote_navigation::State,
     pub(crate) global_search_service: std::sync::OnceLock<crate::app_search::LatestQueryService>,
+    pub(crate) global_search_model_updates: crate::app_global_search::ModelUpdates,
     pub(crate) desks: crate::app_desks::Desks,
     pub(crate) chat: crate::app_acp::ChatState,
     pub active_pane: ActivePane,
     pub explorer: FileExplorer,
     pub session_baseline: Option<crate::session::Session>,
     pub(crate) workspace_generation: u64,
+    #[cfg(test)]
     pub(crate) workspace_open_generation: u64,
     // Active group state (these are the "live" fields for the currently focused group)
     pub tabs: Vec<Tab>,
@@ -187,6 +189,7 @@ pub(crate) struct App {
     pub text_input_regions: Vec<crate::text_input::TextInputRegion>,
     /// Active pointer selection: (field identity, UTF-8 byte anchor).
     pub text_input_drag: Option<(crate::text_input::TextInputId, usize)>,
+    pub(crate) text_input_context_menu: Option<crate::text_input::ContextMenu>,
     pub(crate) text_input_histories: std::collections::HashMap<crate::text_input::TextInputId, crate::text_input::TextInputHistory>,
     pub(crate) text_input_click_id: Option<crate::text_input::TextInputId>,
     pub(crate) text_input_drag_unit: Option<(usize, usize, bool)>,
@@ -351,6 +354,7 @@ pub(crate) struct App {
     pub global_search_truncated: bool,
     pub(crate) global_search_stopped: bool,
     pub global_search_selected: usize,
+    pub(crate) global_search_selected_header: Option<PathBuf>,
     pub global_search_scroll: usize,
     pub max_global_search_results: usize,
     pub(crate) search_debounce_ms: u64,
@@ -497,6 +501,7 @@ pub(crate) struct App {
     pub(crate) terminal_rename: crate::app_terminal::RenameTerminal,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
+    pub(crate) terminal_scrollbar: crate::terminal_scrollbar::State,
     pub(crate) terminal_clicks: crate::app_terminal_selection::TerminalClicks,
     pub(crate) terminal_selection_drag: Option<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_mouse_capture: Option<crate::app_terminal_selection::TerminalSurface>,
@@ -1119,6 +1124,7 @@ impl App {
             loading: Default::default(),
             remote_navigation: crate::app_remote_navigation::State::default(),
             global_search_service: Default::default(),
+            global_search_model_updates: Default::default(),
             desks: crate::app_desks::Desks::default(),
             chat: crate::app_acp::ChatState::default(),
             active_pane: ActivePane::Explorer,
@@ -1129,6 +1135,7 @@ impl App {
             },
             session_baseline: None,
             workspace_generation: 0,
+            #[cfg(test)]
             workspace_open_generation: 0,
             tabs: Vec::new(),
             active_tab: 0,
@@ -1213,6 +1220,7 @@ impl App {
             settings_scrollbar_drag: None,
             text_input_regions: Vec::new(),
             text_input_histories: std::collections::HashMap::new(),
+            text_input_context_menu: None,
             text_input_click_id: None,
             text_input_drag_unit: None,
             text_input_drag: None,
@@ -1358,6 +1366,7 @@ impl App {
             global_search_truncated: false,
             global_search_stopped: false,
             global_search_selected: 0,
+            global_search_selected_header: None,
             global_search_scroll: 0,
             max_global_search_results: 20_000,
             search_debounce_ms: crate::settings::DEFAULT_SEARCH_DEBOUNCE_MS,
@@ -1496,6 +1505,7 @@ impl App {
             terminal_rename: Default::default(),
             next_terminal_to_process: 0,
             terminal_surfaces: Vec::new(),
+            terminal_scrollbar: Default::default(),
             terminal_clicks: Default::default(),
             terminal_selection_drag: None,
             terminal_mouse_capture: None,
@@ -2071,6 +2081,7 @@ impl App {
                         if saving { "Saving" } else { "Opening" }, self.display_path(&path),
                         completed as f64 / 1_048_576.0, total as f64 / 1_048_576.0);
                 }
+                #[cfg(test)]
                 crate::background::BackgroundResult::RemoteWorkspaceOpened { request, source, result } => {
                     if request != self.workspace_open_generation || source != self.workspace_generation { continue; }
                     match result {
@@ -2470,8 +2481,11 @@ impl App {
                     self.finish_exit_recovery(generation, result);
                     has_visual_changes = true;
                 }
+                crate::background::BackgroundResult::GlobalSearchFileResults { path, serial, generation, result } => {
+                    has_visual_changes |= self.apply_global_search_file_results(path, serial, generation, result);
+                }
                 crate::background::BackgroundResult::GlobalSearchResults {
-                    results,
+                    mut results,
                     done,
                     generation,
                     truncated,
@@ -2479,6 +2493,7 @@ impl App {
                     // Discard stale results from a previous search
                     if generation == self.search_generation {
                         has_visual_changes = true;
+                        results.retain(|result| self.global_search_results.accepts_streamed_result(result));
                         if truncated {
                             self.global_search_truncated = true;
                         }
@@ -2983,8 +2998,8 @@ impl App {
                                     .unwrap_or("file")
                             ));
                         }
+                        self.start_pending_git_compare_for_path(&path);
                         if !loaded_large_file_mode {
-                            self.start_pending_git_compare_for_path(&path);
                             self.refresh_compare_diff();
                         }
                         if self.sidebar_view == crate::app::SidebarView::Outline
@@ -4826,6 +4841,7 @@ impl App {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn try_save_session(&self) -> std::io::Result<()> {
         let session = self.build_session();
         if self

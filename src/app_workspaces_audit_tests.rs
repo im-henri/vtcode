@@ -111,6 +111,7 @@ fn completed_workspaces_do_not_leave_expired_background_deadlines() {
         close: false,
         completed: vec![(0, stamp)],
         ready: false,
+        return_to: None,
     });
     assert_eq!(
         app.background_workspace_wait(),

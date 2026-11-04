@@ -345,6 +345,8 @@ fn number(
                 .selection_range(App::inline_selection_range(edit.cursor, edit.anchor))
                 .render(f, value),
         );
+        let hit = edit.hit_map.clone().unwrap();
+        app.register_text_input(crate::text_input::TextInputId::CompletionNumber, hit);
     } else {
         crate::ui_widgets::InputField::new(current)
             .theme_control(&app.colors, app.colors.ui.input_colors, bg)

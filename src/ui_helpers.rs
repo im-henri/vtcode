@@ -183,6 +183,8 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
     app.rendering_inactive_editor = true;
     app.refresh_file_search_view(group_idx);
     let saved_diff_view = app.begin_inactive_diff_view();
+    let pending_diff = app.source_control_enabled
+        && saved_diff_view.as_ref().is_some_and(|view| view.pending);
     let current_tab_kind = app.tabs.get(app.active_tab).map(|t| t.kind);
     if show_breadcrumb {
         crate::editor_blame::header(f, app, layout[1]);
@@ -218,6 +220,8 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
         app.scrollbar_area = None;
         app.h_scrollbar_area = None;
         draw_terminal_in_group(f, app, layout[2], group_idx);
+    } else if pending_diff {
+        crate::ui_loading::draw_diff(f, app, layout[2]);
     } else {
         if app.should_render_diff_for_active_editor() && !matches!(current_tab_kind, Some(crate::app::TabKind::Diff(_))) {
             app.refresh_compare_diff();
@@ -289,8 +293,9 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
         return;
     }
 
-    let width = area.width as usize;
-    let height = area.height as usize;
+    let content = crate::terminal_scrollbar::content_area(area);
+    let width = content.width as usize;
+    let height = content.height as usize;
 
     app.ensure_terminal_pty_at(idx, width, height);
 
@@ -300,16 +305,18 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
     }
 
     if let Some(ref pty) = app.terminals[idx].terminal_pty {
-        app.terminal_surfaces.push(crate::app_terminal_selection::TerminalSurface {
-            index: idx, area, group: Some(group),
-        });
+        let surface = crate::app_terminal_selection::TerminalSurface {
+            index: idx, area: content, group: Some(group),
+        };
+        app.terminal_surfaces.push(surface);
         draw_terminal_emulator(
             f,
             pty,
-            area,
+            content,
             &app.colors.ui,
             app.cursor_visible,
         );
+        crate::terminal_scrollbar::draw(f, app, surface, area);
     } else {
         draw_terminal_launch_error(
             f,

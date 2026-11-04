@@ -6,6 +6,7 @@ struct ClosedTab {
     file: Option<(std::path::PathBuf, usize, usize)>,
     position: Option<crate::editor_view_state::ViewState>,
     view: Option<crate::app::ExtensionViewTabRef>,
+    terminal_idx: Option<usize>,
 }
 
 impl ClosedTab {
@@ -24,6 +25,7 @@ impl ClosedTab {
             position: (tab.kind == TabKind::File && !tab.editor.load_failed)
                 .then(|| crate::editor_view_state::ViewState::capture(&mut tab.editor)),
             view: tab.extension_view.clone(),
+            terminal_idx: if tab.kind == TabKind::Terminal { tab.terminal_idx } else { None },
         }
     }
 }
@@ -232,8 +234,12 @@ impl App {
 
         let mut paths = rustc_hash::FxHashSet::default();
         let mut views = rustc_hash::FxHashMap::default();
+        let mut terminals = Vec::new();
         let mut preview_closed = false;
         for tab in closed {
+            if let Some(index) = tab.terminal_idx {
+                terminals.push(index);
+            }
             // Do not retain the closed view's rope and attribution until a
             // future analysis result happens to prune the document cache.
             self.blame_documents.remove(&tab.navigation_id);
@@ -281,6 +287,14 @@ impl App {
             if let Some(view) = tab.view {
                 views.insert((view.extension_id.clone(), view.view_id.clone()), view);
             }
+        }
+        // Remove all planned views before terminating sessions so tab indices
+        // stay valid throughout the batch. Close terminal indices from the end
+        // so compaction cannot change which sessions are being closed.
+        terminals.sort_unstable();
+        terminals.dedup();
+        for index in terminals.into_iter().rev() {
+            self.close_terminal_tab_at(index);
         }
         if !self.desks.groups.is_empty() {
             let used: rustc_hash::FxHashSet<_> = self.desks.membership.values().copied().collect();

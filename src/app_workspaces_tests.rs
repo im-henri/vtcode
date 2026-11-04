@@ -15,12 +15,17 @@ mod race_tests;
 
 #[path = "app_workspace_sets_tests.rs"]
 mod sets_tests;
+#[path = "app_open_folder_tests.rs"]
+mod open_folder_tests;
 #[path = "app_workspaces_idle_tests.rs"]
 mod idle_tests;
 #[path = "app_workspaces_audit_tests.rs"]
 mod audit_tests;
 #[path = "app_workspaces_warm_tests.rs"]
 mod warm_tests;
+
+#[path = "app_workspace_manager_tests.rs"]
+mod manager_tests;
 
 struct Project(tempfile::TempDir);
 impl Project {
@@ -308,9 +313,11 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
         .record_workspace_event("Build finished", Level::Done);
     for width in [48, 80, 100, 140, 200] {
         let buffer = draw(&mut app, width, 30);
-        let (picker, plus) =
-            crate::ui_chrome::workspace_controls(&app).expect("workspace control fits");
-        assert!(picker.right() <= plus.x && plus.right() < width - 3);
+        let picker =
+            crate::ui_chrome::workspace_button_area(&app).expect("workspace control fits");
+        assert!(picker.right() < width - 3);
+        let title: String = (0..width).map(|x| buffer[(x, picker.y)].symbol()).collect();
+        assert!(!title.contains('+'), "the title bar only offers the workspace picker");
         crate::mouse::handle_mouse(
             &mut app,
             MouseEvent {
@@ -333,17 +340,6 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
             KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
         );
         assert!(!app.workspaces.popup.open);
-        crate::mouse::handle_mouse(
-            &mut app,
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: plus.x,
-                row: plus.y,
-                modifiers: KeyModifiers::NONE,
-            },
-        );
-        assert!(app.change_dir_active && app.folder_browser.add_workspace);
-        app.change_dir_active = false;
     }
     for (width, height) in [(1, 1), (8, 3), (20, 8), (40, 9)] {
         crate::ui_workspaces::open(&mut app);
@@ -358,12 +354,10 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
     app.explorer.root = PathBuf::from("工程👩‍💻長いワークスペース名");
     for width in [48, 67, 83, 140] {
         let buffer = draw(&mut app, width, 25);
-        let (_, plus) = crate::ui_chrome::workspace_controls(&app).unwrap();
-        assert_eq!(
-            buffer[(plus.x + 1, plus.y)].symbol(),
-            "+",
-            "wide names must preserve the painted add button's hit area"
-        );
+        let picker = crate::ui_chrome::workspace_button_area(&app).unwrap();
+        let label: String = (picker.x..picker.right())
+            .map(|x| buffer[(x, picker.y)].symbol()).collect();
+        assert!(label.contains('▾'), "wide names must preserve the workspace dropdown");
         assert_eq!(buffer[(width - 2, 0)].symbol(), "×");
     }
 }

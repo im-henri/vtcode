@@ -201,49 +201,76 @@ fn shared_line_swaps_match_text_reference_at_every_boundary() {
 }
 
 #[test]
-fn shared_duplication_keeps_multiline_unicode_selection_and_undo() {
+fn shared_duplication_copies_cursor_line_regardless_of_multiline_selection() {
     for repeats in [1, 2048] {
         for ending in ["\n", "\r\n"] {
-            let source = format!(
-                "head{ending}α{}Z{ending}tail",
-                format!("界café{ending}").repeat(repeats)
-            );
+            let middle = format!("α{}Z", "界café".repeat(repeats));
+            let source = format!("head{ending}{middle}{ending}tail");
             for backwards in [false, true] {
-                let mut editor = Editor::test_with_text(&source);
-                let start = editor.rope.line_to_char(1) + 1;
-                let end = editor.rope.len_chars() - 2;
-                let position = |offset| {
-                    let line = editor.rope.char_to_line(offset);
-                    (line, offset - editor.rope.line_to_char(line))
-                };
                 let (anchor, cursor) = if backwards {
-                    (position(end), position(start))
+                    ((2, 2), (1, 1))
                 } else {
-                    (position(start), position(end))
+                    ((1, 1), (2, 2))
                 };
-                editor.selection_anchor = Some(anchor);
-                (editor.cursor_line, editor.cursor_col) = cursor;
-                let selected = editor.selected_text().unwrap();
-                editor.duplicate_line_up();
-                assert_eq!(editor.selected_text().as_deref(), Some(selected.as_str()));
-                let mut expected = Rope::from_str(&source);
-                expected.insert(start, &selected);
-                assert_eq!(editor.rope, expected);
-                editor.undo();
-                assert_eq!(editor.rope.to_string(), source);
-                assert_eq!(editor.selection_anchor, Some(anchor));
-                assert_eq!((editor.cursor_line, editor.cursor_col), cursor);
-                editor.duplicate_line();
-                expected = Rope::from_str(&source);
-                expected.insert(end, &selected);
-                assert_eq!(editor.rope, expected);
-                assert_eq!(editor.selection_anchor, None);
-                assert_eq!(
-                    editor.rope.line_to_char(editor.cursor_line) + editor.cursor_col,
-                    end + end - start
-                );
+                let expected = if backwards {
+                    format!("head{ending}{middle}{ending}{middle}{ending}tail")
+                } else {
+                    format!("head{ending}{middle}{ending}tail{ending}tail")
+                };
+                for duplicate_up in [false, true] {
+                    let mut editor = Editor::test_with_text(&source);
+                    editor.detect_line_ending();
+                    editor.selection_anchor = Some(anchor);
+                    (editor.cursor_line, editor.cursor_col) = cursor;
+                    if duplicate_up { editor.duplicate_line_up(); }
+                    else { editor.duplicate_line(); }
+                    assert_eq!(editor.rope.to_string(), expected);
+                    let copied_cursor = (cursor.0 + usize::from(!duplicate_up), cursor.1);
+                    assert_eq!((editor.cursor_line, editor.cursor_col), copied_cursor);
+                    let copied_anchor = editor.selection_anchor;
+                    editor.undo();
+                    assert_eq!(editor.rope.to_string(), source);
+                    assert_eq!(editor.selection_anchor, Some(anchor));
+                    assert_eq!((editor.cursor_line, editor.cursor_col), cursor);
+                    editor.redo();
+                    assert_eq!(editor.rope.to_string(), expected);
+                    assert_eq!((editor.cursor_line, editor.cursor_col), copied_cursor);
+                    assert_eq!(editor.selection_anchor, copied_anchor);
+                }
             }
         }
+    }
+}
+
+#[test]
+fn duplicate_line_copies_each_cursor_line_once_with_multiple_selections() {
+    for duplicate_up in [false, true] {
+        let source = "head\nalpha beta\ngap\ngamma delta\ntail";
+        let mut editor = Editor::test_with_text(source);
+        editor.cursor_line = 1;
+        editor.cursor_col = 5;
+        editor.selection_anchor = Some((1, 2));
+        editor.extra_cursors = vec![(1, 8), (3, 5)];
+        editor.extra_cursor_anchors = vec![Some((1, 6)), Some((3, 8))];
+        if duplicate_up { editor.duplicate_line_up(); }
+        else { editor.duplicate_line(); }
+        let expected = "head\nalpha beta\nalpha beta\ngap\ngamma delta\ngamma delta\ntail";
+        let offset = usize::from(!duplicate_up);
+        assert_eq!(editor.rope.to_string(), expected);
+        assert_eq!((editor.cursor_line, editor.cursor_col), (1 + offset, 5));
+        assert_eq!(editor.selection_anchor, Some((1 + offset, 2)));
+        assert_eq!(editor.extra_cursors, [(1 + offset, 8), (4 + offset, 5)]);
+        assert_eq!(editor.extra_cursor_anchors, [Some((1 + offset, 6)), Some((4 + offset, 8))]);
+        editor.undo();
+        assert_eq!(editor.rope.to_string(), source);
+        assert_eq!((editor.cursor_line, editor.cursor_col), (1, 5));
+        assert_eq!(editor.selection_anchor, Some((1, 2)));
+        assert_eq!(editor.extra_cursors, [(1, 8), (3, 5)]);
+        assert_eq!(editor.extra_cursor_anchors, [Some((1, 6)), Some((3, 8))]);
+        editor.redo();
+        assert_eq!(editor.rope.to_string(), expected);
+        assert_eq!(editor.extra_cursors, [(1 + offset, 8), (4 + offset, 5)]);
+        assert_eq!(editor.extra_cursor_anchors, [Some((1 + offset, 6)), Some((4 + offset, 8))]);
     }
 }
 
@@ -279,19 +306,7 @@ fn benchmark_grouped_and_shared_editor_edits() {
                         ed.reference_swap_blocks(0, 1, 3998);
                     }
                     (_, true) => ed.duplicate_line(),
-                    (_, false) => {
-                        ed.save_undo();
-                        let selected = ed.selected_text().unwrap();
-                        let end = ed.rope.line_to_char(ed.cursor_line);
-                        ed.rope.insert(end, &selected);
-                        let index = end + selected.chars().count();
-                        ed.cursor_line = ed.rope.char_to_line(index);
-                        ed.cursor_col = index - ed.rope.line_to_char(ed.cursor_line);
-                        ed.clear_selection();
-                        ed.modified = true;
-                        ed.clear_stale_folds();
-                        ed.ensure_visible();
-                    }
+                    (_, false) => ed.reference_duplicate_line(),
                 }
                 timings[usize::from(optimized)].push(start.elapsed());
                 black_box(&ed);
@@ -311,63 +326,46 @@ impl Editor {
     pub(crate) fn reference_duplicate_line(&mut self) {
         self.desired_col = None;
         self.save_undo();
-        if let Some(text) = self.selected_text() {
-            // Duplicate selection: insert copy after selection end
-            let Some((_, _, el, ec)) = self.selection_range() else {
-                return;
-            };
-            let end_line_start = self.rope.line_to_char(el);
-            let insert_pos = end_line_start + ec;
-            self.rope.insert(insert_pos, &text);
-            self.modified = true;
-            // Move cursor to end of duplicated text
-            let new_idx = insert_pos + text.chars().count();
-            let new_line = self.rope.char_to_line(new_idx);
-            let new_col = new_idx - self.rope.line_to_char(new_line);
-            self.cursor_line = new_line;
-            self.cursor_col = new_col;
-            self.clear_selection();
-        } else {
-            // Collect all unique lines from primary + extra cursors
-            let mut lines: Vec<usize> = vec![self.cursor_line];
-            for &(l, _) in &self.extra_cursors {
-                lines.push(l);
-            }
-            lines.sort_unstable();
-            lines.dedup();
-
-            // Duplicate lines bottom-to-top to keep indices stable for earlier inserts
-            for &line_idx in lines.iter().rev() {
-                let line_slice = self.rope.line(line_idx);
-                let line = line_slice.to_string();
-                let line_start = self.rope.line_to_char(line_idx);
-                let line_chars = line_slice.len_chars();
-                let insert_pos = line_start + line_chars;
-                if !split_line_ending(&line).1.is_empty() {
-                    self.rope.insert(insert_pos, &line);
-                } else {
-                    let ending = if self.cached_line_ending == "CRLF" {
-                        "\r\n"
-                    } else {
-                        "\n"
-                    };
-                    self.rope.insert(insert_pos, ending);
-                    self.rope.insert(insert_pos + ending.len(), &line);
-                }
-            }
-            // Move all cursors down by the number of duplicated lines
-            self.cursor_line += lines.partition_point(|&line| line <= self.cursor_line);
-            if let Some((ref mut al, _)) = self.selection_anchor {
-                *al += lines.partition_point(|&line| line <= *al);
-            }
-            for ec in &mut self.extra_cursors {
-                ec.0 += lines.partition_point(|&line| line <= ec.0);
-            }
-            for (al, _) in self.extra_cursor_anchors.iter_mut().flatten() {
-                *al += lines.partition_point(|&line| line <= *al);
-            }
-            self.modified = true;
+        // Collect all unique lines from primary + extra cursors
+        let mut lines: Vec<usize> = vec![self.cursor_line];
+        for &(l, _) in &self.extra_cursors {
+            lines.push(l);
         }
+        lines.sort_unstable();
+        lines.dedup();
+
+        // Duplicate lines bottom-to-top to keep indices stable for earlier inserts
+        for &line_idx in lines.iter().rev() {
+            let line_slice = self.rope.line(line_idx);
+            let line = line_slice.to_string();
+            let line_start = self.rope.line_to_char(line_idx);
+            let line_chars = line_slice.len_chars();
+            let insert_pos = line_start + line_chars;
+            if !split_line_ending(&line).1.is_empty() {
+                self.rope.insert(insert_pos, &line);
+            } else {
+                let ending = if self.cached_line_ending == "CRLF" {
+                    "\r\n"
+                } else {
+                    "\n"
+                };
+                self.rope.insert(insert_pos, ending);
+                self.rope.insert(insert_pos + ending.len(), &line);
+            }
+        }
+        // Move all cursors down by the number of duplicated lines
+        self.cursor_line += lines.partition_point(|&line| line <= self.cursor_line);
+        if let Some((ref mut al, _)) = self.selection_anchor {
+            *al += lines.partition_point(|&line| line <= *al);
+        }
+        for ec in &mut self.extra_cursors {
+            ec.0 += lines.partition_point(|&line| line <= ec.0);
+        }
+        for (al, _) in self.extra_cursor_anchors.iter_mut().flatten() {
+            *al += lines.partition_point(|&line| line <= *al);
+        }
+        self.modified = true;
+        self.clamp_cursor();
         self.clear_stale_folds();
         self.ensure_visible();
     }

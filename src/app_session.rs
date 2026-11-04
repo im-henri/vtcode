@@ -797,6 +797,7 @@ impl App {
     /// `defaults < global < workspace` stack. Missing files stay missing until
     /// the user actually changes that scope, keeping startup read-only and
     /// avoiding a blocking workspace write merely to show the first frame.
+    #[cfg(test)]
     pub(crate) fn initialize_settings(&mut self) {
         self.settings_global_path = crate::settings::global_settings_path();
         self.settings_workspace_path =

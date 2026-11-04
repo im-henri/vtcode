@@ -209,6 +209,7 @@ impl App {
         self.resizing_panel = false;
         if self.terminal_sidebar.dragging() { self.drag_start_pos = None; }
         self.terminal_sidebar.cancel_drag();
+        self.terminal_scrollbar.cancel_drag();
         self.resizing_sc_graph = false;
         self.resizing_split = false;
         self.resizing_diff_split = false;
@@ -598,6 +599,7 @@ impl App {
     }
 
     pub(crate) fn open_global_search_result(&mut self) -> bool {
+        self.global_search_selected_header = None;
         self.push_global_search_history();
         if !self.is_global_search_result_visible(self.global_search_selected) {
             return false;
@@ -608,7 +610,7 @@ impl App {
             .cloned()
         {
             self.push_nav_history();
-            self.open_file(&result.file_path);
+            self.open_file_from_search(&result.file_path);
             if let Some(ed) = self.editor_mut() {
                 let position = (result.line_num.saturating_sub(1), result.col_start);
                 ed.clear_selection();
@@ -618,6 +620,70 @@ impl App {
             return true;
         }
         false
+    }
+
+    /// Show the selected match while keeping keyboard focus in search.
+    pub(crate) fn preview_global_search_result(&mut self) {
+        let sidebar_search = self.apply_global_search_collapsed_visibility();
+        if !matches!(self.global_search_selected_row(), Some(crate::search_results::SearchRow::Header(_))) {
+            self.open_global_search_result();
+        }
+        if sidebar_search { self.focus_global_search_results(); }
+        self.reveal_global_search_selection();
+    }
+
+    pub(crate) fn focus_global_search_results(&mut self) {
+        self.active_pane = ActivePane::Explorer;
+        self.global_search_active = false;
+        self.search_input_focused = false;
+        self.terminal_panel_focused = false;
+    }
+
+    pub(crate) fn global_search_selected_row(&self) -> Option<crate::search_results::SearchRow> {
+        use crate::search_results::SearchRow;
+        if self.apply_global_search_collapsed_visibility() {
+            if let Some(index) = self.global_search_selected_header.as_deref()
+                .and_then(|path| self.global_search_results.file_header_index(path)) {
+                return Some(SearchRow::Header(index));
+            }
+            self.global_search_results.result_row(self.global_search_selected)
+                .map(|_| SearchRow::Result(self.global_search_selected))
+        } else {
+            self.global_search_results.get(self.global_search_selected)
+                .map(|_| SearchRow::Result(self.global_search_selected))
+        }
+    }
+
+    pub(crate) fn set_selected_global_search_file_collapsed(&mut self, collapsed: bool) {
+        let path = self.global_search_selected_header.as_deref()
+            .filter(|path| self.global_search_results.file_header_index(path).is_some())
+            .map(Path::to_path_buf)
+            .or_else(|| self.global_search_results.get(self.global_search_selected).map(|result| result.file_path.clone()));
+        let Some(path) = path else { self.global_search_selected_header = None; return; };
+        if collapsed || self.is_global_search_file_collapsed(&path) || self.global_search_selected_header.is_some() {
+            self.global_search_selected_header = Some(path.clone());
+        }
+        self.global_search_results.set_collapsed(&path, collapsed);
+        self.reveal_global_search_selection();
+    }
+
+    fn move_global_search_header_selection(&mut self, forward: bool) -> bool {
+        use crate::search_results::SearchRow;
+        if self.global_search_active { return false; }
+        let Some(SearchRow::Header(index)) = self.global_search_selected_row() else { return false; };
+        let row = self.global_search_results.header_row(index).unwrap();
+        let target = if forward { row.checked_add(1) } else { row.checked_sub(1) };
+        match target.and_then(|row| self.global_search_results.row_at(row)) {
+            Some(SearchRow::Header(index)) => {
+                self.global_search_selected_header = Some(self.global_search_results[index].file_path.clone());
+            }
+            Some(SearchRow::Result(index)) => {
+                self.global_search_selected_header = None;
+                self.global_search_selected = index;
+            }
+            None => {},
+        }
+        true
     }
 
     pub(crate) fn is_global_search_file_collapsed(&self, path: &Path) -> bool {
@@ -640,8 +706,13 @@ impl App {
     }
 
     fn global_search_visual_metrics(&self) -> (Option<usize>, usize) {
-        (self.global_search_results.result_row(self.global_search_selected),
-            self.global_search_results.row_count())
+        use crate::search_results::SearchRow;
+        let row = match self.global_search_selected_row() {
+            Some(SearchRow::Header(index)) => self.global_search_results.header_row(index),
+            Some(SearchRow::Result(index)) => self.global_search_results.result_row(index),
+            None => None,
+        };
+        (row, self.global_search_results.row_count())
     }
 
     /// Reveal the keyboard-selected result without coupling ordinary mouse
@@ -656,7 +727,7 @@ impl App {
         };
         let visible_rows = self
             .explorer_area
-            .map(|area| area.height.saturating_sub(8) as usize)
+            .map(|area| usize::from(area.bottom().saturating_sub(crate::ui_search_panel::search_results_start_y(self, area))))
             .unwrap_or(1)
             .max(1);
         let max_scroll = total_rows.saturating_sub(visible_rows);
@@ -671,11 +742,16 @@ impl App {
     pub(crate) fn ensure_global_search_selection_visible(&mut self) {
         if self.global_search_results.is_empty() {
             self.global_search_selected = 0;
+            self.global_search_selected_header = None;
             self.global_search_scroll = 0;
             return;
         }
         if self.global_search_selected >= self.global_search_results.len() {
             self.global_search_selected = self.global_search_results.len() - 1;
+        }
+        if self.global_search_selected_header.is_some() {
+            if matches!(self.global_search_selected_row(), Some(crate::search_results::SearchRow::Header(_))) { return; }
+            self.global_search_selected_header = None;
         }
         if self.is_global_search_result_visible(self.global_search_selected) {
             return;
@@ -688,6 +764,8 @@ impl App {
     }
 
     pub(crate) fn global_search_select_prev_visible(&mut self) {
+        if self.move_global_search_header_selection(false) { return; }
+        self.global_search_selected_header = None;
         if self.global_search_selected == 0 {
             if !self.is_global_search_result_visible(self.global_search_selected) {
                 self.ensure_global_search_selection_visible();
@@ -707,6 +785,8 @@ impl App {
     }
 
     pub(crate) fn global_search_select_next_visible(&mut self) {
+        if self.move_global_search_header_selection(true) { return; }
+        self.global_search_selected_header = None;
         let len = self.global_search_results.len();
         if len == 0 || self.global_search_selected >= len.saturating_sub(1) {
             if !self.is_global_search_result_visible(self.global_search_selected) {
@@ -1674,8 +1754,8 @@ mod tests {
         app.open_palette();
         app.palette.query.clear();
         app.update_palette_filter();
-        assert_eq!(app.palette.filtered.len(), app.palette.commands.len() - 1);
-        assert!(app.palette.filtered.iter().all(|&index| app.palette.commands[index].id != "workspace_close"));
+        assert_eq!(app.palette.filtered.len(), app.palette.commands.len());
+        assert!(app.palette.filtered.iter().any(|&index| app.palette.commands[index].id == "workspace_close"));
     }
 
     #[test]

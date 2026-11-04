@@ -336,7 +336,7 @@ pub(crate) fn call_noarg_export(
     // Production stores use a fuel-enabled engine. Ignore the error for unit
     // test stores built with Engine::default(); those guests are tiny and
     // deterministic.
-    let task = export == "vtcode_prepare_document_action" || store
+    let task = matches!(export, "vtcode_prepare_document_action" | "vtcode_deactivate") || store
         .data()
         .tick_handlers
         .iter()
@@ -410,35 +410,50 @@ pub(crate) fn save_extension_setting(
     key: &str,
     value: &str,
 ) -> i32 {
+    use std::io::Write;
+    // Different extensions run on different workers and share this JSON file.
+    // Serialize read/modify/replace so one extension cannot erase another's save.
+    static SETTINGS_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SETTINGS_WRITE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut all_settings: serde_json::Value = if settings_path.exists() {
         match std::fs::read_to_string(settings_path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or(serde_json::json!({})),
-            Err(_) => serde_json::json!({}),
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(value) => value,
+                Err(_) => return -1,
+            },
+            Err(_) => return -1,
         }
     } else {
         serde_json::json!({})
     };
 
-    let ext_obj = all_settings
-        .as_object_mut()
-        .expect("settings root should be an object")
+    let Some(root) = all_settings.as_object_mut() else {
+        return -1;
+    };
+    let ext_obj = root
         .entry(ext_id.to_string())
         .or_insert_with(|| serde_json::json!({}));
 
-    if let Some(obj) = ext_obj.as_object_mut() {
-        obj.insert(
-            key.to_string(),
-            serde_json::Value::String(value.to_string()),
-        );
-    }
-
-    if let Some(parent) = settings_path.parent() {
-        let _ = std::fs::create_dir_all(parent); // Error OK: dir may already exist
-    }
-    match std::fs::write(
-        settings_path,
-        serde_json::to_string_pretty(&all_settings).unwrap_or_default(),
-    ) {
+    let Some(obj) = ext_obj.as_object_mut() else {
+        return -1;
+    };
+    obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    let parent = settings_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let result = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(parent)?;
+        let bytes = serde_json::to_vec_pretty(&all_settings)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(settings_path).map_err(|error| error.error)?;
+        Ok(())
+    })();
+    match result {
         Ok(_) => 0,
         Err(_) => -1,
     }
@@ -493,4 +508,41 @@ pub(crate) fn write_guest_bytes(
         return Err(());
     };
     memory.write(caller, ptr, bytes).map_err(|_| ())
+}
+
+#[cfg(test)]
+mod setting_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_extension_setting_saves_preserve_all_workers_and_replacements() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        std::thread::scope(|scope| {
+            for worker in 0..8 {
+                let path = &path;
+                scope.spawn(move || {
+                    let id = format!("extension-{worker}");
+                    for value in 0..10 {
+                        assert_eq!(save_extension_setting(path, &id, "notebook", &value.to_string()), 0);
+                    }
+                });
+            }
+        });
+        for worker in 0..8 {
+            assert_eq!(load_extension_setting(&path, &format!("extension-{worker}"), "notebook"), Some("9".into()));
+        }
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn malformed_extension_settings_are_preserved_without_panicking() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        for original in ["{broken", "[]", "null", r#"{"engineer-buddy":42}"#] {
+            std::fs::write(&path, original).unwrap();
+            assert_eq!(save_extension_setting(&path, "engineer-buddy", "notebook", "data"), -1);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
+    }
 }

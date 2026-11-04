@@ -67,7 +67,6 @@ struct Running {
     input: Arc<(Mutex<InputQueue>, Condvar)>,
     flow: Credits,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
-    _shell_integration: crate::terminal_shell::Integration,
 }
 impl Drop for Running {
     fn drop(&mut self) {
@@ -263,7 +262,6 @@ impl Manager {
             input,
             flow: flow.clone(),
             master,
-            _shell_integration: integration,
         };
         let input_child = child.clone();
         let input_output = self.output.clone();

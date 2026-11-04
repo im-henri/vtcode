@@ -219,11 +219,24 @@ fn dismiss_buttons_match_scrolled_rows_and_never_overlap_sidebar_seams_or_scroll
 
 #[test]
 fn delete_dismisses_only_focused_search_results_and_keeps_text_editing_and_documents_intact() {
-    let mut app = App::test_new();
+    let root = tempfile::tempdir().unwrap();
+    for file in ["a", "b"] {
+        std::fs::write(root.path().join(file), "needle one\nneedle two\n").unwrap();
+    }
+    let mut app = App::new_deferred(root.path().into());
+    app.source_control_enabled = false;
     app.tabs = vec![Tab::new_file(Editor::test_with_text("keep this document"))];
+    let document = app.tabs[0].editor.navigation_id;
     app.focus_global_search();
     app.global_search_query = "needle".into();
-    app.global_search_results = vec![result("a", 1), result("a", 2), result("b", 1)].into();
+    app.global_search_results = vec![result("a", 1), result("a", 2), result("b", 1)]
+        .into_iter()
+        .map(|mut result| {
+            result.file_path = root.path().join(result.file_path);
+            result
+        })
+        .collect::<Vec<_>>()
+        .into();
     app.global_search_results.set_all_collapsed(true);
     app.global_search_active = false;
     key(&mut app, KeyCode::Delete);
@@ -240,9 +253,12 @@ fn delete_dismisses_only_focused_search_results_and_keeps_text_editing_and_docum
     assert_eq!(app.active_pane, ActivePane::Explorer);
     key(&mut app, KeyCode::Down);
     assert_eq!(app.global_search_selected, 1);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.tabs.iter().all(|tab| !tab.editor.bg_loading)
+    });
     key(&mut app, KeyCode::Delete);
     assert_eq!(app.global_search_results.len(), 2);
-    assert_eq!(app.global_search_results[1].file_path, Path::new("b"));
+    assert_eq!(app.global_search_results[1].file_path, root.path().join("b"));
     key(&mut app, KeyCode::Delete);
     key(&mut app, KeyCode::Delete);
     assert!(app.global_search_results.is_empty());
@@ -257,6 +273,7 @@ fn delete_dismisses_only_focused_search_results_and_keeps_text_editing_and_docum
     app.global_search_field_cursors[0] = 0;
     key(&mut app, KeyCode::Delete);
     assert_eq!(app.global_search_query, "eedle");
-    assert_eq!(app.editor().unwrap().rope.to_string(), "keep this document");
-    assert!(!app.editor().unwrap().modified);
+    let editor = &app.tabs.iter().find(|tab| tab.editor.navigation_id == document).unwrap().editor;
+    assert_eq!(editor.rope.to_string(), "keep this document");
+    assert!(!editor.modified);
 }

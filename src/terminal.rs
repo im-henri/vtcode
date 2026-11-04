@@ -532,7 +532,6 @@ impl TermGrid {
 impl vte::Perform for TermGrid {
     fn print(&mut self, c: char) {
         self.put_char(c);
-        if self.selection.is_none() { self.scroll_view = 0; }
     }
 
     fn execute(&mut self, byte: u8) {
@@ -556,7 +555,6 @@ impl vte::Perform for TermGrid {
             }
             _ => {}
         }
-        if self.selection.is_none() { self.scroll_view = 0; }
     }
 
     fn csi_dispatch(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
@@ -772,7 +770,6 @@ impl vte::Perform for TermGrid {
             }
             _ => {}
         }
-        if self.selection.is_none() { self.scroll_view = 0; }
     }
 
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
@@ -891,7 +888,6 @@ pub struct TerminalEmulator {
     last_size: (usize, usize),
     wake: crate::background::UiWake,
     remote: Option<(crate::remote::process::Reader, crate::remote::process::Killer)>,
-    _shell_integration: crate::terminal_shell::Integration,
 }
 
 impl TerminalEmulator {
@@ -948,7 +944,6 @@ impl TerminalEmulator {
             last_size: (width, height),
             wake: crate::background::UiWake::default(),
             remote: None,
-            _shell_integration: Default::default(),
         };
         terminal.process_while(|| true);
         terminal
@@ -964,7 +959,6 @@ impl TerminalEmulator {
             writer: Arc::new(Mutex::new(Some(Box::new(writer)))), _alive: Arc::new(AtomicBool::new(true)),
             _reader_thread: None, child_killer: None, exit_events, _wait_thread: None, master: None,
             last_size: (width, height), wake, remote: Some((reader, killer)),
-            _shell_integration: Default::default(),
         })
     }
 
@@ -1084,7 +1078,7 @@ impl TerminalEmulator {
         })?;
 
         let mut cmd = portable_pty::CommandBuilder::new(program);
-        // Completion hooks are optional; an unwritable temp directory must not
+        // Completion hooks are optional; an unwritable data directory must not
         // prevent opening the user's ordinary shell and profile.
         let integration = crate::terminal_shell::Integration::prepare(program, args).unwrap_or_default();
         for arg in args {
@@ -1160,7 +1154,6 @@ impl TerminalEmulator {
             _wait_thread: Some(wait_thread),
             master: Some(pair.master),
             remote: None,
-            _shell_integration: integration,
             last_size: (width, height),
             wake,
         })
@@ -1311,6 +1304,19 @@ impl TerminalEmulator {
     }
 
     pub(crate) fn scroll_down(&mut self, n: usize) {
+        self.scroll_to_view(self.grid.scroll_view.saturating_sub(n));
+    }
+
+    pub(crate) fn scroll_to_view(&mut self, scroll_view: usize) {
+        self.grid.scroll_view = scroll_view.min(self.grid.scrollback.len());
+        if self.grid.scroll_view == 0 {
+            // Returning to live output must release a finished selection's
+            // viewport anchor, or the next line immediately pins it again.
+            self.grid.clear_selection();
+        }
+    }
+
+    pub(crate) fn scroll_down_while_selecting(&mut self, n: usize) {
         self.grid.scroll_view = self.grid.scroll_view.saturating_sub(n);
     }
 }

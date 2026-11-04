@@ -486,7 +486,7 @@ impl App {
             "breadcrumbs" => "Show breadcrumbs navigation above the editor.",
             "status_bar" => "Show or hide the status bar at the bottom.",
             "tab_bar" => "Show or hide the tab bar at the top of the editor.",
-            "preview_tabs" => "Single-click files in Explorer to reuse an italic preview tab. Click the file again, double-click its tab, or edit it to keep it open.",
+            "preview_tabs" => "Browse files in Explorer and workspace search using a reusable italic preview tab. Click an Explorer file again, double-click its tab, or edit it to keep it open.",
             "mouse_back_forward" => "Use the mouse side buttons to go back and forward through editor locations.",
             "menu_bar" => "Show or hide the menu bar.",
             "cursor_style" => "Set the cursor shape: Line, Block, or Underline.",

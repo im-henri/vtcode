@@ -6,6 +6,9 @@ use crate::{
 };
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
+#[path = "diff_loading_tests.rs"]
+mod diff_tests;
+
 fn fixture() -> App {
     let mut app = App::new_deferred("loading-workspace".into());
     app.new_file();

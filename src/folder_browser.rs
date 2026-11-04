@@ -654,9 +654,9 @@ impl App {
             crate::ui_modal::field_changed(self);
         } else {
             if self.folder_browser.add_workspace {
-                self.workspaces.request = Some(crate::app_workspaces::Request::Open(path));
+                self.workspaces.request = Some(crate::app_workspaces::Request::Add(path));
             } else {
-                self.change_workspace(&path);
+                self.workspaces.request = Some(crate::app_workspaces::Request::Replace(path));
             }
         }
         self.folder_browser_action(Action::Close);
@@ -1170,7 +1170,9 @@ mod tests {
         assert_eq!(app.explorer.root, root.path());
         app.confirm_folder_browser();
         assert!(!app.change_dir_active);
-        assert_eq!(app.explorer.root, beta);
+        assert_eq!(app.explorer.root, root.path());
+        assert!(matches!(app.workspaces.request.as_ref(),
+            Some(crate::app_workspaces::Request::Replace(path)) if path == &beta));
     }
 
     #[test]

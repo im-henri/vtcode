@@ -1,0 +1,8 @@
+{
+  "id": "vtcode.engineer-buddy",
+  "name": "Engineer Buddy",
+  "version": "0.1.0",
+  "description": "Exact wide-integer calculator, base conversions, interactive bits, register fields, HDL literals, and saved engineering calculations.",
+  "apiVersion": "2",
+  "main": "engineer-buddy.wasm"
+}

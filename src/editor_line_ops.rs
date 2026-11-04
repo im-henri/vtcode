@@ -86,46 +86,37 @@ impl Editor {
         crate::editor_document::edit!(self, {
         self.desired_col = None;
         self.save_undo();
-        if let Some((start, end, _, _)) = self.clamped_selection_indices() {
-            let text = CopiedText::new(self.rope.slice(start..end), "", "");
-            self.insert_copied_text(end, text);
-            self.modified = true;
-            let new_idx = end + (end - start);
-            self.cursor_line = self.rope.char_to_line(new_idx);
-            self.cursor_col = new_idx - self.rope.line_to_char(self.cursor_line);
-            self.clear_selection();
-        } else {
-            // Collect all unique lines from primary + extra cursors
-            let mut lines: Vec<usize> = vec![self.cursor_line];
-            for &(l, _) in &self.extra_cursors {
-                lines.push(l);
-            }
-            lines.sort_unstable();
-            lines.dedup();
-
-            // Duplicate lines bottom-to-top to keep indices stable for earlier inserts
-            for &line_idx in lines.iter().rev() {
-                let line = self.rope.line(line_idx);
-                let start = self.rope.line_to_char(line_idx);
-                let end = start + line.len_chars();
-                let prefix = if rope_line_ending_len(line) > 0 { "" }
-                    else if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" };
-                let text = CopiedText::new(line, prefix, "");
-                self.insert_copied_text(end, text);
-            }
-            // Move all cursors down by the number of duplicated lines
-            self.cursor_line += lines.partition_point(|&line| line <= self.cursor_line);
-            if let Some((ref mut al, _)) = self.selection_anchor {
-                *al += lines.partition_point(|&line| line <= *al);
-            }
-            for ec in &mut self.extra_cursors {
-                ec.0 += lines.partition_point(|&line| line <= ec.0);
-            }
-            for (al, _) in self.extra_cursor_anchors.iter_mut().flatten() {
-                *al += lines.partition_point(|&line| line <= *al);
-            }
-            self.modified = true;
+        // Always copy complete cursor lines, regardless of text selections.
+        let mut lines: Vec<usize> = vec![self.cursor_line];
+        for &(l, _) in &self.extra_cursors {
+            lines.push(l);
         }
+        lines.sort_unstable();
+        lines.dedup();
+
+        // Duplicate lines bottom-to-top to keep indices stable for earlier inserts
+        for &line_idx in lines.iter().rev() {
+            let line = self.rope.line(line_idx);
+            let start = self.rope.line_to_char(line_idx);
+            let end = start + line.len_chars();
+            let prefix = if rope_line_ending_len(line) > 0 { "" }
+                else if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" };
+            let text = CopiedText::new(line, prefix, "");
+            self.insert_copied_text(end, text);
+        }
+        // Move all cursors down by the number of duplicated lines
+        self.cursor_line += lines.partition_point(|&line| line <= self.cursor_line);
+        if let Some((ref mut al, _)) = self.selection_anchor {
+            *al += lines.partition_point(|&line| line <= *al);
+        }
+        for ec in &mut self.extra_cursors {
+            ec.0 += lines.partition_point(|&line| line <= ec.0);
+        }
+        for (al, _) in self.extra_cursor_anchors.iter_mut().flatten() {
+            *al += lines.partition_point(|&line| line <= *al);
+        }
+        self.modified = true;
+        self.clamp_cursor();
         self.clear_stale_folds();
         self.ensure_visible();
             })
@@ -135,49 +126,36 @@ impl Editor {
         crate::editor_document::edit!(self, {
         self.desired_col = None;
         self.save_undo();
-        if let Some((start, end, _, _)) = self.clamped_selection_indices() {
-            // Rectangular selections can extend past the end of a short line.
-            // Retain direction using the same clamped offsets as the copy.
-            let forward = self.selection_anchor.unwrap() <= (self.cursor_line, self.cursor_col);
-            let (cursor, anchor) = if forward { (end, start) } else { (start, end) };
-            let text = CopiedText::new(self.rope.slice(start..end), "", "");
-            self.insert_copied_text(start, text);
-            let inserted = end - start;
-            self.cursor_line = self.rope.char_to_line(cursor + inserted);
-            self.cursor_col = cursor + inserted - self.rope.line_to_char(self.cursor_line);
-            let line = self.rope.char_to_line(anchor + inserted);
-            self.selection_anchor = Some((line, anchor + inserted - self.rope.line_to_char(line)));
-        } else {
-            // Collect all unique lines from primary + extra cursors
-            let mut lines: Vec<usize> = vec![self.cursor_line];
-            for &(l, _) in &self.extra_cursors {
-                lines.push(l);
-            }
-            lines.sort_unstable();
-            lines.dedup();
+        // Always copy complete cursor lines, regardless of text selections.
+        let mut lines: Vec<usize> = vec![self.cursor_line];
+        for &(l, _) in &self.extra_cursors {
+            lines.push(l);
+        }
+        lines.sort_unstable();
+        lines.dedup();
 
-            // Duplicate lines top-to-bottom, each insert shifts lines below
-            for (i, &line_idx) in lines.iter().enumerate() {
-                let shifted_idx = line_idx + i;
-                let line = self.rope.line(shifted_idx);
-                let start = self.rope.line_to_char(shifted_idx);
-                let suffix = if rope_line_ending_len(line) > 0 { "" }
-                    else if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" };
-                let text = CopiedText::new(line, "", suffix);
-                self.insert_copied_text(start, text);
-            }
-            self.cursor_line += lines.partition_point(|&line| line < self.cursor_line);
-            for cursor in &mut self.extra_cursors {
-                cursor.0 += lines.partition_point(|&line| line < cursor.0);
-            }
-            for (line, _) in self.extra_cursor_anchors.iter_mut().flatten() {
-                *line += lines.partition_point(|&edited| edited < *line);
-            }
-            if let Some((line, _)) = self.selection_anchor.as_mut() {
-                *line += lines.partition_point(|&edited| edited < *line);
-            }
+        // Duplicate lines top-to-bottom, each insert shifts lines below
+        for (i, &line_idx) in lines.iter().enumerate() {
+            let shifted_idx = line_idx + i;
+            let line = self.rope.line(shifted_idx);
+            let start = self.rope.line_to_char(shifted_idx);
+            let suffix = if rope_line_ending_len(line) > 0 { "" }
+                else if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" };
+            let text = CopiedText::new(line, "", suffix);
+            self.insert_copied_text(start, text);
+        }
+        self.cursor_line += lines.partition_point(|&line| line < self.cursor_line);
+        for cursor in &mut self.extra_cursors {
+            cursor.0 += lines.partition_point(|&line| line < cursor.0);
+        }
+        for (line, _) in self.extra_cursor_anchors.iter_mut().flatten() {
+            *line += lines.partition_point(|&edited| edited < *line);
+        }
+        if let Some((line, _)) = self.selection_anchor.as_mut() {
+            *line += lines.partition_point(|&edited| edited < *line);
         }
         self.modified = true;
+        self.clamp_cursor();
         self.clear_stale_folds();
         self.ensure_visible();
             })

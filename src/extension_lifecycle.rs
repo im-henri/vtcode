@@ -57,6 +57,7 @@ impl ExtensionManager {
     pub(crate) fn reload_extension(&mut self, index: usize) -> Result<String, String> {
         if self.records.get(index).is_some_and(|record| {
             Self::record_has_unsaved_documents(record)
+                || record.views.values().any(|view| view.input_pending)
                 || self.busy_extension_ids.contains(&record.manifest.id)
                 || self
                     .pending_view_events
@@ -85,6 +86,7 @@ impl ExtensionManager {
     pub(crate) fn unload_extension(&mut self, index: usize) -> Result<String, String> {
         if self.records.get(index).is_some_and(|record| {
             Self::record_has_unsaved_documents(record)
+                || record.views.values().any(|view| view.input_pending)
                 || self.busy_extension_ids.contains(&record.manifest.id)
                 || self
                     .pending_view_events

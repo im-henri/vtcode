@@ -147,30 +147,41 @@ fn retrying_failed_open_recovers_shared_views_without_undoing_to_error_text() {
 }
 
 #[test]
-fn duplicate_selection_up_clamps_virtual_columns_and_preserves_undo_redo() {
-    for (source, duplicated) in [("a\nb", "a\nb\nb"), ("界\r\nβ", "界\r\nβ\r\nβ")] {
+fn duplicate_line_ignores_selection_and_clamps_virtual_columns_with_undo_redo() {
+    for (first, ending, last) in [("a", "\n", "b"), ("界", "\r\n", "β")] {
+        let source = format!("{first}{ending}{last}");
         for backwards in [false, true] {
-            let mut editor = Editor::test_with_text(source);
-            editor.record_saved_snapshot(editor.rope.clone());
             let (anchor, cursor) = if backwards {
                 ((1, 50), (0, 50))
             } else {
                 ((0, 50), (1, 50))
             };
-            editor.selection_anchor = Some(anchor);
-            (editor.cursor_line, editor.cursor_col) = cursor;
-            let selected = editor.selected_text();
-            editor.duplicate_line_up();
-            assert_eq!(editor.rope, duplicated);
-            assert_eq!(editor.selected_text(), selected);
-            assert!(editor.cursor_col <= editor.line_len(editor.cursor_line));
-            editor.undo();
-            assert_eq!(editor.rope, source);
-            assert!(!editor.modified && !editor.can_undo());
-            editor.redo();
-            assert_eq!(editor.rope, duplicated);
-            assert_eq!(editor.selected_text(), selected);
-            assert!(editor.modified);
+            let duplicated = if backwards {
+                format!("{first}{ending}{first}{ending}{last}")
+            } else {
+                format!("{first}{ending}{last}{ending}{last}")
+            };
+            for duplicate_up in [false, true] {
+                let mut editor = Editor::test_with_text(&source);
+                editor.detect_line_ending();
+                editor.record_saved_snapshot(editor.rope.clone());
+                editor.selection_anchor = Some(anchor);
+                (editor.cursor_line, editor.cursor_col) = cursor;
+                if duplicate_up { editor.duplicate_line_up(); }
+                else { editor.duplicate_line(); }
+                assert_eq!(editor.rope.to_string(), duplicated);
+                assert_eq!(editor.cursor_line, cursor.0 + usize::from(!duplicate_up));
+                assert_eq!(editor.cursor_col, 1);
+                editor.undo();
+                assert_eq!(editor.rope.to_string(), source);
+                assert_eq!((editor.cursor_line, editor.cursor_col), cursor);
+                assert_eq!(editor.selection_anchor, Some(anchor));
+                assert!(!editor.modified && !editor.can_undo());
+                editor.redo();
+                assert_eq!(editor.rope.to_string(), duplicated);
+                assert_eq!(editor.cursor_col, 1);
+                assert!(editor.modified);
+            }
         }
     }
 }

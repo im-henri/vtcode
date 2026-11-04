@@ -81,6 +81,7 @@ impl App {
             || self.explorer_context_active
             || self.sc_context_active
             || self.context_menu_active
+            || self.text_input_context_menu.is_some()
             || self.settings_dropdown_open
             || self.rename.active
             || self.text_input_drag.is_some()

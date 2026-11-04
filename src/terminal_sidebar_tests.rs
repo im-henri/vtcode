@@ -139,7 +139,7 @@ fn dragging_the_rendered_divider_resizes_the_terminal_and_owns_the_entire_mouse_
                 .unwrap();
             assert_eq!(dock.width, 76);
             assert_eq!(surface.area.x, dock.x + 1);
-            assert_eq!(surface.area.width, 75);
+            assert_eq!(surface.area.width, 74);
             assert_eq!(
                 fixture.app.terminals[0]
                     .terminal_pty
@@ -147,7 +147,7 @@ fn dragging_the_rendered_divider_resizes_the_terminal_and_owns_the_entire_mouse_
                     .unwrap()
                     .grid
                     .width,
-                75
+                74
             );
             // The release can contain the final movement without a preceding drag.
             fixture.mouse(
@@ -167,7 +167,7 @@ fn dragging_the_rendered_divider_resizes_the_terminal_and_owns_the_entire_mouse_
                     .unwrap()
                     .grid
                     .width,
-                67
+                66
             );
             assert_eq!(fixture.app.editor().unwrap().rope, before);
             assert!(fixture.app.editor().unwrap().selection_anchor.is_none());

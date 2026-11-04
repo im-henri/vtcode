@@ -964,9 +964,13 @@ impl App {
             return;
         };
         if editor.bg_loading
-            || editor.large_file_mode
             || editor.file_path.as_deref() != Some(file_path)
         {
+            return;
+        }
+        if editor.large_file_mode {
+            self.clear_diff_state();
+            self.notify("Diff is paused for this large file; adjust the large-file threshold to enable it");
             return;
         }
         if editor.encoding == "Binary" {

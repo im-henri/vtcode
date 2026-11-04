@@ -329,7 +329,7 @@ pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
     let labels = App::menu_labels();
     let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
         + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width)
-        + if area_width >= 48 { 15 } else { 0 };
+        + if area_width >= 48 { 12 } else { 0 };
     let all_width = labels
         .iter()
         .map(|label| UnicodeWidthStr::width(*label) + 2)
@@ -358,7 +358,7 @@ pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
 pub(crate) fn menu_overflow_visible(area_width: u16) -> bool {
     let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
         + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width)
-        + if area_width >= 48 { 15 } else { 0 };
+        + if area_width >= 48 { 12 } else { 0 };
     visible_menu_label_count(area_width) < App::menu_labels().len()
         && area_width as usize >= fixed + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL)
 }
@@ -367,7 +367,6 @@ struct TitleBarCenterLayout {
     area: Rect,
     navigation: Option<[Rect; 2]>,
     workspace: Option<Rect>,
-    add_workspace: Option<Rect>,
 }
 
 fn workspace_name(app: &App) -> String {
@@ -401,9 +400,9 @@ fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
     let center = Rect::new(area.x.saturating_add(used as u16), area.y, remaining as u16, area.height.min(1));
     let nav_width = navigation_reserved_width(area.width);
     let workspace_width = workspace_label(app, usize::MAX / 2).width()
-        .min(remaining.saturating_sub(nav_width + 3)).min(40);
+        .min(remaining.saturating_sub(nav_width)).min(40);
     let show_workspace = workspace_width >= 5 && area.height > 0;
-    let content_width = nav_width + if show_workspace { workspace_width + 3 } else { 0 };
+    let content_width = nav_width + if show_workspace { workspace_width } else { 0 };
     let x = center.x + remaining.saturating_sub(content_width) as u16 / 2;
     TitleBarCenterLayout {
         area: center,
@@ -411,13 +410,11 @@ fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
             Rect::new(x, area.y, 3, 1), Rect::new(x + 3, area.y, 3, 1),
         ]),
         workspace: show_workspace.then(|| Rect::new(x + nav_width as u16, area.y, workspace_width as u16, 1)),
-        add_workspace: show_workspace.then(|| Rect::new(x + nav_width as u16 + workspace_width as u16, area.y, 3, 1)),
     }
 }
 
-pub(crate) fn workspace_controls(app: &App) -> Option<(Rect, Rect)> {
-    let layout = title_bar_center_layout(app, app.menu_bar_area?);
-    Some((layout.workspace?, layout.add_workspace?))
+pub(crate) fn workspace_button_area(app: &App) -> Option<Rect> {
+    title_bar_center_layout(app, app.menu_bar_area?).workspace
 }
 
 pub(crate) fn navigation_button_at(app: &App, col: u16, row: u16) -> Option<(Rect, bool)> {
@@ -431,13 +428,12 @@ pub(crate) fn draw_navigation_tooltip(f: &mut Frame, app: &App) {
     if app.palette.active || app.menu_active || app.change_dir_active
         || app.context_menu_active || app.explorer_context_active || app.sc_context_active
         || app.workspaces.popup.open || crate::ui_modal::active(app).is_some() { return; }
-    if let Some((workspace, add)) = workspace_controls(app) {
-        for (area, label) in [(workspace, "Folders and saved workspaces"), (add, if app.open_folder_count() == 0 { "Open folder" } else { "Add folder" })] {
-            if area.contains((app.mouse_col, app.mouse_row).into()) {
-                crate::ui_widgets::Tooltip::hover(vec![Line::raw(label)], &app.colors).prefer_below().render(f, area.x, area.y);
-                return;
-            }
-        }
+    if let Some(area) = workspace_button_area(app)
+        && area.contains((app.mouse_col, app.mouse_row).into())
+    {
+        crate::ui_widgets::Tooltip::hover(vec![Line::raw("Folders and saved workspaces")], &app.colors)
+            .prefer_below().render(f, area.x, area.y);
+        return;
     }
     let Some((area, forward)) = navigation_button_at(app, app.mouse_col, app.mouse_row) else { return; };
     let (label, command) = if forward { ("Go Forward", "navigate_forward") } else { ("Go Back", "navigate_back") };
@@ -1593,11 +1589,6 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
                     || app.workspaces.popup.open),
         ));
         content_end = workspace.right();
-    }
-    if let Some(plus) = center.add_workspace {
-        spans.push(Span::styled(if app.workspace_opening() { " … " } else { " + " },
-            app.colors.ui.toolbar_style(fg, bg, plus.contains((app.mouse_col, app.mouse_row).into()), false, false)));
-        content_end = plus.right();
     }
     spans.push(Span::styled(crate::helpers::spaces(center.area.right().saturating_sub(content_end) as usize), Style::default().bg(bg)));
     if let Some(button) = agent_chat_button_area(area) {

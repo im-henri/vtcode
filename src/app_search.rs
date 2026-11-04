@@ -1013,6 +1013,7 @@ impl App {
         before: &ropey::Rope,
         after: &ropey::Rope,
     ) {
+        self.queue_global_search_editor_update();
         let Some((sl, sc, el, ec)) = self
             .search_selection_range
             .filter(|_| self.search_in_selection)

@@ -85,12 +85,15 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
     app.search_bar_layout.resizing = false;
     app.cancel_extension_pointer_capture();
     app.record_navigation();
+    let search_edit = app.global_search_edit_snapshot();
     let quit = handle_keyboard_event_inner(app, key);
+    app.refresh_global_search_after_edit(search_edit);
     app.finish_navigation();
     quit
 }
 
 fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+    if app.handle_text_input_context_menu_key(key) { return false; }
     if crate::ui_workspaces::handle_key(app, key) { return false; }
     if app.handle_shortcut_editor_key(key) { return false; }
     if crate::ui_vtcomplete_index::handle_key(app, key) {
@@ -849,7 +852,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                 }
                 KeyCode::Char('o') => {
                     // Ctrl+O: open folder / change directory
-                    crate::ui_workspaces::add(app);
+                    crate::ui_workspaces::open_folder(app);
                     return false;
                 }
                 KeyCode::Char(',') => {

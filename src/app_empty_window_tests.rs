@@ -174,7 +174,7 @@ fn empty_folder_panels_offer_only_relevant_controls_and_a_working_open_button() 
                             modifiers: KeyModifiers::NONE,
                         },
                     );
-                    assert!(app.change_dir_active && app.folder_browser.add_workspace);
+                    assert!(app.change_dir_active && !app.folder_browser.add_workspace);
                     assert!(!app.has_open_folder());
                 }
             }
@@ -540,7 +540,7 @@ fn empty_editor_offers_open_folder_without_close_or_save_workspace() {
             modifiers: crossterm::event::KeyModifiers::NONE,
         },
     );
-    assert!(app.change_dir_active && app.folder_browser.add_workspace);
+    assert!(app.change_dir_active && !app.folder_browser.add_workspace);
     assert!(!app.has_open_folder());
 }
 

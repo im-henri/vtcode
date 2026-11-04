@@ -32,6 +32,10 @@ mod input_performance_tests;
 mod input_load_tests;
 
 #[cfg(test)]
+#[path = "terminal_background_updates_tests.rs"]
+mod terminal_background_tests;
+
+#[cfg(test)]
 #[path = "mouse_selection_latency_tests.rs"]
 mod mouse_selection_latency_tests;
 
@@ -759,7 +763,7 @@ pub(crate) fn handle_mouse_input(
             selection_budget -= 1;
         }
         app.mouse_hover_changed = true;
-        if app.completion_index_ui.open {
+        if app.completion_index_ui.open || app.text_input_context_menu.is_some() {
             mouse::handle_mouse(app, mouse);
             break;
         } else if mouse::handle_navigation_mouse(app, mouse) {
@@ -3376,7 +3380,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     let mut last_title_key: Option<(u64, bool)> = None; // (view identity, modified)
     let mut needs_redraw = true;
     let mut input_redraw = true;
-    let mut chat_redraw_pending = false;
+    let mut background_redraw_pending = false;
     let mut service_scheduler = crate::ui_work::Scheduler::default();
     let mut startup_assets_requested = false;
     let mut input_started: Option<std::time::Instant> = None;
@@ -3459,6 +3463,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 service_scheduler.defer_last_service(&mut service_turn, observed_wake);
             }
             needs_redraw |= changed;
+            if matches!(service, Service::Terminals | Service::Agents) {
+                background_redraw_pending |= changed;
+            }
             if service == Service::Agents { agent_changed = changed; }
             let finished = std::time::Instant::now();
             let phase = match service {
@@ -3527,10 +3534,10 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
         }
 
-        // Keep agent output live in an unfocused terminal, including its final
-        // completion frame. Idle workbenches still suspend background redraws.
-        chat_redraw_pending |= agent_changed;
-        if !chat_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
+        // Keep terminal and agent changes live after window focus is lost.
+        // Retain the request across paced frames so their final output is
+        // painted even when no more data arrives to wake the workbench.
+        if !background_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
             needs_redraw = false;
         }
 
@@ -3668,7 +3675,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
             needs_redraw = false;
             input_redraw = false;
-            chat_redraw_pending = false;
+            background_redraw_pending = false;
         }
 
         // Handle mouse-triggered exit (from clicking exit confirm buttons)

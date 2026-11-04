@@ -17,6 +17,8 @@ pub(crate) struct State {
     pub loaded: bool,
     pub error: Option<String>,
     pub path: PathBuf,
+    pub active: Option<u64>,
+    pending_active: Option<String>,
     pub(super) preserving: bool,
     read: Option<CatalogReply>,
     write: Option<CatalogReply>,
@@ -29,6 +31,8 @@ impl Default for State {
             loaded: false,
             error: None,
             path: crate::portable::data_dir().join("workspace-sets.json"),
+            active: None,
+            pending_active: None,
             preserving: false,
             read: None,
             write: None,
@@ -43,11 +47,14 @@ pub(super) enum Plan {
     Closing(Transition),
 }
 pub(super) struct Staged {
-    set: SavedSet,
+    name: String,
+    set_id: Option<u64>,
+    folder: bool,
     roots: Vec<StagedRoot>,
     active: usize,
     expected: Vec<u64>,
     confirmed: bool,
+    validated: bool,
 }
 struct StagedRoot {
     root: PathBuf,
@@ -57,6 +64,8 @@ struct StagedRoot {
 }
 pub(super) struct Transition {
     name: String,
+    set_id: Option<u64>,
+    folder: bool,
     target: Vec<u64>,
     active: u64,
     close: Vec<u64>,
@@ -91,6 +100,26 @@ impl App {
             .collect();
         sets.sort_by_key(|set| (set.name.to_lowercase(), set.id));
         sets
+    }
+
+    /// Compare saved membership without filesystem work during rendering.
+    /// Changing the focused folder does not make the workspace unsaved.
+    pub(crate) fn current_workspace_set(&self) -> Option<(SavedSet, bool)> {
+        let active = self.workspaces.sets.active?;
+        let base = crate::portable::base_dir();
+        let roots: Vec<_> = std::iter::once(self)
+            .chain(self.workspaces.parked.iter().map(|parked| &*parked.app))
+            .filter(|app| app.has_open_folder())
+            .map(|app| app.remote_workspace.as_ref().map_or_else(
+                || Location::local(&app.explorer.root, &base),
+                |remote| Location::Remote { uri: remote.client.hello().root_uri.clone() },
+            )).collect();
+        let matches = |set: &SavedSet| set.roots.len() == roots.len()
+            && set.roots.iter().all(|root| roots.contains(root));
+        if roots.is_empty() { return None; }
+        let set = self.saved_workspace_sets().into_iter().find(|set| set.id == active)?;
+        let modified = !matches(&set);
+        Some((set, modified))
     }
     pub(crate) fn workspace_sets_busy(&self) -> bool {
         self.workspaces.sets.read.is_some() || self.workspaces.sets.write.is_some()
@@ -144,6 +173,7 @@ impl App {
         });
     }
     pub(crate) fn save_workspace_set(&mut self, name: String, replace: Option<u64>) {
+        let active_name = name.trim().to_owned();
         let result = (|| -> Result<Mutation, String> {
             workspace_sets::valid_name(&name).map_err(|error| error.to_string())?;
             if self.workspace_opening()
@@ -193,7 +223,11 @@ impl App {
             })
         })();
         match result {
-            Ok(mutation) => self.write_workspace_sets(mutation),
+            Ok(mutation) => {
+                let idle = !self.workspace_sets_busy();
+                self.write_workspace_sets(mutation);
+                if idle && self.workspaces.sets.write.is_some() { self.workspaces.sets.pending_active = Some(active_name); }
+            }
             Err(error) => self.workspaces.sets.error = Some(error),
         }
     }
@@ -226,14 +260,85 @@ impl App {
         let close = self
             .workspace_entries()
             .into_iter()
-            .filter(|entry| !entry.path.is_empty() && !keep.contains(&entry.id))
+            .filter(|entry| (staged.folder || !entry.path.is_empty()) && !keep.contains(&entry.id))
             .collect();
-        Some((staged.set.name.clone(), staged.roots.len(), close))
+        Some((staged.name.clone(), staged.roots.len(), close))
+    }
+    pub(crate) fn workspace_folder_replacement(&self) -> bool {
+        match &self.workspaces.sets.plan {
+            Some(Plan::Ready(staged)) => staged.folder,
+            Some(Plan::Closing(transition)) => transition.folder,
+            _ => false,
+        }
+    }
+
+    fn folder_replacement_needs_confirmation(&self) -> bool {
+        self.unsaved_file_count() > 0
+            || !self.pending_custom_recoveries.is_empty()
+            || (0..self.terminals.len()).any(|index| self.terminal_is_open(index))
+            || self.chat.any_agent_running()
+            || self.chat.agents().any(|(_, agent)| {
+                agent.control_busy
+                    || !agent.permissions.is_empty()
+                    || agent.queues.values().any(|queue| !queue.is_empty())
+            })
+    }
+
+    /// Prepare the destination before asking to close any live workbench.
+    /// The existing close sequence preserves edits and stops its services.
+    pub(super) fn prepare_folder_replacement(&mut self, path: PathBuf) {
+        if self.workspaces.opening.is_some() || self.workspace_sets_busy() {
+            self.notify_warn("Wait for folders or saved workspaces to finish loading");
+            return;
+        }
+        let name = self.display_path(&path);
+        let opened: Vec<_> = std::iter::once((self.workspaces.active, self.explorer.root.clone()))
+            .chain(self.workspaces.parked.iter().map(|parked| (parked.id, parked.app.explorer.root.clone())))
+            .collect();
+        let remote = self.remote_workspace.clone();
+        let (sender, receiver) = mpsc::channel();
+        let cancel = crate::background::CancellationToken::new();
+        self.workspaces.sets.plan = Some(Plan::Loading(StageReply { receiver, cancel: cancel.clone() }));
+        let wake = self.background.wake_handle();
+        self.background.spawn("prepare-open-folder", move || {
+            let result = (|| -> Result<Staged, String> {
+                if cancel.is_cancelled() { return Err("Opening the folder was cancelled".into()); }
+                let (root, canonical, prepared) = if let Some(remote) = remote {
+                    let remote = remote.open_workspace(&path).map_err(|error| error.to_string())?;
+                    let root = remote.view_root.clone();
+                    let startup = crate::startup::Prepared::load_remote(root.clone());
+                    (root, None, Prepared { startup, remote: Some(remote), equivalent_roots: vec![] })
+                } else {
+                    let root = crate::folder_browser::normalized_path(&path);
+                    if !root.is_dir() { return Err("Choose an existing folder; current folders were kept open".into()); }
+                    let canonical = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+                    let startup = crate::startup::Prepared::load(Some(root.clone().into_os_string()));
+                    if !same_workspace(&startup.target.root, &root) { return Err("The folder changed during loading".into()); }
+                    (root, Some(canonical), Prepared { startup, remote: None, equivalent_roots: vec![] })
+                };
+                let existing = opened.iter().find(|(_, path)| same_workspace(path, &root)
+                    || canonical.as_ref().is_some_and(|canonical| std::fs::canonicalize(path).is_ok_and(|path| path == *canonical)))
+                    .map(|(id, _)| *id);
+                Ok(Staged {
+                    name, set_id: None, folder: true, active: 0, confirmed: false, validated: false,
+                    roots: vec![StagedRoot { root, canonical, existing, prepared: existing.is_none().then_some(prepared) }],
+                    expected: opened.into_iter().map(|(id, _)| id).collect(),
+                })
+            })();
+            let _ = sender.send(result);
+            wake.notify();
+        });
+        self.notify("Preparing folder…");
     }
     pub(crate) fn confirm_workspace_set(&mut self) {
-        let Some(Plan::Ready(staged)) = self.workspaces.sets.plan.take() else {
+        self.validate_workspace_set(true);
+    }
+
+    fn validate_workspace_set(&mut self, confirmed: bool) {
+        let Some(Plan::Ready(mut staged)) = self.workspaces.sets.plan.take() else {
             return;
         };
+        staged.confirmed |= confirmed;
         let (sender, receiver) = mpsc::channel();
         self.workspaces.sets.preserving = true;
         let cancel = crate::background::CancellationToken::new();
@@ -274,7 +379,7 @@ impl App {
                     }
                 }
                 Ok(Staged {
-                    confirmed: true,
+                    validated: true,
                     ..staged
                 })
             })();
@@ -365,7 +470,7 @@ impl App {
                     if index == set.active { active = roots.len(); }
                     roots.push(StagedRoot { root, canonical, existing, prepared });
                 }
-                Ok(Staged { set, roots, active, expected: opened.into_iter().map(|(id, _)| id).collect(), confirmed: false })
+                Ok(Staged { name: set.name, set_id: Some(id), folder: false, roots, active, expected: opened.into_iter().map(|(id, _)| id).collect(), confirmed: false, validated: false })
             })();
             let _ = sender.send(result); wake.notify();
         });
@@ -391,6 +496,10 @@ impl App {
                     self.workspaces.sets.loaded = true;
                     self.workspaces.sets.error = None;
                     if is_write {
+                        if let Some(name) = self.workspaces.sets.pending_active.take() {
+                            self.workspaces.sets.active = self.saved_workspace_sets().iter()
+                                .find(|set| set.name == name).map(|set| set.id);
+                        }
                         if self.workspaces.popup.open
                             && matches!(
                                 self.workspaces.popup.sets.mode,
@@ -407,6 +516,7 @@ impl App {
                     }
                 }
                 Err(error) => {
+                    if is_write { self.workspaces.sets.pending_active = None; }
                     self.workspaces.sets.error = Some(error.clone());
                     self.notify_error(error);
                 }
@@ -438,7 +548,7 @@ impl App {
                 let mut current: Vec<_> = self
                     .workspace_entries()
                     .iter()
-                    .filter(|entry| !entry.path.is_empty())
+                    .filter(|entry| staged.folder || !entry.path.is_empty())
                     .map(|entry| entry.id)
                     .collect();
                 current.sort_unstable();
@@ -459,16 +569,21 @@ impl App {
                     .into_iter()
                     .filter(|id| !keep.contains(id))
                     .collect();
-                if !close.is_empty() && !staged.confirmed {
+                let needs_confirmation = close.iter().any(|id| {
+                    !staged.folder || if *id == self.workspaces.active { self.folder_replacement_needs_confirmation() }
+                        else { self.workspaces.parked.iter().find(|parked| parked.id == *id)
+                            .is_some_and(|parked| parked.app.folder_replacement_needs_confirmation()) }
+                });
+                if needs_confirmation && !staged.confirmed {
                     self.workspaces.sets.plan = Some(Plan::Ready(staged));
                     crate::ui_workspace_sets::show_confirmation(self);
                     return true;
                 }
-                if !staged.confirmed && staged.roots.iter().any(|root| root.prepared.is_some()) {
+                if !staged.validated && staged.roots.iter().any(|root| root.prepared.is_some()) {
                     // Adding folders still has a preparation/application gap,
                     // even when there is nothing to ask permission to close.
                     self.workspaces.sets.plan = Some(Plan::Ready(staged));
-                    self.confirm_workspace_set();
+                    self.validate_workspace_set(false);
                     return true;
                 }
                 if staged.roots.iter().any(|root| {
@@ -498,7 +613,9 @@ impl App {
                 }
                 let active = target[staged.active];
                 self.workspaces.sets.plan = Some(Plan::Closing(Transition {
-                    name: staged.set.name,
+                    name: staged.name,
+                    set_id: staged.set_id,
+                    folder: staged.folder,
                     target,
                     active,
                     close,
@@ -529,7 +646,8 @@ impl App {
                         return true;
                     }
                     self.switch_workspace(transition.active);
-                    self.notify(format!("Opened workspace: {}", transition.name));
+                    self.workspaces.sets.active = transition.set_id;
+                    self.notify(format!("Opened {}: {}", if transition.folder { "folder" } else { "workspace" }, transition.name));
                 }
                 true
             }

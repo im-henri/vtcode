@@ -123,6 +123,10 @@ pub struct Frame {
     /// context-menu handler. Omit to preserve ordinary editor middle gestures.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pointer_buttons: Vec<String>,
+    /// Opt in to named shortcuts before built-in editor defaults (e.g. Ctrl+L).
+    /// Explicit workbench bindings and reserved navigation keep their priority.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_capture: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -16,6 +16,8 @@ pub(crate) struct ViewFrame {
     #[serde(default)]
     pub pointer_buttons: Vec<String>,
     #[serde(default)]
+    pub key_capture: Vec<String>,
+    #[serde(default)]
     pub dirty: bool,
     pub path: Option<String>,
 }

@@ -387,7 +387,10 @@ impl App {
         .into();
         self.notify_warn(self.remote_connection.message.clone());
         self.workspace_generation = self.workspace_generation.wrapping_add(1);
-        self.workspace_open_generation = self.workspace_open_generation.wrapping_add(1);
+        #[cfg(test)]
+        {
+            self.workspace_open_generation = self.workspace_open_generation.wrapping_add(1);
+        }
         self.cancel_remote_location();
         self.cancel_workspace_replace();
         self.cancel_remote_disk_checks();

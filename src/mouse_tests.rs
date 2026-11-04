@@ -794,7 +794,7 @@ fn workspace_search_result_drag_never_moves_the_editor_caret() {
             let sidebar = app.explorer_area.unwrap();
             let result_y = crate::ui_search_panel::search_results_start_y(&app, sidebar) + 1;
             handle_mouse(&mut app, pointer(MouseEventKind::Down(MouseButton::Left), sidebar.x + 3, result_y));
-            assert_eq!(app.active_pane, ActivePane::Editor);
+            assert_eq!(app.active_pane, ActivePane::Explorer);
             assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (7, 4));
             terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
             let state = |app: &App| {

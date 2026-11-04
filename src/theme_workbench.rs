@@ -172,6 +172,7 @@ pub(crate) struct WorkbenchColors {
     pub widget_background: ColorLayer,
     pub widget_foreground: ColorLayer,
     pub widget_border: ColorLayer,
+    pub widget_shadow: ColorLayer,
     pub hover_colors: ControlColors,
     pub suggest_colors: ControlColors,
     pub suggest_selection: ControlColors,
@@ -715,6 +716,9 @@ impl WorkbenchColors {
             widget_background,
             widget_foreground,
             widget_border: widget_border_layer,
+            widget_shadow: ColorLayer::resolve(colors, "widget.shadow", if high_contrast {
+                ColorLayer::default()
+            } else { ColorLayer::rgba(0, 0, 0, if light { 41 } else { 92 }) }),
             hover_colors: ControlColors {
                 background: ColorLayer::resolve(colors, "editorHoverWidget.background", widget_background),
                 foreground: ColorLayer::resolve(colors, "editorHoverWidget.foreground", widget_foreground),
@@ -1845,6 +1849,7 @@ impl Default for WorkbenchColors {
             widget_background: ColorLayer::default(),
             widget_foreground: ColorLayer::default(),
             widget_border: ColorLayer::default(),
+            widget_shadow: ColorLayer::default(),
             hover_colors: ControlColors::default(),
             suggest_colors: ControlColors::default(),
             suggest_selection: ControlColors::default(),

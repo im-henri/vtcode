@@ -38,6 +38,7 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    if app.handle_text_input_context_menu_mouse(mouse) { return; }
     if crate::ui_workspaces::handle_mouse(app, mouse) { return; }
     if crate::app_shortcuts::handle_mouse(app, mouse) { return; }
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
@@ -55,6 +56,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
         app.copy_animation.clear();
     }
     if crate::terminal_sidebar::captured_mouse(app, mouse) { return; }
+    if crate::terminal_scrollbar::captured_mouse(app, mouse) { return; }
     if crate::ui_panels::captured_mouse(app, mouse) { return; }
     if crate::ui_side_notice::handle_mouse(app, mouse) { return; }
     if crate::ui_logs::mouse(app, mouse) { return; }
@@ -279,6 +281,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if crate::ui_search_dialog::handle_vtcomplete_mouse(app, mouse) { return; }
     if crate::ui_inline_blame::handle_mouse(app, mouse) { return; }
     if crate::terminal_sidebar::begin_resize(app, mouse) { return; }
+    if crate::terminal_scrollbar::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
     if app.handle_terminal_selection_mouse(mouse) { return; }
     if app.handle_chat_mouse(mouse) { return; }
     if mouse.kind == MouseEventKind::Moved
@@ -719,15 +722,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         }
                         return;
                     }
-                    if let Some((picker, plus)) = crate::ui_chrome::workspace_controls(app) {
-                        if picker.contains((col, row).into()) {
-                            crate::ui_workspaces::open(app);
-                            return;
-                        }
-                        if plus.contains((col, row).into()) {
-                            crate::ui_workspaces::add(app);
-                            return;
-                        }
+                    if crate::ui_chrome::workspace_button_area(app)
+                        .is_some_and(|area| area.contains((col, row).into()))
+                    {
+                        crate::ui_workspaces::open(app);
+                        return;
                     }
                     if crate::ui_chrome::agent_chat_button_area(menu_area)
                         .is_some_and(|area| area.contains((col, row).into()))
@@ -1597,13 +1596,15 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if let Some(hit) = app.global_search_results.row_at(clicked_row) {
                                 match hit {
                                     SearchRow::Header(idx) => {
-                                        app.global_search_active = false;
+                                        app.focus_global_search_results();
                                         let path = app.global_search_results[idx].file_path.clone();
+                                        app.global_search_selected_header = Some(path.clone());
                                         app.toggle_global_search_file_collapsed(&path);
                                     }
                                     SearchRow::Result(idx) => {
+                                        app.global_search_selected_header = None;
                                         app.global_search_selected = idx;
-                                        app.open_global_search_result();
+                                        app.preview_global_search_result();
                                     }
                                 }
                             }

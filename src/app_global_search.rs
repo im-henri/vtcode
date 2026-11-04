@@ -6,6 +6,29 @@ use crate::search_regex::SearchRegex;
 
 type OpenSearchBuffers = rustc_hash::FxHashMap<PathBuf, ropey::Rope>;
 
+const MODEL_SEARCH_QUIET_PERIOD: Duration = Duration::from_millis(75);
+
+struct ModelUpdate {
+    serial: u64,
+    rope: ropey::Rope,
+}
+
+#[derive(Default)]
+pub(crate) struct ModelUpdates {
+    pending_since: Option<Instant>,
+    pending: rustc_hash::FxHashMap<PathBuf, ModelUpdate>,
+    serial: u64,
+    work: crate::background::latest::LatestWork,
+}
+
+impl ModelUpdates {
+    fn clear(&mut self) {
+        self.work.cancel();
+        self.pending.clear();
+        self.pending_since = None;
+    }
+}
+
 #[cfg(test)]
 #[path = "regex_search_tests.rs"]
 mod regex_tests;
@@ -25,6 +48,14 @@ mod debounce_tests;
 #[cfg(test)]
 #[path = "workspace_search_dismiss_tests.rs"]
 mod dismiss_tests;
+
+#[cfg(test)]
+#[path = "workspace_search_edit_tests.rs"]
+mod edit_tests;
+
+#[cfg(test)]
+#[path = "workspace_search_navigation_tests.rs"]
+mod navigation_tests;
 
 fn search_failed(sender: &crate::background::BackgroundResultSender, generation: u64, error: String) {
     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchFailed {
@@ -94,6 +125,7 @@ impl App {
         cancel
     }
     fn reset_global_search_request(&mut self) {
+        self.global_search_model_updates.clear();
         self.global_search_pending_since = None;
         if self.status_message.starts_with("Invalid regex:") { self.status_message.clear(); }
         if let Some(token) = self.search_cancel_token.take() { token.cancel(); }
@@ -104,6 +136,7 @@ impl App {
         self.global_search_stopped = false;
         self.global_search_error = None;
         self.global_search_selected = 0;
+        self.global_search_selected_header = None;
         self.global_search_scroll = 0;
         self.bg_global_search_running = false;
     }
@@ -127,14 +160,146 @@ impl App {
 
     pub(crate) fn global_search_debounce_wait(&self, now: Instant) -> Option<Duration> {
         if !self.workspace_visible { return None; }
-        self.global_search_pending_since.map(|start| Duration::from_millis(self.search_debounce_ms)
-            .saturating_sub(now.saturating_duration_since(start)))
+        let query = self.global_search_pending_since.map(|start| Duration::from_millis(self.search_debounce_ms)
+            .saturating_sub(now.saturating_duration_since(start)));
+        let model = self.global_search_model_updates.pending_since.map(|start| MODEL_SEARCH_QUIET_PERIOD
+            .saturating_sub(now.saturating_duration_since(start)));
+        query.into_iter().chain(model).min()
     }
 
     pub(crate) fn poll_pending_global_search(&mut self, now: Instant) -> bool {
-        if self.global_search_debounce_wait(now) != Some(Duration::ZERO) { return false; }
-        self.global_search_pending_since = None;
-        self.start_global_search();
+        if !self.workspace_visible { return false; }
+        let mut changed = false;
+        if self.global_search_pending_since.is_some_and(|start|
+            now.saturating_duration_since(start) >= Duration::from_millis(self.search_debounce_ms)) {
+            self.global_search_pending_since = None;
+            self.start_global_search();
+            changed = true;
+        }
+        if self.global_search_model_updates.pending_since.is_some_and(|start|
+            now.saturating_duration_since(start) >= MODEL_SEARCH_QUIET_PERIOD) {
+            self.start_global_search_model_updates();
+            changed = true;
+        }
+        changed
+    }
+
+    pub(crate) fn global_search_edit_snapshot(&self) -> Option<(u64, u64)> {
+        if self.global_search_query.is_empty() { return None; }
+        let tab = self.tabs.get(self.active_tab)?;
+        if tab.kind != crate::app::TabKind::File
+            || !self.global_search_results.tracks_file(tab.editor.file_path.as_deref()?) {
+            return None;
+        }
+        Some((tab.editor.navigation_id, tab.editor.content_version))
+    }
+
+    pub(crate) fn refresh_global_search_after_edit(&mut self, previous: Option<(u64, u64)>) {
+        if let Some((id, version)) = previous
+            && self.global_search_edit_snapshot().is_some_and(|after| after.0 == id && after.1 != version) {
+            self.queue_global_search_editor_update();
+        }
+    }
+
+    pub(crate) fn queue_global_search_editor_update(&mut self) {
+        if self.global_search_edit_snapshot().is_none() { return; }
+        let editor = self.editor().unwrap();
+        let path = editor.file_path.clone().unwrap();
+        let rope = editor.rope.clone();
+        self.queue_global_search_model_update(path, rope);
+    }
+
+    pub(crate) fn queue_global_search_model_update(&mut self, path: PathBuf, rope: ropey::Rope) {
+        if self.global_search_query.is_empty()
+            || !self.global_search_results.mark_file_edited(&path) { return; }
+        let updates = &mut self.global_search_model_updates;
+        if updates.pending.get(&path).is_some_and(|pending| pending.rope.is_instance(&rope)) { return; }
+        updates.work.cancel();
+        updates.serial = updates.serial.wrapping_add(1);
+        updates.pending.insert(path, ModelUpdate { serial: updates.serial, rope });
+        updates.pending_since = Some(Instant::now());
+    }
+
+    fn start_global_search_model_updates(&mut self) {
+        let updates = &mut self.global_search_model_updates;
+        updates.pending_since = None;
+        let sources: Vec<_> = updates.pending.iter()
+            .map(|(path, update)| (path.clone(), update.serial, update.rope.clone())).collect();
+        if sources.is_empty() { return; }
+        let query = self.global_search_query.clone();
+        let case_sensitive = self.global_search_case_sensitive;
+        let whole_word = self.global_search_whole_word;
+        let is_regex = self.global_search_regex;
+        let max_results = self.max_global_search_results;
+        let generation = self.search_generation;
+        let sender = self.background.sender.clone();
+        let cancel = crate::background::CancellationToken::new();
+        let worker_cancel = cancel.clone();
+        let activity = self.background.activity.start("Updating search results", None).cancellable(cancel.clone());
+        updates.work.replace(self.background.interactive_sender(), crate::background::latest::Job {
+            cancel,
+            run: Box::new(move || {
+                let _activity = activity.running();
+                let regex = SearchRegex::cached_editor(&query, case_sensitive, whole_word, is_regex);
+                for (path, serial, rope) in sources {
+                    if worker_cancel.is_cancelled() { return; }
+                    let result = match &regex {
+                        Ok(regex) => {
+                            let mut results = Vec::new();
+                            let mut truncated = false;
+                            Self::search_file_rope(&path, &rope, GlobalSearchSpec {
+                                query: &query, regex: Some(regex), include: "", exclude: "",
+                                max_results, case_sensitive, open_buffers: None,
+                            }, &mut results, &mut truncated, &worker_cancel);
+                            Ok((results, truncated))
+                        }
+                        Err(error) => Err(crate::search_regex::error_summary(error)),
+                    };
+                    if worker_cancel.is_cancelled() { return; }
+                    let _ = sender.send(crate::background::BackgroundResult::GlobalSearchFileResults {
+                        path, serial, generation, result,
+                    });
+                }
+            }),
+        });
+    }
+
+    pub(crate) fn apply_global_search_file_results(&mut self, path: PathBuf, serial: u64, generation: u64,
+        result: Result<(Vec<GlobalSearchResult>, bool), String>) -> bool {
+        if generation != self.search_generation
+            || self.global_search_model_updates.pending.get(&path).is_none_or(|pending| pending.serial != serial) {
+            return false;
+        }
+        self.global_search_model_updates.pending.remove(&path);
+        let (mut results, truncated) = match result {
+            Ok(result) => result,
+            Err(error) => { self.global_search_error = Some(error); return true; }
+        };
+        results.retain(|result| self.global_search_results.accepts_refreshed_result(result));
+        let available = self.max_global_search_results.saturating_sub(
+            self.global_search_results.len() - self.global_search_results.file_matches(&path));
+        self.global_search_truncated |= truncated || results.len() > available;
+        results.truncate(available);
+        let selected = self.global_search_results.get(self.global_search_selected).cloned();
+        let anchor = self.global_search_results.row_at(self.global_search_scroll).map(|row| {
+            let (crate::search_results::SearchRow::Header(index) | crate::search_results::SearchRow::Result(index)) = row;
+            (self.global_search_results[index].clone(), matches!(row, crate::search_results::SearchRow::Header(_)))
+        });
+        self.global_search_results.replace_file(&path, results);
+        if let Some(index) = selected.as_ref().and_then(|result| self.global_search_results.index_of(result)) {
+            self.global_search_selected = index;
+        }
+        self.ensure_global_search_selection_visible();
+        if let Some((result, header)) = anchor
+            && let Some(index) = self.global_search_results.index_of(&result)
+            && let Some(row) = if header { self.global_search_results.header_row(index) }
+                else { self.global_search_results.result_row(index) } {
+            self.global_search_scroll = row;
+        }
+        let visible = self.explorer_area.map_or(1, |area| {
+            usize::from(area.bottom().saturating_sub(crate::ui_search_panel::search_results_start_y(self, area)))
+        }).max(1);
+        self.global_search_scroll = self.global_search_scroll.min(self.global_search_results.row_count().saturating_sub(visible));
         true
     }
 

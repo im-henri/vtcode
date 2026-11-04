@@ -16,10 +16,12 @@ pub(crate) enum SearchRow {
 #[derive(Default)]
 struct FileInfo {
     matches: usize,
+    first_result: usize,
     collapsed: bool,
     sort_key: Option<crate::file_order::SearchPathKey>,
     dismissed: bool,
     dismissed_matches: FxHashSet<(usize, usize, usize)>,
+    edited: bool,
 }
 
 struct Group {
@@ -68,6 +70,10 @@ impl SearchResults {
         if index >= self.results.len() { return None; }
         Some(self.groups[self.groups.partition_point(|group| group.start <= index) - 1].row)
     }
+    pub(crate) fn file_header_index(&self, path: &Path) -> Option<usize> {
+        let file = self.files.get(path)?;
+        (file.matches > 0).then_some(file.first_result)
+    }
     pub(crate) fn clear(&mut self) {
         self.results.clear();
         self.files.clear();
@@ -79,6 +85,48 @@ impl SearchResults {
     }
 
     pub(crate) fn revision(&self) -> u64 { self.revision }
+
+    pub(crate) fn tracks_file(&self, path: &Path) -> bool {
+        self.files.contains_key(path)
+    }
+
+    pub(crate) fn mark_file_edited(&mut self, path: &Path) -> bool {
+        let Some(file) = self.files.get_mut(path) else { return false; };
+        file.edited = true;
+        true
+    }
+
+    pub(crate) fn accepts_streamed_result(&self, result: &GlobalSearchResult) -> bool {
+        self.accepts_result(result, false)
+    }
+
+    pub(crate) fn accepts_refreshed_result(&self, result: &GlobalSearchResult) -> bool {
+        self.accepts_result(result, true)
+    }
+
+    fn accepts_result(&self, result: &GlobalSearchResult, refreshed: bool) -> bool {
+        self.files.get(&result.file_path).is_none_or(|file| {
+            (refreshed || !file.edited) && !file.dismissed
+                && !file.dismissed_matches.contains(&(result.line_num, result.col_start, result.col_end))
+        })
+    }
+
+    /// Replace one open model without resetting other files, collapsed groups,
+    /// or explicit dismissals. Original search batches for this file are stale.
+    pub(crate) fn replace_file(&mut self, path: &Path, results: Vec<GlobalSearchResult>) {
+        let Some(file) = self.files.get_mut(path) else { return; };
+        if file.matches > 0 {
+            self.file_count -= 1;
+            file.matches = 0;
+            self.results.retain(|result| result.file_path != path);
+        }
+        file.edited = true;
+        self.groups.clear();
+        self.rows = 0;
+        self.append_groups(0);
+        self.extend_results(results, true);
+        self.revision = self.revision.wrapping_add(1);
+    }
 
     /// Dismiss only from this search. Remember removals while later batches
     /// arrive; clear() starts a fresh search with every match eligible again.
@@ -112,6 +160,7 @@ impl SearchResults {
             let result = &self.results[index];
             let collapsed = self.files[&result.file_path].collapsed;
             if self.groups.last().is_none_or(|last| self.results[last.start].file_path != result.file_path) {
+                self.files.get_mut(&result.file_path).unwrap().first_result = index;
                 self.groups.push(Group { start: index, end: index, row: self.rows, collapsed });
                 self.rows += 1;
             }
@@ -215,13 +264,10 @@ impl SearchResults {
     }
 }
 
-impl Extend<GlobalSearchResult> for SearchResults {
-    fn extend<T: IntoIterator<Item = GlobalSearchResult>>(&mut self, values: T) {
-        let mut values: Vec<_> = values.into_iter().filter(|result| {
-            self.files.get(&result.file_path).is_none_or(|file| {
-                !file.dismissed && !file.dismissed_matches.contains(&(result.line_num, result.col_start, result.col_end))
-            })
-        }).collect();
+impl SearchResults {
+    fn extend_results<T: IntoIterator<Item = GlobalSearchResult>>(&mut self, values: T, refreshed: bool) {
+        let mut values: Vec<_> = values.into_iter()
+            .filter(|result| self.accepts_result(result, refreshed)).collect();
         if values.is_empty() { return; }
         let order = self.ordering.get_or_insert_with(crate::file_order::FileOrder::system).clone();
         for result in &values {
@@ -262,6 +308,12 @@ impl Extend<GlobalSearchResult> for SearchResults {
         };
         self.append_groups(start);
         self.revision = self.revision.wrapping_add(1);
+    }
+}
+
+impl Extend<GlobalSearchResult> for SearchResults {
+    fn extend<T: IntoIterator<Item = GlobalSearchResult>>(&mut self, values: T) {
+        self.extend_results(values, false);
     }
 }
 
@@ -318,6 +370,7 @@ mod tests {
         let mut previous = None;
         for (index, result) in results.iter().enumerate() {
             if previous != Some(&result.file_path) {
+                assert_eq!(results.file_header_index(&result.file_path), Some(index));
                 rows.push(SearchRow::Header(index));
                 previous = Some(&result.file_path);
             }
@@ -344,6 +397,27 @@ mod tests {
                 (0..index).rev().find(visible)
             );
         }
+    }
+
+    #[test]
+    fn edited_file_replacement_keeps_indexes_and_rejects_original_streamed_matches() {
+        let mut results: SearchResults = [result("a"), result("b"), result("c")].into_iter().collect();
+        results.set_collapsed(Path::new("b"), true);
+        results.mark_file_edited(Path::new("a"));
+        results.extend([result("a")]);
+        assert_eq!(results.file_matches(Path::new("a")), 1);
+        results.replace_file(Path::new("a"), Vec::new());
+        assert_eq!(results.file_count(), 2);
+        assert!(results.tracks_file(Path::new("a")));
+        assert_matches_scan(&results);
+        results.replace_file(Path::new("a"), vec![result("a")]);
+        assert_eq!(results.file_count(), 3);
+        assert_matches_scan(&results);
+        results.dismiss(SearchRow::Header(1));
+        results.replace_file(Path::new("b"), vec![result("b")]);
+        assert_eq!(results.file_matches(Path::new("b")), 0);
+        assert!(results.is_collapsed(Path::new("b")));
+        assert_matches_scan(&results);
     }
 
     #[test]

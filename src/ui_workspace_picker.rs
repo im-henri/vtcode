@@ -7,7 +7,7 @@ use crossterm::event::{KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEve
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
@@ -23,6 +23,10 @@ pub(crate) struct Search {
     dragging: bool,
 }
 impl Search {
+    pub(crate) fn input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
+        (&mut self.text, &mut self.cursor, &mut self.anchor)
+    }
+
     pub fn edit(&mut self, key: KeyEvent, paste: Option<&str>) -> bool {
         self.history
             .edit(
@@ -59,23 +63,76 @@ impl Search {
 }
 
 pub(crate) fn base(app: &App) -> Style {
-    Style::default()
-        .bg(app.colors.bg_sidebar)
-        .fg(app.colors.ui.sidebar_text_color(app.colors.bg_sidebar))
-}
-pub(crate) fn secondary(app: &App) -> Style {
-    base(app).fg(app
+    let background = app
         .colors
         .ui
-        .readable_foreground(app.colors.fg_dim, app.colors.bg_sidebar, 4.5))
+        .quick_background
+        .over(app.colors.bg_editor)
+        .unwrap_or(app.colors.bg_editor);
+    Style::default()
+        .bg(background)
+        .fg(app.colors.ui.quick_text_color(background, false))
+}
+pub(crate) fn secondary(app: &App) -> Style {
+    let background = base(app).bg.unwrap();
+    base(app).fg(app.colors.ui.description_color(background))
 }
 pub(crate) fn selected(app: &App) -> Style {
+    let background = app
+        .colors
+        .ui
+        .quick_focus_background
+        .over(base(app).bg.unwrap())
+        .unwrap_or(base(app).bg.unwrap());
     base(app)
-        .bg(app.colors.bg_selection)
-        .fg(app
-            .colors
-            .ui
-            .readable_foreground(app.colors.fg_selected, app.colors.bg_selection, 4.5))
+        .bg(background)
+        .fg(app.colors.ui.quick_text_color(background, true))
+}
+
+fn backdrop(f: &mut Frame, app: &App, area: Rect) {
+    let surface = app.colors.bg_editor;
+    let fade = |color, foreground| {
+        let color = if color == Color::Reset {
+            if foreground {
+                app.colors.fg_text
+            } else {
+                surface
+            }
+        } else {
+            app.colors.ui.terminal_color(color, foreground)
+        };
+        crate::app_theme::lerp_color(color, surface, 0.76)
+    };
+    // Fade actual colors rather than relying on terminal-specific DIM handling.
+    // Only the rendered frame changes; the workbench and its caches stay intact.
+    for cell in &mut f.buffer_mut().content {
+        if cell.modifier.contains(Modifier::REVERSED) {
+            std::mem::swap(&mut cell.fg, &mut cell.bg);
+        }
+        cell.fg = fade(cell.fg, true);
+        cell.bg = fade(cell.bg, false);
+        cell.underline_color = fade(cell.underline_color, true);
+        cell.modifier &= Modifier::HIDDEN;
+    }
+    let shadow = Rect::new(
+        area.x.saturating_add(2),
+        area.y.saturating_add(1),
+        area.width,
+        area.height,
+    )
+    .intersection(f.area());
+    for y in shadow.y..shadow.bottom() {
+        for x in shadow.x..shadow.right() {
+            if area.contains((x, y).into()) {
+                continue;
+            }
+            let cell = &mut f.buffer_mut()[(x, y)];
+            if let Some(background) = app.colors.ui.widget_shadow.border(cell.bg) {
+                cell.reset();
+                cell.set_bg(background).set_fg(background);
+            }
+        }
+    }
 }
 
 pub(crate) fn surface(f: &mut Frame, app: &mut App, title: &str, desired: usize) -> Option<Rect> {
@@ -88,30 +145,56 @@ pub(crate) fn surface(f: &mut Frame, app: &mut App, title: &str, desired: usize)
     if screen.width < 4 || screen.height < 4 {
         return None;
     }
-    let width = screen.width.min(72);
-    let height = desired.min(screen.height.saturating_sub(1) as usize).max(3) as u16;
-    let anchor = crate::ui_chrome::workspace_controls(app).map(|(rect, _)| rect);
-    let x = anchor
-        .map_or(screen.x + (screen.width - width) / 2, |rect| rect.x)
-        .clamp(screen.x, screen.right().saturating_sub(width));
-    let y = app
-        .menu_bar_area
-        .map_or(screen.y + 1, |bar| bar.bottom())
-        .min(screen.bottom().saturating_sub(height))
-        .max(screen.y);
+    let width = screen
+        .width
+        .saturating_sub(u16::from(screen.width >= 16) * 4)
+        .min(96);
+    let height = (desired + usize::from(screen.height >= 12) * 2)
+        .min(
+            screen
+                .height
+                .saturating_sub(u16::from(screen.height >= 12) * 2) as usize,
+        )
+        .max(3) as u16;
+    let x = screen.x + (screen.width - width) / 2;
+    let y = screen.y + (screen.height - height) / 2;
     let area = Rect::new(x, y, width, height);
+    backdrop(f, app, area);
+    let background = base(app).bg.unwrap();
+    let border = app
+        .colors
+        .ui
+        .active_contrast_border
+        .border(background)
+        .or_else(|| app.colors.ui.focus_border.border(background))
+        .or_else(|| app.colors.ui.widget_border.border(background))
+        .unwrap_or(app.colors.fg_accent_blue);
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .style(base(app))
-        .border_style(secondary(app));
-    if !title.is_empty() {
-        block = block.title(format!(
+        .border_style(base(app).fg(app.colors.ui.readable_foreground(border, background, 4.5)));
+    let title = if title.is_empty() {
+        "Workspaces"
+    } else {
+        title
+    };
+    block = block.title(Line::styled(
+        format!(
             " {} ",
             crate::ui_workspaces::clipped(title, width.saturating_sub(8) as usize)
-        ));
+        ),
+        base(app).add_modifier(Modifier::BOLD),
+    ));
+    let mut inner = block.inner(area);
+    if width >= 40 {
+        inner.x += 1;
+        inner.width = inner.width.saturating_sub(2);
     }
-    let inner = block.inner(area);
+    if height >= 12 {
+        inner.y += 1;
+        inner.height = inner.height.saturating_sub(2);
+    }
     f.render_widget(Clear, area);
     f.render_widget(block, area);
     app.workspaces.popup.area = area;
@@ -137,20 +220,29 @@ pub(crate) fn list(
     actions: usize,
     detail_rows: usize,
 ) -> Option<ListLayout> {
-    let row_height = if !saved && f.area().height >= 12 {
-        2
-    } else {
-        1
-    };
-    let inner = surface(
-        f,
-        app,
-        "",
-        count.clamp(1, 6) * row_height + actions + detail_rows + 5,
-    )?;
+    let row_height = if f.area().height >= 24 { 2 } else { 1 };
+    let inner = surface(f, app, "", (count.clamp(1, 6) * row_height + 14).max(20))?;
     let mut top = inner.y;
     let mut space = inner.height;
-    if space >= 4 {
+    if space >= 8 {
+        workspace_summary(f, app, Rect::new(inner.x, top, inner.width, 1));
+        let note = if app.workspace_opening() {
+            "Updating folders… You can keep working while they load."
+        } else {
+            match app.current_workspace_set() {
+                Some((_, true)) => "Folder changes have not been saved to this workspace.",
+                Some(_) => "Choose a folder or manage a saved workspace.",
+                None => "Save this folder collection to reopen it together later.",
+            }
+        };
+        let rows = if space >= 16 { 2 } else { 1 };
+        if rows > 1 {
+            detail(f, app, Rect::new(inner.x, top + 1, inner.width, 1), note);
+        }
+        top += rows;
+        space -= rows;
+    }
+    if space >= 5 {
         let mut x = inner.x;
         let labels = if inner.width >= 32 {
             [" Open folders ", " Saved workspaces "]
@@ -178,31 +270,61 @@ pub(crate) fn list(
             app.workspaces.popup.tabs[index] = rect;
             x = rect.right();
         }
-        top += 1;
-        space -= 1;
+        let rows = if space >= 12 { 2 } else { 1 };
+        top += rows;
+        space -= rows;
     }
-    if space >= actions as u16 + 3 {
+    if space >= 4 {
         let rect = Rect::new(inner.x + 1, top, inner.width.saturating_sub(2), 1);
+        let input_foreground = secondary(app).fg.unwrap();
         let search = &mut app.workspaces.popup.search;
         search.input = Some(
             crate::ui_widgets::InputField::new(&search.text)
-                .prefix("", app.colors.fg_input)
+                .prefix("⌕ ", input_foreground)
                 .cursor_pos(search.cursor)
                 .selection_range(App::inline_selection_range(search.cursor, search.anchor))
                 .cursor_marker("│")
                 .placeholder_text(if saved {
-                    "Find a saved workspace…"
+                    "Filter saved workspaces…"
                 } else {
-                    "Find an open folder…"
+                    "Filter folders by name or path…"
                 })
                 .theme_colors(&app.colors)
                 .render(f, rect),
         );
-        top += 1;
-        space -= 1;
+        let hit = search.input.clone().unwrap();
+        app.register_text_input(crate::text_input::TextInputId::WorkspaceFilter, hit);
+        let rows = if space >= 10 { 2 } else { 1 };
+        top += rows;
+        space -= rows;
     }
-    let detail = if space >= actions as u16 + detail_rows as u16 + 2 {
-        detail_rows as u16
+    let hint = u16::from(space >= 6);
+    if hint > 0 {
+        let hint_text = if inner.width < 24 {
+            "↑↓ ↵ Esc"
+        } else if inner.width < 40 {
+            "↑↓ Move  Enter  Esc"
+        } else if inner.width < 80 {
+            if saved {
+                "↑↓ Move  Enter Details  Ctrl+Tab Views"
+            } else {
+                "↑↓ Move  Enter Switch  Ctrl+Tab Views"
+            }
+        } else if saved {
+            "↑↓ Select   Enter Details   Ctrl+Tab Views   Esc Close"
+        } else {
+            "↑↓ Select   Enter Switch   Delete Close folder   Ctrl+Tab Views   Esc Close"
+        };
+        self::detail(
+            f,
+            app,
+            Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+            hint_text,
+        );
+        space -= hint;
+    }
+    let detail = if space >= 7 {
+        detail_rows.max(2) as u16
     } else {
         0
     };
@@ -210,14 +332,14 @@ pub(crate) fn list(
     // On tiny terminals, keep the selected action reachable instead of reserving
     // space for decoration or offscreen choices.
     let action_focus = app.workspaces.popup.selected >= count;
-    let action_height =
-        (actions as u16).min(space.saturating_sub(detail + separator + u16::from(!action_focus)));
-    let choice_height = space.saturating_sub(action_height + detail + separator);
+    let action_height = u16::from(actions > 0 && (space >= 2 || action_focus));
+    let action_gap = u16::from(space > action_height + detail + separator + 1);
+    let choice_height = space.saturating_sub(action_height + action_gap + detail + separator);
     let row_height = (row_height as u16).min(choice_height.max(1));
     let choice_height = choice_height / row_height * row_height;
     let choices = Rect::new(inner.x, top, inner.width, choice_height);
     let detail_area = Rect::new(inner.x, choices.bottom(), inner.width, detail);
-    let action_y = detail_area.bottom() + separator;
+    let action_y = detail_area.bottom() + separator + action_gap;
     if separator > 0 {
         self::separator(
             f,
@@ -237,6 +359,146 @@ pub(crate) fn separator(f: &mut Frame, app: &App, rect: Rect) {
         Paragraph::new("─".repeat(rect.width as usize)).style(secondary(app)),
         rect,
     );
+}
+
+pub(crate) fn workspace_summary(f: &mut Frame, app: &App, row: Rect) {
+    let (label, status) = match app.current_workspace_set() {
+        Some((set, true)) => (set.name, "Unsaved changes"),
+        Some((set, false)) => (set.name, "Saved"),
+        None if !app.workspaces.sets.loaded && app.workspace_sets_busy() => {
+            ("Current workspace".into(), "Loading…")
+        }
+        None if !app.workspaces.sets.loaded && app.workspaces.sets.error.is_some() => {
+            ("Current workspace".into(), "Catalog unavailable")
+        }
+        None => ("Unsaved workspace".into(), "Not saved"),
+    };
+    if row.is_empty() {
+        return;
+    }
+    f.render_widget(Block::default().style(base(app)), row);
+    let count = app.open_folder_count();
+    let badge = format!(
+        "{status} · {count} folder{}",
+        if count == 1 { "" } else { "s" }
+    );
+    let badge_width = badge.width().min(row.width.saturating_sub(4) as usize) as u16;
+    if badge_width > 0 {
+        let background = base(app).bg.unwrap();
+        let color = if status == "Saved" {
+            app.colors.fg_accent_blue
+        } else {
+            app.colors.fg_warning
+        };
+        let color = app.colors.ui.readable_foreground(color, background, 4.5);
+        f.render_widget(
+            Paragraph::new(crate::ui_workspaces::clipped(&badge, badge_width as usize))
+                .style(base(app).fg(color)),
+            Rect::new(row.right() - badge_width - 1, row.y, badge_width, 1),
+        );
+    }
+    {
+        let label = crate::ui_workspaces::clipped(
+            &label,
+            row.width.saturating_sub(badge_width + 3) as usize,
+        );
+        f.render_widget(
+            Paragraph::new(format!(" {label}")).style(base(app).add_modifier(Modifier::BOLD)),
+            Rect::new(row.x, row.y, (label.width() as u16 + 1).min(row.width), 1),
+        );
+    }
+}
+
+/// Commands have their own footer, separate from the selectable folder rows.
+pub(crate) fn action_buttons(
+    f: &mut Frame,
+    app: &App,
+    row: Rect,
+    labels: &[&str],
+    selected_index: usize,
+    first_index: usize,
+) -> Vec<(Rect, usize)> {
+    if row.is_empty() || labels.is_empty() {
+        return vec![];
+    }
+    let compact = labels.iter().map(|label| label.width() + 6).sum::<usize>() > row.width as usize;
+    let mut x = row.x;
+    let mut hits = vec![];
+    for (index, label) in labels.iter().enumerate() {
+        let label = if compact {
+            match *label {
+                "+ Add folder…" => "+ Add",
+                "+ Open folder…" => "+ Open",
+                "Save workspace…" | "+ Save workspace…" => "Save…",
+                "Open workspace" => {
+                    if row.width >= 40 {
+                        "Open workspace"
+                    } else {
+                        "Open"
+                    }
+                }
+                "Update from open folders…" => {
+                    if row.width >= 80 {
+                        "Update folders…"
+                    } else {
+                        "Update…"
+                    }
+                }
+                "Rename workspace…" => "Rename…",
+                "Delete workspace…" => "Delete…",
+                other => other,
+            }
+        } else {
+            label
+        };
+        let width = (label.width() as u16 + 4).min(row.right().saturating_sub(x));
+        if width < 3 {
+            continue;
+        }
+        let rect = Rect::new(x, row.y, width, 1);
+        let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
+        let focused = selected_index == first_index + index;
+        let mut style =
+            app.colors
+                .ui
+                .button_style(base(app).bg.unwrap(), index == 0, hovered, true);
+        if focused {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        f.render_widget(
+            Paragraph::new(crate::ui_workspaces::clipped(
+                &format!("[ {label} ]"),
+                width as usize,
+            ))
+            .style(style),
+            rect,
+        );
+        hits.push((rect, first_index + index));
+        x = rect.right().saturating_add(2);
+    }
+    // A terminal narrower than the footer still exposes its focused command.
+    if !hits.iter().any(|(_, index)| *index == selected_index)
+        && selected_index >= first_index
+        && let Some(label) = labels.get(selected_index - first_index)
+    {
+        let rect = Rect::new(row.x, row.y, row.width, 1);
+        f.render_widget(Clear, rect);
+        f.render_widget(
+            Paragraph::new(crate::ui_workspaces::clipped(
+                &format!("[ {label} ]"),
+                row.width as usize,
+            ))
+            .style(
+                app.colors
+                    .ui
+                    .button_style(base(app).bg.unwrap(), true, false, true)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+            rect,
+        );
+        return vec![(rect, selected_index)];
+    }
+    hits
 }
 
 pub(crate) fn scroll(scroll: &mut usize, selected: usize, count: usize, visible: u16) -> usize {
@@ -360,7 +622,7 @@ pub(crate) fn buttons(
     ] {
         let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
         let mut style = app.colors.ui.button_style(
-            app.colors.bg_sidebar,
+            base(app).bg.unwrap(),
             primary,
             hovered,
             enabled || !primary,

@@ -13,6 +13,9 @@ use std::{
 #[path = "remote_terminal_transport_tests.rs"]
 mod terminal_transport;
 
+#[path = "remote_rename_tests.rs"]
+mod rename_tests;
+
 #[test]
 fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
     for (native, uri, first) in [

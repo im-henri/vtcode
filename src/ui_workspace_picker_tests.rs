@@ -36,6 +36,7 @@ fn fixture() -> (tempfile::TempDir, App) {
         .map(|path| Location::local(path, &crate::portable::base_dir()))
         .collect::<Vec<_>>();
     app.workspaces.sets.loaded = true;
+    app.workspaces.sets.active = Some(10);
     app.workspaces.sets.catalog = Catalog::default();
     app.workspaces.sets.catalog.sets = ["Engineering", "Operations", "Release λ"]
         .into_iter()
@@ -88,8 +89,7 @@ fn row_containing(buffer: &Buffer, area: Rect, name: &str) -> u16 {
 fn title_controls_and_tabs_switch_in_one_click_and_toggle_closed() {
     let (_root, mut app) = fixture();
     draw(&mut app, 120, 28);
-    let (directory, add) = crate::ui_chrome::workspace_controls(&app).unwrap();
-    assert_eq!(add.x, directory.right());
+    let directory = crate::ui_chrome::workspace_button_area(&app).unwrap();
     click(&mut app, directory);
     draw(&mut app, 120, 28);
     let saved_tab = app.workspaces.popup.tabs[1];
@@ -106,7 +106,13 @@ fn title_controls_and_tabs_switch_in_one_click_and_toggle_closed() {
     let workspace_tab = app.workspaces.popup.tabs[0];
     click(&mut app, workspace_tab);
     assert!(app.workspaces.popup.open && app.workspaces.popup.sets.mode.is_none());
-    click(&mut app, add);
+    let buffer = draw(&mut app, 120, 28);
+    let area = app.workspaces.popup.area;
+    let add_row = row_containing(&buffer, area, "+ Add folder");
+    let add_col = (area.x..area.right())
+        .find(|&x| buffer[(x, add_row)].symbol() == "+")
+        .unwrap();
+    click(&mut app, Rect::new(add_col, add_row, 1, 1));
     assert!(app.change_dir_active && app.folder_browser.add_workspace);
     assert!(!app.workspaces.popup.open);
 }
@@ -194,6 +200,12 @@ fn tiny_lists_keep_actions_reachable_and_close_defaults_to_cancel() {
         key(&mut app, KeyCode::End, KeyModifiers::NONE);
         draw(&mut app, width, height);
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(
+            app.workspaces.popup.sets.mode,
+            Some(Mode::Save(None))
+        ));
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        crate::ui_workspaces::close(&mut app);
         assert!(app.workspaces.popup.close);
         draw(&mut app, width, height);
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
@@ -251,7 +263,7 @@ fn saved_sets_preview_each_directory_before_opening_and_mark_the_starting_folder
     );
     assert_eq!(web, api + 1);
     assert_eq!(infra, web + 1);
-    assert_eq!(row_containing(&buffer, area, "Start here"), web);
+    assert_eq!(row_containing(&buffer, area, "Start folder"), web);
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert!(matches!(app.workspaces.request, Some(Request::OpenSet(10))));
     assert!(!app.workspaces.popup.open);
@@ -293,7 +305,7 @@ fn large_set_contents_scroll_without_moving_action_focus_and_survive_resizes() {
     let area = app.workspaces.popup.area;
     assert!(text(&buffer).contains("service-23"));
     assert_eq!(
-        row_containing(&buffer, area, "Start here"),
+        row_containing(&buffer, area, "Start folder"),
         row_containing(&buffer, area, "service-23")
     );
     let before = row_containing(&buffer, area, "service-23");
@@ -420,7 +432,7 @@ fn directory_preview_keeps_foreign_paths_and_escapes_control_characters() {
 }
 
 #[test]
-fn a_single_open_folder_has_no_close_action_or_hidden_keyboard_target() {
+fn a_single_open_folder_has_an_explicit_close_button_and_separate_save_action() {
     let (_root, mut app) = fixture();
     app.workspaces.parked.clear();
     for (width, height) in [(4, 4), (24, 8), (48, 12), (110, 24)] {
@@ -443,7 +455,7 @@ fn a_single_open_folder_has_no_close_action_or_hidden_keyboard_target() {
     }
     crate::ui_workspaces::dismiss(&mut app);
     app.execute_palette_command("workspace_close");
-    assert!(!app.workspaces.popup.open);
+    assert!(app.workspaces.popup.open && app.workspaces.popup.close);
     assert!(app.workspaces.request.is_none());
     crate::ui_workspaces::open(&mut app);
     crate::ui_control_visibility_tests::snapshot(
@@ -457,11 +469,10 @@ fn close_folder_visibility_uses_all_open_folders_and_names_the_current_target() 
     let (_root, mut app) = fixture();
     crate::ui_workspaces::open(&mut app);
     crate::ui_workspace_sets::paste(&mut app, "web");
-    let buffer = draw(&mut app, 110, 24);
-    assert!(text(&buffer).contains("Close current folder…"));
-    key(&mut app, KeyCode::Up, KeyModifiers::NONE);
-    assert_eq!(app.workspaces.popup.selected, 3);
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    draw(&mut app, 110, 24);
+    assert_eq!(app.workspaces.popup.close_hits.len(), 1);
+    assert_eq!(app.workspaces.popup.close_hits[0].1, 1);
+    crate::ui_workspaces::close(&mut app);
     let buffer = draw(&mut app, 110, 24);
     assert!(text(&buffer).contains("Close “api”?"));
     assert!(app.workspaces.popup.close);
@@ -474,7 +485,7 @@ fn close_folder_visibility_uses_all_open_folders_and_names_the_current_target() 
 }
 
 #[test]
-fn file_menu_and_palette_hide_close_for_the_last_folder_including_recent_commands() {
+fn file_menu_and_palette_offer_safe_close_for_the_last_folder_including_recent_commands() {
     let (_root, mut app) = fixture();
     let parked = app.workspaces.parked.pop().unwrap();
     app.workspaces.parked.clear();
@@ -487,13 +498,13 @@ fn file_menu_and_palette_hide_close_for_the_last_folder_including_recent_command
             app.palette
                 .filtered
                 .iter()
-                .all(|&index| app.palette.commands[index].id != "workspace_close")
+                .any(|&index| app.palette.commands[index].id == "workspace_close")
         );
     }
     assert!(
         app.menu_entries(0)
             .iter()
-            .all(|entry| entry.command != "workspace_close")
+            .any(|entry| entry.command == "workspace_close")
     );
     app.workspaces.parked.push(parked);
     app.palette.query = "close current folder".into();
@@ -513,11 +524,12 @@ fn file_menu_and_palette_hide_close_for_the_last_folder_including_recent_command
 }
 
 #[test]
-fn stale_close_confirmation_cannot_quit_the_last_folder() {
+fn stale_close_confirmation_cannot_close_a_missing_folder() {
     let (_root, mut app) = fixture();
     crate::ui_workspaces::close(&mut app);
     key(&mut app, KeyCode::Up, KeyModifiers::NONE);
     app.workspaces.parked.clear();
+    app.explorer.root = std::path::PathBuf::new();
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     assert!(app.workspaces.request.is_none());
     assert!(!app.workspaces.popup.close);
@@ -565,7 +577,6 @@ fn picker_uses_folder_and_workspace_names_consistently() {
         "Saved workspaces",
         "Add folder",
         "Save workspace",
-        "Close current folder",
     ] {
         assert!(shown.contains(label), "missing {label}");
     }
@@ -579,9 +590,9 @@ fn picker_uses_folder_and_workspace_names_consistently() {
     for label in [
         "Saved workspaces",
         "Open workspace",
-        "Update from open folders",
-        "Rename workspace",
-        "Delete workspace",
+        "Update folders",
+        "Rename…",
+        "Delete…",
     ] {
         assert!(shown.contains(label), "missing {label}");
     }
@@ -608,20 +619,34 @@ fn adding_a_workspace_names_the_action_in_the_folder_dialog() {
 #[test]
 fn picker_text_and_actions_remain_readable_across_workbench_themes() {
     let (_root, mut app) = fixture();
+    app.tabs[0].editor = crate::editor::Editor::test_with_text(
+        &"Background build output and agent messages fill the workbench with text.\n".repeat(60),
+    );
+    app.cursor_blinking = false;
     let mut failures = Vec::new();
     for theme in crate::ui_control_visibility_tests::audit_themes() {
         app.colors = theme.to_theme_colors();
-        for mode in 0..4 {
+        crate::ui_workspaces::dismiss(&mut app);
+        let behind = draw(&mut app, 150, 36);
+        let code = app.code_area.unwrap();
+        let context = (code.x, code.y + 1);
+        assert!(!behind[context].symbol().trim().is_empty());
+        for mode in 0..6 {
             match mode {
                 0 => crate::ui_workspaces::open(&mut app),
                 1 => crate::ui_workspace_sets::open(&mut app),
                 2 => crate::ui_workspace_sets::save(&mut app),
-                _ => {
+                3 => {
                     crate::ui_workspace_sets::open(&mut app);
                     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
                 }
+                4 => crate::ui_workspaces::close(&mut app),
+                _ => {
+                    crate::ui_workspace_sets::open(&mut app);
+                    key(&mut app, KeyCode::Delete, KeyModifiers::NONE);
+                }
             }
-            let buffer = draw(&mut app, 110, 24);
+            let buffer = draw(&mut app, 150, 36);
             crate::ui_control_visibility_tests::check_region(
                 &buffer,
                 app.workspaces.popup.area,
@@ -629,7 +654,30 @@ fn picker_text_and_actions_remain_readable_across_workbench_themes() {
                 &mut failures,
                 &app.colors.ui,
             );
+            assert!(!app.workspaces.popup.area.contains(context.into()));
+            let before = &behind[context];
+            let after = &buffer[context];
+            assert_eq!(
+                after.symbol(),
+                before.symbol(),
+                "the backdrop retains context"
+            );
+            assert!(
+                crate::ui_colors::contrast_ratio(after.fg, after.bg).unwrap()
+                    < crate::ui_colors::contrast_ratio(before.fg, before.bg).unwrap(),
+                "{} workspace view {mode}: background text competes with the popup",
+                theme.name,
+            );
+            app.rendering_animation_frame = true;
+            let cached = draw(&mut app, 150, 36);
+            app.rendering_animation_frame = false;
+            assert_eq!(
+                cached[context], buffer[context],
+                "the backdrop must not accumulate"
+            );
         }
+        crate::ui_workspaces::dismiss(&mut app);
+        assert_eq!(draw(&mut app, 150, 36)[context], behind[context]);
     }
     assert!(
         failures.is_empty(),
@@ -646,12 +694,16 @@ fn picker_text_and_actions_remain_readable_across_workbench_themes() {
 #[test]
 fn workspace_picker_rendered_previews() {
     let (_root, mut app) = fixture();
+    app.tabs[0].editor = crate::editor::Editor::test_with_text(
+        &"Build output and agent chat: working on the project, checking files, running commands and reporting results.\n".repeat(60),
+    );
+    app.cursor_blinking = false;
     app.workspaces.parked[0].app.workspace_activity.unread = 2;
     app.workspaces.parked[0].app.workspace_activity.last = "Agent finished: tests pass".into();
     crate::ui_workspaces::open(&mut app);
     app.workspaces.popup.selected = 1;
     for (name, width, height) in [
-        ("Workspace picker - open", 110, 24),
+        ("Workspace picker - open", 150, 36),
         ("Workspace picker - narrow", 48, 16),
     ] {
         crate::ui_control_visibility_tests::snapshot(&draw(&mut app, width, height), name);
@@ -685,4 +737,106 @@ fn workspace_picker_rendered_previews() {
         app.workspaces.popup.sets.mode,
         Some(Mode::Delete(_))
     ));
+    for theme in ["monokai", "light", "high-contrast"] {
+        app.colors = crate::builtin_themes::THEMES
+            .iter()
+            .find(|entry| entry.key == theme)
+            .unwrap()
+            .theme()
+            .to_theme_colors();
+        crate::ui_workspaces::open(&mut app);
+        crate::ui_control_visibility_tests::snapshot(
+            &draw(&mut app, 150, 36),
+            &format!("Workspace picker - busy {theme}"),
+        );
+    }
+}
+
+#[test]
+fn workspace_manager_is_centered_and_keeps_actions_separate_from_folders() {
+    for (width, height) in [(120, 32), (200, 70), (80, 20), (40, 12), (12, 8), (4, 4)] {
+        let (_root, mut app) = fixture();
+        crate::ui_workspaces::open(&mut app);
+        let buffer = draw(&mut app, width, height);
+        let area = app.workspaces.popup.area;
+        assert!((area.x as i32 - (width - area.right()) as i32).abs() <= 1);
+        assert!((area.y as i32 - (height - area.bottom()) as i32).abs() <= 1);
+        if width >= 80 && height >= 20 {
+            assert!(text(&buffer).contains("Engineering"));
+            assert!(text(&buffer).contains("Saved · 3 folders"));
+            let actions_y = row_containing(&buffer, area, "+ Add folder");
+            assert_eq!(app.workspaces.popup.close_hits.len(), 3);
+            for (close, _) in &app.workspaces.popup.close_hits {
+                assert!(close.y < actions_y);
+            }
+        }
+    }
+}
+
+#[test]
+fn workspace_manager_clarifies_active_modified_and_unsaved_collections() {
+    let (_root, mut app) = fixture();
+    app.workspaces.sets.active = Some(12);
+    crate::ui_workspace_sets::open(&mut app);
+    let shown = text(&draw(&mut app, 120, 32));
+    assert!(shown.contains("Release λ"));
+    assert_eq!(shown.matches("Active").count(), 1);
+    app.workspaces.parked.pop();
+    let shown = text(&draw(&mut app, 120, 32));
+    assert!(shown.contains("Unsaved changes"));
+    assert!(shown.contains("Active · Unsaved"));
+    app.workspaces.sets.catalog.sets.retain(|set| set.id != 12);
+    let shown = text(&draw(&mut app, 120, 32));
+    assert!(shown.contains("Unsaved workspace"));
+    assert!(!shown.contains("Active  3 folders"));
+    app.workspaces.sets.catalog.sets.clear();
+    crate::ui_workspaces::open(&mut app);
+    let shown = text(&draw(&mut app, 120, 32));
+    assert!(shown.contains("Unsaved workspace"));
+    assert!(shown.contains("Not saved"));
+}
+
+#[test]
+fn each_folder_close_button_confirms_its_own_target_and_cancel_keeps_the_filter() {
+    let (_root, mut app) = fixture();
+    crate::ui_workspaces::open(&mut app);
+    crate::ui_workspace_sets::paste(&mut app, "web");
+    draw(&mut app, 120, 32);
+    let close = app
+        .workspaces
+        .popup
+        .close_hits
+        .iter()
+        .find(|(_, id)| *id == 1)
+        .unwrap()
+        .0;
+    click(&mut app, close);
+    assert_eq!(app.workspaces.active, 0);
+    assert_eq!(app.workspaces.popup.close_target, Some(1));
+    let shown = text(&draw(&mut app, 120, 32));
+    assert!(shown.contains("Close “web”?"));
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(!app.workspaces.popup.close);
+    assert_eq!(app.workspaces.popup.search.text, "web");
+    assert!(app.workspaces.request.is_none());
+    draw(&mut app, 120, 32);
+    let close = app.workspaces.popup.close_hits[0].0;
+    click(&mut app, close);
+    key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(matches!(
+        app.workspaces.request,
+        Some(Request::CloseFolder(1))
+    ));
+}
+
+#[test]
+fn stale_folder_close_target_cannot_close_another_folder() {
+    let (_root, mut app) = fixture();
+    crate::ui_workspaces::close_folder(&mut app, 1);
+    app.workspaces.parked.remove(0);
+    key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(app.workspaces.request.is_none());
+    assert!(!app.workspaces.popup.close);
 }

@@ -22,6 +22,105 @@ fn wait_for_files(app: &mut App) {
     });
 }
 
+fn open_search_result(app: &mut App, path: &std::path::Path, line: usize, col: usize) {
+    app.global_search_results = vec![crate::app::GlobalSearchResult {
+        file_path: path.into(), line_num: line, line_text: "match".into(),
+        col_start: col, col_end: col + 1, context_before: None, context_after: None,
+    }].into();
+    app.global_search_selected = 0;
+    app.focus_global_search();
+    assert!(app.open_global_search_result());
+}
+
+#[test]
+fn workspace_search_results_follow_the_preview_setting_and_replace_loading_previews() {
+    for enabled in [false, true] {
+        let (directory, mut app) = workspace();
+        app.apply_settings(&Settings { enable_preview_tabs: Some(enabled), ..Default::default() });
+        let a = directory.path().join("a.txt");
+        let b = directory.path().join("b.txt");
+        open_search_result(&mut app, &a, 1, 0);
+        assert_eq!(app.tabs.len(), 1);
+        assert!(app.editor().unwrap().bg_loading);
+        assert_eq!(app.tabs[0].preview, enabled);
+        open_search_result(&mut app, &b, 1, 2);
+        assert_eq!(app.tabs.len(), if enabled { 1 } else { 2 });
+        wait_for_files(&mut app);
+        assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&b));
+        assert_eq!(app.editor().unwrap().rope.to_string(), "b.txt\n");
+        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 2));
+        assert_eq!(app.tabs[app.active_tab].preview, enabled);
+    }
+}
+
+#[test]
+fn workspace_search_results_in_the_same_file_keep_its_preview_and_latest_cursor() {
+    let (directory, mut app) = workspace();
+    let a = directory.path().join("a.txt");
+    std::fs::write(&a, "first line\n界 needle\nlast line\n").unwrap();
+    open_search_result(&mut app, &a, 2, 2);
+    let identity = app.editor().unwrap().navigation_id;
+    open_search_result(&mut app, &a, 2, 5);
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.editor().unwrap().navigation_id, identity);
+    assert!(app.tabs[0].preview);
+    wait_for_files(&mut app);
+    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (1, 5));
+    open_search_result(&mut app, &a, 3, 1);
+    assert!(app.tabs[0].preview);
+    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (2, 1));
+    open_search_result(&mut app, &directory.path().join("b.txt"), 1, 0);
+    assert_eq!(app.tabs.len(), 1);
+    assert!(app.tabs[0].preview);
+}
+
+#[test]
+fn workspace_search_preserves_existing_permanent_pinned_and_edited_tabs() {
+    for state in ["permanent", "pinned", "edited"] {
+        let (directory, mut app) = workspace();
+        let a = directory.path().join("a.txt");
+        if state == "permanent" { app.open_file(&a); }
+        else { app.open_file_preview(&a); }
+        wait_for_files(&mut app);
+        if state == "pinned" { app.tabs[0].pinned = true; }
+        if state == "edited" { app.editor_mut().unwrap().insert_char('!'); }
+        let identity = app.editor().unwrap().navigation_id;
+        let text = app.editor().unwrap().rope.to_string();
+        open_search_result(&mut app, &a, 1, 1);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.editor().unwrap().navigation_id, identity);
+        assert!(!app.tabs[0].preview);
+        open_search_result(&mut app, &directory.path().join("b.txt"), 1, 0);
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.tabs[0].editor.rope.to_string(), text);
+        assert_eq!(app.tabs[0].pinned, state == "pinned");
+        assert!(app.tabs[1].preview);
+    }
+}
+
+#[test]
+fn workspace_search_reuses_an_existing_preview_in_another_split_without_keeping_it() {
+    let (directory, mut app) = workspace();
+    app.open_file(&directory.path().join("a.txt"));
+    app.open_file(&directory.path().join("b.txt"));
+    app.create_split_group_dir(1, SplitDirection::Horizontal);
+    let c = directory.path().join("c.txt");
+    app.open_file_preview(&c);
+    wait_for_files(&mut app);
+    let group = app.active_group;
+    let identity = app.editor().unwrap().navigation_id;
+    app.switch_group(0);
+    open_search_result(&mut app, &c, 1, 2);
+    assert_eq!(app.active_group, group);
+    assert_eq!(app.editor().unwrap().navigation_id, identity);
+    assert_eq!(app.tabs.len(), 2);
+    assert!(app.tabs[app.active_tab].preview);
+    open_search_result(&mut app, &directory.path().join("d.txt"), 1, 0);
+    assert_eq!(app.active_group, group);
+    assert_eq!(app.tabs.len(), 2);
+    assert!(app.tabs[app.active_tab].preview);
+}
+
 #[test]
 fn preview_clicks_replace_loading_files_and_second_click_keeps_the_file() {
     let (directory, mut app) = workspace();

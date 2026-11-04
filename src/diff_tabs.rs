@@ -255,6 +255,11 @@ pub(crate) struct DiffViewState {
     pending: bool,
 }
 
+pub(crate) struct InactiveDiffView {
+    saved: DiffViewState,
+    pub(crate) pending: bool,
+}
+
 /// A suspended card in the commit review. All large fields are moved; the
 /// active card and this cache never own independent copies of its revisions.
 pub(crate) struct CommitFileView {
@@ -861,6 +866,15 @@ impl App {
         }
     }
 
+    pub(crate) fn git_compare_pending_for_active_editor(&self) -> bool {
+        self.source_control_enabled
+            && !self.rendering_inactive_editor
+            && self.active_diff_tab_id() == self.diff_tabs.owner
+            && self.pending_git_compare_path.as_ref().is_some_and(|path| {
+                self.editor().and_then(|editor| editor.file_path.as_ref()) == Some(path)
+            })
+    }
+
     pub(crate) fn suspend_diff_tab(&mut self) {
         if let Some(id) = self.diff_tabs.owner.take() {
             let view = DiffViewState::take(self);
@@ -1113,24 +1127,32 @@ impl App {
 
     // Split rendering temporarily swaps the visible tab list. Project its
     // cached view without cancelling or starting any active-tab workers.
-    pub(crate) fn begin_inactive_diff_view(&mut self) -> Option<DiffViewState> {
+    pub(crate) fn begin_inactive_diff_view(&mut self) -> Option<InactiveDiffView> {
         let id = self.active_diff_tab_id();
         if id.is_none() && self.diff_tabs.owner.is_none() {
             return None;
         }
         let saved = DiffViewState::take(self);
-        if let Some(view) = id.and_then(|id| self.diff_tabs.views.remove(&id)) {
+        let pending = if let Some(view) = id.and_then(|id| self.diff_tabs.views.remove(&id)) {
+            let pending = view.pending;
             view.install(self);
-        }
-        Some(saved)
+            pending
+        } else {
+            // An uncached diff tab has not prepared its comparison yet.
+            id.is_some()
+        };
+        let pending = pending && self.editor().is_some_and(|editor| {
+            !editor.load_failed && !editor.large_file_mode
+        });
+        Some(InactiveDiffView { saved, pending })
     }
 
-    pub(crate) fn end_inactive_diff_view(&mut self, saved: Option<DiffViewState>) {
-        if let Some(saved) = saved {
+    pub(crate) fn end_inactive_diff_view(&mut self, saved: Option<InactiveDiffView>) {
+        if let Some(InactiveDiffView { saved, pending }) = saved {
             if let Some(id) = self.active_diff_tab_id() {
                 let mut view = DiffViewState::take(self);
                 // A pending active compare belongs to the focused tab.
-                view.pending = view.mode == DiffMode::Off && view.base.is_none();
+                view.pending = pending;
                 self.cache_diff_view(id, view);
             }
             saved.install(self);

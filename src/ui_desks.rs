@@ -421,6 +421,21 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     true
 }
 
+pub(crate) fn focused_input(app: &App) -> Option<crate::text_input::TextInputId> {
+    app.desks.popup.mode.as_ref().filter(|mode| **mode != Mode::Close)
+        .map(|_| crate::text_input::TextInputId::DeskPopup)
+}
+
+pub(crate) fn edit_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+    let popup = &mut app.desks.popup;
+    let result = popup.history.edit(
+        crate::text_input::TextInput::new(&mut popup.text, &mut popup.cursor, &mut popup.anchor),
+        code, modifiers, paste,
+    );
+    if result.changed { popup.selected = 0; popup.scroll = 0; }
+    result
+}
+
 pub(crate) fn paste(app: &mut App, text: &str) -> bool {
     if app.desks.popup.mode.is_none() {
         return false;
@@ -447,6 +462,12 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         app.mouse_row = mouse.row;
     }
     if app.desks.popup.mode.is_some() {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+            && app.text_input_area(crate::text_input::TextInputId::DeskPopup)
+                .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
+            && app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
+            return true;
+        }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if !app.desks.popup.area.contains(pos) {
@@ -849,6 +870,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let style = Style::default().fg(app.colors.ui.quick_text_color(row_bg, selected)).bg(row_bg);
         f.render_widget(Paragraph::new(format!(" {}", label)).style(style), rect);
         p.hits.push((rect, action));
+    }
+    if let Some(map) = p.input_map.clone() {
+        app.register_text_input(crate::text_input::TextInputId::DeskPopup, map);
     }
 }
 

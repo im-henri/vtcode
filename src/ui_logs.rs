@@ -242,6 +242,12 @@ impl State {
             .as_ref()
             .is_some_and(|reader| reader.search_focused())
     }
+    pub(crate) fn find_input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
+        self.reader().find_input_state()
+    }
+    pub(crate) fn edit_find_input(&mut self, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+        self.reader().edit_find_input(code, modifiers, paste)
+    }
     fn reader(&mut self) -> &mut text::Reader {
         self.reader
             .get_or_insert_with(|| Box::new(text::Reader::default()))
@@ -259,6 +265,7 @@ impl State {
             log.observe(None);
         }
     }
+    #[cfg(test)]
     pub(crate) fn reset_views(&mut self) {
         self.hide();
         self.reader = None;
@@ -363,6 +370,15 @@ pub(crate) fn draw_content(frame: &mut Frame, app: &mut App, area: Rect) {
     app.logs
         .reader()
         .draw(frame, &app.colors, area, text_focused, mouse, log.as_ref(), source);
+    if let Some(hit) = app.logs.reader().find_hit_map() {
+        app.register_text_input(crate::text_input::TextInputId::OutputFind, hit);
+    }
+}
+
+pub(crate) fn focus_find(app: &mut App) {
+    app.active_pane = ActivePane::Panel;
+    app.logs.focus = None;
+    app.logs.reader().focus_find();
 }
 
 pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -621,6 +637,12 @@ pub(crate) fn mouse(app: &mut App, mouse: MouseEvent) -> bool {
     }
     if blocked(app) {
         return false;
+    }
+    if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+        && app.text_input_area(crate::text_input::TextInputId::OutputFind)
+            .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
+        && app.handle_background_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
+        return true;
     }
     if matches!(
         mouse.kind,

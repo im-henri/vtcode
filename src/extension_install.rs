@@ -22,6 +22,21 @@ pub(crate) fn validate_relative(path: &Path) -> Result<(), String> {
 pub(crate) fn validate_manifest(
     manifest: &crate::extension_manifest::ExtensionManifest,
 ) -> Result<(), String> {
+    validate_manifest_source(manifest, true)
+}
+
+/// Source trees can be developed before their public repository is created.
+/// Release installation still requires and verifies an exact repository identity.
+pub(crate) fn validate_local_manifest(
+    manifest: &crate::extension_manifest::ExtensionManifest,
+) -> Result<(), String> {
+    validate_manifest_source(manifest, false)
+}
+
+fn validate_manifest_source(
+    manifest: &crate::extension_manifest::ExtensionManifest,
+    require_repository: bool,
+) -> Result<(), String> {
     let id = manifest.id.as_str();
     if id.is_empty()
         || id.len() > 100
@@ -65,11 +80,13 @@ pub(crate) fn validate_manifest(
     if manifest.name.trim().is_empty() || manifest.version.trim().is_empty() {
         return Err("Extension name and version are required".into());
     }
-    let source = ExtensionSource::parse(&manifest.repository).map_err(|_| {
-        "Every extension must declare a GitHub `repository` containing its source code".to_string()
-    })?;
-    if source.reference.is_some() {
-        return Err("The manifest's repository must link to the GitHub repository root".into());
+    if require_repository || !manifest.repository.trim().is_empty() {
+        let source = ExtensionSource::parse(&manifest.repository).map_err(|_| {
+            "Published extensions must declare a GitHub `repository` containing their source code".to_string()
+        })?;
+        if source.reference.is_some() {
+            return Err("The manifest's repository must link to the GitHub repository root".into());
+        }
     }
     if !manifest.main.is_empty() {
         validate_relative(Path::new(&manifest.main))?;

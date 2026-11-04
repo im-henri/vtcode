@@ -184,6 +184,7 @@ mod extension_recovery;
 #[cfg(test)] mod extension_hex_tests;
 #[cfg(test)] mod extension_waveform_tests;
 #[cfg(test)] mod extension_tabular_tests;
+#[cfg(test)] mod extension_engineer_tests;
 mod app_extension_install;
 mod extension_lifecycle;
 mod extension_manifest;
@@ -228,6 +229,8 @@ mod git_tasks;
 mod git_operation;
 mod ui_git_operation;
 mod git_output;
+#[cfg(test)]
+mod git_config_error_tests;
 #[cfg(windows)]
 mod windows_input;
 #[cfg(unix)]
@@ -287,6 +290,7 @@ mod ui_helpers;
 mod ui_markdown;
 mod ui_panels;
 mod terminal_sidebar;
+mod terminal_scrollbar;
 mod ui_status;
 mod ui_performance;
 mod ui_performance_details;

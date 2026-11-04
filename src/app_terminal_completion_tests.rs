@@ -93,7 +93,7 @@ fn terminal_completion_editor_badge_preserves_tab_and_close_hit_targets() {
 fn terminal_completion_watching_other_panes_and_window_focus_are_independent() {
     let (mut app, _exits) = fixture();
     finish(&mut app, 0, 0);
-    assert!(!app.terminals[0].completion.unread, "the current terminal needs only a short blink");
+    assert!(!app.terminals[0].completion.visible(Instant::now()), "the focused terminal needs no completion alert");
     app.terminal_panel_focused = false;
     finish(&mut app, 0, 0);
     assert!(app.terminals[0].completion.unread, "editing a file must leave the terminal unread");
@@ -106,6 +106,37 @@ fn terminal_completion_watching_other_panes_and_window_focus_are_independent() {
     app.terminal_has_focus = true;
     draw(&mut app);
     assert!(!app.terminals[1].completion.unread);
+}
+
+#[test]
+fn focused_terminal_successes_and_failures_never_show_a_badge_or_blink() {
+    for editor_tab in [false, true] {
+        for code in [0, 17] {
+            let (mut app, _exits) = fixture();
+            if editor_tab { assert!(app.detach_terminal_to_group(0, app.active_group)); }
+            draw(&mut app);
+            finish(&mut app, 0, code);
+            let now = Instant::now();
+            assert!(!app.terminals[0].completion.unread);
+            assert!(!app.terminals[0].completion.visible(now));
+            assert!(!app.terminals[0].completion.pulse(now, true));
+            assert_eq!(app.next_terminal_completion_wait(now), None);
+            assert_eq!(app.terminals[0].completion.failed(), code != 0);
+            let buffer = draw(&mut app);
+            let header = if editor_tab { app.tab_bar_area.unwrap() }
+                else { app.terminal_sidebar_tab_areas.iter().find(|(_, index)| *index == 0).unwrap().0 };
+            let label: String = (header.x..header.right()).map(|x| buffer[(x, header.y)].symbol()).collect();
+            assert!(label.contains("Shell"), "{label}");
+            assert!(!label.contains('●'), "{label}");
+            let background = app.colors.ui.bg_panel;
+            assert_eq!(crate::ui_chrome_tabs::terminal_completion_background(&app, Some(0), background, now), background);
+            if editor_tab { app.active_tab = 0; }
+            else { app.terminal_panel_focused = false; }
+            draw(&mut app);
+            assert!(!app.terminals[0].completion.visible(Instant::now()), "leaving the terminal must not resurrect an acknowledged command");
+            assert_eq!(app.next_terminal_completion_wait(Instant::now()), None);
+        }
+    }
 }
 
 #[test]

@@ -753,6 +753,40 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_line_shortcuts_copy_whole_lines_with_selection() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        for (code, line) in [(KeyCode::Up, 1), (KeyCode::Down, 2)] {
+            for anchor in [None, Some((1, 2)), Some((1, 8)), Some((1, 5))] {
+                let mut app = app_with_content("head\nalpha beta\nend");
+                app.active_pane = crate::app::ActivePane::Editor;
+                let editor = app.editor_mut().unwrap();
+                editor.cursor_line = 1;
+                editor.cursor_col = 5;
+                editor.selection_anchor = anchor;
+                let selected = editor.selected_text();
+
+                crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(
+                    code, KeyModifiers::ALT | KeyModifiers::SHIFT,
+                ));
+
+                let editor = app.editor_mut().unwrap();
+                assert_eq!(editor.rope.to_string(), "head\nalpha beta\nalpha beta\nend");
+                assert_eq!((editor.cursor_line, editor.cursor_col), (line, 5));
+                assert_eq!(editor.selected_text(), selected);
+                editor.undo();
+                assert_eq!(editor.rope.to_string(), "head\nalpha beta\nend");
+                assert_eq!((editor.cursor_line, editor.cursor_col), (1, 5));
+                assert_eq!(editor.selection_anchor, anchor);
+                editor.redo();
+                assert_eq!(editor.rope.to_string(), "head\nalpha beta\nalpha beta\nend");
+                assert_eq!((editor.cursor_line, editor.cursor_col), (line, 5));
+                assert_eq!(editor.selected_text(), selected);
+            }
+        }
+    }
+
+    #[test]
     fn delete_line_removes_current_line() {
         let mut app = app_with_content("aaa\nbbb\nccc\n");
         app.editor_mut().unwrap().cursor_line = 1;

@@ -2,7 +2,6 @@ use crossterm::event;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use crate::app::App;
 use crate::helpers::len_as_u16;
-use crate::input;
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
@@ -363,7 +362,7 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
             let clicked = scroll + (row - inner_y - 1) as usize;
             if clicked < app.global_search_results.len() {
                 app.global_search_selected = clicked;
-                input::handle_global_search_key(app, KeyCode::Enter, KeyModifiers::NONE);
+                app.preview_global_search_result();
             }
             return true;
         }

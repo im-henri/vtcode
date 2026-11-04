@@ -1,6 +1,6 @@
 use super::*;
 use crate::{app::App, text_input::TextInputId};
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 struct Workspace(tempfile::TempDir);
 
@@ -270,12 +270,15 @@ fn sessions_without_field_histories_keep_their_last_filter_and_replacement_value
 fn workspace_history_keys_leave_other_fields_and_result_navigation_available() {
     let workspace = Workspace::new();
     let mut app = workspace.app();
+    let file = workspace.0.path().join("file.txt");
+    std::fs::write(&file, "current term\ncurrent term\ncurrent term\n").unwrap();
+    app.focus_global_search();
     app.global_search_query = "old term".into();
     app.push_global_search_history();
     app.global_search_query = "current term".into();
-    app.global_search_results = (1..=3)
+    let results: Vec<_> = (1..=3)
         .map(|line| crate::app::GlobalSearchResult {
-            file_path: workspace.0.path().join("file.txt"),
+            file_path: file.clone(),
             line_num: line,
             line_text: "current term".into(),
             col_start: 0,
@@ -283,21 +286,29 @@ fn workspace_history_keys_leave_other_fields_and_result_navigation_available() {
             context_before: None,
             context_after: None,
         })
-        .collect::<Vec<_>>()
-        .into();
-    crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::ALT);
-    assert_eq!(app.global_search_selected, 1);
+        .collect();
+    app.global_search_results = results.clone().into();
+    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
+    assert_eq!(app.global_search_query, "old term", "history stays accessible with matches");
+    assert!(app.tabs.is_empty());
+    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::ALT));
     assert_eq!(app.global_search_query, "current term");
-    app.search_focus_field = 1;
+    app.global_search_results = results.into();
+    app.global_search_pending_since = None;
+    crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.global_search_selected, 0, "the first arrow enters the results");
+    crate::input::handle_explorer_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.global_search_selected, 1);
+    app.focus_text_input(TextInputId::GlobalSearch(1));
     app.global_search_replace_query = "replacement".into();
     crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     assert_eq!(app.global_search_selected, 1, "plain arrows belong to field history");
-    crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::ALT);
+    crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
     assert_eq!(app.global_search_selected, 2);
     assert_eq!(app.global_search_replace_query, "replacement");
-    app.search_focus_field = 0;
-    crate::input::handle_global_search_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
-    assert_eq!(app.global_search_query, "old term");
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        app.tabs.iter().all(|tab| !tab.editor.bg_loading)
+    });
 }
 
 #[test]

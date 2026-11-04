@@ -5,6 +5,13 @@ API version `2` adds custom file editors to the existing commands, views,
 overlays, settings, diagnostics, and text-edit APIs. API version `1` remains
 accepted by the host. This SDK exposes `API_VERSION = "2"`.
 
+Locally developed extensions can omit `repository` until their GitHub repository
+exists. A nonempty repository must still be a valid GitHub repository root.
+Release packages always require a repository matching their download source.
+Extension setting writes are serialized across workers and atomically replace the
+settings file. An unreadable or malformed existing file is preserved and saving
+returns an error, allowing the guest to offer an export instead of losing data.
+
 Host calls are available when compiling for `wasm32`. Shared editor data types
 also compile natively, so extension logic can be unit-tested without linking
 the editor's Wasm host imports into a native test executable.
@@ -241,6 +248,17 @@ queue work or advance an internal decoder do not redraw an unchanged surface.
 Keep callbacks bounded:
 the host supplies 10 million Wasm fuel units per UI call and limits guest memory
 to 128 MiB. Frames are limited to 2 MiB, 512 lines, and 32768 total spans.
+
+Frames can opt into additional shortcuts with `keyCapture`, for example
+`["Ctrl+L", "Ctrl+Enter", "Ctrl+Shift+C", "Alt+1"]`. The host checks up to 32
+single-stroke shortcuts using the workbench shortcut syntax. These reach the
+view before built-in editor defaults. Explicit configured workbench bindings
+keep their priority, and F1, Ctrl+P/W/Tab and Ctrl+Shift+S remain reserved.
+The field is optional; older hosts ignore it.
+
+`vtcode_deactivate` receives the background task fuel budget so small persistent
+tools can flush their last accepted state on reload/unload. Reload/unload waits
+for views with staged input (`set_input_pending`) to settle first.
 Clipboard reads are supplied for paste events, and writes return through the
 UI thread. The guest has no WASI filesystem, process, or network capabilities.
 

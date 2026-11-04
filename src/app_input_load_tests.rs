@@ -124,8 +124,10 @@ fn multiline_typing_keeps_normal_autoindent_pairing_undo_and_completion() {
             assert!(!actual.vtcomplete_active);
         } else {
             assert!(actual.vtcomplete_input_batch.submissions > 0);
-        actual.wait_for_background(Duration::from_secs(3), |app| app.vtcomplete_active);
-        assert!(actual.vtcomplete_suggestions.iter().any(|word| word == "value"));
+            // This checks completion correctness, not worker latency under the
+            // full release suite's competing background jobs.
+            actual.wait_for_background(Duration::from_secs(10), |app| app.vtcomplete_active);
+            assert!(actual.vtcomplete_suggestions.iter().any(|word| word == "value"));
         }
         for _ in 0..15 {
             let (a, b) = (actual.editor().unwrap(), expected.editor().unwrap());

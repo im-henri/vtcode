@@ -479,24 +479,27 @@ fn draw_docked_terminal(f: &mut Frame, app: &mut App, index: usize, area: Rect) 
     if area.is_empty() || index >= app.terminals.len() {
         return;
     }
-    let width = area.width as usize;
-    let height = area.height as usize;
+    let content = crate::terminal_scrollbar::content_area(area);
+    let width = content.width as usize;
+    let height = content.height as usize;
     app.ensure_terminal_pty_at(index, width, height);
 
     if let Some(ref mut pty) = app.terminals[index].terminal_pty {
         pty.resize(width, height);
     }
     if let Some(ref pty) = app.terminals[index].terminal_pty {
-        app.terminal_surfaces.push(crate::app_terminal_selection::TerminalSurface {
-            index, area, group: None,
-        });
+        let surface = crate::app_terminal_selection::TerminalSurface {
+            index, area: content, group: None,
+        };
+        app.terminal_surfaces.push(surface);
         crate::ui_helpers::draw_terminal_emulator(
             f,
             pty,
-            area,
+            content,
             &app.colors.ui,
             app.cursor_visible && app.active_terminal == index && app.terminal_panel_focused,
         );
+        crate::terminal_scrollbar::draw(f, app, surface, area);
         return;
     }
 

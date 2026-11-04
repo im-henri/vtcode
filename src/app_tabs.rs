@@ -2,8 +2,11 @@ use std::path::Path;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{ActivePane, App, SourceControlRepositoryState, Tab, TabKind};
+#[cfg(test)]
+use crate::app::SourceControlRepositoryState;
+use crate::app::{ActivePane, App, Tab, TabKind};
 use crate::editor::Editor;
+#[cfg(test)]
 use crate::explorer::FileExplorer;
 
 fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loaded: crate::editor::LoadedTextFile, skip_open_prompt: bool) -> crate::background::BackgroundResult {
@@ -195,19 +198,24 @@ impl App {
         self.open_file_with_preview(path, self.enable_preview_tabs);
     }
 
+    /// Browse search matches in a reusable preview and retain existing tab states.
+    pub(crate) fn open_file_from_search(&mut self, path: &Path) {
+        self.open_file_with_source(path, self.enable_preview_tabs, true, None);
+    }
+
     fn open_file_with_preview(&mut self, path: &Path, preview: bool) {
-        self.open_file_with_source(path, preview, None);
+        self.open_file_with_source(path, preview, false, None);
     }
 
     pub(crate) fn open_file_with_preloaded(&mut self, path: &Path, loaded: crate::editor::LoadedTextFile) {
-        self.open_file_with_source(path, false, Some(loaded));
+        self.open_file_with_source(path, false, false, Some(loaded));
     }
 
-    fn open_file_with_source(&mut self, path: &Path, preview: bool, mut loaded: Option<crate::editor::LoadedTextFile>) {
+    fn open_file_with_source(&mut self, path: &Path, preview: bool, preserve_existing_preview: bool, mut loaded: Option<crate::editor::LoadedTextFile>) {
         self.start_empty_window_document_services();
         self.cancel_remote_location();
         self.record_navigation();
-        self.open_file_with_preview_inner(path, preview, &mut loaded);
+        self.open_file_with_preview_inner(path, preview, preserve_existing_preview, &mut loaded);
         self.record_navigation();
         if let Some(unused) = loaded {
             // Opening an already-live/shared buffer, or a pending Save As,
@@ -216,7 +224,7 @@ impl App {
         }
     }
 
-    fn open_file_with_preview_inner(&mut self, path: &Path, preview: bool, loaded: &mut Option<crate::editor::LoadedTextFile>) {
+    fn open_file_with_preview_inner(&mut self, path: &Path, preview: bool, preserve_existing_preview: bool, loaded: &mut Option<crate::editor::LoadedTextFile>) {
         if self.pending_save_as.values().any(|(generation, target)|
             *generation == self.workspace_generation && Self::same_open_path(target, path))
         {
@@ -250,7 +258,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|fp| Self::same_open_path(fp, &open_path));
                 if matches {
-                    self.tabs[i].preview = false;
+                    if !preserve_existing_preview { self.tabs[i].preview = false; }
                     self.active_tab = i;
                     self.active_pane = ActivePane::Editor;
                     self.sync_diff_tab();
@@ -273,7 +281,7 @@ impl App {
                     if matches {
                         self.switch_group(group_idx);
                         self.active_tab = tab_idx;
-                        self.pin_preview_tab();
+                        if !preserve_existing_preview { self.pin_preview_tab(); }
                         self.active_pane = ActivePane::Editor;
                         self.sync_diff_tab();
                         self.touch_tab_mru(tab_idx);
@@ -1320,7 +1328,12 @@ impl App {
             self.notify("No recently closed tabs");
         }
     }
+}
 
+// In-place resets support session and stale-result regression tests. Interactive
+// folder changes use the workbench lifecycle in app_workspaces instead.
+#[cfg(test)]
+impl App {
     /// Drop view state owned by the previous directory after its session has
     /// been saved. Settings and the destination session rebuild the layout.
     fn clear_workspace_view(&mut self) {
@@ -1566,7 +1579,9 @@ impl App {
             self.notify(format!("Not a directory: {}", path.display()));
         }
     }
+}
 
+impl App {
     fn tab_ui_width(tab: &Tab) -> usize {
         let display_width = if let Some(revision) = tab
             .editor

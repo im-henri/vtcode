@@ -27,9 +27,12 @@ pub(super) fn last_pointer_updated() -> std::time::SystemTime {
     LAST_POINTER.get()
 }
 
-#[cfg(windows)]
 pub(super) fn observe(observer: impl FnMut(&App) -> bool + 'static) {
     OBSERVER.with_borrow_mut(|slot| *slot = Some(Box::new(observer)));
+}
+
+pub(super) fn clear_observer() {
+    OBSERVER.with_borrow_mut(|slot| *slot = None);
 }
 
 #[cfg(windows)]

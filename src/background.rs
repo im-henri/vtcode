@@ -355,6 +355,7 @@ pub enum BackgroundResult {
     RemoteReconnectFile { generation: u64, check: crate::app_remote_connection::FileCheck },
     AgentFileResolved { agent: crate::app_acp::AgentId, handle: vtcode::acp::ClientHandle, id: vtcode::acp::protocol::RequestId, ticket: u64, request: vtcode::acp::FileRequest, aliases: Result<Vec<(PathBuf, Option<PathBuf>)>, vtcode::acp::protocol::Error> },
     RemoteTransferProgress { generation: u64, path: PathBuf, saving: bool, completed: u64, total: u64 },
+    #[cfg(test)]
     RemoteWorkspaceOpened {
         request: u64,
         source: u64,
@@ -460,6 +461,13 @@ pub enum BackgroundResult {
     },
     /// Search failures obey the same query lifetime as result batches.
     GlobalSearchFailed { generation: u64, error: String },
+    /// Recomputed matches for an edited open model within the current query.
+    GlobalSearchFileResults {
+        path: PathBuf,
+        serial: u64,
+        generation: u64,
+        result: Result<(Vec<crate::app::GlobalSearchResult>, bool), String>,
+    },
     /// Matches for the active file prepared from a Rope snapshot. Find input
     /// can arrive on every keystroke, so scanning never runs on the UI thread.
     #[cfg_attr(test, allow(dead_code))]

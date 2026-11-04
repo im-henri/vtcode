@@ -204,6 +204,24 @@ impl App {
         {
             return false;
         }
+        // Requested tool keys take priority over editor defaults. Only an
+        // explicitly reassigned workbench binding takes priority over a request.
+        let stroke = crate::app_shortcuts::normalize((modifiers, code));
+        let reassigned = self.keybindings.iter().any(|binding| {
+            binding.is_modified() && self.shortcut_applies(binding)
+                && crate::app_shortcuts::normalize((binding.modifiers, binding.code)) == stroke
+        });
+        let requested = self.active_extension_view()
+            .and_then(|view| self.extension_manager.get_view(&view.extension_id, &view.view_id))
+            .and_then(|view| view.frame)
+            .is_some_and(|frame| frame.key_capture.iter().take(32).any(|text| {
+                text.len() <= 64 && crate::app_shortcuts::parse_shortcut(text)
+                    .is_some_and(|(key, chord)| chord.is_none()
+                        && crate::app_shortcuts::normalize(key) == stroke)
+            }));
+        if requested && !reassigned {
+            return self.handle_active_extension_view_key(code, modifiers);
+        }
         if let Some(command) = self.lookup_keybinding(modifiers, code) {
             let command = match command {
                 "go_to_line" => "goto_line",

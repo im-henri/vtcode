@@ -300,6 +300,7 @@ impl App {
                 editor.paste_snapshot_text(&text, false, None);
             }
             editor.clipboard = text;
+            self.queue_global_search_editor_update();
             return;
         }
         let Some(snapshot) = crate::editor_paste::Snapshot::capture(editor, &text) else {
@@ -382,10 +383,11 @@ impl App {
                 .ok_or_else(|| {
                     "Paste cancelled because the destination was closed or moved".to_owned()
                 })?;
-            prepared.apply(editor, threshold)
+            prepared.apply(editor, threshold).map(|bytes| (bytes, editor.file_path.clone(), editor.rope.clone()))
         });
         match result {
-            Ok(bytes) => {
+            Ok((bytes, path, rope)) => {
+                if let Some(path) = path { self.queue_global_search_model_update(path, rope); }
                 self.last_edit_time = std::time::Instant::now();
                 self.notify(format!("Paste complete · {}", size(bytes)));
                 if self

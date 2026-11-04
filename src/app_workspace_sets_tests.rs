@@ -1,7 +1,7 @@
 use super::*;
 use crate::workspace_sets::{self, Location, Mutation, Scope};
 
-fn tick(app: &mut App) {
+pub(super) fn tick(app: &mut App) {
     app.poll_workspace_requests();
     services(app);
     if app.workspace_set_preserving() {
@@ -242,7 +242,7 @@ fn title_button_directory_menu_name_input_and_small_frames_share_hit_geometry() 
     app.workspaces.sets.path = project.path().join("sets.json");
     for width in [48, 80, 140] {
         draw(&mut app, width, 28);
-        let (directory, _) = crate::ui_chrome::workspace_controls(&app).unwrap();
+        let directory = crate::ui_chrome::workspace_button_area(&app).unwrap();
         crate::mouse::handle_mouse(
             &mut app,
             MouseEvent {
@@ -588,5 +588,5 @@ fn hovering_a_set_redraws_its_row_and_management_targets_that_set() {
     });
     let buffer = draw(&mut app, 120, 28);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-    assert!(text.contains("Beta") && text.contains("Update from open folders"));
+    assert!(text.contains("Beta") && text.contains("Update folders"));
 }

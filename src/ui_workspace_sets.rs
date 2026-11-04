@@ -7,6 +7,7 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Frame, layout::Rect};
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Mode {
@@ -65,6 +66,42 @@ pub(crate) struct Popup {
     contents_scroll: usize,
     contents_len: usize,
     hits: Vec<(Rect, Action, usize)>,
+}
+impl Popup {
+    pub(crate) fn input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
+        (&mut self.text, &mut self.cursor, &mut self.anchor)
+    }
+    pub(crate) fn focus_input(&mut self) {
+        self.field_focus = true;
+    }
+    pub(crate) fn name_focused(&self) -> bool {
+        self.field_focus && matches!(self.mode, Some(Mode::Save(_) | Mode::Rename(_)))
+    }
+}
+
+pub(crate) fn edit_input(
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    paste: Option<&str>,
+) -> crate::text_input::TextInputResult {
+    if app.workspace_sets_saving() {
+        return crate::text_input::TextInputResult {
+            consumed: true,
+            changed: false,
+        };
+    }
+    let popup = &mut app.workspaces.popup.sets;
+    let result = popup.history.edit(
+        TextInput::new(&mut popup.text, &mut popup.cursor, &mut popup.anchor),
+        code,
+        modifiers,
+        paste,
+    );
+    if result.changed {
+        app.workspaces.sets.error = None;
+    }
+    result
 }
 pub(crate) fn open(app: &mut App) {
     crate::ui_workspaces::open(app);
@@ -288,6 +325,30 @@ fn rows(app: &App) -> Vec<Row> {
             let Some((name, count, close)) = app.workspace_set_confirmation() else {
                 return vec![Row::new("Preparing workspace…", Action::None)];
             };
+            if app.workspace_folder_replacement() {
+                let mut rows = vec![
+                    Row::new(format!("Open “{name}”?"), Action::None),
+                    Row::new(
+                        "The folders below and their open files will close.",
+                        Action::None,
+                    ),
+                    Row::new("Their terminals and agents will stop.", Action::None),
+                    Row::new("Unsaved edits will be kept for next time.", Action::None),
+                ];
+                rows.extend(close.into_iter().map(|entry| {
+                    Row::new(
+                        if entry.path.is_empty() {
+                            entry.name
+                        } else {
+                            entry.path
+                        },
+                        Action::None,
+                    )
+                }));
+                rows.push(Row::new("Open folder", Action::Confirm));
+                rows.push(Row::new("Cancel", Action::Cancel));
+                return rows;
+            }
             let mut rows = vec![
                 Row::new(
                     format!(
@@ -713,52 +774,57 @@ fn draw_contents(f: &mut Frame, app: &mut App, id: u64, rows: &[Row]) {
     let name = set
         .as_ref()
         .map_or("Saved workspace", |set| set.name.as_str());
-    let desired = if set.is_some() {
-        paths.len().clamp(1, 8) + 9
-    } else {
-        4
-    };
-    let Some(inner) = picker::surface(f, app, name, desired) else {
+    let Some(inner) = picker::surface(
+        f,
+        app,
+        "Workspace details",
+        (paths.len().clamp(1, 8) + 12).max(16),
+    ) else {
         return;
     };
     let selected = app.workspaces.popup.selected;
     let back_index = rows.len().saturating_sub(1);
-    let back_height = u16::from(inner.height >= 3 || rows.len() == 1);
-    let action_count = rows.len().saturating_sub(back_height as usize);
-    if back_height > 0 {
-        let rect = Rect::new(inner.x, inner.y, inner.width, 1);
+    let room = inner.height;
+    let header = if room >= 9 { 4 } else { 0 };
+    let footer = if room >= 5 { 3 } else { room.min(2) };
+    if header > 0 {
+        let active = app.current_workspace_set().filter(|(set, _)| set.id == id);
+        let badge = match active {
+            Some((_, true)) => "Active · Unsaved changes",
+            Some(_) => "Active workspace",
+            None => "Saved workspace",
+        };
         picker::choice(
             f,
             app,
-            rect,
-            if inner.width < 24 {
-                "‹ Workspaces"
-            } else {
-                "‹ Saved workspaces"
-            },
-            "Esc",
-            selected == back_index,
+            Rect::new(inner.x, inner.y, inner.width, 1),
+            name,
+            badge,
+            false,
             true,
         );
-        app.workspaces
-            .popup
-            .sets
-            .hits
-            .push((rect, Action::Cancel, back_index));
+        picker::detail(
+            f,
+            app,
+            Rect::new(inner.x, inner.y + 1, inner.width, 1),
+            &format!(
+                "{} folder{} · Open this collection together",
+                paths.len(),
+                if paths.len() == 1 { "" } else { "s" }
+            ),
+        );
+        picker::detail(
+            f,
+            app,
+            Rect::new(inner.x, inner.y + 3, inner.width, 1),
+            "FOLDERS IN THIS WORKSPACE",
+        );
     }
-    let header_height = u16::from(inner.height >= 8);
-    let available = inner.height.saturating_sub(back_height + header_height);
-    // Keep a directory visible before secondary commands on short terminals.
-    // Commands scroll independently so the focused action remains reachable.
-    let preview_height = u16::from(!paths.is_empty() && available >= 2);
-    let separator = u16::from(preview_height > 0 && available >= 3);
-    let action_height =
-        (action_count as u16).min(available.saturating_sub(preview_height + separator));
     let contents = Rect::new(
         inner.x,
-        inner.y + back_height + header_height,
+        inner.y + header,
         inner.width,
-        available.saturating_sub(action_height + separator),
+        room.saturating_sub(header + footer),
     );
     let popup = &mut app.workspaces.popup.sets;
     popup.contents = contents;
@@ -767,35 +833,6 @@ fn draw_contents(f: &mut Frame, app: &mut App, id: u64, rows: &[Row]) {
         .contents_scroll
         .min(paths.len().saturating_sub(contents.height as usize));
     let start = popup.contents_scroll;
-    let end = (start + contents.height as usize).min(paths.len());
-    if set.is_none() {
-        picker::detail(f, app, contents, "Workspace is no longer available");
-    }
-    if header_height > 0 {
-        let badge = if paths.len() > contents.height as usize {
-            format!("{}–{} · PgUp/PgDn", start + 1, end)
-        } else {
-            String::new()
-        };
-        let label = if set.is_none() {
-            "Workspace is no longer available".into()
-        } else {
-            format!(
-                "{} folder{}",
-                paths.len(),
-                if paths.len() == 1 { "" } else { "s" }
-            )
-        };
-        picker::choice(
-            f,
-            app,
-            Rect::new(inner.x, inner.y + back_height, inner.width, 1),
-            &label,
-            &badge,
-            false,
-            false,
-        );
-    }
     for (offset, (index, path)) in paths
         .iter()
         .enumerate()
@@ -803,151 +840,207 @@ fn draw_contents(f: &mut Frame, app: &mut App, id: u64, rows: &[Row]) {
         .take(contents.height as usize)
         .enumerate()
     {
-        let active = set.as_ref().is_some_and(|set| set.active == index);
-        let badge = if active && contents.width >= 30 {
-            "Start here"
+        let first = set.as_ref().is_some_and(|set| set.active == index);
+        let badge = if first && contents.width >= 30 {
+            "Start folder"
         } else {
             ""
         };
-        let room = contents.width.saturating_sub(5 + badge.len() as u16);
-        let path =
-            crate::ui_performance::clip_middle(&crate::ui_workspaces::escaped(path), room as usize);
+        let path = crate::ui_performance::clip_middle(
+            &crate::ui_workspaces::escaped(path),
+            contents.width.saturating_sub(badge.width() as u16 + 6) as usize,
+        );
         picker::choice(
             f,
             app,
             Rect::new(contents.x, contents.y + offset as u16, contents.width, 1),
-            &format!("{} {path}", if active { "✓" } else { " " }),
+            &format!("{} {path}", if first { "▰" } else { "▱" }),
             badge,
             false,
             true,
         );
     }
-    if separator > 0 {
-        picker::separator(
-            f,
-            app,
-            Rect::new(inner.x, contents.bottom(), inner.width, 1),
-        );
+    if set.is_none() {
+        picker::detail(f, app, contents, "Workspace is no longer available");
     }
-    let action_start = selected
-        .min(action_count.saturating_sub(1))
-        .saturating_sub(action_height.saturating_sub(1) as usize);
-    for (offset, (index, row)) in rows
-        .iter()
-        .enumerate()
-        .take(action_count)
-        .skip(action_start)
-        .take(action_height as usize)
-        .enumerate()
-    {
-        let rect = Rect::new(
-            inner.x,
-            inner.bottom() - action_height + offset as u16,
-            inner.width,
-            1,
-        );
-        let badge = match row.action {
-            Action::Open(_) if selected == index => "Enter",
-            Action::Rename(_) => "F2",
-            Action::Delete(_) => "Delete",
-            Action::Cancel => "Esc",
-            _ => "",
-        };
-        let badge = if rect.width < 32 { "" } else { badge };
-        picker::choice(
+    if footer == 0 {
+        return;
+    }
+    let action_y = inner.bottom() - footer;
+    if footer == 1 && selected == back_index {
+        for (rect, index) in picker::action_buttons(
             f,
             app,
-            rect,
-            &row.text,
-            badge,
-            selected == index,
-            !app.workspace_sets_busy() || matches!(row.action, Action::Cancel),
-        );
+            Rect::new(inner.x, action_y, inner.width, 1),
+            &["‹ Saved workspaces"],
+            selected,
+            back_index,
+        ) {
+            app.workspaces
+                .popup
+                .sets
+                .hits
+                .push((rect, Action::Cancel, index));
+        }
+        return;
+    }
+    let action_count = rows.len().saturating_sub(1);
+    let labels: Vec<_> = rows
+        .iter()
+        .take(action_count)
+        .map(|row| row.text.as_str())
+        .collect();
+    for (rect, index) in picker::action_buttons(
+        f,
+        app,
+        Rect::new(inner.x, action_y, inner.width, 1),
+        &labels,
+        selected,
+        0,
+    ) {
         app.workspaces
             .popup
             .sets
             .hits
-            .push((rect, row.action.clone(), index));
+            .push((rect, rows[index].action.clone(), index));
+    }
+    if footer > 1 {
+        let row = Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
+        let hits =
+            picker::action_buttons(f, app, row, &["‹ Saved workspaces"], selected, back_index);
+        app.workspaces.popup.sets.hits.extend(
+            hits.into_iter()
+                .map(|(rect, index)| (rect, Action::Cancel, index)),
+        );
+        if row.width >= 62 {
+            picker::detail(
+                f,
+                app,
+                Rect::new(row.x + 25, row.y, row.width - 25, 1),
+                "F2 Rename · Delete Remove · PgUp/PgDn Folders",
+            );
+        }
     }
 }
 fn draw_list(f: &mut Frame, app: &mut App, rows: &[Row]) {
-    let actions = usize::from(app.open_folder_count() > 0) + usize::from(app.workspace_set_switching());
+    let actions =
+        usize::from(app.open_folder_count() > 0) + usize::from(app.workspace_set_switching());
     let count = rows.len().saturating_sub(actions);
-    let Some(layout) = picker::list(
-        f,
-        app,
-        true,
-        count,
-        actions,
-        usize::from(app.workspaces.sets.error.is_some()),
-    ) else {
+    let Some(layout) = picker::list(f, app, true, count, actions, 2) else {
         return;
     };
     let selected = app.workspaces.popup.selected;
+    let active = app.current_workspace_set();
     let start = picker::scroll(
         &mut app.workspaces.popup.scroll,
         selected,
         count,
-        layout.choices.height,
+        layout.choices.height / layout.row_height,
     );
+    let sets = app.saved_workspace_sets();
     for (offset, (index, row)) in rows
         .iter()
         .enumerate()
         .take(count)
         .skip(start)
-        .take(layout.choices.height as usize)
+        .take((layout.choices.height / layout.row_height) as usize)
         .enumerate()
     {
         let rect = Rect::new(
             layout.choices.x,
-            layout.choices.y + offset as u16,
+            layout.choices.y + offset as u16 * layout.row_height,
             layout.choices.width,
             1,
         );
+        let set = match row.action {
+            Action::Manage(id) => sets.iter().find(|set| set.id == id),
+            _ => None,
+        };
+        let current =
+            set.and_then(|set| active.as_ref().filter(|(current, _)| current.id == set.id));
+        let badge = match current {
+            Some((_, true)) => format!("Active · Unsaved  {}  ›", row.badge),
+            Some(_) => format!("Active  {}  ›", row.badge),
+            None if set.is_some() => format!("{}  ›", row.badge),
+            None => row.badge.clone(),
+        };
         picker::choice(
             f,
             app,
             rect,
-            &row.text,
-            &if matches!(row.action, Action::Manage(_)) {
-                format!("{}  ›", row.badge)
-            } else {
-                row.badge.clone()
-            },
+            &format!("{} {}", if selected == index { "›" } else { "▦" }, row.text),
+            &badge,
             selected == index,
             !matches!(row.action, Action::None),
         );
-        app.workspaces
-            .popup
-            .sets
-            .hits
-            .push((rect, row.action.clone(), index));
+        if layout.row_height > 1 {
+            let description = set
+                .map(|set| {
+                    root_paths(set)
+                        .iter()
+                        .map(|path| {
+                            path.rsplit(['/', '\\'])
+                                .find(|part| !part.is_empty())
+                                .unwrap_or(path)
+                                .to_owned()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("  ·  ")
+                })
+                .unwrap_or_else(|| "Save a workspace to keep a named folder collection.".into());
+            picker::subtitle(
+                f,
+                app,
+                Rect::new(rect.x, rect.y + 1, rect.width, 1),
+                &crate::ui_workspaces::clipped(&description, rect.width.saturating_sub(5) as usize),
+                selected == index,
+            );
+        }
+        app.workspaces.popup.sets.hits.push((
+            Rect {
+                height: layout.row_height,
+                ..rect
+            },
+            row.action.clone(),
+            index,
+        ));
     }
-    let action_start = selected
-        .saturating_sub(count)
-        .saturating_sub(layout.actions.height.saturating_sub(1) as usize);
-    for (offset, (index, row)) in rows
+    let labels: Vec<_> = rows
         .iter()
-        .enumerate()
-        .skip(count + action_start)
-        .take(layout.actions.height as usize)
-        .enumerate()
-    {
-        let rect = Rect::new(
-            layout.actions.x,
-            layout.actions.y + offset as u16,
-            layout.actions.width,
-            1,
-        );
-        picker::choice(f, app, rect, &row.text, "", selected == index, true);
+        .skip(count)
+        .map(|row| row.text.as_str())
+        .collect();
+    for (rect, index) in picker::action_buttons(f, app, layout.actions, &labels, selected, count) {
         app.workspaces
             .popup
             .sets
             .hits
-            .push((rect, row.action.clone(), index));
+            .push((rect, rows[index].action.clone(), index));
     }
-    let detail = app.workspaces.sets.error.as_deref().unwrap_or("");
-    picker::detail(f, app, layout.detail, detail);
+    let detail = app.workspaces.sets.error.clone().unwrap_or_else(|| {
+        rows.get(selected)
+            .and_then(|row| match row.action {
+                Action::Manage(id) => sets.iter().find(|set| set.id == id),
+                _ => None,
+            })
+            .map(|set| {
+                format!(
+                    "{} folders · Start folder: {}",
+                    set.roots.len(),
+                    root_paths(set).get(set.active).cloned().unwrap_or_default()
+                )
+            })
+            .unwrap_or_default()
+    });
+    picker::detail(
+        f,
+        app,
+        Rect {
+            height: layout.detail.height.min(1),
+            ..layout.detail
+        },
+        &detail,
+    );
 }
 fn draw_dialog(f: &mut Frame, app: &mut App, mode: Mode, rows: &[Row]) {
     let form = is_form(app);
@@ -956,6 +1049,7 @@ fn draw_dialog(f: &mut Frame, app: &mut App, mode: Mode, rows: &[Row]) {
         Mode::Save(None) => "Save workspace",
         Mode::Rename(_) => "Rename workspace",
         Mode::Delete(_) => "Delete workspace",
+        Mode::Confirm if app.workspace_folder_replacement() => "Open folder",
         _ => "Open workspace",
     };
     let error = app.workspaces.sets.error.clone();
@@ -1000,10 +1094,16 @@ fn draw_dialog(f: &mut Frame, app: &mut App, mode: Mode, rows: &[Row]) {
                     .theme_colors(&app.colors)
                     .render(f, Rect::new(text_x, y, text_width, 1)),
             );
+            let hit = p.input.clone().unwrap();
+            app.register_text_input(crate::text_input::TextInputId::WorkspaceName, hit);
             y += 1;
         }
         if inner.height >= 5 && !matches!(mode, Mode::Rename(_)) {
-            let entries: Vec<_> = app.workspace_entries().into_iter().filter(|entry| !entry.path.is_empty()).collect();
+            let entries: Vec<_> = app
+                .workspace_entries()
+                .into_iter()
+                .filter(|entry| !entry.path.is_empty())
+                .collect();
             picker::detail(
                 f,
                 app,

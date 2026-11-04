@@ -527,6 +527,7 @@ impl App {
         if let Some(path) = after.file_path {
             self.lsp_manager.invalidate_document_feedback(&path);
         }
+        self.queue_global_search_editor_update();
         true
     }
 

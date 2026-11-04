@@ -715,7 +715,7 @@ fn clicking_search_activity_focuses_query_from_editor() {
 }
 
 #[test]
-fn clicking_search_result_navigates_on_first_click() {
+fn clicking_search_result_navigates_on_first_click_and_keeps_search_focus_until_enter() {
     for already_open in [false, true] {
         let (workspace, mut app, mut terminal) = fixture();
         let path = workspace.path().join("result.txt");
@@ -746,7 +746,8 @@ fn clicking_search_result_navigates_on_first_click() {
             MouseEventKind::Down(MouseButton::Left),
             (panel.x + 3, result_y),
         );
-        assert_eq!(app.active_pane, ActivePane::Editor);
+        assert_eq!(app.active_pane, ActivePane::Explorer);
+        assert!(!app.global_search_active);
         if !already_open {
             assert!(app.editor().unwrap().bg_loading);
         }
@@ -759,6 +760,8 @@ fn clicking_search_result_navigates_on_first_click() {
         assert_eq!((editor.cursor_line, editor.cursor_col), (70, 92));
         assert!(editor.scroll_offset > 0, "match must be revealed vertically");
         assert!(editor.horizontal_scroll > 0, "match must be revealed horizontally");
+        key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.active_pane, ActivePane::Editor);
         key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
         assert_eq!(app.global_search_query, "needle");
         assert!(app.editor().unwrap().rope.line(70).to_string().contains("!needle"));
@@ -1149,6 +1152,7 @@ fn scrolled_workspace_results(
     app.global_search_results.set_all_collapsed(true);
     if selected_file_expanded {
         let path = app.global_search_results[0].file_path.clone();
+        std::fs::write(&path, "foo match 0\nfoo match 1\nfoo match 2\nfoo match 3\n").unwrap();
         app.global_search_results.set_collapsed(&path, false);
     }
     app.global_search_selected = 0;
@@ -1199,6 +1203,7 @@ fn workspace_search_expansion_preserves_viewport_with_selection_above_it() {
             draw(&mut app, &mut terminal);
             assert_eq!(app.global_search_selected, 1, "keyboard navigation must still move selection");
             assert!(app.global_search_scroll < scroll, "keyboard navigation still reveals the chosen match");
+            app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
         }
     }
 }

@@ -206,7 +206,7 @@ impl App {
         if !self.has_open_folder() && self.explorer_context_target.as_ref().is_none_or(|path| path.as_os_str().is_empty()) {
             match action {
                 "New File" => { self.new_file(); return false; }
-                "New Folder" => { crate::ui_workspaces::add(self); return false; }
+                "New Folder" => { crate::ui_workspaces::open_folder(self); return false; }
                 _ => {}
             }
         }
@@ -523,7 +523,10 @@ impl App {
 
     pub(crate) fn execute_rename(&mut self) {
         if self.remote_workspace.is_some() {
-            if self.bg_filesystem_action_running { return; }
+            if self.bg_filesystem_action_running {
+                self.notify("Another file operation is already running");
+                return;
+            }
             let Some(target) = self.rename.target.clone() else { return; };
             let name = self.rename.query.trim();
             if name.is_empty() { self.cancel_rename(); return; }

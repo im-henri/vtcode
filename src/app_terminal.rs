@@ -35,6 +35,10 @@ mod rename_tests;
 #[path = "app_terminal_completion_tests.rs"]
 mod completion_tests;
 
+#[cfg(test)]
+#[path = "app_terminal_close_tests.rs"]
+mod close_tests;
+
 impl App {
     pub(crate) fn begin_terminal_rename(&mut self, index: usize) {
         if !self.terminal_is_open(index) { return; }
@@ -205,6 +209,7 @@ impl App {
         self.terminal_mouse_capture = None;
         self.terminal_clicks = Default::default();
         self.terminal_surfaces.clear();
+        self.terminal_scrollbar = Default::default();
         if self.terminals.len() == 1 {
             self.remove_terminal_editor_tabs(index);
             let cwd = self.explorer.root.clone();
