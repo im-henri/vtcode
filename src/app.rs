@@ -73,6 +73,7 @@ pub(crate) struct App {
     pub active_pane: ActivePane,
     pub explorer: FileExplorer,
     pub session_baseline: Option<crate::session::Session>,
+    pub(crate) incomplete_session_recovery: Option<crate::session::RecoveryLease>,
     pub(crate) workspace_generation: u64,
     #[cfg(test)]
     pub(crate) workspace_open_generation: u64,
@@ -1145,6 +1146,7 @@ impl App {
                 FileExplorer::new(root)
             },
             session_baseline: None,
+            incomplete_session_recovery: None,
             workspace_generation: 0,
             #[cfg(test)]
             workspace_open_generation: 0,
@@ -2466,14 +2468,12 @@ impl App {
                                     .cloned().collect();
                                 self.queue_file_disk_checks(paths);
                             }
-                            if outcome.clear_explorer_clipboard {
-                                self.explorer_clipboard = None;
-                            }
+                            self.finish_explorer_cut(&outcome);
                             self.explorer_multi_selected.retain(|path| {
                                 !outcome
                                     .deleted
                                     .iter()
-                                    .any(|deleted| path.ancestors().any(|ancestor| Self::same_open_path(ancestor, deleted)))
+                                    .any(|deleted| crate::native_paths::strip_spelling_prefix(path, deleted).is_some())
                             });
                             self.explorer_hover.invalidate(None);
                             self.explorer_hover_info_cache.clear();
@@ -2824,6 +2824,7 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::SessionUntitledLoaded { restore } => {
+                    self.preserve_unreadable_session_recovery(std::slice::from_ref(&restore));
                     let threshold = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
                     for tab in self.tabs.iter_mut().chain(
                         self.groups.iter_mut().flat_map(|group| &mut group.tabs),
@@ -2841,6 +2842,15 @@ impl App {
                         }
                     }
                 }
+                #[cfg(windows)]
+                crate::background::BackgroundResult::NativeOpenResolved { generation, request, source } => {
+                    if generation == self.workspace_generation {
+                        has_visual_changes |= match source {
+                            Some(source) => self.finish_native_file_open_alias(request, source),
+                            None => self.finish_native_file_open_distinct_preview(&request),
+                        };
+                    }
+                }
                 crate::background::BackgroundResult::FileLoaded {
                     workspace_generation,
                     path,
@@ -2856,6 +2866,7 @@ impl App {
                     {
                         continue;
                     }
+                    self.preserve_unreadable_session_recovery(&session_restores);
                     let open_commands = if skip_open_prompt {
                         Vec::new()
                     } else {
@@ -2936,8 +2947,7 @@ impl App {
                             .pending_session_restore
                             .as_ref()
                             .map(|restore| restore.id);
-                        let matching_restore = pending_restore_id
-                            .and_then(|id| session_restores.get(&id).cloned().map(|saved| (id, saved)));
+                        let matching_restore = pending_restore_id.and_then(|id| session_restores.get(&id));
                         let belongs_to_result = if session_result {
                             matching_restore.is_some()
                         } else {
@@ -2945,9 +2955,10 @@ impl App {
                         };
                         if belongs_to_result {
                             let pending_selection = crate::app_navigation::NavigationSelection::capture(&tab.editor);
-                            if let Some((id, saved)) = matching_restore {
-                                tab.editor.pending_session_restore =
-                                    Some(crate::session::SessionRestore { id, tab: saved });
+                            if let Some(saved) = matching_restore
+                                && let Some(restore) = &mut tab.editor.pending_session_restore
+                            {
+                                restore.tab = saved.clone();
                             }
                             // Rope clones share their tree, so this remains O(1) even when
                             // the same file has a placeholder in more than one split group.
@@ -2972,15 +2983,7 @@ impl App {
                             tab.editor
                                 .apply_pending_session_restore(large_file_threshold_bytes);
                             tab.editor.restore_reopen_view();
-                            if let Some((line, col)) = tab.editor.pending_cursor_position.take() {
-                                let col = if std::mem::take(&mut tab.editor.pending_cursor_utf16) {
-                                    crate::lsp_positions::from_utf16(&tab.editor.rope, line, col as u32)
-                                } else { col };
-                                tab.editor.set_cursor(line, col);
-                            }
-                            if let Some(selection) = tab.editor.pending_navigation_selection.take() {
-                                selection.restore(&mut tab.editor);
-                            }
+                            tab.editor.apply_pending_file_navigation();
                             navigation.resolve_loaded_editor(&tab.editor, pending_selection);
                             loaded_large_file_mode |= tab.editor.large_file_mode;
                             applied_file |= tab.kind == TabKind::File;
@@ -3055,6 +3058,7 @@ impl App {
                     {
                         continue;
                     }
+                    self.preserve_unreadable_session_recovery(&session_restores);
                     if session_restores.is_empty() && self.skip_failed_navigation(&path) {
                         has_visual_changes = true;
                         continue;
@@ -3107,8 +3111,7 @@ impl App {
                             .pending_session_restore
                             .as_ref()
                             .map(|restore| restore.id);
-                        let matching_restore = pending_restore_id
-                            .and_then(|id| session_restores.get(&id).cloned().map(|saved| (id, saved)));
+                        let matching_restore = pending_restore_id.and_then(|id| session_restores.get(&id));
                         let belongs_to_result = if session_result {
                             matching_restore.is_some()
                         } else {
@@ -3116,9 +3119,10 @@ impl App {
                         };
                         if belongs_to_result {
                             let pending_selection = crate::app_navigation::NavigationSelection::capture(&tab.editor);
-                            if let Some((id, saved)) = matching_restore {
-                                tab.editor.pending_session_restore =
-                                    Some(crate::session::SessionRestore { id, tab: saved });
+                            if let Some(saved) = matching_restore
+                                && let Some(restore) = &mut tab.editor.pending_session_restore
+                            {
+                                restore.tab = saved.clone();
                             }
                             let has_unsaved_restore = tab
                                 .editor
@@ -3135,15 +3139,7 @@ impl App {
                                 tab.editor.load_failed = false;
                                 tab.editor.read_only = default_read_only || matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails);
                                 tab.editor.apply_pending_session_restore(threshold_bytes);
-                                if let Some((line, col)) = tab.editor.pending_cursor_position.take() {
-                                    let col = if std::mem::take(&mut tab.editor.pending_cursor_utf16) {
-                                        crate::lsp_positions::from_utf16(&tab.editor.rope, line, col as u32)
-                                    } else { col };
-                                    tab.editor.set_cursor(line, col);
-                                }
-                                if let Some(selection) = tab.editor.pending_navigation_selection.take() {
-                                    selection.restore(&mut tab.editor);
-                                }
+                                tab.editor.apply_pending_file_navigation();
                                 navigation.resolve_loaded_editor(&tab.editor, pending_selection);
                                 tab.editor.disk_unavailable = true;
                                 recovered_unsaved = true;

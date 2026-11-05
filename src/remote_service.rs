@@ -835,6 +835,7 @@ impl Service {
                 let name = entry.file_name().to_str().unwrap_or("");
                 !cancel.is_cancelled()
                     && !crate::editor::is_save_temporary_path(entry.path())
+                    && !crate::fs_ops::is_copy_temporary_name(entry.file_name())
                     && rules.as_ref().map_or_else(|| (include_hidden || !name.starts_with('.'))
                         && (!entry.file_type().is_dir() || !crate::app_global_search::EXCLUDE_DIRS.contains(&name)),
                         |rules| !rules.excludes(&crate::search_paths::Candidate::new(entry.path()), &self.root))

@@ -111,11 +111,19 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
     let screen = frame.area();
-    let bottom = app
+    let mut bottom = app
         .status_bar_area
         .map_or(screen.bottom().saturating_sub(1), |area| {
             area.y.min(screen.bottom())
         });
+    // Output follows the newest entries at the bottom of its panel. Keep
+    // those entries and the panel controls accessible while a notice is open.
+    if app.show_panel
+        && app.panel_tab == 2
+        && let Some(panel) = app.panel_area
+    {
+        bottom = bottom.min(panel.y);
+    }
     if screen.width < 16 || bottom.saturating_sub(screen.y) < 6 {
         return;
     }

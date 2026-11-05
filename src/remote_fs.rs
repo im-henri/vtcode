@@ -29,6 +29,8 @@ pub(crate) struct Outcome {
     deleted: Vec<RemotePath>,
     check_deleted: Vec<RemotePath>,
     clear_clipboard: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    completed_cut_paths: Vec<RemotePath>,
     warning: bool,
     open_file: Option<RemotePath>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -42,6 +44,7 @@ pub(crate) fn execute(
     progress: impl FnMut(crate::file_deletion::Progress, bool),
 ) -> io::Result<Outcome> {
     let mut result = crate::background::FilesystemActionOutcome::default();
+    let mut clear_clipboard = false;
     match task {
         Task::Create { path, directory } => {
             let native = path.resolve(root)?;
@@ -81,83 +84,17 @@ pub(crate) fn execute(
             directory,
             cut,
         } => {
+            if cut && sources.iter().any(|path| path.0.is_empty()) {
+                return Err(io::Error::other("Cannot move the remote workspace root"));
+            }
             let directory = directory.resolve(root)?;
-            if !directory.is_dir() {
-                return Err(io::Error::other("Paste destination is not a directory"));
-            }
-            let mut failed = 0;
-            let mut last_error = None;
-            for path in sources {
-                if cancel.is_cancelled() {
-                    break;
-                }
-                let operation = (|| {
-                    let source = path.resolve(root)?;
-                    let name = source
-                        .file_name()
-                        .ok_or_else(|| io::Error::other("Cannot copy a filesystem root"))?;
-                    let mut destination = directory.join(name);
-                    // symlink_metadata recognizes dangling symlinks as occupied.
-                    if (!cut || source != destination)
-                        && std::fs::symlink_metadata(&destination).is_ok()
-                    {
-                        let stem = source.file_stem().unwrap_or(name).to_string_lossy();
-                        let extension = source
-                            .extension()
-                            .map(|s| format!(".{}", s.to_string_lossy()))
-                            .unwrap_or_default();
-                        let mut found = false;
-                        for suffix in 1..=10_000 {
-                            destination = directory.join(format!("{stem} ({suffix}){extension}"));
-                            if matches!(std::fs::symlink_metadata(&destination), Err(error) if error.kind() == io::ErrorKind::NotFound)
-                            {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            return Err(io::Error::other("Could not choose an unused copy name"));
-                        }
-                    }
-                    if cut {
-                        crate::fs_ops::rename_no_replace(&source, &destination)?;
-                    } else {
-                        crate::fs_ops::copy_no_replace(&source, &destination, || {
-                            cancel.is_cancelled()
-                        })?;
-                    }
-                    Ok((source, destination))
-                })();
-                match operation {
-                    Ok((source, destination)) => {
-                        if cut && source != destination {
-                            result.renames.push((source, destination.clone()));
-                        }
-                        result.pasted_paths.push(destination);
-                    }
-                    Err(error) => {
-                        failed += 1;
-                        last_error = Some(error);
-                    }
-                }
-            }
-            let done = result.pasted_paths.len();
-            if done == 0
-                && let Some(error) = last_error
-            {
-                return Err(error);
-            }
-            result.message = format!(
-                "{} {done} items{extra}",
-                if cut { "Moved" } else { "Copied" },
-                extra = if failed == 0 {
-                    String::new()
-                } else {
-                    format!("; {failed} failed")
-                }
-            );
-            result.warning = failed != 0 || cancel.is_cancelled();
-            result.clear_explorer_clipboard = cut;
+            let sources = sources
+                .iter()
+                .map(|path| path.resolve(root))
+                .collect::<io::Result<_>>()?;
+            result =
+                crate::fs_ops::paste_items(sources, &directory, cut, || cancel.is_cancelled())?;
+            clear_clipboard = cut && !result.warning;
         }
     }
     let convert = |path: PathBuf| git::from_native(&path, root);
@@ -179,7 +116,18 @@ pub(crate) fn execute(
             .map(convert)
             .collect::<io::Result<_>>()?,
         warning: result.warning,
-        clear_clipboard: result.clear_explorer_clipboard,
+        clear_clipboard,
+        // For a complete cut the client already knows the source list. Keep
+        // the existing flag for older clients and send paths only on partial cuts.
+        completed_cut_paths: if clear_clipboard {
+            Vec::new()
+        } else {
+            result
+                .completed_cut_paths
+                .into_iter()
+                .map(convert)
+                .collect::<io::Result<_>>()?
+        },
         open_file: result.open_file.map(convert).transpose()?,
         pasted_paths: result
             .pasted_paths
@@ -196,6 +144,12 @@ impl workspace::Workspace {
         cancel: &crate::background::CancellationToken,
         progress: impl FnMut(crate::file_deletion::Progress),
     ) -> io::Result<crate::background::FilesystemActionOutcome> {
+        let cut_sources = match &task {
+            Task::Paste {
+                sources, cut: true, ..
+            } => sources.clone(),
+            _ => Vec::new(),
+        };
         let Reply::Filesystem(outcome) =
             self.client
                 .call_progress(Command::Filesystem(task), cancel, progress)?
@@ -203,6 +157,25 @@ impl workspace::Workspace {
             return Err(io::Error::other("Invalid remote filesystem reply"));
         };
         self.invalidate_directories();
+        let completed_cut_paths = if outcome.clear_clipboard {
+            if outcome.warning {
+                // Older agents set the flag for partial moves as well. Their
+                // rename list still identifies files we can safely consume.
+                outcome
+                    .renames
+                    .iter()
+                    .map(|(from, _)| self.view_key(from))
+                    .collect()
+            } else {
+                cut_sources.iter().map(|path| self.view_key(path)).collect()
+            }
+        } else {
+            outcome
+                .completed_cut_paths
+                .iter()
+                .map(|path| self.view_key(path))
+                .collect()
+        };
         Ok(crate::background::FilesystemActionOutcome {
             message: outcome.message,
             renames: outcome
@@ -220,7 +193,8 @@ impl workspace::Workspace {
                 .iter()
                 .map(|path| self.view_key(path))
                 .collect(),
-            clear_explorer_clipboard: outcome.clear_clipboard,
+            completed_cut_paths,
+            cut_clipboard: None,
             warning: outcome.warning,
             open_file: outcome.open_file.as_ref().map(|path| self.view_key(path)),
             pasted_paths: outcome

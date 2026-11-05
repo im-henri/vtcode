@@ -1600,6 +1600,20 @@ impl Editor {
         }
     }
 
+    pub(crate) fn apply_pending_file_navigation(&mut self) {
+        if let Some((line, col)) = self.pending_cursor_position.take() {
+            let col = if std::mem::take(&mut self.pending_cursor_utf16) {
+                crate::lsp_positions::from_utf16(&self.rope, line, col as u32)
+            } else {
+                col
+            };
+            self.set_cursor(line, col);
+        }
+        if let Some(selection) = self.pending_navigation_selection.take() {
+            selection.restore(self);
+        }
+    }
+
     /// Mouse hit testing already chose a visible position. Keyboard scroll
     /// margins must not move that text out from under a click or drag.
     pub(crate) fn set_cursor_without_scrolling(&mut self, line: usize, col: usize) {

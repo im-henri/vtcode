@@ -5,6 +5,26 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
+#[cfg(windows)]
+use crate::native_paths::windows::{entry_path, final_path, open_entry};
+
+pub(super) fn selected_path(target: &Path) -> io::Result<PathBuf> {
+    let name = target
+        .file_name()
+        .ok_or_else(|| io::Error::other("Cannot delete a filesystem root"))?;
+    #[cfg(windows)]
+    if let Ok(path) = entry_path(target, &mut vec![0; 512]) {
+        // Opening the entry itself resolves case aliases without following a
+        // selected link. The resulting spelling is safe for containment tests.
+        return Ok(path);
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| io::Error::other("Invalid deletion path"))?;
+    // Resolving just the parent preserves links and allows missing or locked
+    // entries to be handled independently during the walk.
+    Ok(std::fs::canonicalize(parent)?.join(name))
+}
 
 #[cfg(unix)]
 pub(super) struct Root {
@@ -106,67 +126,25 @@ pub(super) struct Root {
 }
 
 #[cfg(windows)]
-fn final_path(file: &File, buffer: &mut Vec<u16>) -> io::Result<PathBuf> {
-    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
-    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
-    loop {
-        // SAFETY: file owns the handle and buffer has initialized writable
-        // elements. Normalized names resolve ancestor junctions as well.
-        let size = unsafe {
-            GetFinalPathNameByHandleW(
-                file.as_raw_handle(),
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                0,
-            )
-        };
-        if size == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if (size as usize) < buffer.len() {
-            return Ok(PathBuf::from(std::ffi::OsString::from_wide(
-                &buffer[..size as usize],
-            )));
-        }
-        buffer.resize(size as usize + 1, 0);
-    }
-}
-
-#[cfg(windows)]
 impl Root {
     pub(super) fn new(target: &Path) -> io::Result<Self> {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::*;
+        use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
         let parent = target
             .parent()
             .ok_or_else(|| io::Error::other("Invalid deletion path"))?;
-        let file = std::fs::OpenOptions::new()
-            .access_mode(FILE_READ_ATTRIBUTES)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(parent)?;
-        let mut buffer = vec![0; 512];
-        let selected = final_path(&file, &mut buffer)?.join(target.file_name().unwrap());
         Ok(Self {
-            _parent: file,
-            selected,
-            buffer,
+            _parent: open_entry(parent, FILE_READ_ATTRIBUTES)?,
+            selected: target.to_owned(),
+            buffer: vec![0; 512],
         })
     }
 
     pub(super) fn remove(&mut self, entry: &walkdir::DirEntry) -> io::Result<()> {
-        use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+        use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Storage::FileSystem::*;
-        let file = std::fs::OpenOptions::new()
-            .access_mode(DELETE | FILE_READ_ATTRIBUTES)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(entry.path())?;
+        let file = open_entry(entry.path(), DELETE | FILE_READ_ATTRIBUTES)?;
         let resolved = final_path(&file, &mut self.buffer)?;
-        if !resolved
-            .ancestors()
-            .any(|ancestor| crate::app::App::same_open_path(ancestor, &self.selected))
-        {
+        if !resolved.starts_with(&self.selected) {
             return Err(io::Error::other(
                 "Directory changed during deletion; refusing to follow a link outside the selection",
             ));

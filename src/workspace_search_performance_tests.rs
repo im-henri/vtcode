@@ -14,6 +14,7 @@ use std::{
 fn query(include: &str) -> Query {
     Query {
         stream: false,
+        report_open_aliases: false,
         text: "CoreProper".into(),
         case_sensitive: false,
         whole_word: false,
@@ -86,7 +87,7 @@ fn benchmark_scoped_workspace_search() {
     let mut samples = Vec::new();
     for sample in 0..9 {
         let started = Instant::now();
-        let Reply::Search { hits, truncated } = search::execute(
+        let Reply::Search { hits, truncated, .. } = search::execute(
             workspace.path(),
             query("./cores/*/src/"),
             &CancellationToken::new(),
@@ -182,7 +183,7 @@ fn benchmark_complex_workspace_includes() {
                 filters.push(elapsed);
             }
             let started = Instant::now();
-            let Reply::Search { hits, truncated } =
+            let Reply::Search { hits, truncated, .. } =
                 search::execute(workspace.path(), query(&include), &CancellationToken::new())
                     .unwrap()
             else {
@@ -276,10 +277,87 @@ fn optimized_paths(
         )),
         crate::search_walk::Options {
             follow_links: query.follow_links,
+            workers: 1,
+            open_aliases: None,
+            path_aliases: Default::default(),
         },
         cancel,
     )
+    .map(|(path, _)| path)
     .collect()
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn overlapping_root_aliases_search_each_closed_file_once_after_filtering() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    let sources = root.join("Sources");
+    let alias = root.join("sources");
+    write(&sources, "left.txt", "CoreProperty left\n");
+    write(&sources, "shared.txt", "CoreProperty shared\n");
+    write(&sources, "right.rs", "CoreProperty right\n");
+    write(&sources, "nested/deep.txt", "CoreProperty deep\n");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&sources, &alias).unwrap();
+    #[cfg(windows)]
+    if !alias.is_dir() {
+        return;
+    }
+
+    for (include, expected) in [
+        (
+            format!("{}/*.txt, {}/shared.*, {}/*.rs", sources.display(), alias.display(), alias.display()),
+            ["left.txt", "right.rs", "shared.txt"],
+        ),
+        (
+            format!("{}/**/*.txt, {}/nested/*.txt", sources.display(), alias.display()),
+            ["deep.txt", "left.txt", "shared.txt"],
+        ),
+    ] {
+        let mut app = crate::app::App::new_deferred(root.to_owned());
+        app.source_control_enabled = false;
+        app.global_search_query = "CoreProper".into();
+        app.search_include_pattern = include.clone();
+        app.update_global_search();
+        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+        assert!(app.global_search_error.is_none(), "{:?}", app.global_search_error);
+        let mut local: Vec<_> = app.global_search_results.iter()
+            .map(|hit| hit.file_path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        local.sort_unstable();
+        assert_eq!(local, expected, "local scope {include}");
+
+        let mut streamed = Vec::new();
+        let Reply::Search { hits, truncated, .. } = search::execute_streaming(
+            root, query(&include), &CancellationToken::new(), |batch| {
+                streamed.extend(batch);
+                Ok(())
+            },
+        ).unwrap() else { panic!("search response"); };
+        assert!(!truncated);
+        streamed.extend(hits);
+        let mut remote: Vec<_> = streamed.into_iter()
+            .map(|hit| hit.path.display().rsplit('/').next().unwrap().to_owned())
+            .collect();
+        remote.sort_unstable();
+        assert_eq!(remote, expected, "headless scope {include}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn overlapping_root_check_keeps_case_distinct_sources_separate() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    if !crate::native_paths::enable_case_sensitive_test_directory(root) {
+        return;
+    }
+    let upper = write(root, "Sources/file.txt", "CoreProperty upper\n");
+    let lower = write(root, "sources/file.txt", "CoreProperty lower\n");
+    let include = format!("{}, {}", upper.parent().unwrap().display(), lower.parent().unwrap().display());
+    let paths = optimized_paths(root, &query(&include), &CancellationToken::new());
+    assert_eq!(paths, [upper, lower].into_iter().collect());
 }
 
 #[test]
@@ -370,7 +448,7 @@ fn cached_include_plans_keep_file_discovery_and_sibling_checks_live_without_igno
     let hits = |request: &Query| {
         let mut current = query(&request.include);
         current.search_exclude = request.search_exclude.clone();
-        let Reply::Search { hits, truncated } =
+        let Reply::Search { hits, truncated, .. } =
             search::execute(workspace.path(), current, &CancellationToken::new()).unwrap()
         else {
             panic!("search response");
@@ -423,6 +501,26 @@ fn scoped_workspace_search_prunes_unrelated_entries_before_exclusion_and_file_re
         previous_visits > visits * 5,
         "{previous_visits} -> {visits}"
     );
+}
+
+#[test]
+fn workspace_search_skips_copy_staging_even_when_explicitly_included() {
+    use std::collections::BTreeSet;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    write(root, "src/visible.cps", "search text\n");
+    let staged = "src/.vtcode-copy-ABcd12345678/item/partial.cps";
+    write(root, staged, "search text\n");
+    for (include, expected) in [
+        (String::new(), BTreeSet::from([root.join("src/visible.cps")])),
+        (format!("./{staged}"), BTreeSet::new()),
+    ] {
+        assert_eq!(
+            optimized_paths(root, &query(&include), &CancellationToken::new()),
+            expected,
+        );
+    }
 }
 
 #[test]

@@ -598,16 +598,9 @@ impl App {
                         }
                     },
                 };
-                if !path.exists() {
-                    if let Err(error) =
-                        crate::settings::save_to_file(&path, &crate::settings::Settings::default())
-                    {
-                        self.notify(format!(
-                            "Could not create settings file {}: {error}",
-                            path.display()
-                        ));
-                        return false;
-                    }
+                if let Err(error) = crate::settings::ensure_file(&path) {
+                    self.notify(format!("Could not create settings file {}: {error}", path.display()));
+                    return false;
                 }
                 self.open_file(&path);
             }

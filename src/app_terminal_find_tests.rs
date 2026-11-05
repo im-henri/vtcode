@@ -369,13 +369,40 @@ fn matches_highlight_the_visible_scrollback_and_manual_selection_takes_precedenc
         terminal.backend().buffer()[(hit.start.column as u16, 0)].bg,
         app.colors.ui.bg_find_current
     );
-    let mut parser = vte::Parser::new();
-    for byte in b"\x1b[H\x1b[2J\x1b[3J" {
-        parser.advance(
-            &mut app.terminals[0].terminal_pty.as_mut().unwrap().grid,
-            *byte,
-        );
-    }
+    let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
+    pty.test_queue_output(b"\x1b[H\x1b[2J\x1b[3J");
+    assert!(pty.process_while(|| true));
     terminal.draw(|frame| paint(frame, &mut app)).unwrap();
     assert!(app.terminals[0].find.index.matches.is_empty());
+}
+
+#[test]
+fn unchanged_find_frames_skip_the_history_walk_until_the_pty_changes() {
+    let mut app = fixture(false);
+    app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(
+        80, 24, &"find match\r\n".repeat(3000),
+    ));
+    app.begin_terminal_find(0);
+    crate::app_event_loop::handle_paste_input(&mut app, "match");
+    assert_eq!(app.terminals[0].find.index.matches.len(), 3000);
+    let builds = app.terminals[0].find.index.stamp_builds;
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let redraw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+        terminal.draw(|frame| super::draw(frame, app, 0, frame.area())).unwrap();
+    };
+    for _ in 0..10 {
+        redraw(&mut terminal, &mut app);
+    }
+    assert_eq!(app.terminals[0].find.index.stamp_builds, builds);
+
+    let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
+    pty.resize(78, 24);
+    redraw(&mut terminal, &mut app);
+    assert_eq!(app.terminals[0].find.index.stamp_builds, builds + 1);
+    assert_eq!(app.terminals[0].find.index.matches.len(), 3000);
+
+    app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(78, 24, "new match"));
+    redraw(&mut terminal, &mut app);
+    assert_eq!(app.terminals[0].find.index.stamp_builds, builds + 2);
+    assert_eq!(app.terminals[0].find.index.matches.len(), 1);
 }

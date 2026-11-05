@@ -35,6 +35,7 @@ struct Line {
 pub(crate) struct Index {
     query: String,
     case_sensitive: bool,
+    text_revision: Option<u64>,
     regex: Option<regex::Regex>,
     rows: Vec<Stamp>,
     lines: FxHashMap<usize, Line>,
@@ -44,6 +45,8 @@ pub(crate) struct Index {
     pub error: Option<String>,
     #[cfg(test)]
     pub rescanned: usize,
+    #[cfg(test)]
+    pub stamp_builds: usize,
 }
 
 fn row(grid: &TermGrid, index: usize) -> Option<(&TermRow, bool)> {
@@ -132,11 +135,17 @@ impl Index {
 
     pub fn update(&mut self, grid: &TermGrid, query: &str, case_sensitive: bool) -> bool {
         if query.is_empty() {
-            let changed = !self.query.is_empty();
+            if self.query.is_empty() {
+                return false;
+            }
             self.clear();
-            return changed;
+            return true;
         }
         let changed_query = self.query != query || self.case_sensitive != case_sensitive;
+        if !changed_query && self.text_revision == Some(grid.text_revision) {
+            return false;
+        }
+        self.text_revision = Some(grid.text_revision);
         if changed_query {
             self.query = query.to_owned();
             self.case_sensitive = case_sensitive;
@@ -150,6 +159,10 @@ impl Index {
                 .err()
                 .map(|_| "Search text is too long".to_owned());
             self.regex = regex.ok();
+        }
+        #[cfg(test)]
+        {
+            self.stamp_builds += 1;
         }
         let rows: Vec<_> = (0..grid.scrollback.len() + grid.cells.len())
             .filter_map(|index| {

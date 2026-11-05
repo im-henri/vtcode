@@ -4,7 +4,7 @@
 use super::*;
 use std::{
     collections::HashMap,
-    io::{BufRead, Read, Write},
+    io::{BufRead, Write},
 };
 
 #[cfg(test)]
@@ -43,6 +43,18 @@ pub(crate) fn record(line: &[u8]) -> &[u8] {
     line.trim_ascii_end()
 }
 
+/// Keep geometric growth for small fragments while bounding each allocation
+/// to the validated message limit, even just past a power of two.
+fn append_with_bounded_growth(data: &mut Vec<u8>, bytes: &[u8], limit: usize) {
+    let end = data.len() + bytes.len();
+    debug_assert!(end <= limit);
+    if end > data.capacity() {
+        let capacity = (data.capacity() * 2).max(end).max(8).min(limit);
+        data.reserve_exact(capacity - data.len());
+    }
+    data.extend_from_slice(bytes);
+}
+
 pub(crate) fn encode<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
     struct Limited(Vec<u8>);
     impl Write for Limited {
@@ -50,7 +62,7 @@ pub(crate) fn encode<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
             if bytes.len() > (MAX_MESSAGE + 1).saturating_sub(self.0.len()) {
                 return Err(io::Error::other("Remote message exceeds limit"));
             }
-            self.0.extend_from_slice(bytes);
+            append_with_bounded_growth(&mut self.0, bytes, MAX_MESSAGE + 1);
             Ok(bytes.len())
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -75,25 +87,64 @@ pub(crate) fn encode<T: Serialize>(value: &T) -> io::Result<Vec<u8>> {
     }
 }
 
-fn decode(mut data: Vec<u8>) -> io::Result<Vec<u8>> {
-    match data.first() {
-        Some(0) => {
-            // Reuse the receive buffer instead of allocating another complete
-            // message merely to discard its one-byte encoding marker.
-            data.remove(0);
-            Ok(data)
+enum Encoding {
+    Plain,
+    Zlib,
+}
+
+impl Encoding {
+    fn from_marker(marker: u8) -> io::Result<Self> {
+        match marker {
+            0 => Ok(Self::Plain),
+            1 => Ok(Self::Zlib),
+            _ => Err(io::Error::other("Invalid remote message encoding")),
         }
-        Some(1) => {
-            let mut result = Vec::new();
-            flate2::read::ZlibDecoder::new(&data[1..])
-                .take((MAX_MESSAGE + 1) as u64)
-                .read_to_end(&mut result)?;
-            if result.len() > MAX_MESSAGE {
-                return Err(io::Error::other("Expanded remote message exceeds limit"));
+    }
+
+    fn decode(self, data: Vec<u8>) -> io::Result<Vec<u8>> {
+        match self {
+            Self::Plain => Ok(data),
+            Self::Zlib => decode_compressed(&data),
+        }
+    }
+}
+
+fn decode_compressed(input: &[u8]) -> io::Result<Vec<u8>> {
+    use flate2::{Decompress, FlushDecompress, Status};
+
+    let mut decoder = Decompress::new(true);
+    let mut output = Vec::with_capacity(input.len().saturating_mul(2).clamp(1024, 64 * 1024));
+    loop {
+        let before = output.len();
+        if before == output.capacity() {
+            let capacity = (before * 2).min(MAX_MESSAGE + 1);
+            output.reserve_exact(capacity - before);
+        }
+        let offset = decoder.total_in() as usize;
+        // Require StreamEnd explicitly. Some reader adapters signal EOF even
+        // if the peer supplied all JSON bytes but cut off the zlib checksum.
+        let status = decoder
+            .decompress_vec(&input[offset..], &mut output, FlushDecompress::None)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if output.len() > MAX_MESSAGE {
+            return Err(io::Error::other("Expanded remote message exceeds limit"));
+        }
+        let consumed = decoder.total_in() as usize;
+        if status == Status::StreamEnd {
+            if consumed == input.len() {
+                return Ok(output);
             }
-            Ok(result)
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Trailing bytes after compressed remote message",
+            ));
         }
-        _ => Err(io::Error::other("Invalid remote message encoding")),
+        if consumed == offset && output.len() == before {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Incomplete compressed remote message",
+            ));
+        }
     }
 }
 
@@ -334,9 +385,15 @@ impl OutputQueue {
     }
 }
 
+struct PendingMessage {
+    expected: usize,
+    encoding: Encoding,
+    data: Vec<u8>,
+}
+
 pub(crate) struct Decoder {
     prefix: String,
-    pending: HashMap<u64, (usize, Vec<u8>)>,
+    pending: HashMap<u64, PendingMessage>,
     bytes: usize,
     chunk: [u8; CHUNK + 3],
 }
@@ -365,18 +422,12 @@ impl Decoder {
             return Err(io::Error::other("Remote frame exceeds limit"));
         }
         let record = record(line);
-        let Ok(text) = std::str::from_utf8(record) else {
-            if !record.starts_with(b"VTCR") { output(line); }
-            return Ok(None);
-        };
-        let Some(body) = text
-            .trim_end_matches(['\r', '\n'])
-            .strip_prefix(&self.prefix)
-        else {
+        let Some(body) = record.strip_prefix(self.prefix.as_bytes()) else {
             if !record.starts_with(b"VTCR") { output(line); }
             return Ok(None);
         };
         let invalid = || io::Error::other("Invalid remote frame sequence");
+        let body = std::str::from_utf8(body).map_err(|_| invalid())?.trim_end_matches(['\r', '\n']);
         let mut parts = body.splitn(4, ':');
         let id =
             u64::from_str_radix(parts.next().ok_or_else(invalid)?, 16).map_err(|_| invalid())?;
@@ -394,30 +445,34 @@ impl Decoder {
             if self.pending.contains_key(&id) {
                 return Err(invalid());
             }
-            let data = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| invalid())?;
-            if data.is_empty() || data.len() > CHUNK || (last == "0" && data.len() != CHUNK) {
+            let mut data = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| invalid())?;
+            let count = data.len();
+            if count == 0 || count > CHUNK || (last == "0" && count != CHUNK) {
                 return Err(invalid());
             }
+            // Remove the marker from this small chunk. Removing it after
+            // assembly would move every byte of a large uncompressed message.
+            let encoding = Encoding::from_marker(data.remove(0))?;
             // Most requests/replies finish in one frame. They need neither a
             // hash-table insertion nor a fragmented-message allocation/window.
             if last == "1" {
-                return Ok(Some((id, decode(data)?)));
+                return Ok(Some((id, encoding.decode(data)?)));
             }
             if self.pending.len() >= MAX_PENDING {
                 return Err(io::Error::other("Too many remote transfers"));
             }
-            if self.bytes + data.len() > MAX_MESSAGE * 2 {
+            if self.bytes + count > MAX_MESSAGE * 2 {
                 return Err(invalid());
             }
-            self.bytes += data.len();
-            self.pending.insert(id, (1, data));
+            self.bytes += count;
+            self.pending.insert(id, PendingMessage { expected: 1, encoding, data });
             return Ok(None);
         }
-        let (expected, data) = self.pending.get_mut(&id).ok_or_else(invalid)?;
-        if sequence != *expected {
+        let pending = self.pending.get_mut(&id).ok_or_else(invalid)?;
+        if sequence != pending.expected {
             return Err(invalid());
         }
-        let previous = data.len();
+        let previous = pending.data.len() + 1; // include the wire marker in byte budgets
         let decoded_len = encoded.len() / 4 * 3 + encoded.len() % 4 * 6 / 8;
         if previous + decoded_len > MAX_MESSAGE + 1 || self.bytes + decoded_len > MAX_MESSAGE * 2 {
             return Err(invalid());
@@ -436,15 +491,15 @@ impl Decoder {
         {
             return Err(invalid());
         }
-        data.extend_from_slice(&self.chunk[..count]);
+        append_with_bounded_growth(&mut pending.data, &self.chunk[..count], MAX_MESSAGE);
         self.bytes += count;
-        *expected += 1;
+        pending.expected += 1;
         if last == "0" {
             return Ok(None);
         }
-        let (_, data) = self.pending.remove(&id).unwrap();
-        self.bytes -= data.len();
-        Ok(Some((id, decode(data)?)))
+        let pending = self.pending.remove(&id).unwrap();
+        self.bytes -= pending.data.len() + 1;
+        Ok(Some((id, pending.encoding.decode(pending.data)?)))
     }
 }
 

@@ -1,8 +1,9 @@
 use super::{Blob, FileState, Result};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::Write,
+    io::{self, Read, Seek, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -23,6 +24,64 @@ pub(super) fn path_key(path: &Path) -> PathBuf {
     }
 }
 
+/// Use the real spelling of existing targets. For a missing suffix, consult
+/// the first existing parent's mode before treating distinct spellings as
+/// separate destinations. The mode of uncreated directories is unknown.
+#[cfg(windows)]
+pub(super) fn restore_target_key(path: &Path) -> Result<PathBuf> {
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut actual) => {
+                if let Some(first) = missing.pop() {
+                    if case_sensitive_directory(&actual) {
+                        actual.push(first);
+                    } else {
+                        actual.push(path_key(Path::new(first)));
+                    }
+                    for part in missing.into_iter().rev() {
+                        actual.push(path_key(Path::new(part)));
+                    }
+                }
+                return Ok(actual);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        }
+        missing.push(ancestor.file_name().ok_or("Missing rollback target parent")?);
+        ancestor = ancestor.parent().ok_or("Missing rollback target parent")?;
+    }
+}
+
+#[cfg(windows)]
+fn case_sensitive_directory(path: &Path) -> bool {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_CASE_SENSITIVE_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, FileCaseSensitiveInfo, GetFileInformationByHandleEx,
+    };
+    const FILE_CS_FLAG_CASE_SENSITIVE_DIR: u32 = 1;
+    let Ok(file) = File::options()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+    else {
+        return false;
+    };
+    let mut info = FILE_CASE_SENSITIVE_INFO { Flags: 0 };
+    // SAFETY: file owns the handle and info is the output structure for this class.
+    let queried = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileCaseSensitiveInfo,
+            (&mut info as *mut FILE_CASE_SENSITIVE_INFO).cast(),
+            std::mem::size_of::<FILE_CASE_SENSITIVE_INFO>() as u32,
+        )
+    };
+    queried != 0 && info.Flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR != 0
+}
+
 pub fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     File::open(path)
@@ -31,6 +90,89 @@ pub fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct BackupIdentity {
+    volume: u64,
+    file: [u8; 16],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created: Option<(u64, u32)>,
+}
+
+impl BackupIdentity {
+    fn of(file: &File, _metadata: &fs::Metadata) -> Result<Self> {
+        let (volume, file) = crate::file_source::file_identity(file, _metadata)
+            .ok_or("Cannot identify the file to retain its rollback backup safely")?;
+        #[cfg(unix)]
+        let created = _metadata
+            .created()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|time| (time.as_secs(), time.subsec_nanos()));
+        // NTFS can carry a deleted destination's creation time onto the
+        // renamed file. The identifier from the handle survives that rename.
+        #[cfg(not(unix))]
+        let created = None;
+        Ok(Self {
+            volume,
+            file: file.to_le_bytes(),
+            created,
+        })
+    }
+}
+
+fn open_checkpoint_file(path: &Path) -> Result<Option<(File, fs::Metadata)>> {
+    match crate::file_source::open_canonical_regular_file(path) {
+        Ok((file, metadata)) => Ok(Some((file, metadata))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
+}
+
+pub(super) fn backup_identity(path: &Path) -> Result<Option<BackupIdentity>> {
+    open_checkpoint_file(path)?
+        .map(|(file, metadata)| BackupIdentity::of(&file, &metadata))
+        .transpose()
+}
+
+pub(super) fn fresh_backup_path(parent: &Path, prefix: &str) -> Result<PathBuf> {
+    let temporary = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempfile_in(parent)
+        .map_err(|e| e.to_string())?;
+    let path = temporary.path().to_path_buf();
+    temporary.close().map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+pub(super) fn displace_to_backup(source: &Path, backup: &Path) -> Result<()> {
+    crate::file_source::rename_no_replace(source, backup)
+        .map_err(|e| format!("Cannot retain {} at {}: {e}", source.display(), backup.display()))?;
+    sync_directory(source.parent().ok_or("Missing rollback backup directory")?)
+}
+
+pub(super) fn capture_displaced(
+    repository: &Path,
+    path: &Path,
+    expected: Option<&BackupIdentity>,
+) -> Result<Option<FileState>> {
+    let Some(expected) = expected else {
+        // Older write-ahead plans recorded only the backup's name.
+        return capture(repository, path);
+    };
+    let Some((file, metadata)) = open_checkpoint_file(path)? else {
+        return Ok(None);
+    };
+    if BackupIdentity::of(&file, &metadata)? != *expected {
+        return Err(format!(
+            "Rollback backup was replaced: {}. The file was retained.",
+            path.display()
+        ));
+    }
+    // Recover the bytes from the verified handle, even when the original
+    // received a final write after it was moved to the backup name.
+    capture_opened(&self::repository(repository)?, path, file, metadata, || {}).map(Some)
 }
 
 pub fn atomic_json(path: &Path, value: &impl serde::Serialize) -> Result<()> {
@@ -67,10 +209,10 @@ pub(super) fn checked_root(root: &Path) -> Result<()> {
 pub fn checked_path(root: &Path, relative: &Path) -> Result<PathBuf> {
     checked_root(root)?;
     if relative.as_os_str().is_empty()
-        || relative.components().any(|c| metadata_name(c.as_os_str()))
-        || relative
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_)))
+        || relative.components().any(|part| match part {
+            Component::Normal(name) => metadata_name(name) || crate::acp::files::has_windows_stream_separator(name),
+            _ => true,
+        })
     {
         return Err("Unsafe path in rollback history".into());
     }
@@ -198,52 +340,174 @@ pub fn capture(repository: &Path, path: &Path) -> Result<Option<FileState>> {
 }
 
 pub(super) fn capture_with_repo(repo: &git2::Repository, path: &Path) -> Result<Option<FileState>> {
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
+    capture_with_repo_inner(repo, path, || {})
+}
+
+fn capture_with_repo_inner(
+    repo: &git2::Repository,
+    path: &Path,
+    before_read: impl FnOnce(),
+) -> Result<Option<FileState>> {
+    let Some((file, metadata)) = open_checkpoint_file(path)? else {
+        return Ok(None);
     };
-    if !meta.is_file() || is_link(&meta) {
-        return Err(format!("Not a regular file: {}", path.display()));
+    capture_opened(repo, path, file, metadata, before_read).map(Some)
+}
+
+#[derive(PartialEq, Eq)]
+struct CaptureVersion {
+    identity: (u64, u128),
+    length: u64,
+    mode: u32,
+    modified: Option<std::time::SystemTime>,
+    changed: Option<(i64, i64)>,
+}
+
+impl CaptureVersion {
+    fn of(file: &File, metadata: &fs::Metadata) -> Option<Self> {
+        Some(Self {
+            identity: crate::file_source::file_identity(file, metadata)?,
+            length: metadata.len(),
+            mode: mode(metadata),
+            modified: metadata.modified().ok(),
+            changed: change_time(file, metadata),
+        })
     }
-    let hash = git2::Oid::hash_file(git2::ObjectType::Blob, path).map_err(|e| e.to_string())?;
-    if !repo.odb().map_err(|e| e.to_string())?.exists(hash) {
-        // blob_path applies .gitattributes/CRLF clean filters; rollback needs
-        // the exact disk bytes and must never execute user-provided filters.
-        let mut writer = repo.blob_writer(None).map_err(|e| e.to_string())?;
-        std::io::copy(
-            &mut File::open(path).map_err(|e| e.to_string())?,
-            &mut writer,
-        )
-        .map_err(|e| e.to_string())?;
-        let stored = writer.commit().map_err(|e| e.to_string())?;
+}
+
+fn change_time(_file: &File, _metadata: &fs::Metadata) -> Option<(i64, i64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((_metadata.ctime(), _metadata.ctime_nsec()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx,
+        };
+        let mut info = FILE_BASIC_INFO::default();
+        // SAFETY: the file owns a live handle and info matches the information class.
+        let queried = unsafe {
+            GetFileInformationByHandleEx(
+                _file.as_raw_handle(),
+                FileBasicInfo,
+                (&mut info as *mut FILE_BASIC_INFO).cast(),
+                std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        };
+        (queried != 0).then_some((info.ChangeTime, 0))
+    }
+    #[cfg(not(any(unix, windows)))]
+    None
+}
+
+fn capture_opened(
+    repo: &git2::Repository,
+    path: &Path,
+    mut file: File,
+    metadata: fs::Metadata,
+    before_read: impl FnOnce(),
+) -> Result<FileState> {
+    let changed = || format!("File changed during checkpoint capture: {}", path.display());
+    let before = CaptureVersion::of(&file, &metadata)
+        .ok_or_else(|| format!("Cannot identify checkpoint file: {}", path.display()))?;
+    before_read();
+    let hash = hash_file_handle(&mut file, before.length)
+        .map_err(|e| format!("Cannot hash {}: {e}", path.display()))?;
+    let odb = repo.odb().map_err(|e| e.to_string())?;
+    let pending = if odb.exists(hash) {
+        None
+    } else {
+        // Write raw bytes without Git's worktree clean filters. A known size
+        // lets the ODB stream compress directly without a second temporary file.
+        let size = usize::try_from(before.length).map_err(|e| e.to_string())?;
+        let mut writer = odb
+            .writer(size, git2::ObjectType::Blob)
+            .map_err(|e| e.to_string())?;
+        file.rewind().map_err(|e| e.to_string())?;
+        let length = io::copy(&mut (&mut file).take(before.length), &mut writer)
+            .map_err(|e| e.to_string())?;
+        if length != before.length {
+            return Err(changed());
+        }
+        Some(writer)
+    };
+
+    // Only inspect the name to confirm that it still denotes the opened entry.
+    // Keep the original handle alive until this comparison to prevent ID reuse.
+    #[cfg(unix)]
+    let after = fs::symlink_metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file() && !is_link(metadata))
+        .and_then(|metadata| CaptureVersion::of(&file, &metadata));
+    #[cfg(not(unix))]
+    let after = open_checkpoint_file(path)?
+        .and_then(|(file, metadata)| CaptureVersion::of(&file, &metadata));
+    if after.as_ref() != Some(&before) {
+        return Err(changed());
+    }
+
+    if let Some(mut writer) = pending {
+        let stored = writer.finalize().map_err(|e| e.to_string())?;
         if stored != hash {
-            return Err(format!(
-                "File changed during checkpoint capture: {}",
-                path.display()
-            ));
+            return Err(changed());
         }
         sync_object(repo, stored)?;
     }
-    let after = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    if !after.is_file()
-        || is_link(&after)
-        || mode(&meta) != mode(&after)
-        || meta.len() != after.len()
-        || meta.modified().ok() != after.modified().ok()
-    {
-        return Err(format!(
-            "File changed during checkpoint capture: {}",
-            path.display()
-        ));
-    }
-    Ok(Some(FileState {
+    Ok(FileState {
         blob: Blob {
             hash: hash.to_string(),
-            length: meta.len(),
+            length: before.length,
         },
-        mode: mode(&meta),
-    }))
+        mode: before.mode,
+    })
+}
+
+fn hash_file_handle(file: &mut File, length: u64) -> Result<git2::Oid> {
+    use std::ffi::{c_int, c_void};
+
+    struct Source<'a> {
+        file: &'a mut File,
+        error: Option<io::Error>,
+    }
+
+    unsafe extern "C" fn read_chunk(data: *mut c_void, bytes: *mut c_void, len: usize) -> c_int {
+        // SAFETY: the native call passes our live Source and a writable,
+        // initialized slice of its own buffer. Calls are synchronous and serial.
+        let source = unsafe { &mut *data.cast::<Source<'_>>() };
+        let bytes = unsafe { std::slice::from_raw_parts_mut(bytes.cast::<u8>(), len) };
+        match source.file.read_exact(bytes) {
+            Ok(()) => 0,
+            Err(error) => {
+                source.error = Some(error);
+                -1
+            }
+        }
+    }
+
+    let mut source = Source { file, error: None };
+    let mut oid = libgit2_sys::git_oid {
+        id: [0; libgit2_sys::GIT_OID_RAWSZ],
+    };
+    // SAFETY: both pointers stay valid throughout the call. Libgit2 only calls
+    // read_chunk with its own buffer and never retains the source pointer.
+    let status = unsafe {
+        libgit2_sys::vtcode_git_hash_blob_stream(
+            &mut oid,
+            length,
+            read_chunk,
+            (&mut source as *mut Source<'_>).cast(),
+        )
+    };
+    if let Some(error) = source.error {
+        return Err(error.to_string());
+    }
+    if status < 0 {
+        return Err(git2::Error::last_error(status).to_string());
+    }
+    git2::Oid::from_bytes(&oid.id).map_err(|e| e.to_string())
 }
 
 pub fn store_bytes(repository: &Path, bytes: &[u8], mode: u32) -> Result<FileState> {
@@ -361,4 +625,54 @@ pub fn pin(repository: &Path, reference: &str, files: &BTreeMap<PathBuf, FileSta
         .and_then(|f| f.sync_all())
         .map_err(|e| e.to_string())?;
     sync_directory(path.parent().unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_capture_preserves_binary_bytes_across_hash_chunks() {
+        let directory = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(directory.path().join("git")).unwrap();
+        let path = directory.path().join("file.bin");
+        let bytes: Vec<_> = (0..(128 * 1024 + 3)).map(|index| (index % 251) as u8).collect();
+        fs::write(&path, &bytes).unwrap();
+
+        let expected = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).unwrap();
+        for _ in 0..2 {
+            let captured = capture_with_repo(&repo, &path).unwrap().unwrap();
+            assert_eq!(captured.blob.hash, expected.to_string());
+            assert_eq!(captured.blob.length, bytes.len() as u64);
+            assert_eq!(repo.find_blob(expected).unwrap().content(), bytes);
+        }
+    }
+
+    #[test]
+    fn checkpoint_capture_rejects_a_same_size_replacement_before_reading() {
+        let directory = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(directory.path().join("git")).unwrap();
+        let path = directory.path().join("file.txt");
+        let displaced = directory.path().join("displaced.txt");
+        fs::write(&path, "original").unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let replacement = b"external";
+
+        let result = capture_with_repo_inner(&repo, &path, || {
+            fs::rename(&path, &displaced).unwrap();
+            fs::write(&path, replacement).unwrap();
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .unwrap();
+        });
+
+        assert!(result.is_err(), "a different file cannot enter the checkpoint");
+        let unexpected = git2::Oid::hash_object(git2::ObjectType::Blob, replacement).unwrap();
+        assert!(!repo.odb().unwrap().exists(unexpected));
+        assert_eq!(fs::read(&path).unwrap(), replacement);
+        assert_eq!(fs::read(displaced).unwrap(), b"original");
+    }
 }

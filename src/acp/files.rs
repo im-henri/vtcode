@@ -124,9 +124,15 @@ impl Workspace {
         if let Some(backend) = &self.backend {
             return backend.resolve(path);
         }
-        if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
-            return Err(failure(
-                "ACP paths must be absolute and must not contain '..'",
+        if !path.is_absolute()
+            || path.components().any(|part| {
+                part == Component::ParentDir
+                    || matches!(part, Component::Normal(name) if has_windows_stream_separator(name))
+            })
+        {
+            return Err(p::Error::new(
+                p::ErrorCode::InvalidParams.into(),
+                "ACP paths must be absolute and use ordinary file and directory names without parent traversals",
             ));
         }
         let mut ancestor = path;
@@ -160,6 +166,15 @@ impl Workspace {
         request: &p::ReadTextFileRequest,
         buffer: Option<&str>,
     ) -> Result<p::ReadTextFileResponse, p::Error> {
+        self.read_inner(request, buffer, || {})
+    }
+
+    fn read_inner(
+        &self,
+        request: &p::ReadTextFileRequest,
+        buffer: Option<&str>,
+        after_resolve: impl FnOnce(),
+    ) -> Result<p::ReadTextFileResponse, p::Error> {
         if let Some(backend) = &self.backend {
             return backend.read(request, buffer);
         }
@@ -169,6 +184,7 @@ impl Workspace {
         let text = if let Some(buffer) = buffer {
             buffer
         } else {
+            after_resolve();
             disk = read_text(&path)?;
             &disk
         };
@@ -201,45 +217,84 @@ impl Workspace {
         if request.content.len() > MAX_FILE_BYTES {
             return Err(failure("ACP text files are limited to 8 MiB"));
         }
-        let before = if path.exists() {
-            read_text(&path)?
-        } else {
-            String::new()
+        let before = match crate::file_source::open_canonical_regular_file(&path) {
+            Ok((mut file, metadata)) => {
+                if metadata.permissions().readonly() {
+                    return Err(failure("The file is read-only"));
+                }
+                let text = read_text_contents(&mut file)?;
+                Some(WriteBaseline { file, metadata, text })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error(error)),
         };
         let parent = path
             .parent()
             .ok_or_else(|| failure("Cannot write the workspace root"))?;
-        std::fs::create_dir_all(parent).map_err(io_error)?;
-        // Recheck after directory creation and use an adjacent temporary file so
-        // failed writes never leave an existing file partially overwritten.
-        let path = self.resolve(&request.path)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(io_error)?;
-        if let Ok(metadata) = path.metadata() {
-            if metadata.permissions().readonly() {
-                return Err(failure("The file is read-only"));
+        if before.is_none() {
+            std::fs::create_dir_all(parent).map_err(io_error)?;
+        }
+        let validate_destination = || {
+            if self.resolve(&request.path)? == path {
+                Ok(())
+            } else {
+                Err(failure("The destination changed during the ACP write"))
+            }
+        };
+        validate_destination()?;
+        let temporary = if before
+            .as_ref()
+            .is_none_or(|baseline| baseline.text != request.content)
+        {
+            let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(io_error)?;
+            if let Some(before) = &before {
+                temporary
+                    .as_file()
+                    .set_permissions(before.metadata.permissions())
+                    .map_err(io_error)?;
             }
             temporary
-                .as_file()
-                .set_permissions(metadata.permissions())
+                .write_all(request.content.as_bytes())
                 .map_err(io_error)?;
-        }
-        temporary
-            .write_all(request.content.as_bytes())
-            .map_err(io_error)?;
-        temporary.as_file().sync_all().map_err(io_error)?;
+            temporary.as_file().sync_all().map_err(io_error)?;
+            Some(temporary)
+        } else {
+            None
+        };
         if cancelled() {
             return Err(p::Error::request_cancelled());
         }
-        temporary
-            .persist(&path)
+        validate_destination()?;
+        let before = match before {
+            Some(baseline) => {
+                verify_write_baseline(&path, &baseline)?;
+                // Windows publication needs the original entry's handle closed.
+                drop(baseline.file);
+                Some(baseline.text)
+            }
+            None => None,
+        };
+        if let Some(temporary) = temporary {
+            if before.is_some() {
+                temporary.persist(&path)
+            } else {
+                temporary.persist_noclobber(&path)
+            }
             .map_err(|error| io_error(error.error))?;
+        }
         Ok(FileEdit {
             session_id: request.session_id.clone(),
             path,
-            before,
+            before: before.unwrap_or_default(),
             after: request.content.clone(),
         })
     }
+}
+
+/// A colon in a Windows name can select a stream or replace the base when
+/// that component is appended on its own.
+pub(super) fn has_windows_stream_separator(name: &std::ffi::OsStr) -> bool {
+    cfg!(windows) && name.as_encoded_bytes().contains(&b':')
 }
 
 pub(super) fn agent_path(path: &Path) -> PathBuf {
@@ -267,7 +322,11 @@ pub(super) fn agent_path(path: &Path) -> PathBuf {
 }
 
 fn read_text(path: &Path) -> Result<String, p::Error> {
-    let (file, _) = crate::file_source::open_document_source(path, false).map_err(io_error)?;
+    let (file, _) = crate::file_source::open_canonical_regular_file(path).map_err(io_error)?;
+    read_text_contents(file)
+}
+
+fn read_text_contents(file: impl Read) -> Result<String, p::Error> {
     let mut bytes = Vec::new();
     file.take((MAX_FILE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
@@ -276,6 +335,41 @@ fn read_text(path: &Path) -> Result<String, p::Error> {
         return Err(failure("ACP text files are limited to 8 MiB"));
     }
     String::from_utf8(bytes).map_err(|_| failure("ACP text files must be UTF-8"))
+}
+
+struct WriteBaseline {
+    // The original entry stays open so its identifier cannot be reused.
+    file: std::fs::File,
+    metadata: std::fs::Metadata,
+    text: String,
+}
+
+fn verify_write_baseline(path: &Path, before: &WriteBaseline) -> Result<(), p::Error> {
+    use crate::file_source::file_identity;
+
+    let (mut file, metadata) = crate::file_source::open_canonical_regular_file(path)
+        .map_err(io_error)?;
+    let changed = || failure("The file changed during the ACP write");
+    if metadata.len() != before.text.len() as u64
+        || metadata.permissions() != before.metadata.permissions()
+        || file_identity(&file, &metadata) != file_identity(&before.file, &before.metadata)
+    {
+        return Err(changed());
+    }
+    // Compare exact bytes in bounded chunks. A timestamp or file-size check
+    // alone misses edits that preserve both.
+    let mut buffer = [0; 16 * 1024];
+    for expected in before.text.as_bytes().chunks(buffer.len()) {
+        let actual = &mut buffer[..expected.len()];
+        file.read_exact(actual).map_err(io_error)?;
+        if actual != expected {
+            return Err(changed());
+        }
+    }
+    if file.read(&mut buffer[..1]).map_err(io_error)? != 0 {
+        return Err(changed());
+    }
+    Ok(())
 }
 
 pub fn line_range(text: &str, line: Option<u32>, limit: Option<u32>) -> Result<String, p::Error> {
@@ -294,10 +388,14 @@ pub fn line_range(text: &str, line: Option<u32>, limit: Option<u32>) -> Result<S
 }
 
 pub(super) fn failure(message: impl Into<String>) -> p::Error {
-    p::Error::new(-32000, message)
+    p::Error::new(p::ErrorCode::InternalError.into(), message)
 }
 pub(super) fn io_error(error: std::io::Error) -> p::Error {
-    failure(error.to_string())
+    let code = match error.kind() {
+        std::io::ErrorKind::NotFound => p::ErrorCode::ResourceNotFound,
+        _ => p::ErrorCode::InternalError,
+    };
+    p::Error::new(code.into(), error.to_string())
 }
 
 #[cfg(test)]
@@ -450,12 +548,199 @@ mod tests {
         let request = p::WriteTextFileRequest::new("test", &path, "hello\n");
         let edit = workspace.write(&request).unwrap();
         assert_eq!(edit.before, "");
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "hello\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n");
+        let update = p::WriteTextFileRequest::new("test", &path, "updated\n");
+        let edit = workspace.write(&update).unwrap();
+        assert_eq!(edit.before, "hello\n");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "updated\n");
         assert!(workspace.resolve(&dir.path().join("../outside")).is_err());
         assert!(workspace.resolve(Path::new("relative")).is_err());
         let outside = tempfile::tempdir().unwrap();
         assert!(workspace.resolve(&outside.path().join("no.txt")).is_err());
     }
+
+    #[test]
+    fn an_identical_agent_write_preserves_the_file_and_its_hard_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(directory.path()).unwrap();
+        let path = directory.path().join("file.txt");
+        let alias = directory.path().join("alias.txt");
+        let content = "unchanged\r\n";
+        std::fs::write(&path, content).unwrap();
+        std::fs::hard_link(&path, &alias).unwrap();
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(time))
+            .unwrap();
+
+        let edit = workspace
+            .write(&p::WriteTextFileRequest::new("test", &path, content))
+            .unwrap();
+
+        assert_eq!(edit.before, content);
+        assert_eq!(edit.after, content);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), time);
+        std::fs::write(alias, "updated through the other name").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "updated through the other name"
+        );
+    }
+
+    #[test]
+    fn workspace_file_errors_report_their_protocol_codes() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let request = p::ReadTextFileRequest::new("test", dir.path().join("missing.txt"));
+        let error = workspace.read(&request, None).unwrap_err();
+        assert_eq!(error.code, p::ErrorCode::ResourceNotFound);
+
+        let error = workspace.resolve(Path::new("relative")).unwrap_err();
+        assert_eq!(error.code, p::ErrorCode::InvalidParams);
+
+        let error = workspace.resolve(dir.path().parent().unwrap()).unwrap_err();
+        assert_eq!(error.code, p::ErrorCode::InternalError);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn agent_read_rejects_an_ancestor_redirected_after_resolution() {
+        let directory = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(directory.path()).unwrap();
+        let parent = directory.path().join("sub");
+        let moved = directory.path().join("moved");
+        let path = parent.join("file.txt");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::write(&path, "workspace text").unwrap();
+        std::fs::write(outside.path().join("file.txt"), "external text").unwrap();
+        let request = p::ReadTextFileRequest::new("test", &path);
+
+        let point_parent_at = |target: &Path| {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(target, &parent).unwrap();
+            #[cfg(windows)]
+            assert!(
+                std::process::Command::new("cmd.exe")
+                    .args(["/d", "/c", "mklink", "/J"])
+                    .arg(&parent)
+                    .arg(target)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        };
+        let remove_link = || {
+            #[cfg(unix)]
+            std::fs::remove_file(&parent).unwrap();
+            #[cfg(windows)]
+            std::fs::remove_dir(&parent).unwrap();
+        };
+        let result = workspace.read_inner(&request, None, || {
+            std::fs::rename(&parent, &moved).unwrap();
+            point_parent_at(outside.path());
+        });
+        remove_link();
+
+        assert!(
+            result.is_err(),
+            "read accessed a substituted ancestor: {result:?}"
+        );
+        point_parent_at(&moved);
+        let response = workspace.read(&request, None);
+        remove_link();
+        assert_eq!(response.unwrap().content, "workspace text");
+    }
+
+    fn preserve_external_write(original: Option<&str>) {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let path = dir.path().join("file.txt");
+        if let Some(original) = original {
+            std::fs::write(&path, original).unwrap();
+        }
+        let request = p::WriteTextFileRequest::new("test", &path, "agent replacement\n");
+        let checked = std::cell::Cell::new(false);
+        let result = workspace.write_cancellable(&request, &|| {
+            if checked.replace(true) {
+                std::fs::write(&path, "external\n").unwrap();
+            }
+            false
+        });
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "external\n");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn agent_write_preserves_files_created_during_publication() {
+        preserve_external_write(None);
+    }
+
+    #[test]
+    fn agent_write_preserves_same_size_external_edits_during_publication() {
+        preserve_external_write(Some("original\n"));
+    }
+
+    #[test]
+    fn agent_write_refuses_a_replaced_file_with_identical_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let path = dir.path().join("file.txt");
+        let retained = dir.path().join("original.txt");
+        std::fs::write(&path, "original\n").unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let request = p::WriteTextFileRequest::new("test", &path, "agent replacement\n");
+        let staged = std::cell::Cell::new(false);
+
+        let result = workspace.write_cancellable(&request, &|| {
+            if staged.replace(true) {
+                std::fs::rename(&path, &retained).unwrap();
+                std::fs::write(&path, "original\n").unwrap();
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .unwrap()
+                    .set_times(std::fs::FileTimes::new().set_modified(modified))
+                    .unwrap();
+            }
+            false
+        });
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original\n");
+        assert_eq!(std::fs::read_to_string(&retained).unwrap(), "original\n");
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_write_preserves_both_files_after_link_retargeting() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Workspace::new(dir.path()).unwrap();
+        let original = dir.path().join("original.txt");
+        let other = dir.path().join("other.txt");
+        let link = dir.path().join("link.txt");
+        let new_link = dir.path().join("new-link.txt");
+        std::fs::write(&original, "original\n").unwrap();
+        std::fs::write(&other, "other\n").unwrap();
+        std::os::unix::fs::symlink(&original, &link).unwrap();
+        std::os::unix::fs::symlink(&other, &new_link).unwrap();
+        let request = p::WriteTextFileRequest::new("test", &link, "agent replacement\n");
+        let checked = std::cell::Cell::new(false);
+        let result = workspace.write_cancellable(&request, &|| {
+            if checked.replace(true) {
+                std::fs::rename(&new_link, &link).unwrap();
+            }
+            false
+        });
+        assert_eq!(std::fs::read_to_string(original).unwrap(), "original\n");
+        assert_eq!(std::fs::read_to_string(other).unwrap(), "other\n");
+        assert!(result.is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlink_ancestors_cannot_escape_workspace() {

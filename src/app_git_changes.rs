@@ -12,7 +12,7 @@ fn message<P: AsRef<Path>>(action: &str, changes: &[GitFileChange<P>]) -> String
 
 fn expand_directories<P: AsRef<Path>>(repo: &git2::Repository, changes: &[GitFileChange<P>]) -> Result<Vec<GitFileChange<PathBuf>>, String> {
     let workdir = if changes.iter().any(|change| change.directory) {
-        super::ignore_formatter_working_copies(repo).map_err(|error| error.to_string())?;
+        super::ignore_working_copies(repo).map_err(|error| error.to_string())?;
         Some(std::fs::canonicalize(repo.workdir().ok_or("Bare repository")?).map_err(|error| error.to_string())?)
     } else { None };
     let mut expanded = Vec::new();

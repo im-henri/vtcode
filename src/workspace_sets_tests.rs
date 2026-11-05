@@ -86,6 +86,54 @@ fn concurrent_catalog_writers_merge_without_losing_sets() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_catalog_rejects_a_fifo_without_waiting_for_a_writer() {
+    use std::{
+        fs::OpenOptions,
+        os::unix::{ffi::OsStrExt, fs::OpenOptionsExt},
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("sets.json");
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: the path is a terminated name in a disposable directory.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let (done, result) = mpsc::channel();
+    let read_path = path.clone();
+    let reader = std::thread::spawn(move || {
+        let _ = done.send(load(&read_path));
+    });
+    let early = result.recv_timeout(Duration::from_secs(2));
+    if early.is_err() {
+        // Unblock a regressed reader before joining the thread.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+            {
+                Ok(peer) => {
+                    drop(peer);
+                    break;
+                }
+                Err(error)
+                    if error.raw_os_error() == Some(libc::ENXIO) && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("cannot unblock catalog reader: {error}"),
+            }
+        }
+        result.recv_timeout(Duration::from_secs(5)).unwrap().unwrap_err();
+    }
+    reader.join().unwrap();
+    assert!(early.expect("catalog load waited for a FIFO writer").is_err());
+}
+
 #[test]
 fn malformed_newer_and_invalid_mutations_never_overwrite_catalogs() {
     let temp = tempfile::tempdir().unwrap();

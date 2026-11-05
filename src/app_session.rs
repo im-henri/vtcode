@@ -943,6 +943,27 @@ impl App {
         self.apply_settings(&applied);
     }
 
+    fn settings_file_has_unsaved_edits(&self, path: &std::path::Path) -> bool {
+        let canonical = std::cell::OnceCell::new();
+        self.tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(|tab| {
+                tab.has_unsaved_changes()
+                    && tab.editor.file_path.as_deref().is_some_and(|candidate| {
+                        Self::same_open_path(candidate, path)
+                            || (!crate::remote::workspace::is_view_key(candidate)
+                                && canonical
+                                    .get_or_init(|| path.canonicalize().ok())
+                                    .as_ref()
+                                    .zip(candidate.canonicalize().ok())
+                                    .is_some_and(|(target, candidate)| {
+                                        Self::same_open_path(target, &candidate)
+                                    }))
+                    })
+            })
+    }
+
     /// Atomically patch one preference while preserving unknown keys and external edits.
     /// Failure leaves both the disk file and live settings unchanged.
     pub(crate) fn patch_settings_scope(
@@ -958,59 +979,10 @@ impl App {
         };
         let mut layer = layer.clone();
         if self.settings_persistence_enabled {
-            if self
-                .tabs
-                .iter()
-                .chain(self.groups.iter().flat_map(|group| &group.tabs))
-                .any(|tab| {
-                    tab.editor.modified
-                        && tab
-                            .editor
-                            .file_path
-                            .as_ref()
-                            .is_some_and(|p| Self::same_open_path(p, path))
-                })
-            {
+            if self.settings_file_has_unsaved_edits(path) {
                 return Err("The settings file has unsaved edits. Save or close those edits, then try again.".into());
             }
-            let write = || -> Result<Settings, Box<dyn std::error::Error>> {
-                use std::io::Write;
-                let mut document: serde_json::Value = match std::fs::read_to_string(path) {
-                    Ok(text) => serde_json::from_str(&text)?,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        serde_json::json!({})
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                let mut updated: Settings = serde_json::from_value(document.clone())?;
-                patch(&mut updated);
-                document
-                    .as_object_mut()
-                    .ok_or("Settings must be an object")?
-                    .insert(
-                        key.into(),
-                        if matches!(key, "files.exclude" | "search.exclude") {
-                            serde_json::to_value(&updated)?[key].as_object().cloned().map(serde_json::Value::Object).unwrap_or_else(|| serde_json::json!({}))
-                        } else { serde_json::to_value(&updated)?[key].clone() },
-                    );
-                let parent = path.parent().ok_or("Settings path has no parent")?;
-                std::fs::create_dir_all(parent)?;
-                let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-                if let Ok(metadata) = path.metadata() {
-                    if metadata.permissions().readonly() {
-                        return Err("Settings file is read-only".into());
-                    }
-                    temporary
-                        .as_file()
-                        .set_permissions(metadata.permissions())?;
-                }
-                serde_json::to_writer_pretty(&mut temporary, &document)?;
-                temporary.write_all(b"\n")?;
-                temporary.as_file().sync_all()?;
-                temporary.persist(path)?;
-                Ok(updated)
-            };
-            layer = write().map_err(|error| error.to_string())?;
+            layer = crate::settings::patch_file(path, key, patch).map_err(|error| error.to_string())?;
         } else {
             patch(&mut layer);
         }
@@ -1028,15 +1000,22 @@ impl App {
         mut settings: Settings,
     ) {
         settings.validate();
-        let path = match scope {
-            crate::settings::SettingsScope::Global => self.settings_global_path.clone(),
-            crate::settings::SettingsScope::Workspace => self.settings_workspace_path.clone(),
-        };
-
         if self.settings_persistence_enabled {
-            if let Err(error) = crate::settings::save_to_file(&path, &settings) {
-                log_error!("failed to save {} settings: {error}", scope.label());
-                self.notify(format!("Could not save {} settings: {error}", scope.label()));
+            let (path, previous) = match scope {
+                crate::settings::SettingsScope::Global => (&self.settings_global_path, &self.settings_global),
+                crate::settings::SettingsScope::Workspace => (&self.settings_workspace_path, &self.settings_workspace),
+            };
+            let result = if self.settings_file_has_unsaved_edits(path) {
+                Err(std::io::Error::other("The settings file has unsaved edits. Save or close those edits, then try again."))
+            } else {
+                crate::settings::save_changes(path, previous, &settings)
+            };
+            match result {
+                Ok(merged) => settings = merged,
+                Err(error) => {
+                    log_error!("failed to save {} settings: {error}", scope.label());
+                    self.notify(format!("Could not save {} settings: {error}", scope.label()));
+                }
             }
         }
 
@@ -1412,11 +1391,7 @@ impl App {
                 (None, None)
             };
             crate::session::SavedTab {
-                file_path: tab
-                    .editor
-                    .file_path
-                    .as_ref()
-                    .map(|p| p.display().to_string()),
+                file_path: tab.editor.file_path.clone(),
                 cursor_line: tab.editor.cursor_line,
                 cursor_col: tab.editor.cursor_col,
                 scroll_offset: tab.editor.scroll_offset,
@@ -1470,6 +1445,8 @@ impl App {
             SidebarView::Remote => "remote",
         };
         crate::session::Session {
+            recovery_lease: Default::default(),
+            recovery_incomplete: self.incomplete_session_recovery.is_some(),
             remote_checkpoints: self.remote_workspace.as_ref().map(|_| std::sync::Arc::new(self.tabs.iter()
                 .chain(self.groups.iter().flat_map(|group| &group.tabs))
                 .filter_map(|tab| Some((tab.editor.file_path.as_ref()?.to_string_lossy().into_owned(), tab.editor.remote_checkpoint.clone()?)))
@@ -1525,6 +1502,38 @@ impl App {
         }
     }
 
+    pub(crate) fn preserve_unreadable_session_recovery(
+        &mut self,
+        restores: &[crate::session::SessionRestore],
+    ) {
+        if self.incomplete_session_recovery.is_some() {
+            return;
+        }
+        let failed = restores.iter().find(|restore| {
+            restore.tab.recovery_read_failed()
+                && self
+                    .tabs
+                    .iter()
+                    .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                    .any(|tab| {
+                        tab.editor.bg_loading
+                            && tab.editor.pending_session_restore
+                                .as_ref()
+                                .is_some_and(|pending| pending.id == restore.id)
+                    })
+        });
+        if let Some(failed) = failed {
+            self.mark_session_recovery_incomplete(failed.recovery_lease.clone());
+        }
+    }
+
+    pub(crate) fn mark_session_recovery_incomplete(&mut self, lease: crate::session::RecoveryLease) {
+        self.incomplete_session_recovery = Some(lease);
+        self.notify_warn(
+            "Some recovery files could not be read. The previous session backup was preserved.",
+        );
+    }
+
     /// Restore session state
     pub(crate) fn restore_session(&mut self, session: &crate::session::Session) {
         self.restore_search_histories(session);
@@ -1549,9 +1558,14 @@ impl App {
                 // results must never match a new placeholder for the same path.
                 id: NEXT_SESSION_RESTORE_ID.fetch_add(1, Ordering::Relaxed),
                 tab: saved_tab.clone(),
+                recovery_lease: if saved_tab.has_recovery_sidecars() {
+                    session.recovery_lease.clone()
+                } else {
+                    Default::default()
+                },
             };
             let mut editor = if let Some(path) = &saved_tab.file_path {
-                Editor::new_loading(std::path::Path::new(path), 0)
+                Editor::new_loading(path, 0)
             } else {
                 let mut editor = Editor::new();
                 editor.bg_loading = true;
@@ -1568,8 +1582,7 @@ impl App {
             editor.cursor_surrounding_lines = default_cursor_surrounding_lines;
             editor.pending_session_restore = Some(restore.clone());
             if let Some(path) = &saved_tab.file_path {
-                let path = std::path::PathBuf::from(path);
-                restore_jobs.entry(path).or_default().push(restore);
+                restore_jobs.entry(path.clone()).or_default().push(restore);
             } else {
                 untitled_restore_jobs.push(restore);
             }
@@ -2279,7 +2292,7 @@ mod tests {
         let app = App::test_new();
         let mut session = app.build_session();
         session.tabs.push(crate::session::SavedTab {
-            file_path: Some("/nonexistent/path/file.txt".to_string()),
+            file_path: Some("/nonexistent/path/file.txt".into()),
             cursor_line: 0,
             cursor_col: 0,
             scroll_offset: 0,
@@ -2309,7 +2322,7 @@ mod tests {
         std::fs::write(&file_path, "disk baseline\n").unwrap();
         let session = crate::session::Session {
             tabs: vec![crate::session::SavedTab {
-                file_path: Some(file_path.display().to_string()),
+                file_path: Some(file_path),
                 cursor_line: 0,
                 cursor_col: 7,
                 scroll_offset: 0,
@@ -2343,12 +2356,68 @@ mod tests {
     }
 
     #[test]
+    fn failed_session_sidecar_restore_keeps_the_previous_backup_on_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recovery.txt");
+        std::fs::write(&path, "saved file\n").unwrap();
+        let mut source = App::new(dir.path().to_path_buf());
+        let mut editor = Editor::new();
+        editor.open_file(&path).unwrap();
+        editor.insert_char('X');
+        source.tabs.push(Tab::new_file(editor));
+        crate::session::save_session(dir.path(), &source.build_session()).unwrap();
+        let manifest_path = crate::session::session_path(dir.path());
+        let previous = std::fs::read(&manifest_path).unwrap();
+        let manifest = crate::session::load_session(dir.path()).unwrap();
+        let sidecar = crate::session::unsaved_dir(dir.path())
+            .join(manifest.tabs[0].unsaved_file.as_ref().unwrap());
+        std::fs::write(&sidecar, [0xff]).unwrap();
+
+        let mut restored = App::new(dir.path().to_path_buf());
+        restored.restore_session(&manifest);
+        wait_for_session_restore(&mut restored);
+        drop(manifest);
+        assert_eq!(restored.tabs[0].editor.rope, "saved file\n");
+        assert!(restored.incomplete_session_recovery.as_ref().unwrap().is_held());
+        let error = crate::session::save_session(dir.path(), &restored.build_session()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        restored.exit_discard_quit = true;
+        restored.save_finished_workspace().unwrap();
+        assert_eq!(std::fs::read(manifest_path).unwrap(), previous);
+        assert_eq!(std::fs::read(sidecar).unwrap(), [0xff]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_reopens_the_native_filename() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(std::ffi::OsStr::from_bytes(b"source-\xff.txt"));
+        std::fs::write(&path, "native filename\n").unwrap();
+        std::fs::write(dir.path().join("source-\u{fffd}.txt"), "different file\n").unwrap();
+        let mut source = App::new(dir.path().to_path_buf());
+        let mut editor = Editor::new();
+        editor.open_file(&path).unwrap();
+        source.tabs.push(Tab::new_file(editor));
+        crate::session::save_session(dir.path(), &source.build_session()).unwrap();
+        let manifest = crate::session::load_session(dir.path()).unwrap();
+
+        let mut restored = App::new(dir.path().to_path_buf());
+        restored.restore_session(&manifest);
+        wait_for_session_restore(&mut restored);
+        let editor = &restored.tabs[0].editor;
+        assert_eq!(editor.file_path.as_deref(), Some(path.as_path()));
+        assert_eq!(editor.rope, "native filename\n");
+    }
+
+    #[test]
     fn restore_session_recovers_unsaved_content_when_disk_file_is_missing() {
         let dir = tempfile::tempdir().unwrap();
         let missing_path = dir.path().join("missing.txt");
         let session = crate::session::Session {
             tabs: vec![crate::session::SavedTab {
-                file_path: Some(missing_path.display().to_string()),
+                file_path: Some(missing_path),
                 cursor_line: 0,
                 cursor_col: 4,
                 scroll_offset: 0,

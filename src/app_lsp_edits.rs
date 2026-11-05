@@ -37,13 +37,18 @@ pub(crate) fn apply(editor: &mut Editor, edits: &[TextEdit]) -> Result<usize, St
     })
 }
 
+pub(crate) fn ensure_writable(editor: &Editor) -> Result<(), String> {
+    if editor.read_only || editor.save_content_error().is_some() {
+        return Err("The target editor is not writable".into());
+    }
+    Ok(())
+}
+
 /// Apply sorted, non-overlapping edits in the current Rope's character coordinates.
 /// Local renames use the same undo and cursor mapping as language-server edits.
 pub(crate) fn apply_prepared(editor: &mut Editor, mut edits: Vec<(usize, usize, String)>) -> Result<usize, String> {
         crate::editor_document::edit!(editor, {
-    if editor.read_only || editor.save_content_error().is_some() {
-        return Err("The target editor is not writable".into());
-    }
+    ensure_writable(editor)?;
     // Validate the complete response first, then ignore edits that do nothing.
     // Format Document must not clear redo or dirty an already formatted file.
     edits.retain(|(start, end, text)| editor.rope.slice(*start..*end) != text.as_str());
@@ -87,9 +92,7 @@ pub(crate) fn complete(
     editor: &mut Editor,
     item: &crate::lsp::LspCompletionItem,
 ) -> Result<(), String> {
-    if editor.read_only || editor.bg_loading {
-        return Err("The target editor is not writable".into());
-    }
+    ensure_writable(editor)?;
     let (mut start, mut end) = if let Some(((sl, sc), (el, ec))) = item.text_edit_range {
         lsp_positions::range(
             &editor.rope,

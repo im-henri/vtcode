@@ -2,7 +2,7 @@
 use crate::{
     app::{ActivePane, App},
     lsp::LspServerConfig,
-    settings::{Settings, SettingsScope},
+    settings::SettingsScope,
     text_input::TextInputId,
     ui_widgets::InputField,
 };
@@ -13,7 +13,6 @@ use ratatui::{
     style::{Modifier, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use std::io::Write;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -247,69 +246,10 @@ fn clear_inputs(app: &mut App) {
 /// Persist before changing runtime state, so an I/O error leaves the draft usable.
 fn persist(app: &mut App, servers: Vec<LspServerConfig>) -> Result<(), String> {
     let scope = app.lsp_settings.scope;
-    let (path, layer) = match scope {
-        SettingsScope::Global => (&app.settings_global_path, &app.settings_global),
-        SettingsScope::Workspace => (&app.settings_workspace_path, &app.settings_workspace),
-    };
-    let mut settings = layer.clone();
-    if app.settings_persistence_enabled {
-        let same_path = |candidate: &std::path::Path| {
-            candidate == path
-                || candidate
-                    .canonicalize()
-                    .ok()
-                    .zip(path.canonicalize().ok())
-                    .is_some_and(|(a, b)| a == b)
-        };
-        if app
-            .tabs
-            .iter()
-            .chain(app.groups.iter().flat_map(|group| &group.tabs))
-            .any(|tab| {
-                tab.editor.modified && tab.editor.file_path.as_ref().is_some_and(|p| same_path(p))
-            })
-        {
-            return Err(
-                "The settings file has unsaved edits. Save or close those edits, then try again."
-                    .into(),
-            );
-        }
-        let write = || -> Result<Settings, Box<dyn std::error::Error>> {
-            let mut document: serde_json::Value = match std::fs::read_to_string(path) {
-                Ok(text) => serde_json::from_str(&text)?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-                Err(error) => return Err(error.into()),
-            };
-            let object = document
-                .as_object_mut()
-                .ok_or("Settings must be a JSON object")?;
-            object.insert("lspServers".into(), serde_json::to_value(&servers)?);
-            let updated = serde_json::from_value(document.clone())?;
-            let parent = path.parent().ok_or("Settings path has no parent")?;
-            std::fs::create_dir_all(parent)?;
-            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-            if let Ok(metadata) = path.metadata() {
-                if metadata.permissions().readonly() {
-                    return Err("Settings file is read-only".into());
-                }
-                temporary
-                    .as_file()
-                    .set_permissions(metadata.permissions())?;
-            }
-            serde_json::to_writer_pretty(&mut temporary, &document)?;
-            temporary.write_all(b"\n")?;
-            temporary.as_file().sync_all()?;
-            temporary.persist(path)?;
-            Ok(updated)
-        };
-        settings = write().map_err(|error| format!("Could not save servers: {error}"))?;
-    }
-    settings.lsp_servers = Some(servers.clone());
-    match scope {
-        SettingsScope::Global => app.settings_global = settings,
-        SettingsScope::Workspace => app.settings_workspace = settings,
-    }
-    app.apply_effective_settings();
+    app.patch_settings_scope(scope, "lspServers", |settings| {
+        settings.lsp_servers = Some(servers.clone());
+    })
+    .map_err(|error| format!("Could not save servers: {error}"))?;
     app.lsp_settings.servers = servers;
     app.lsp_settings.inherited = false;
     app.notify("Language server settings saved and applied.");

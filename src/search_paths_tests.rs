@@ -16,11 +16,11 @@ fn legacy_match(globs: &SearchGlobs, path: &Path) -> bool {
 }
 
 fn legacy_includes(paths: &SearchPaths, path: &Path) -> bool {
-    paths.folders.iter().any(|(root, pattern)| {
-        crate::native_paths::strip_prefix(path, root).is_some_and(|relative| {
-            (!paths.has_global && pattern.is_none())
+    paths.folders.iter().any(|folder| {
+        crate::native_paths::strip_prefix(path, &folder.root).is_some_and(|relative| {
+            (!paths.has_global && folder.whole_folder)
                 || legacy_match(&paths.global, relative)
-                || pattern
+                || folder.pattern
                     .as_ref()
                     .is_some_and(|glob| legacy_match(glob, relative))
         })
@@ -40,11 +40,12 @@ fn legacy_excludes(paths: &SearchPaths, path: &Path, workspace: &Path) -> bool {
             crate::native_paths::strip_prefix(path, workspace).unwrap_or(path),
         )
         || paths.using_paths
-            && paths.folders.iter().any(|(root, pattern)| {
-                crate::native_paths::strip_prefix(path, root).is_some_and(|relative| {
-                    pattern
-                        .as_ref()
-                        .is_none_or(|glob| legacy_match(glob, relative))
+            && paths.folders.iter().any(|folder| {
+                crate::native_paths::strip_prefix(path, &folder.root).is_some_and(|relative| {
+                    folder.whole_folder
+                        || folder.pattern
+                            .as_ref()
+                            .is_some_and(|glob| legacy_match(glob, relative))
                 })
             })
 }
@@ -415,6 +416,47 @@ fn path_scopes_match_previous_behavior_with_overlapping_external_and_open_paths(
 }
 
 #[test]
+fn whole_folder_scope_keeps_its_coverage_when_combined_with_narrower_globs() {
+    let workspace = std::env::current_dir().unwrap().join("workspace");
+    let folder = workspace.join("sources");
+    let absolute = folder.display().to_string();
+    for (scope, root) in [
+        ("./,./*.rs".to_owned(), workspace.as_path()),
+        ("./*.rs,./".to_owned(), workspace.as_path()),
+        (format!("{absolute},{absolute}/*.rs"), folder.as_path()),
+        (format!("{absolute}/*.rs,{absolute}"), folder.as_path()),
+    ] {
+        let path = root.join("nested/notes.txt");
+        let candidate = Candidate::new(&path);
+        let rules = SearchPaths::new(&workspace, &scope);
+        assert!(rules.includes(&candidate), "include {scope:?}");
+        assert!(rules.includes_open(&candidate), "open {scope:?}");
+        assert!(rules.excludes(&candidate, &workspace), "exclude {scope:?}");
+    }
+
+    let rules = SearchPaths::new(&workspace, &format!("{absolute},{absolute}/*.rs,*.toml"));
+    for (name, included) in [("main.rs", true), ("Cargo.toml", true), ("notes.txt", false)] {
+        let path = folder.join(name);
+        assert_eq!(rules.includes(&Candidate::new(&path)), included, "{name}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn open_scope_accepts_a_verified_case_alias_of_the_directory() {
+    let workspace = tempfile::tempdir().unwrap();
+    let folder = workspace.path().join("Sources");
+    let alias = workspace.path().join("sources");
+    std::fs::create_dir(&folder).unwrap();
+    if !alias.is_dir() {
+        return;
+    }
+    let open_file = folder.join("file.txt");
+    let includes = SearchPaths::new(workspace.path(), &alias.to_string_lossy());
+    assert!(includes.includes_open(&Candidate::new(&open_file)));
+}
+
+#[test]
 fn empty_rules_and_unfiltered_paths_do_not_prepare_text() {
     let workspace = std::env::current_dir().unwrap();
     let path = workspace.join("any/file.rs");
@@ -683,10 +725,10 @@ fn non_utf8_paths_preserve_lossy_matching_for_global_and_rooted_rules() {
 fn windows_native_prefix_aliases_and_unpaired_surrogates_keep_their_behavior() {
     use std::os::windows::ffi::OsStringExt;
     for (root, name) in [
-        (r"C:\Repo", r"\\?\c:\REPO\src\main.rs"),
+        (r"C:\Repo", r"\\?\c:\Repo\src\main.rs"),
         (
             r"\\server\share\Repo",
-            r"\\?\UNC\SERVER\share\REPO\src\main.rs",
+            r"\\?\UNC\SERVER\share\Repo\src\main.rs",
         ),
     ] {
         let root = Path::new(root);

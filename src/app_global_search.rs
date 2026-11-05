@@ -3,6 +3,7 @@ use crate::app::{App, GlobalSearchResult};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use crate::search_regex::SearchRegex;
+use crate::search_walk::{MatchedFiles, OpenFileAliases, has_parent_traversal};
 
 type OpenSearchBuffers = rustc_hash::FxHashMap<PathBuf, ropey::Rope>;
 
@@ -346,17 +347,18 @@ impl App {
         if let Some(remote) = self.remote_workspace.clone() {
             let request = crate::remote::search::Query {
                 stream: true,
+                report_open_aliases: true,
                 text: query.clone(), case_sensitive, whole_word, regex: is_regex,
                 include: include.clone(), exclude: exclude.clone(), limit: max_results,
                 files_exclude: settings.files_exclude.clone(), search_exclude: settings.search_exclude.clone(),
                 use_ignores: false, parent_ignores: false, global_ignores: false, follow_links,
-                open_files: open_buffers.keys().filter_map(|path| remote.remote_path(path).ok()).collect(),
+                open_files: Vec::new(),
             };
             self.search_cancel_token = Some(self.submit_global_search(move |cancel| {
                 if cancel.is_cancelled() { return; }
                 // View keys are opaque client paths. Native include/exclude
                 // semantics belong to the node, including absolute and ~/ paths.
-                // Only path metadata is sent, once per filter/open-file set.
+                // Cache scope replies when the node used only path metadata.
                 let mut paths = open_buffers.keys().cloned().collect::<Vec<_>>();
                 paths.sort_unstable();
                 let selected = match remote.search_scope_with_settings(&paths, &include, &exclude,
@@ -368,30 +370,59 @@ impl App {
                     }
                 };
                 if cancel.is_cancelled() { return; }
-                // The node compiles its disk matcher. Locally we need only an
-                // editor matcher, and only when there are open models to scan.
-                let regex = if selected.is_empty() { None } else {
-                    match SearchRegex::cached_editor(&query, case_sensitive, whole_word, is_regex) {
-                        Ok(regex) => Some(regex),
-                        Err(error) => { search_failed(&sender, generation, crate::search_regex::error_summary(&error)); return; }
+                let scan_drafts = |indices: &[usize], limit| {
+                    let mut results = Vec::new();
+                    let mut truncated = false;
+                    if indices.is_empty() {
+                        return Ok((results, truncated));
                     }
+                    let regex = SearchRegex::cached_editor(&query, case_sensitive, whole_word, is_regex)
+                        .map_err(|error| crate::search_regex::error_summary(&error))?;
+                    let spec = GlobalSearchSpec {
+                        query: &query,
+                        regex: Some(&regex),
+                        include: "",
+                        exclude: "",
+                        max_results: limit,
+                        case_sensitive,
+                        open_buffers: None,
+                    };
+                    for &index in indices {
+                        if cancel.is_cancelled() || truncated {
+                            break;
+                        }
+                        let path = &paths[index];
+                        Self::search_file_rope(
+                            path, &open_buffers[path], spec,
+                            &mut results, &mut truncated, &cancel,
+                        );
+                    }
+                    Ok::<_, String>((results, truncated))
                 };
-                let mut local = Vec::new(); let mut truncated = false;
-                for index in selected {
-                    if cancel.is_cancelled() { return; }
-                    let path = &paths[index];
-                    Self::search_file_rope(path, &open_buffers[path], GlobalSearchSpec { query: &query, regex: regex.as_deref(), include: "", exclude: "", max_results, case_sensitive, open_buffers: None }, &mut local, &mut truncated, &cancel);
-                    if truncated { break; }
-                }
-                let mut request = request; request.limit = max_results.saturating_sub(local.len());
+                let (local, truncated) = match scan_drafts(&selected, max_results) {
+                    Ok(result) => result,
+                    Err(error) => { search_failed(&sender, generation, error); return; }
+                };
+                if cancel.is_cancelled() { return; }
+                let mut request = request;
+                request.limit = max_results.saturating_sub(local.len());
                 if truncated || request.limit == 0 {
                     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results: local, done: true, generation, truncated }); return;
                 }
                 if !local.is_empty() {
                     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results: local, done: false, generation, truncated: false });
                 }
+                let mut open_indices = Vec::new();
+                for (index, path) in paths.iter().enumerate() {
+                    if let Ok(remote_path) = remote.remote_path(path) {
+                        request.open_files.push(remote_path);
+                        open_indices.push(index);
+                    }
+                }
+                let mut remaining = request.limit;
                 let response = remote.client.search(request, &cancel, |hits| {
                         if cancel.is_cancelled() { return Err(std::io::ErrorKind::Interrupted.into()); }
+                        remaining = remaining.saturating_sub(hits.len());
                         let results = hits.into_iter().map(|hit| crate::app::GlobalSearchResult {
                             file_path: remote.view_key(&hit.path), line_num: hit.line, line_text: hit.text,
                             col_start: hit.start, col_end: hit.end, context_before: None, context_after: None,
@@ -401,8 +432,21 @@ impl App {
                 });
                 if cancel.is_cancelled() { return; }
                 match response {
-                    Ok(truncated) => {
-                        let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results: Vec::new(), done: true, generation, truncated });
+                    Ok((disk_truncated, draft_aliases)) => {
+                        let aliases: Vec<_> = draft_aliases.into_iter()
+                            .map(|index| open_indices[index])
+                            .filter(|index| selected.binary_search(index).is_err())
+                            .collect();
+                        match scan_drafts(&aliases, remaining) {
+                            Ok((results, draft_truncated)) if !cancel.is_cancelled() => {
+                                let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults {
+                                    results, done: true, generation,
+                                    truncated: disk_truncated || draft_truncated,
+                                });
+                            }
+                            Ok(_) => {}
+                            Err(error) => search_failed(&sender, generation, error),
+                        }
                     }
                     Err(error) => {
                         search_failed(&sender, generation, error.to_string());
@@ -422,32 +466,75 @@ impl App {
             let setting_excludes = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(
                 &settings.files_exclude, &settings.search_exclude));
             if cancel.is_cancelled() { return; }
-            let disk_paths = crate::search_walk::paths(&root, includes.clone(), excludes.clone(), setting_excludes.clone(),
-                crate::search_walk::Options { follow_links }, &cancel);
+            let open_paths: Vec<_> = open_buffers.keys().map(PathBuf::as_path).collect();
+            let open_aliases = OpenFileAliases::new(
+                open_paths.iter().copied().enumerate(),
+                &includes,
+                follow_links,
+                &cancel,
+            );
+            let path_aliases = std::sync::Arc::<crate::search_paths::PathAliases>::default();
+            let disk_paths = crate::search_walk::paths(
+                &root, includes.clone(), excludes.clone(), setting_excludes.clone(),
+                crate::search_walk::Options {
+                    follow_links,
+                    workers: 1,
+                    open_aliases: open_aliases.clone(),
+                    path_aliases: path_aliases.clone(),
+                },
+                &cancel,
+            );
             let mut results = Vec::new();
             let mut truncated = false;
             let mut sent = 0;
             let mut last_publish = std::time::Instant::now();
             let mut visited = rustc_hash::FxHashSet::default();
+            let mut matched_files = follow_links.then(MatchedFiles::default);
             // Open models use TextModelSearch, bypass ignore files, and take
             // precedence over the disk copy even when they contain no matches.
-            let mut paths = open_buffers.keys().cloned().chain(disk_paths);
+            let mut paths = open_buffers.keys().cloned().map(|path| (path, true, false))
+                .chain(disk_paths.map(|(path, is_symlink)| (path, false, is_symlink)));
             loop {
                 if cancel.is_cancelled() { return; }
-                let Some(path) = paths.next() else { break; };
-                if !visited.insert(path.clone()) { continue; }
-                let is_open = open_buffers.contains_key(&path);
-                if is_open {
+                let Some((path, from_open, is_symlink)) = paths.next() else { break; };
+                if from_open {
                     let candidate = crate::search_paths::Candidate::new(&path);
-                    if !includes.includes_open(&candidate) || excludes.excludes(&candidate, &root)
+                    let included = if has_parent_traversal(&path) {
+                        let Ok(actual) = path.canonicalize() else { continue; };
+                        let actual_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+                        let resolved = crate::search_paths::Candidate::new(&actual);
+                        includes.includes_canonical_open(&resolved)
+                            && !excludes.excludes_with_aliases(&resolved, &actual_root, &path_aliases)
+                            && !setting_excludes.excludes_tree(&actual, &actual_root)
+                    } else {
+                        includes.includes_open_with_aliases(&candidate, &path_aliases)
+                    };
+                    if !included || excludes.excludes_with_aliases(&candidate, &root, &path_aliases)
                         || setting_excludes.excludes_tree(&path, &root) { continue; }
                 }
+                let (path, is_open) = if from_open || open_buffers.contains_key(&path) {
+                    (path, true)
+                } else if let Some(index) = open_aliases.as_ref().and_then(|aliases| aliases.get(&path)) {
+                    (open_paths[index].to_path_buf(), true)
+                } else {
+                    (path, false)
+                };
+                if !visited.insert(path.clone()) { continue; }
                 let spec = GlobalSearchSpec {
                     query: &query, regex: Some(&regex), include: "", exclude: "",
                     max_results: max_results.saturating_sub(sent), case_sensitive,
                     open_buffers: Some(&open_buffers),
                 };
+                let first_match = results.len();
                 Self::search_single_file(&path, &root, spec, &mut results, &mut truncated, &cancel);
+                if (results.len() > first_match || truncated)
+                    && let Some(matched_files) = &mut matched_files
+                    && !is_open
+                    && !matched_files.insert(&path, is_symlink)
+                {
+                    results.truncate(first_match);
+                    truncated = false;
+                }
                 if truncated { break; }
                 if !results.is_empty() && (results.len() >= 32 || last_publish.elapsed() >= std::time::Duration::from_millis(80)) {
                     sent += results.len();

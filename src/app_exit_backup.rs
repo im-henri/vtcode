@@ -69,6 +69,11 @@ impl App {
             return;
         }
         let session = self.build_session();
+        let recovery_lease = self.tabs.iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .filter_map(|tab| tab.editor.pending_session_restore.as_ref())
+            .find(|restore| restore.recovery_lease.is_held())
+            .map(|restore| restore.recovery_lease.clone());
         let generation = self.workspace_generation;
         self.exit_recovery.pending = Some(Pending {
             generation,
@@ -79,6 +84,7 @@ impl App {
         let job_root = root.clone();
         let sender = self.background.sender.clone();
         self.background.save_for_file(&root, move || {
+            let _recovery_lease = recovery_lease;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 crate::session::save_session(&job_root, &session).map_err(|error| error.to_string())
             }))

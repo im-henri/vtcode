@@ -1434,36 +1434,54 @@ impl App {
                 identity.as_deref().is_some_and(|identity| Self::same_open_path(identity, path))
             }).collect();
             if missing {
-                let _ = handle.send(Command::FileResponse { id, ticket, result: Err(p::Error::new(-32000, "Open files changed while validating this request. Retry after file operations finish.")), edit: None });
+                let error = p::Error::new(
+                    p::ErrorCode::InternalError.into(),
+                    "Open files changed while validating this request. Retry after file operations finish.",
+                );
+                let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None });
                 return;
             }
             editors
         } else { self.acp_file_editors(path) };
         if self.unresolved_agent_files() || editors.iter().any(|tab| tab.editor.bg_loading) {
-            let _ = handle.send(Command::FileResponse { id, ticket, result: Err(p::Error::new(-32000, "Wait for the open files to finish loading, then retry this file request.")), edit: None });
+            let error = p::Error::new(
+                p::ErrorCode::InternalError.into(),
+                "Wait for the open files to finish loading, then retry this file request.",
+            );
+            let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None });
             return;
         }
         let buffer = self.acp_read_buffer(&editors);
-        if self
+        let error = if self
             .chat
             .sessions
             .get(request.session_id())
             .is_some_and(|s| s.cancelling)
-            || buffer.as_ref().is_some_and(|rope| rope.len_bytes() > vtcode::acp::MAX_FILE_BYTES)
         {
+            Some(p::Error::request_cancelled())
+        } else if buffer.as_ref().is_some_and(|rope| rope.len_bytes() > vtcode::acp::MAX_FILE_BYTES) {
+            Some(p::Error::new(
+                p::ErrorCode::InternalError.into(),
+                "The open buffer exceeds the 8 MiB text limit",
+            ))
+        } else {
+            None
+        };
+        if let Some(error) = error {
             let _ = handle.send(Command::FileResponse {
                 id,
                 ticket,
-                result: Err(p::Error::new(
-                    -32000,
-                    "File request cancelled or buffer exceeds the 8 MiB text limit",
-                )),
+                result: Err(error),
                 edit: None,
             });
             return;
         }
         if matches!(request, FileRequest::Write(_)) && self.acp_write_blocked(path, &editors) {
-            let _ = handle.send(Command::FileResponse { id, ticket, result: Err(p::Error::new(-32000, "The file has unsaved edits, is read-only, or has a pending save. Save or revert it before the agent retries.")), edit: None });
+            let error = p::Error::new(
+                p::ErrorCode::InternalError.into(),
+                "The file has unsaved edits, is read-only, or has a pending save. Save or revert it before the agent retries.",
+            );
+            let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None });
             return;
         }
         let modified_buffers: Vec<_> = editors.iter().filter(|tab| tab.editor.modified).map(|tab| tab.editor.rope.clone()).collect();
@@ -1482,7 +1500,11 @@ impl App {
             .spawn(move || {
                 let _guard = write_guard;
                 if matches!(&request, FileRequest::Read(_)) && modified_buffers.first().is_some_and(|first| modified_buffers.iter().skip(1).any(|other| !crate::rope_changes::equal(first, other))) {
-                    let _ = handle.send_blocking(Command::FileResponse { id, ticket, result: Err(p::Error::new(-32000, "This file has conflicting unsaved buffers through different aliases. Save or reconcile them before retrying.")), edit: None });
+                    let error = p::Error::new(
+                        p::ErrorCode::InternalError.into(),
+                        "This file has conflicting unsaved buffers through different aliases. Save or reconcile them before retrying.",
+                    );
+                    let _ = handle.send_blocking(Command::FileResponse { id, ticket, result: Err(error), edit: None });
                     return;
                 }
                 let buffer = buffer.map(|rope| rope.to_string());

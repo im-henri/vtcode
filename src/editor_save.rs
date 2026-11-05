@@ -427,7 +427,7 @@ impl DiskSaveBaseline {
 
     fn validate_inner(&self, path: &Path, cancel: Option<&crate::background::CancellationToken>) -> io::Result<fs::Metadata> {
         if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err(io::ErrorKind::Interrupted.into()); }
-        let (file, before) = crate::fs_ops::open_document_source(path, false).map_err(|error| {
+        let source_error = |error: io::Error| {
             if matches!(
                 error.kind(),
                 io::ErrorKind::NotFound | io::ErrorKind::InvalidInput
@@ -436,7 +436,8 @@ impl DiskSaveBaseline {
             } else {
                 error
             }
-        })?;
+        };
+        let (file, before) = crate::fs_ops::open_document_source(path, false).map_err(source_error)?;
         let encoded_len = match self.encoding {
             "UTF-16 LE" | "UTF-16 BE" => self.rope.len_utf16_cu() * 2 + 2,
             "ISO-8859-1" => self.rope.len_chars(),
@@ -461,18 +462,48 @@ impl DiskSaveBaseline {
         if !comparison.reader.fill_buf()?.is_empty() {
             return Err(conflict(path));
         }
-        let after = std::fs::metadata(path).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                conflict(path)
-            } else {
-                error
-            }
-        })?;
+        #[cfg(windows)]
+        let after = windows_source_after_read(path, comparison.reader.get_ref()).map_err(source_error)?;
+        #[cfg(not(windows))]
+        let after = std::fs::metadata(path).map_err(source_error)?;
         if !same_source_metadata(&before, &after) {
             return Err(conflict(path));
         }
         Ok(after)
     }
+}
+
+#[cfg(windows)]
+fn windows_source_after_read(path: &Path, original: &fs::File) -> io::Result<fs::Metadata> {
+    use vtcode::file_source::windows_file_identity;
+    // A same-size replacement can also preserve the original mtime. Compare
+    // the handle we read with the entry that the path opens now.
+    let (current, metadata) = crate::fs_ops::open_document_source(path, false)?;
+    if windows_file_identity(original) != windows_file_identity(&current) {
+        return Err(conflict(path));
+    }
+    Ok(metadata)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn windows_external_replacement_conflicts_even_with_equal_size_and_mtime() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("file.txt");
+    fs::write(&path, "before").unwrap();
+    let (original, before) = crate::fs_ops::open_document_source(&path, false).unwrap();
+    assert!(windows_source_after_read(&path, &original).is_ok());
+    fs::rename(&path, root.path().join("old.txt")).unwrap();
+    fs::write(&path, "AFTER!").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(before.modified().unwrap()))
+        .unwrap();
+    let after = fs::metadata(&path).unwrap();
+    assert!(same_source_metadata(&before, &after));
+    assert!(is_conflict(&windows_source_after_read(&path, &original).unwrap_err()));
 }
 
 fn same_source_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool {

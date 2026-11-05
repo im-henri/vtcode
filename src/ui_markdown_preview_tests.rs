@@ -138,6 +138,23 @@ fn completion_wakes_the_event_loop_and_requests_redraw_without_input() {
 }
 
 #[test]
+fn drawing_a_second_pane_preserves_the_first_panes_pending_repaint() {
+    let (mut app, mut terminal) = fixture();
+    let first = app.editor().unwrap().navigation_id;
+    let mut other = Editor::new();
+    other.rope = ropey::Rope::from_str("# Second pane\n");
+    app.tabs.push(Tab::new_file(other));
+    draw(&mut app, &mut terminal, 80);
+    wait(|| app.markdown_previews.jobs.load(Ordering::Relaxed) == 0);
+
+    app.active_tab = 1;
+    draw(&mut app, &mut terminal, 70);
+    assert!(app.markdown_previews.slots[0].pending.is_some());
+    assert!(app.markdown_previews.poll());
+    assert_eq!(app.markdown_previews.ready(first).width, 73);
+}
+
+#[test]
 fn stalled_reflow_keeps_the_old_display_and_coalesces_edits_and_resizes() {
     let (mut app, mut terminal) = fixture();
     settle(&mut app, &mut terminal, 80);

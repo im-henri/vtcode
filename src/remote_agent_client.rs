@@ -269,7 +269,7 @@ impl std::fmt::Debug for Files {
     }
 }
 fn failure(error: impl ToString) -> p::Error {
-    p::Error::new(-32000, error.to_string())
+    p::Error::new(p::ErrorCode::InternalError.into(), error.to_string())
 }
 impl Files {
     fn prepare(&self, write: bool) -> Result<(), p::Error> {

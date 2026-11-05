@@ -102,7 +102,7 @@ fn remote_search_streams_into_the_ui_before_completion_and_discards_cancelled_ba
         request: first.id, hits: vec![hit("obsolete")],
     }) }).unwrap();
     responses.send(remote::Response { id: first.id, result: Ok(remote::Reply::Search {
-        hits: vec![hit("obsolete final")], truncated: true,
+        hits: vec![hit("obsolete final")], truncated: true, draft_aliases: Vec::new(),
     }) }).unwrap();
     responses.send(remote::Response { id: 0, result: Ok(remote::Reply::SearchProgress {
         request: next.id, hits: vec![hit("new")],
@@ -111,7 +111,7 @@ fn remote_search_streams_into_the_ui_before_completion_and_discards_cancelled_ba
     assert!(app.bg_global_search_running);
     assert_eq!(&*app.global_search_results[0].line_text, "new");
     responses.send(remote::Response { id: next.id, result: Ok(remote::Reply::Search {
-        hits: vec![hit("new tail")], truncated: false,
+        hits: vec![hit("new tail")], truncated: false, draft_aliases: Vec::new(),
     }) }).unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
     assert_eq!(app.global_search_results.len(), 2);
@@ -146,7 +146,7 @@ fn remote_search_oversized_progress_fails_only_the_search_and_accepts_legacy_rep
     app.update_global_search();
     let next = requests.recv_timeout(Duration::from_secs(5)).unwrap();
     responses.send(remote::Response { id: next.id, result: Ok(remote::Reply::Search {
-        hits: vec![hit()], truncated: false,
+        hits: vec![hit()], truncated: false, draft_aliases: Vec::new(),
     }) }).unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
     assert!(app.global_search_error.is_none());
@@ -190,6 +190,174 @@ fn remote_search_filters_keep_percent_names_and_absolute_includes_when_a_file_is
         "exclude spelling is the remote filename"
     );
     workspace.client.call(remote::Command::Shutdown).unwrap();
+}
+
+#[test]
+fn remote_search_replace_all_keeps_an_open_draft_through_an_aliased_root() {
+    replace_draft_through_alias(|alias| alias.display().to_string(), true, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_replace_all_keeps_a_draft_when_the_walk_discovers_a_link() {
+    for remote in [false, true] {
+        replace_draft_through_alias(|_| "./sources".to_owned(), remote, false);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn search_replace_all_keeps_a_draft_reached_by_a_file_symlink() {
+    for remote in [false, true] {
+        replace_draft_through_alias(|_| "./sources".to_owned(), remote, true);
+    }
+}
+
+fn replace_draft_through_alias(include: impl FnOnce(&Path) -> String, remote: bool, _file_link: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("Sources");
+    let alias = root.path().join("sources");
+    std::fs::create_dir(&directory).unwrap();
+    let file = directory.join("file.txt");
+    std::fs::write(&file, "disk needle").unwrap();
+    #[cfg(unix)]
+    {
+        let target = if _file_link { &file } else { &directory };
+        std::os::unix::fs::symlink(target, &alias).unwrap();
+    }
+    if !alias.exists() {
+        return;
+    }
+    let (mut app, workspace) = if remote {
+        let (app, workspace) = remote_app(root.path());
+        (app, Some(workspace))
+    } else {
+        (App::new_deferred(root.path().to_path_buf()), None)
+    };
+    app.source_control_enabled = false;
+    let key = workspace.as_ref().map_or_else(
+        || file.clone(),
+        |workspace| workspace.view_key(&RemotePath::new(b"Sources/file.txt".to_vec()).unwrap()),
+    );
+    let mut editor = Editor::test_with_text("disk needle");
+    editor.file_path = Some(key.clone());
+    editor.record_saved_snapshot(editor.rope.clone());
+    editor.select_all();
+    editor.paste_plain_with_text("draft needle");
+    app.tabs.push(Tab::new_file(editor));
+
+    app.search_include_pattern = include(&alias);
+    app.global_search_query = "needle".into();
+    app.global_search_replace_query = "replaced".into();
+    search(&mut app);
+    let searched: Vec<_> = app
+        .global_search_results
+        .iter()
+        .map(|hit| (hit.file_path.clone(), hit.line_text.clone()))
+        .collect();
+    app.replace_all_in_files();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.bg_global_replace_running && !app.bg_global_search_running
+    });
+
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "disk needle");
+    assert_eq!(app.editor().unwrap().rope, "draft replaced");
+    assert_eq!(searched, [(key, "draft needle".into())]);
+    if let Some(workspace) = workspace {
+        workspace.client.call(remote::Command::Shutdown).unwrap();
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn remote_search_uses_the_draft_when_only_the_walked_spelling_matches() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("file.txt"), "disk contents").unwrap();
+    if !root.path().join("FILE.TXT").is_file() {
+        return;
+    }
+    let (mut app, workspace) = remote_app(root.path());
+    let key = workspace.view_key(&RemotePath::new(b"FILE.TXT".to_vec()).unwrap());
+    let cancel = crate::background::CancellationToken::new();
+    assert!(
+        workspace
+            .search_scope(std::slice::from_ref(&key), "file.txt", "", &cancel)
+            .unwrap()
+            .is_empty()
+    );
+    let mut editor = Editor::test_with_text("draft needle needle");
+    editor.file_path = Some(key.clone());
+    app.tabs.push(Tab::new_file(editor));
+
+    app.max_global_search_results = 1;
+    app.search_include_pattern = "file.txt".into();
+    app.global_search_query = "needle".into();
+    search(&mut app);
+
+    assert_eq!(app.global_search_results.len(), 1);
+    assert_eq!(app.global_search_results[0].file_path, key);
+    assert_eq!(&*app.global_search_results[0].line_text, "draft needle needle");
+    assert!(app.global_search_truncated);
+    workspace.client.call(remote::Command::Shutdown).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn search_exclusion_keeps_distinct_case_sensitive_siblings() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("case-sensitive");
+    std::fs::create_dir(&parent).unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(&parent) {
+        return;
+    }
+    let excluded = parent.join("Sources");
+    let included = parent.join("sources");
+    let ordinary = root.path().join("Archive");
+    for folder in [&excluded, &included, &ordinary] {
+        std::fs::create_dir(folder).unwrap();
+    }
+    std::fs::write(excluded.join("closed.txt"), "excluded needle").unwrap();
+    std::fs::write(included.join("closed.txt"), "closed needle").unwrap();
+    std::fs::write(included.join("open.txt"), "disk needle").unwrap();
+    std::fs::write(ordinary.join("closed.txt"), "alias needle").unwrap();
+    let ordinary_alias = root.path().join("archive");
+    if !ordinary_alias.is_dir() {
+        return;
+    }
+    let exclude = format!("{},{}", excluded.display(), ordinary_alias.display());
+
+    for remote in [false, true] {
+        let (mut app, workspace) = if remote {
+            let (app, workspace) = remote_app(root.path());
+            (app, Some(workspace))
+        } else {
+            (App::new_deferred(root.path().to_path_buf()), None)
+        };
+        app.source_control_enabled = false;
+        let mut editor = Editor::test_with_text("draft needle");
+        editor.file_path = Some(workspace.as_ref().map_or_else(
+            || included.join("open.txt"),
+            |workspace| {
+                let path = RemotePath::new(b"case-sensitive/sources/open.txt".to_vec()).unwrap();
+                workspace.view_key(&path)
+            },
+        ));
+        app.tabs.push(Tab::new_file(editor));
+        app.search_exclude_pattern = exclude.clone();
+        app.global_search_query = "needle".into();
+        search(&mut app);
+
+        let mut lines: Vec<_> = app
+            .global_search_results
+            .iter()
+            .map(|hit| hit.line_text.as_ref())
+            .collect();
+        lines.sort_unstable();
+        assert_eq!(lines, ["closed needle", "draft needle"], "remote={remote}");
+        if let Some(workspace) = workspace {
+            workspace.client.call(remote::Command::Shutdown).unwrap();
+        }
+    }
 }
 
 #[test]
@@ -332,6 +500,72 @@ fn remote_search_scope_cache_avoids_repeated_requests_and_invalidates_for_change
         "cancelled query cannot submit metadata work"
     );
     workspace.client.call(remote::Command::Shutdown).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn remote_search_scope_rechecks_an_alias_after_its_directory_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("parent");
+    std::fs::create_dir_all(parent.join("Sources")).unwrap();
+    std::fs::write(parent.join("Sources/file.txt"), "contents\n").unwrap();
+    if !parent.join("sources").is_dir() {
+        return;
+    }
+    let workspace = remote::workspace::Workspace::new(remote::tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
+    let excluding = remote::workspace::Workspace::new(workspace.client.clone());
+    let file = workspace.view_key(&RemotePath::new(b"parent/Sources/file.txt".to_vec()).unwrap());
+    let paths = std::slice::from_ref(&file);
+    let pattern = parent.join("sources").display().to_string();
+    let cancel = crate::background::CancellationToken::new();
+    assert_eq!(
+        workspace
+            .search_scope(paths, &pattern, "", &cancel)
+            .unwrap(),
+        [0]
+    );
+    assert!(
+        excluding
+            .search_scope(paths, "", &pattern, &cancel)
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::rename(&parent, root.path().join("retained-parent")).unwrap();
+    std::fs::create_dir(&parent).unwrap();
+    if crate::native_paths::enable_case_sensitive_test_directory(&parent) {
+        for name in ["Sources", "sources"] {
+            std::fs::create_dir(parent.join(name)).unwrap();
+            std::fs::write(parent.join(name).join("file.txt"), name).unwrap();
+        }
+        assert!(
+            workspace
+                .search_scope(paths, &pattern, "", &cancel)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            excluding
+                .search_scope(paths, "", &pattern, &cancel)
+                .unwrap(),
+            [0]
+        );
+    }
+    workspace.client.call(remote::Command::Shutdown).unwrap();
+}
+
+#[test]
+fn remote_search_scope_accepts_legacy_replies_without_caching_them() {
+    let reply: remote::Reply =
+        serde_json::from_str(r#"{"SearchScope":{"indices":[0]}}"#).unwrap();
+    assert!(matches!(
+        reply,
+        remote::Reply::SearchScope { indices, cacheable: false } if indices == [0]
+    ));
 }
 
 #[test]

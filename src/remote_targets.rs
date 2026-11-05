@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -131,8 +131,12 @@ impl std::fmt::Display for UpdateError {
 }
 
 fn read(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
+    match crate::fs_ops::open_document_source(path, false) {
+        Ok((mut file, _)) => {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)?;
+            Ok(Some(bytes))
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -157,7 +161,7 @@ impl Store {
             Vec::new()
         };
         validate_targets(&targets)?;
-        targets.sort_by_key(|target| target.name.to_lowercase());
+        targets.sort_by_cached_key(|target| target.name.to_lowercase());
         Ok(Self {
             targets,
             path: path.into(),
@@ -231,44 +235,39 @@ impl Store {
         } else if let Some(index) = position {
             latest.targets.remove(index);
         }
-        latest
-            .write(latest.targets.clone())
-            .map_err(UpdateError::Storage)?;
+        let targets = std::mem::take(&mut latest.targets);
+        latest.write(targets).map_err(UpdateError::Storage)?;
         *self = latest;
         Ok(())
     }
 
-    fn lock(&self) -> Result<fs::File, String> {
+    fn lock(&self) -> Result<vtcode::file_source::ExclusiveFileLock, String> {
         let parent = self
             .path
             .parent()
             .ok_or("Remote targets path has no parent")?;
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.path.with_extension("lock"))
+        let lock = crate::fs_ops::open_lock_file(&self.path.with_extension("lock"))
             .map_err(|error| error.to_string())?;
-        lock.try_lock().map_err(|_| {
-            "Remote targets are being saved by another window. Try again.".to_string()
-        })?;
-        Ok(lock)
+        vtcode::file_source::ExclusiveFileLock::try_acquire(lock).map_err(|error| match error {
+            fs::TryLockError::WouldBlock => {
+                "Remote targets are being saved by another window. Try again.".to_string()
+            }
+            fs::TryLockError::Error(error) => error.to_string(),
+        })
     }
 
-    fn write(&mut self, targets: Vec<Target>) -> Result<(), String> {
-        validate_targets(&targets)?;
+    fn write(&mut self, mut targets: Vec<Target>) -> Result<(), String> {
         let parent = self
             .path
             .parent()
             .ok_or("Remote targets path has no parent")?;
-        let mut targets = targets;
-        targets.sort_by_key(|target| target.name.to_lowercase());
-        let mut bytes = serde_json::to_vec_pretty(&Catalog {
+        targets.sort_by_cached_key(|target| target.name.to_lowercase());
+        let catalog = Catalog {
             version: 1,
-            targets: targets.clone(),
-        })
-        .map_err(|error| error.to_string())?;
+            targets,
+        };
+        let mut bytes = serde_json::to_vec_pretty(&catalog).map_err(|error| error.to_string())?;
         bytes.push(b'\n');
         let mut temp =
             tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
@@ -277,21 +276,20 @@ impl Store {
             .map_err(|error| error.to_string())?;
         temp.persist(&self.path)
             .map_err(|error| format!("Cannot save {}: {error}", self.path.display()))?;
-        self.targets = targets;
+        self.targets = catalog.targets;
         self.source = Some(bytes);
         Ok(())
     }
 }
 
 fn validate_targets(targets: &[Target]) -> Result<(), String> {
-    for (index, target) in targets.iter().enumerate() {
+    let mut names =
+        rustc_hash::FxHashSet::with_capacity_and_hasher(targets.len(), Default::default());
+    for target in targets {
         target
             .validate()
             .map_err(|error| format!("Target {:?}: {error}", target.name))?;
-        if targets[..index]
-            .iter()
-            .any(|other| other.name.eq_ignore_ascii_case(&target.name))
-        {
+        if !names.insert(target.name.to_ascii_lowercase()) {
             return Err(format!(
                 "A remote target named {:?} already exists. Choose a unique name.",
                 target.name

@@ -50,15 +50,27 @@ impl workspace::Workspace {
             if path.1 || !path.0.is_empty() {
                 encoded.push('/');
             }
-            let drive = self.windows_paths() && path.is_absolute()
-                && path.0.get(1) == Some(&b':') && path.0[0].is_ascii_alphabetic();
-            let drive_root = drive && path.0.len() == 2;
+            let windows = self.windows_paths();
+            let drive_root = windows && path.is_absolute() && path.0.len() == 2
+                && path.0[0].is_ascii_alphabetic() && path.0[1] == b':';
+            // Match the node's native file URLs, including literal @ in mount
+            // names. Escape a POSIX drive-like first component before parsing
+            // so the URL parser cannot normalize it as a Windows drive letter.
+            let posix_drive_like = !windows && encoded == "file:///"
+                && path.0.first().is_some_and(u8::is_ascii_alphabetic)
+                && matches!(path.0.get(1), Some(b':' | b'|'))
+                && path.0.get(2).is_none_or(|&byte| byte == b'/');
+            encoded.reserve(path.0.len());
             for (index, byte) in path.0.into_iter().enumerate() {
-                if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte)
-                    || (drive && index == 1 && byte == b':') {
-                    encoded.push(byte as char);
+                if !byte.is_ascii_graphic() || b"\"#%<>?\\`{}".contains(&byte)
+                    || (posix_drive_like && index == 1)
+                {
+                    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                    encoded.push('%');
+                    encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+                    encoded.push(char::from(HEX[usize::from(byte & 0xf)]));
                 } else {
-                    encoded.push_str(&format!("%{byte:02X}"));
+                    encoded.push(char::from(byte));
                 }
             }
             if drive_root { encoded.push('/'); }

@@ -9,6 +9,10 @@ use crate::editor::Editor;
 #[cfg(test)]
 use crate::explorer::FileExplorer;
 
+#[cfg(windows)]
+#[path = "app_native_open.rs"]
+pub(crate) mod native_open;
+
 fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loaded: crate::editor::LoadedTextFile, skip_open_prompt: bool) -> crate::background::BackgroundResult {
     let result = crate::background::BackgroundResult::FileLoaded {
         workspace_generation, path, rope: loaded.rope, encoding: loaded.encoding,
@@ -18,6 +22,23 @@ fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loade
     match loaded.remote_checkpoint {
         Some(checkpoint) => crate::background::BackgroundResult::RemoteFileResult { checkpoint, result: Box::new(result) },
         None => result,
+    }
+}
+
+fn file_load_result(
+    generation: u64,
+    path: std::path::PathBuf,
+    result: std::io::Result<crate::editor::LoadedTextFile>,
+    skip_open_prompt: bool,
+) -> crate::background::BackgroundResult {
+    match result {
+        Ok(loaded) => loaded_file_result(generation, path, loaded, skip_open_prompt),
+        Err(error) => crate::background::BackgroundResult::FileLoadFailed {
+            workspace_generation: generation,
+            path,
+            error: error.to_string(),
+            session_restores: Vec::new(),
+        },
     }
 }
 
@@ -32,20 +53,9 @@ impl App {
         let activity_path = path.clone();
         let remote = self.remote_workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&path));
         self.background.read_for_file("file-load", &activity_path, true, move || {
-            match remote.map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
-                crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false))) {
-                Ok(loaded) => {
-                    let _ = sender.send(loaded_file_result(workspace_generation, path, loaded, skip_open_prompt));
-                }
-                Err(error) => {
-                    let _ = sender.send(crate::background::BackgroundResult::FileLoadFailed {
-                        workspace_generation,
-                        path,
-                        error: error.to_string(),
-                        session_restores: Vec::new(),
-                    });
-                }
-            }
+            let result = remote.map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
+                crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false)));
+            let _ = sender.send(file_load_result(workspace_generation, path, result, skip_open_prompt));
         });
     }
 
@@ -177,7 +187,19 @@ impl App {
 
     pub(crate) fn same_open_path(left: &Path, right: &Path) -> bool {
         if crate::remote::workspace::is_view_key(left) || crate::remote::workspace::is_view_key(right) { return left == right; }
-        crate::native_paths::same(left, right)
+        crate::native_paths::same_spelling(left, right)
+    }
+
+    /// Use this only to guard writes while an entry's identity is uncertain.
+    pub(crate) fn paths_may_share_entry(left: &Path, right: &Path) -> bool {
+        #[cfg(windows)]
+        if !crate::remote::workspace::is_view_key(left)
+            && !crate::remote::workspace::is_view_key(right)
+            && crate::native_paths::possible_case_alias(left, right)
+        {
+            return true;
+        }
+        Self::same_open_path(left, right)
     }
 
     pub(crate) fn open_binary_file_info_tab(&mut self, path: &Path) {
@@ -229,7 +251,7 @@ impl App {
 
     fn open_file_with_preview_inner(&mut self, path: &Path, preview: bool, preserve_existing_preview: bool, loaded: &mut Option<crate::editor::LoadedTextFile>) {
         if self.pending_save_as.values().any(|(generation, target)|
-            *generation == self.workspace_generation && Self::same_open_path(target, path))
+            *generation == self.workspace_generation && Self::paths_may_share_entry(target, path))
         {
             self.notify("Wait for Save As to finish before opening its destination.");
             return;
@@ -338,6 +360,14 @@ impl App {
         editor.tab_size = self.default_tab_size;
         editor.use_tabs = self.default_use_tabs;
         editor.cursor_surrounding_lines = self.default_cursor_surrounding_lines;
+        #[cfg(windows)]
+        let document = editor.save_identity;
+        #[cfg(windows)]
+        let candidates = if loaded.is_none() { self.native_open_candidates(&open_path) } else { Vec::new() };
+        #[cfg(windows)]
+        let deferred_preview = preview && self.enable_preview_tabs && !candidates.is_empty();
+        #[cfg(windows)]
+        let preview = preview && !deferred_preview;
         self.status_message = format!("Loading: {}...", self.display_path(&open_path));
         self.push_previewable_tab(Tab::new_file(editor), preview);
         self.active_pane = ActivePane::Editor;
@@ -345,7 +375,19 @@ impl App {
 
         if let Some(loaded) = loaded.take() {
             let _ = self.background.sender.send(loaded_file_result(self.workspace_generation, open_path, loaded, skip_open_prompt));
-        } else { self.queue_background_file_load(open_path, skip_open_prompt); }
+        } else {
+            #[cfg(windows)]
+            self.queue_native_file_open(native_open::Request {
+                path: open_path,
+                document,
+                skip_open_prompt,
+                preserve_existing_preview,
+                activate_existing_group: !self.navigation.restoring,
+                deferred_preview,
+            }, candidates);
+            #[cfg(not(windows))]
+            self.queue_background_file_load(open_path, skip_open_prompt);
+        }
     }
 
     /// Highlight every visible editor viewport on workers. Scrolling and edits
@@ -662,19 +704,25 @@ impl App {
     pub(crate) fn push_previewable_tab(&mut self, mut tab: Tab, preview: bool) {
         self.promote_modified_preview_tabs();
         tab.preview = preview && self.enable_preview_tabs && !tab.has_unsaved_changes();
-        let replace = if tab.preview {
-            self.tabs.iter().position(|tab| tab.preview && matches!(tab.kind, TabKind::File | TabKind::Diff(_)))
-        } else { None };
+        let preview = tab.preview;
         // Add first so replacing a group's only tab cannot close the group.
         // Normal close handling releases document and diff cache ownership.
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         self.touch_tab_mru(self.active_tab);
+        if preview {
+            self.replace_other_preview_tab();
+        }
+    }
+
+    fn replace_other_preview_tab(&mut self) {
+        let replace = self.tabs.iter().enumerate().position(|(index, tab)| {
+            index != self.active_tab && tab.preview && matches!(tab.kind, TabKind::File | TabKind::Diff(_))
+        });
         if let Some(index) = replace {
             self.clear_transient_editor_state();
             self.clear_file_search_results();
             self.force_close_tab(index);
-            self.active_tab = self.tabs.len() - 1;
             self.touch_tab_mru(self.active_tab);
         }
     }
@@ -1449,6 +1497,7 @@ impl App {
         self.visible_highlight_key = None;
         self.provisional_highlight_key = None;
         self.session_baseline = None;
+        self.incomplete_session_recovery = None;
         self.tabs.clear();
         self.groups.clear();
     }

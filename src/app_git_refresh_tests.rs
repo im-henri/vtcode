@@ -539,6 +539,64 @@ fn aliased_workspaces_and_deleted_path_traversals_map_to_canonical_repositories(
 
 #[cfg(windows)]
 #[test]
+fn windows_event_refresh_only_scans_the_changed_case_distinct_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(temp.path()) {
+        return;
+    }
+    let workspace = temp.path().canonicalize().unwrap();
+    let upper = workspace.join("Repo");
+    let lower = workspace.join("repo");
+    init(&upper);
+    init(&lower);
+    let roots = vec![upper, lower.clone()];
+    let mut discovery = Discovery {
+        workspace: workspace.clone(),
+        roots: roots.clone(),
+        parent: None,
+        errors: Vec::new(),
+    };
+    let path = lower.join("first.txt");
+    std::fs::write(&path, "changed lower repository\n").unwrap();
+    let before = STATUS_READS.get();
+    let scans = collect(
+        &mut discovery, roots, Some([path].into_iter().collect()), &workspace,
+        &CancellationToken::new(), true,
+    );
+    assert_eq!(scans.len(), 1);
+    assert_eq!(scans[0].root, lower);
+    assert_eq!(STATUS_READS.get(), before + 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_event_refresh_finds_a_verified_alias_of_a_nested_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+    let root = workspace.join("MixedRepo");
+    init(&root);
+    let alias = workspace.join("mixedrepo").join("first.txt");
+    if !alias.is_file() {
+        return;
+    }
+    let mut discovery = Discovery {
+        workspace: workspace.clone(),
+        roots: vec![root.clone()],
+        parent: None,
+        errors: Vec::new(),
+    };
+    std::fs::write(root.join("first.txt"), "changed through alias\n").unwrap();
+    let scans = collect(
+        &mut discovery, vec![root.clone()], Some([alias].into_iter().collect()), &workspace,
+        &CancellationToken::new(), true,
+    );
+    assert_eq!(scans.len(), 1);
+    assert_eq!(scans[0].root, root);
+    assert!(scans[0].files.iter().any(|file| file.path == "first.txt" && file.status == 'M'));
+}
+
+#[cfg(windows)]
+#[test]
 fn windows_event_paths_accept_case_and_extended_length_aliases() {
     let temp = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(temp.path()).unwrap();

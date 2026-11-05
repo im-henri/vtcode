@@ -558,6 +558,7 @@ fn cutting_back_into_the_same_folder_is_a_noop_and_copying_a_folder_into_itself_
     wait(&mut app);
     assert!(directory.path().join("alpha.rs").exists());
     assert!(!directory.path().join("alpha (1).rs").exists());
+    assert!(app.explorer_clipboard.is_none());
     assert_eq!(editor_state(&app), before);
     select(&mut app, "folder");
     ctrl(&mut app, 'c');
@@ -568,4 +569,60 @@ fn cutting_back_into_the_same_folder_is_a_noop_and_copying_a_folder_into_itself_
         std::fs::read_to_string(directory.path().join("folder/nested.txt")).unwrap(),
         "Saved folder/nested.txt\n"
     );
+}
+
+#[test]
+fn partial_cut_keeps_failed_sources_retryable_with_the_original_terminal_paste() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let (directory, mut app) = fixture(true);
+    let alpha = directory.path().join("alpha.rs");
+    let second = directory.path().join("second.txt");
+    let parked = directory.path().join("parked");
+    app.explorer_multi_selected = vec![alpha.clone(), second.clone()].into();
+    ctrl(&mut app, 'x');
+    let payload = crate::clipboard::get_text().unwrap();
+    std::fs::rename(&second, &parked).unwrap();
+    select(&mut app, "destination");
+    ctrl(&mut app, 'v');
+    wait(&mut app);
+    assert!(directory.path().join("destination/alpha.rs").is_file());
+    assert!(!alpha.exists());
+    assert_eq!(app.explorer_clipboard.as_ref().unwrap().paths, [second.clone()]);
+
+    std::fs::rename(parked, &second).unwrap();
+    select(&mut app, "destination");
+    crate::app_event_loop::handle_paste_input(&mut app, &payload);
+    wait(&mut app);
+    assert!(directory.path().join("destination/second.txt").is_file());
+    assert!(!second.exists());
+    assert!(app.explorer_clipboard.is_none());
+}
+
+#[test]
+fn finishing_an_older_cut_preserves_the_newer_clipboard_selection() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let (directory, mut app) = fixture(true);
+    ctrl(&mut app, 'x');
+    select(&mut app, "destination");
+    ctrl(&mut app, 'v');
+    select(&mut app, "second.txt");
+    ctrl(&mut app, 'x');
+    wait(&mut app);
+    assert!(directory.path().join("destination/alpha.rs").is_file());
+    let clipboard = app.explorer_clipboard.as_ref().unwrap();
+    assert!(clipboard.cut);
+    assert_eq!(clipboard.paths, [directory.path().join("second.txt")]);
+}
+
+#[test]
+fn paste_to_a_removed_selected_folder_does_not_write_into_its_parent() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let (directory, mut app) = fixture(true);
+    ctrl(&mut app, 'c');
+    select(&mut app, "destination");
+    std::fs::remove_dir(directory.path().join("destination")).unwrap();
+    ctrl(&mut app, 'v');
+    wait(&mut app);
+    assert!(!directory.path().join("alpha (1).rs").exists());
+    assert!(directory.path().join("alpha.rs").is_file());
 }

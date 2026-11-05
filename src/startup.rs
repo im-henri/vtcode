@@ -21,6 +21,10 @@ pub(crate) struct Target {
 }
 
 impl Target {
+    fn restores_session(&self, session: &crate::session::Session) -> bool {
+        self.file.is_none() || session.has_recovery_sidecars()
+    }
+
     /// Metadata can block on a network drive. Resolve the CLI on the loader,
     /// including literal colon-containing filenames before file:line:column.
     pub(crate) fn resolve(raw: Option<OsString>) -> Self {
@@ -69,6 +73,7 @@ pub(crate) struct Prepared {
     pub global: Settings,
     pub workspace: Settings,
     pub session: Option<crate::session::Session>,
+    pub incomplete_session_recovery: Option<crate::session::RecoveryLease>,
 }
 
 /// Resolve folder identity on the loader, before looking up portable state.
@@ -117,8 +122,15 @@ impl Prepared {
         global.validate();
         let _ = crate::highlight::Highlighter::startup_theme_set();
         let workspace = crate::settings::load_from_file(&crate::settings::project_settings_path(&root));
-        let session = crate::session::load_session(&root);
-        Self { target: Target { root, file: None, line: None, column: None }, global, workspace, session }
+        let (session, incomplete_session_recovery) =
+            crate::session::load_session_with_recovery_status(&root);
+        Self {
+            target: Target { root, file: None, line: None, column: None },
+            global,
+            workspace,
+            session,
+            incomplete_session_recovery,
+        }
     }
     pub(crate) fn load(raw: Option<OsString>) -> io::Result<Self> {
         let mut target = Target::resolve(raw);
@@ -158,7 +170,8 @@ impl Prepared {
         };
         global.validate();
         workspace.validate();
-        let session = crate::session::load_session(&target.root);
+        let (session, incomplete_session_recovery) =
+            crate::session::load_session_with_recovery_status(&target.root);
         // Initialize only the shared startup palette, on this worker. Other
         // built-ins and installed themes are discovered after the workbench draws.
         let _ = crate::highlight::Highlighter::startup_theme_set();
@@ -166,7 +179,11 @@ impl Prepared {
             .theme
             .as_ref()
             .or(global.theme.as_ref())
-            .or_else(|| session.as_ref().filter(|_| target.file.is_none()).and_then(|session| session.theme.as_ref()));
+            .or_else(|| {
+                session.as_ref()
+                    .filter(|session| target.restores_session(session))
+                    .and_then(|session| session.theme.as_ref())
+            });
         if let Some(key) = selected {
             let _ = crate::app_theme_loader::builtin_theme(key);
         }
@@ -175,6 +192,7 @@ impl Prepared {
             global,
             workspace,
             session,
+            incomplete_session_recovery,
         }
     }
 
@@ -184,6 +202,8 @@ impl Prepared {
     }
 
     pub(crate) fn into_app_with_remote(self, wake: UiWake, remote: Option<crate::remote::workspace::Workspace>) -> App {
+        let restore_session = self.session.as_ref()
+            .is_some_and(|session| self.target.restores_session(session));
         let mut app = App::new_startup(self.target.root, wake);
         app.remote_workspace = remote;
         if app.has_open_folder() { app.git_output(); }
@@ -198,7 +218,7 @@ impl Prepared {
             .or_else(|| {
                 self.session
                     .as_ref()
-                    .filter(|_| self.target.file.is_none())
+                    .filter(|_| restore_session)
                     .and_then(|session| session.theme.as_ref())
             })
             .cloned()
@@ -229,10 +249,15 @@ impl Prepared {
         app.settings_global = self.global;
         app.settings_workspace = self.workspace;
         app.apply_effective_settings();
-        if let Some(path) = self.target.file {
-            if let Some(session) = &self.session {
+        if let Some(session) = &self.session {
+            // An explicit file takes focus after restoring any earlier drafts.
+            if restore_session {
+                app.restore_session(session);
+            } else {
                 app.restore_search_histories(session);
             }
+        }
+        if let Some(path) = self.target.file {
             app.open_file(&path);
             if let Some(line) = self.target.line
                 && let Some(editor) = app.editor_mut()
@@ -242,12 +267,13 @@ impl Prepared {
                     self.target.column.unwrap_or(1).saturating_sub(1),
                 );
             }
-        } else if let Some(session) = self.session {
-            app.restore_session(&session);
         }
         app.apply_session_settings();
         if app.remote_workspace.is_some() {
             app.notify("Remote workspace · editing and rendering run locally");
+        }
+        if let Some(lease) = self.incomplete_session_recovery {
+            app.mark_session_recovery_incomplete(lease);
         }
         app.capture_session_baseline();
         app

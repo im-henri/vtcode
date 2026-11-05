@@ -1,22 +1,11 @@
 //! Remove deleted disk files from every editor group without losing unsaved text.
 use crate::app::{App, Tab, TabKind};
+use crate::native_paths::{same_spelling, strip_spelling_prefix};
 use std::path::{Path, PathBuf};
 
 fn normalized(path: &Path) -> PathBuf {
     if crate::remote::workspace::is_view_key(path) { return path.to_owned(); }
-    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    #[cfg(windows)]
-    {
-        let text = path.to_string_lossy().replace('/', "\\");
-        let text = if let Some(unc) = text.strip_prefix("\\\\?\\UNC\\") {
-            format!("\\\\{unc}")
-        } else {
-            text.strip_prefix("\\\\?\\").unwrap_or(&text).to_owned()
-        };
-        PathBuf::from(text.to_lowercase())
-    }
-    #[cfg(not(windows))]
-    path
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 impl App {
@@ -31,22 +20,38 @@ impl App {
         let target = normalized(path);
         // A save can briefly displace its old file. Its completion requests a
         // fresh probe; sibling tabs in a deleted directory can still close.
-        let saving: rustc_hash::FxHashSet<_> = self
+        let saving: Vec<_> = self
             .pending_file_saves
             .keys()
             .map(|path| normalized(path))
             .collect();
-        let matches = |tab: &Tab| {
-            matches!(tab.kind, TabKind::File | TabKind::MarkdownPreview)
-                && tab.editor.file_path.as_ref().is_some_and(|path| {
-                    normalized(path).starts_with(&target)
-                        && (confirmed || !saving.contains(&normalized(path)))
-                })
-                && !(tab.editor.bg_loading && tab.editor.pending_session_restore.is_some())
-                && (confirmed
+        let mut aliases_to_check = Vec::new();
+        let mut matches = |tab: &Tab| {
+            if !matches!(tab.kind, TabKind::File | TabKind::MarkdownPreview)
+                || (tab.editor.bg_loading && tab.editor.pending_session_restore.is_some())
+                || !(confirmed
                     || tab.editor.last_disk_modified.is_some()
                     || tab.editor.saved_rope.is_some()
                     || (tab.editor.bg_loading && tab.editor.pending_session_restore.is_none()))
+            {
+                return false;
+            }
+            let Some(path) = &tab.editor.file_path else { return false; };
+            let candidate = normalized(path);
+            if !confirmed && saving.iter().any(|saving| same_spelling(&candidate, saving)) {
+                return false;
+            }
+            if strip_spelling_prefix(&candidate, &target).is_some() {
+                return true;
+            }
+            if cfg!(windows) && !crate::remote::workspace::is_view_key(path)
+                && crate::native_paths::strip_possible_alias_prefix(&candidate, &target).is_some()
+            {
+                // The notification establishes absence for its own spelling.
+                // Inspect a possible alias before changing its editor state.
+                aliases_to_check.push(path.clone());
+            }
+            false
         };
         let mut closed_paths = Vec::new();
         let mut recovered = 0;
@@ -128,6 +133,9 @@ impl App {
             }
             self.force_close_tab(index);
         }
+        if !aliases_to_check.is_empty() {
+            self.queue_file_disk_checks(aliases_to_check);
+        }
         if !changed {
             return false;
         }
@@ -140,8 +148,9 @@ impl App {
         }
         // Reopen Closed Editor must not recreate a deleted file with empty text.
         self.closed_tab_paths
-            .retain(|(path, _, _)| !normalized(path).starts_with(&target));
-        self.closed_file_views.retain(|path, _| !normalized(path).starts_with(&target));
+            .retain(|(path, _, _)| strip_spelling_prefix(&normalized(path), &target).is_none());
+        self.closed_file_views
+            .retain(|path, _| strip_spelling_prefix(&normalized(path), &target).is_none());
         self.navigation.remove_path(path);
         if self
             .groups

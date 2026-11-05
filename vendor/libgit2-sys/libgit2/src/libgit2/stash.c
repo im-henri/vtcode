@@ -486,13 +486,15 @@ static int commit_worktree(
 	git_tree *w_tree = NULL;
 	int error = 0, ignorecase;
 
-	if ((error = git_repository_index(&r_index, repo) < 0) ||
+	if ((error = git_repository_index(&r_index, repo)) < 0 ||
 	    (error = git_index__new(&i_index, repo->oid_type)) < 0 ||
-	    (error = git_index__fill(i_index, &r_index->entries) < 0) ||
+	    (error = git_index__fill(i_index, &r_index->entries)) < 0 ||
 	    (error = git_repository__configmap_lookup(&ignorecase, repo, GIT_CONFIGMAP_IGNORECASE)) < 0)
 		goto cleanup;
 
 	git_index__set_ignore_case(i_index, ignorecase);
+	/* Keep the racy-clean check when diffing the copied stat cache. */
+	i_index->stamp.mtime = r_index->stamp.mtime;
 
 	if ((error = build_workdir_tree(&w_tree, repo, i_index, b_commit)) < 0)
 		goto cleanup;

@@ -425,8 +425,14 @@ pub(crate) fn glob_match(path: &str, pattern: &str) -> bool {
     Candidate::new(Path::new(path)).matches(&patterns.finish(), Path::new(path))
 }
 
+struct FolderScope {
+    root: PathBuf,
+    pattern: Option<SearchGlobs>,
+    whole_folder: bool,
+}
+
 pub(crate) struct SearchPaths {
-    folders: Vec<(PathBuf, Option<SearchGlobs>)>,
+    folders: Vec<FolderScope>,
     // Conservative directory-prefix matchers, parallel to `folders`. Exact
     // file/open-buffer semantics remain in the original compiled patterns.
     // Compile only for directory walking, never for exclusions/open-buffer
@@ -500,6 +506,53 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Filesystem alias decisions belong to a single search, separate from the
+/// reusable glob plans. Exact prefixes need no filesystem access.
+#[derive(Default)]
+pub(crate) struct PathAliases {
+    #[cfg(windows)]
+    resolved: std::sync::Mutex<rustc_hash::FxHashMap<PathBuf, Option<PathBuf>>>,
+}
+
+impl PathAliases {
+    pub(crate) fn checked_filesystem(&self) -> bool {
+        #[cfg(windows)]
+        {
+            !self.resolved.lock().unwrap().is_empty()
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
+    fn strip_prefix<'a>(&self, path: &'a Path, root: &Path) -> Option<&'a Path> {
+        let exact = crate::native_paths::strip_spelling_prefix(path, root);
+        #[cfg(windows)]
+        if exact.is_none()
+            && let Some(relative) = crate::native_paths::strip_possible_alias_prefix(path, root)
+        {
+            // Verify the prefix entry even when the open file itself is missing.
+            let prefix = path.ancestors().nth(relative.components().count())?;
+            let mut resolved = self.resolved.lock().unwrap();
+            let mut buffer = Vec::new();
+            for spelling in [prefix, root] {
+                if !resolved.contains_key(spelling) {
+                    if buffer.is_empty() {
+                        buffer.resize(512, 0);
+                    }
+                    let actual = crate::native_paths::windows::entry_path(spelling, &mut buffer);
+                    resolved.insert(spelling.to_path_buf(), actual.ok());
+                }
+            }
+            return resolved[prefix]
+                .as_deref()
+                .zip(resolved[root].as_deref())
+                .is_some_and(|(prefix, root)| crate::native_paths::same_spelling(prefix, root))
+                .then_some(relative);
+        }
+        exact
+    }
+}
+
 impl SearchPaths {
     /// Reuse syntax plans as the search text changes. Never cache file lists,
     /// ignore decisions, metadata or conditional-sibling existence checks.
@@ -541,7 +594,7 @@ impl SearchPaths {
     }
 
     pub(crate) fn new(workspace: &Path, source: &str) -> Self {
-        let mut folders = Vec::<(PathBuf, Vec<String>)>::new();
+        let mut folders = Vec::<(PathBuf, Vec<String>, bool)>::new();
         let mut globals = Vec::new();
         for pattern in split_patterns(source) {
             let mut pattern = pattern.replace('\\', "/");
@@ -590,32 +643,45 @@ impl SearchPaths {
                 )
             };
             let index =
-                if let Some(index) = folders.iter().position(|(existing, _)| *existing == folder) {
+                if let Some(index) = folders.iter().position(|(existing, _, _)| *existing == folder) {
                     index
                 } else {
-                    folders.push((folder, Vec::new()));
+                    folders.push((folder, Vec::new(), false));
                     folders.len() - 1
                 };
-            if !local.is_empty() {
-                folders[index].1.push(local.clone());
+            let (_, patterns, whole_folder) = &mut folders[index];
+            if local.is_empty() {
+                *whole_folder = true;
+            } else {
+                patterns.push(local.clone());
                 if !local.ends_with("**") {
-                    folders[index].1.push(format!("{local}/**"));
+                    patterns.push(format!("{local}/**"));
                 }
             }
         }
+        let has_global = !globals.is_empty();
         let using_paths = !folders.is_empty();
         if folders.is_empty() {
-            folders.push((workspace.to_path_buf(), Vec::new()));
+            folders.push((workspace.to_path_buf(), Vec::new(), true));
         }
         let (folders, descendants) = folders
             .into_iter()
-            .map(|(path, patterns)| {
+            .map(|(root, mut patterns, whole_folder)| {
+                // Bare roots still use global includes. Preserve narrower
+                // clauses for that case, where they are independent matches.
+                if whole_folder && !has_global {
+                    patterns = Vec::new();
+                }
                 let mut builder = GlobBuilder::default();
                 for pattern in &patterns {
                     add_glob(&mut builder, pattern);
                 }
                 (
-                    (path, (!patterns.is_empty()).then(|| builder.finish())),
+                    FolderScope {
+                        root,
+                        pattern: (!patterns.is_empty()).then(|| builder.finish()),
+                        whole_folder,
+                    },
                     (patterns, std::sync::OnceLock::new()),
                 )
             })
@@ -624,66 +690,112 @@ impl SearchPaths {
             folders,
             descendants,
             global: compile_patterns(&globals.join(",")),
-            has_global: !globals.is_empty(),
+            has_global,
             using_paths,
         }
     }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = &Path> {
-        self.folders.iter().map(|(path, _)| path.as_path())
+        self.folders.iter().map(|folder| folder.root.as_path())
+    }
+
+    pub(crate) fn has_path_scopes(&self) -> bool {
+        self.using_paths
     }
 
     pub(crate) fn may_descend(&self, candidate: &Candidate<'_>) -> bool {
         self.folders
             .iter()
             .zip(&self.descendants)
-            .any(|((root, _), (patterns, descendants))| {
-                match crate::native_paths::strip_prefix(candidate.path, root) {
+            .any(|(folder, (patterns, descendants))| {
+                match crate::native_paths::strip_spelling_prefix(candidate.path, &folder.root) {
                     Some(relative) => {
                         self.has_global
+                            || folder.whole_folder
                             || descendants
                                 .get_or_init(|| descendant_globs(patterns))
                                 .as_ref()
                                 .is_none_or(|glob| candidate.matches(glob, relative))
                     }
-                    None => crate::native_paths::strip_prefix(root, candidate.path).is_some(),
+                    None => crate::native_paths::strip_spelling_prefix(&folder.root, candidate.path).is_some(),
                 }
             })
     }
 
     pub(crate) fn includes(&self, candidate: &Candidate<'_>) -> bool {
-        self.folders.iter().any(|(root, pattern)| {
-            crate::native_paths::strip_prefix(candidate.path, root).is_some_and(|relative| {
-                (!self.has_global && pattern.is_none())
+        self.includes_with_prefix(candidate, crate::native_paths::strip_spelling_prefix)
+    }
+
+    fn includes_with_prefix<'a>(
+        &self,
+        candidate: &Candidate<'a>,
+        strip_prefix: impl Fn(&'a Path, &Path) -> Option<&'a Path>,
+    ) -> bool {
+        self.folders.iter().any(|folder| {
+            strip_prefix(candidate.path, &folder.root).is_some_and(|relative| {
+                (!self.has_global && folder.whole_folder)
                     || candidate.matches(&self.global, relative)
-                    || pattern
+                    || folder.pattern
                         .as_ref()
                         .is_some_and(|pattern| candidate.matches(pattern, relative))
             })
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn includes_open(&self, candidate: &Candidate<'_>) -> bool {
+        self.includes_open_with_aliases(candidate, &PathAliases::default())
+    }
+
+    pub(crate) fn includes_open_with_aliases(
+        &self,
+        candidate: &Candidate<'_>,
+        aliases: &PathAliases,
+    ) -> bool {
+        self.includes_open_with_prefix(candidate, |path, root| aliases.strip_prefix(path, root))
+    }
+
+    pub(crate) fn includes_canonical_open(&self, candidate: &Candidate<'_>) -> bool {
+        self.includes_open_with_prefix(candidate, |path, root| {
+            crate::native_paths::strip_spelling_prefix(path, &root.canonicalize().ok()?)
+        })
+    }
+
+    fn includes_open_with_prefix<'a>(
+        &self,
+        candidate: &Candidate<'a>,
+        strip_prefix: impl Fn(&'a Path, &Path) -> Option<&'a Path>,
+    ) -> bool {
         // searchService.ts also searches open editors outside the workspace.
         (!self.has_global && !self.using_paths)
             || candidate.matches(&self.global, candidate.path)
-            || self.using_paths && self.includes(candidate)
+            || self.using_paths && self.includes_with_prefix(candidate, strip_prefix)
     }
 
+    #[cfg(test)]
     pub(crate) fn excludes(&self, candidate: &Candidate<'_>, workspace: &Path) -> bool {
+        self.excludes_with_aliases(candidate, workspace, &PathAliases::default())
+    }
+
+    pub(crate) fn excludes_with_aliases(
+        &self,
+        candidate: &Candidate<'_>,
+        workspace: &Path,
+        aliases: &PathAliases,
+    ) -> bool {
         self.has_global
             && candidate.matches(
                 &self.global,
-                crate::native_paths::strip_prefix(candidate.path, workspace)
-                    .unwrap_or(candidate.path),
+                aliases.strip_prefix(candidate.path, workspace).unwrap_or(candidate.path),
             )
             || self.using_paths
-                && self.folders.iter().any(|(root, pattern)| {
-                    crate::native_paths::strip_prefix(candidate.path, root).is_some_and(
+                && self.folders.iter().any(|folder| {
+                    aliases.strip_prefix(candidate.path, &folder.root).is_some_and(
                         |relative| {
-                            pattern
-                                .as_ref()
-                                .is_none_or(|pattern| candidate.matches(pattern, relative))
+                            folder.whole_folder
+                                || folder.pattern
+                                    .as_ref()
+                                    .is_some_and(|pattern| candidate.matches(pattern, relative))
                         },
                     )
                 })

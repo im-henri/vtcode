@@ -1,10 +1,7 @@
 use super::*;
 
 fn output(grid: &mut TermGrid, text: &str) {
-    let mut parser = vte::Parser::new();
-    for byte in text.bytes() {
-        parser.advance(grid, byte);
-    }
+    grid.advance_output(&mut vte::Parser::new(), text.as_bytes());
 }
 
 #[test]
@@ -41,6 +38,7 @@ fn literal_case_and_unicode_matches_map_to_terminal_columns() {
     assert_eq!(index.matches[0].end.column, 1);
     grid.cells[1][0].ch = '界';
     grid.cells[1][1].ch = '\0';
+    grid.text_changed();
     index.update(&grid, "界", false);
     assert_eq!(
         index.matches[1].end.column, 2,

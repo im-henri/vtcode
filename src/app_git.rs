@@ -39,9 +39,13 @@ pub(crate) struct GitCommitRequest {
     pub message: String,
 }
 
-fn ignore_formatter_working_copies(repo: &git2::Repository) -> Result<(), git2::Error> {
+pub(crate) fn ignore_working_copies(repo: &git2::Repository) -> Result<(), git2::Error> {
     // Only this repository handle is affected; never edit the user's ignores.
-    repo.add_ignore_rule(&format!("{}*/", crate::formatters::TEMP_DIR_PREFIX))
+    repo.add_ignore_rule(&format!(
+        "{}*/\n{}",
+        crate::formatters::TEMP_DIR_PREFIX,
+        crate::fs_ops::COPY_TEMP_GIT_IGNORE
+    ))
 }
 
 pub(crate) fn commit_repository(
@@ -74,7 +78,7 @@ pub(crate) fn commit_repository(
         return Err("Resolve merge conflicts before committing".into());
     }
     if stage_all {
-        ignore_formatter_working_copies(&repo).map_err(|error| error.to_string())?;
+        ignore_working_copies(&repo).map_err(|error| error.to_string())?;
         index
             .add_all(std::iter::once("*"), git2::IndexAddOption::DEFAULT, None)
             .map_err(|error| error.to_string())?;
@@ -225,7 +229,7 @@ pub(crate) fn blob_file_content(
 }
 
 pub(crate) fn repository_relative_path(workdir: &Path, file_path: &Path) -> Option<PathBuf> {
-    if let Some(relative) = crate::native_paths::strip_prefix(file_path, workdir) {
+    if let Some(relative) = crate::native_paths::strip_spelling_prefix(file_path, workdir) {
         // On Unix the prefix can match even when the remaining path contains
         // `..`. Git index lookups need the resolved repository-relative path.
         if !relative.components().any(|part| part == std::path::Component::ParentDir) {
@@ -237,7 +241,7 @@ pub(crate) fn repository_relative_path(workdir: &Path, file_path: &Path) -> Opti
     // have the same lexical spelling as libgit2's worktree path. Compare their
     // canonical forms so tracked files still receive gutter decorations.
     let canonical_workdir = std::fs::canonicalize(workdir).ok()?;
-    if let Ok(relative) = file_path.strip_prefix(&canonical_workdir)
+    if let Some(relative) = crate::native_paths::strip_spelling_prefix(file_path, &canonical_workdir)
         && !relative.components().any(|part| part == std::path::Component::ParentDir)
     {
         return Some(relative.to_owned());
@@ -361,7 +365,7 @@ fn collect_source_control_status_impl<P: Ord>(
         if operation.is_some() { *changed = None; }
 
         // Let Git collapse only directories with no indexed descendants.
-        let _ = ignore_formatter_working_copies(&repo);
+        let _ = ignore_working_copies(&repo);
         let mut status_paths = if let Some(changed) = changed.as_mut() {
             // Use Git's policy, including case-sensitive Windows worktrees,
             // when merging cached paths after this read.
@@ -1164,7 +1168,9 @@ impl App {
     }
 
     pub(crate) fn find_editor_mut_by_path(&mut self, path: &Path) -> Option<&mut crate::editor::Editor> {
-        let active_matches = self.editor().and_then(|editor| editor.file_path.as_deref())
+        let active_matches = self.tabs.get(self.active_tab)
+            .filter(|tab| tab.kind == crate::app::TabKind::File)
+            .and_then(|tab| tab.editor.file_path.as_deref())
             .is_some_and(|other| Self::same_open_path(other, path));
         if active_matches {
             return self.editor_mut();
@@ -1173,6 +1179,7 @@ impl App {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| {
             tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, path))
         }) {
+            tab.editor.refresh_document();
             return Some(&mut tab.editor);
         }
 
@@ -1181,6 +1188,7 @@ impl App {
                 tab.kind == crate::app::TabKind::File
                     && tab.editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, path))
             }) {
+                tab.editor.refresh_document();
                 return Some(&mut tab.editor);
             }
         }
@@ -1215,17 +1223,18 @@ impl App {
             return Err("Another git operation is already running".into());
         }
         if self.pending_file_saves.contains_key(file) || self.deferred_file_saves.contains_key(file)
+            || self.pending_save_as.values().any(|(_, target)| Self::paths_may_share_entry(target, file))
             || self.chat.rollback.file_busy(file)
         {
             return Err("Wait for the file operation to finish before using git hunk actions".into());
         }
         if self.should_render_diff_for_active_editor()
-            && self.editor().and_then(|editor| editor.file_path.as_deref()).is_some_and(|other| Self::same_open_path(other, file))
+            && self.editor().and_then(|editor| editor.file_path.as_deref()).is_some_and(|other| Self::paths_may_share_entry(other, file))
         {
             return Err("Hunk actions are unavailable in compare view".to_string());
         }
         for tab in self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-            .filter(|tab| tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, file)))
+            .filter(|tab| tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_deref().is_some_and(|other| Self::paths_may_share_entry(other, file)))
         {
             let editor = &tab.editor;
             if editor.modified {
@@ -1689,7 +1698,7 @@ impl App {
             }
         }
         if self.pending_save_as.contains_key(&request.source_document_id)
-            || self.pending_save_as.values().any(|(_, target)| Self::same_open_path(target, &request.path))
+            || self.pending_save_as.values().any(|(_, target)| Self::paths_may_share_entry(target, &request.path))
         {
             self.notify("Save As is still in progress. New edits remain unsaved until you save again.");
             return false;

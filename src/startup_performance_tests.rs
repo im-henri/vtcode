@@ -87,7 +87,54 @@ fn prepared(root: &Path, theme: &str) -> crate::startup::Prepared {
         global: crate::settings::Settings { theme: Some(theme.into()), tab_size: Some(8), ..Default::default() },
         workspace: crate::settings::Settings { tab_size: Some(2), ..Default::default() },
         session: None,
+        incomplete_session_recovery: None,
     }
+}
+
+#[test]
+fn opening_a_cli_file_restores_previous_drafts_and_focuses_the_requested_location() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("requested.txt");
+    std::fs::write(&path, "first\nsecond\n").unwrap();
+    let mut source = App::new(root.path().to_path_buf());
+    let mut file = Editor::new();
+    file.open_file(&path).unwrap();
+    file.insert_char('X');
+    let mut draft = Editor::test_with_text("untitled draft");
+    draft.modified = true;
+    source.tabs = vec![Tab::new_file(file), Tab::new_file(draft)];
+    source.active_tab = 1;
+    crate::session::save_session(root.path(), &source.build_session()).unwrap();
+
+    let requested = format!("{}:2:3", path.display());
+    let mut app = crate::startup::Prepared::load(Some(requested.into()))
+        .unwrap()
+        .into_app(Default::default());
+    app.wait_for_background(WAIT, |app| app.tabs.iter().all(|tab| !tab.editor.bg_loading));
+
+    assert_eq!(app.tabs.len(), 2);
+    let active = app.editor().unwrap();
+    assert_eq!(active.file_path.as_deref(), Some(path.as_path()));
+    assert_eq!(active.rope, "Xfirst\nsecond\n");
+    assert_eq!((active.cursor_line, active.cursor_col), (1, 2));
+    assert!(app.tabs.iter().any(|tab| tab.editor.rope == "untitled draft"));
+}
+
+#[test]
+fn startup_keeps_an_unreadable_manifest_and_can_still_finish_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let path = crate::session::session_path(root.path());
+    crate::session::save_session(root.path(), &crate::session::Session::default()).unwrap();
+    std::fs::write(&path, b"{incomplete").unwrap();
+    let mut app = crate::startup::Prepared::load(Some(root.path().as_os_str().to_owned()))
+        .unwrap()
+        .into_app(Default::default());
+
+    assert!(app.incomplete_session_recovery.is_some());
+    assert!(app.tabs.is_empty());
+    app.global_search_query = "new layout state".into();
+    app.save_finished_workspace().unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), b"{incomplete");
 }
 
 #[test]
@@ -325,7 +372,7 @@ fn cached_startup_registry_highlights_without_waiting_for_maintenance_completion
 
 fn saved(path: Option<String>, text: Option<&str>) -> crate::session::SavedTab {
     crate::session::SavedTab {
-        file_path: path, cursor_line: 0, cursor_col: 0, scroll_offset: 0,
+        file_path: path.map(std::path::PathBuf::from), cursor_line: 0, cursor_col: 0, scroll_offset: 0,
         horizontal_scroll: 0, pinned: false, preview: false, unsaved_file: None,
         pending_unsaved_content: text.map(ropey::Rope::from_str), undo_history_file: None,
         language_override: None, undo_entries: None, redo_entries: None,

@@ -678,6 +678,89 @@ fn workspace_replace_all_updates_open_and_closed_files_and_refreshes_matches() {
     }
 }
 
+fn replace_in_absolute_folder(app: &mut App, selected: &std::path::Path) {
+    app.search_include_pattern = selected.display().to_string();
+    app.global_search_query = "foo".into();
+    app.global_search_replace_query = "bar".into();
+    app.update_global_search();
+    app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+    app.replace_all_in_files();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.bg_global_replace_running && !app.bg_global_search_running
+    });
+}
+
+#[cfg(windows)]
+#[test]
+fn absolute_search_scope_keeps_replace_all_out_of_case_distinct_open_siblings() {
+    let (workspace, mut app, _) = fixture();
+    let directory = workspace.path().join("case-sensitive");
+    std::fs::create_dir(&directory).unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(&directory) {
+        return;
+    }
+    let selected = directory.join("Sources");
+    let sibling = directory.join("sources");
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(&sibling).unwrap();
+    let selected_file = selected.join("file.txt");
+    let open_sibling = sibling.join("file.txt");
+    std::fs::write(&selected_file, "foo\n").unwrap();
+    std::fs::write(&open_sibling, "foo\n").unwrap();
+    app.open_file(&open_sibling);
+    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+
+    replace_in_absolute_folder(&mut app, &selected);
+
+    assert_eq!(std::fs::read_to_string(selected_file).unwrap(), "bar\n");
+    assert_eq!(std::fs::read_to_string(open_sibling).unwrap(), "foo\n");
+    assert_eq!(app.editor().unwrap().rope, "foo\n");
+    assert!(!app.editor().unwrap().modified);
+}
+
+#[test]
+fn absolute_search_scope_excludes_an_open_parent_traversal_outside_the_folder() {
+    let (workspace, mut app, _) = fixture();
+    let selected = workspace.path().join("selected");
+    std::fs::create_dir(&selected).unwrap();
+    let included = selected.join("file.txt");
+    let outside = selected.join("../outside.txt");
+    std::fs::write(&included, "foo\n").unwrap();
+    std::fs::write(&outside, "foo\n").unwrap();
+    app.open_file(&outside);
+    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+
+    replace_in_absolute_folder(&mut app, &selected);
+
+    assert_eq!(std::fs::read_to_string(included).unwrap(), "bar\n");
+    assert_eq!(app.editor().unwrap().rope, "foo\n");
+    assert!(!app.editor().unwrap().modified);
+}
+
+#[cfg(windows)]
+#[test]
+fn absolute_search_scope_replaces_the_open_model_once_through_a_case_alias() {
+    let (workspace, mut app, _) = fixture();
+    let selected = workspace.path().join("Sources");
+    let alias = workspace.path().join("sources");
+    std::fs::create_dir(&selected).unwrap();
+    if !alias.is_dir() {
+        return;
+    }
+    let file = selected.join("file.txt");
+    std::fs::write(&file, "foo\n").unwrap();
+    app.open_file(&file);
+    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    let editor = app.editor_mut().unwrap();
+    editor.rope = ropey::Rope::from_str("draft\nfoo\n");
+    editor.modified = true;
+
+    replace_in_absolute_folder(&mut app, &alias);
+
+    assert_eq!(app.editor().unwrap().rope, "draft\nbar\n");
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "foo\n");
+}
+
 #[test]
 fn clicking_search_activity_focuses_query_from_editor() {
     for (visible, view) in [
@@ -822,6 +905,7 @@ fn latest_search_click_survives_loading_in_an_inactive_split() {
         let mut editor = Editor::new_loading(&path, 0);
         let session_restore = restoring_session.then(|| crate::session::SessionRestore {
             id: 123,
+            recovery_lease: Default::default(),
             tab: serde_json::from_value(serde_json::json!({
                 "filePath": path.to_string_lossy(),
                 "cursorLine": 1,

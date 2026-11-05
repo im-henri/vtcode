@@ -1,8 +1,9 @@
 //! Portable named folder sets. Writes merge under a file lock and replace the
 //! catalog atomically; a malformed or newer catalog is never overwritten.
+use crate::native_paths::NativePath;
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::OpenOptions,
+    fs::TryLockError,
     io::{self, Read, Write},
     path::{Path, PathBuf},
 };
@@ -20,14 +21,6 @@ mod tests;
 pub(crate) enum Scope {
     Local,
     Remote(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "encoding", content = "value", rename_all = "camelCase")]
-pub(crate) enum NativePath {
-    Utf8(String),
-    Unix(Vec<u8>),
-    Windows(Vec<u16>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,22 +58,8 @@ impl Location {
             };
         }
         let native = relative.unwrap_or(&path);
-        let encoded = if let Some(text) = native.to_str() {
-            NativePath::Utf8(text.into())
-        } else {
-            #[cfg(unix)]
-            {
-                use std::os::unix::ffi::OsStrExt;
-                NativePath::Unix(native.as_os_str().as_bytes().to_vec())
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::ffi::OsStrExt;
-                NativePath::Windows(native.as_os_str().encode_wide().collect())
-            }
-        };
         Self::Local {
-            path: encoded,
+            path: NativePath::from_path(native),
             relative: relative.is_some(),
             windows: cfg!(windows),
         }
@@ -100,24 +79,9 @@ impl Location {
                 "This workspace contains folders saved on a different operating system",
             ));
         }
-        let path = match path {
-            NativePath::Utf8(text) => PathBuf::from(text),
-            #[cfg(unix)]
-            NativePath::Unix(bytes) => {
-                use std::os::unix::ffi::OsStringExt;
-                PathBuf::from(std::ffi::OsString::from_vec(bytes.clone()))
-            }
-            #[cfg(windows)]
-            NativePath::Windows(units) => {
-                use std::os::windows::ffi::OsStringExt;
-                PathBuf::from(std::ffi::OsString::from_wide(units))
-            }
-            _ => {
-                return Err(invalid(
-                    "This folder name uses a different operating system's path encoding",
-                ));
-            }
-        };
+        let path = path.to_path_buf().ok_or_else(|| {
+            invalid("This folder name uses a different operating system's path encoding")
+        })?;
         if *relative {
             if path
                 .components()
@@ -197,12 +161,15 @@ pub(crate) fn valid_name(name: &str) -> io::Result<String> {
 }
 
 pub(crate) fn load(path: &Path) -> io::Result<Catalog> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
+    let (file, metadata) = match crate::fs_ops::open_document_source(path, false) {
+        Ok(source) => source,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Catalog::default()),
         Err(error) => return Err(error),
     };
-    let mut data = Vec::new();
+    if metadata.len() > MAX_BYTES {
+        return Err(invalid("Saved workspace catalog is too large"));
+    }
+    let mut data = Vec::with_capacity(metadata.len() as usize);
     file.take(MAX_BYTES + 1).read_to_end(&mut data)?;
     if data.len() as u64 > MAX_BYTES {
         return Err(invalid("Saved workspace catalog is too large"));
@@ -257,24 +224,15 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
         .parent()
         .ok_or_else(|| invalid("Invalid saved workspace catalog path"))?;
     std::fs::create_dir_all(parent)?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path.with_extension("lock"))?;
+    let lock = crate::fs_ops::open_lock_file(&path.with_extension("lock"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        match lock.try_lock() {
-            Ok(()) => break,
-            Err(error) if std::time::Instant::now() >= deadline => {
-                return Err(io::Error::other(format!(
-                    "Could not lock saved workspaces: {error}"
-                )));
+    let _lock = vtcode::file_source::FileLock::try_acquire_before(lock, deadline)
+        .map_err(|error| match error {
+            TryLockError::WouldBlock => {
+                io::Error::new(io::ErrorKind::WouldBlock, "Saved workspaces are busy")
             }
-            Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
-        }
-    }
+            TryLockError::Error(error) => error,
+        })?;
     let mut catalog = load(path)?;
     match mutation {
         Mutation::Save {

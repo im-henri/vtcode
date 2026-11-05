@@ -245,7 +245,7 @@ impl Operation {
                     scans.len()
                 ),
                 Reply::GitBranches(branches) => format!("{} branches", branches.len()),
-                Reply::Search { hits, truncated } => {
+                Reply::Search { hits, truncated, .. } => {
                     format!("{} matches; truncated={truncated}", hits.len())
                 }
                 Reply::Files { files, .. } => files.as_ref().map_or_else(

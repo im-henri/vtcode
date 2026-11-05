@@ -1676,6 +1676,40 @@ static int hash_header(git_hash_ctx *ctx, git_object_size_t size, git_object_t t
 	return git_hash_update(ctx, header, hdrlen);
 }
 
+/* Hash the exact length from a caller-owned source without opening a path
+ * or writing an object. The callback fills the requested bytes or fails. */
+GIT_EXTERN(int) vtcode_git_hash_blob_stream(
+	git_oid *out, git_object_size_t length,
+	int GIT_CALLBACK(read_chunk)(void *, void *, size_t), void *payload)
+{
+	git_hash_ctx ctx;
+	char buffer[GIT_BUFSIZE_FILEIO] = { 0 };
+	int error;
+
+	if ((error = git_hash_ctx_init(&ctx, GIT_HASH_ALGORITHM_SHA1)) < 0)
+		return error;
+	if ((error = hash_header(&ctx, length, GIT_OBJECT_BLOB)) < 0)
+		goto done;
+
+	while (length > 0) {
+		size_t count = length < sizeof(buffer) ? (size_t)length : sizeof(buffer);
+
+		if ((error = read_chunk(payload, buffer, count)) < 0 ||
+		    (error = git_hash_update(&ctx, buffer, count)) < 0)
+			goto done;
+		length -= count;
+	}
+
+	error = git_hash_final(out->id, &ctx);
+#ifdef GIT_EXPERIMENTAL_SHA256
+	out->type = GIT_OID_SHA1;
+#endif
+
+done:
+	git_hash_ctx_cleanup(&ctx);
+	return error;
+}
+
 int git_odb_open_wstream(
 	git_odb_stream **stream, git_odb *db, git_object_size_t size, git_object_t type)
 {
@@ -1753,7 +1787,10 @@ static int git_odb_stream__invalid_length(
 
 int git_odb_stream_write(git_odb_stream *stream, const char *buffer, size_t len)
 {
-	git_hash_update(stream->hash_ctx, buffer, len);
+	int error = git_hash_update(stream->hash_ctx, buffer, len);
+
+	if (error < 0)
+		return error;
 
 	stream->received_bytes += len;
 
@@ -1766,11 +1803,14 @@ int git_odb_stream_write(git_odb_stream *stream, const char *buffer, size_t len)
 
 int git_odb_stream_finalize_write(git_oid *out, git_odb_stream *stream)
 {
+	int error;
+
 	if (stream->received_bytes != stream->declared_size)
 		return git_odb_stream__invalid_length(stream,
 			"stream_finalize_write()");
 
-	git_hash_final(out->id, stream->hash_ctx);
+	if ((error = git_hash_final(out->id, stream->hash_ctx)) < 0)
+		return error;
 
 #ifdef GIT_EXPERIMENTAL_SHA256
 	out->type = stream->oid_type;

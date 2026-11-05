@@ -119,13 +119,6 @@ pub(crate) struct InstalledExtension {
     pub sha256: String,
 }
 
-struct InstallLock(std::fs::File);
-impl Drop for InstallLock {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
-}
-
 pub(crate) fn install_version(
     source: &ExtensionSource,
     version: &crate::extension_versions::ReleaseVersion,
@@ -199,10 +192,9 @@ fn install_with_download(
         .truncate(false)
         .open(root.join(".install-lock"))
         .map_err(|error| error.to_string())?;
-    lock_file.try_lock().map_err(
+    let _lock = vtcode::file_source::ExclusiveFileLock::try_acquire(lock_file).map_err(
         |_| "Another extension installation is running. Wait for it to finish, then retry.",
     )?;
-    let _lock = InstallLock(lock_file);
     let staging = tempfile::Builder::new()
         .prefix(".install-")
         .tempdir_in(root)

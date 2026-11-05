@@ -57,6 +57,60 @@ fn assert_untracked_preference(app: &mut App, show: bool) {
 }
 
 #[test]
+fn editing_scoped_preferences_merges_disk_keys_and_external_map_entries() {
+    let (_directory, mut app) = fixture();
+    std::fs::create_dir_all(app.settings_global_path.parent().unwrap()).unwrap();
+    std::fs::write(&app.settings_global_path, r#"{
+        "external.setting": 123,
+        "tabSize": 6,
+        "statusBarItems": { "external-item": false }
+    }"#).unwrap();
+    app.set_status_bar_item_pinned("language", true);
+    let document: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&app.settings_global_path).unwrap(),
+    ).unwrap();
+    assert_eq!(document["external.setting"], 123);
+    assert_eq!(document["tabSize"], 6);
+    assert_eq!(document["statusBarItems"]["external-item"], false);
+    assert_eq!(document["statusBarItems"]["language"], true);
+    assert_eq!(app.settings_global.tab_size, Some(6));
+}
+
+#[test]
+fn scoped_settings_controls_preserve_an_open_settings_draft() {
+    let (_directory, mut app) = fixture();
+    crate::settings::ensure_file(&app.settings_global_path).unwrap();
+    let mut editor = crate::editor::Editor::test_with_text("{\"tabSize\": 7}\n");
+    editor.file_path = Some(app.settings_global_path.clone());
+    editor.modified = true;
+    app.tabs.push(Tab::new_file(editor));
+
+    app.set_status_bar_item_pinned("language", true);
+    assert_eq!(std::fs::read_to_string(&app.settings_global_path).unwrap(), "{}\n");
+    assert_eq!(app.tabs.last().unwrap().editor.rope, "{\"tabSize\": 7}\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_patch_detects_unsaved_edits_opened_via_a_link_target() {
+    let (directory, mut app) = fixture();
+    let target = directory.path().join("actual-settings.json");
+    crate::settings::ensure_file(&target).unwrap();
+    std::fs::create_dir_all(app.settings_global_path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &app.settings_global_path).unwrap();
+    let mut editor = crate::editor::Editor::test_with_text("{\"tabSize\": 7}\n");
+    editor.file_path = Some(target.clone());
+    editor.modified = true;
+    app.tabs.push(Tab::new_file(editor));
+
+    let result = app.patch_settings_scope(SettingsScope::Global, "tabSize", |settings| {
+        settings.tab_size = Some(4);
+    });
+    assert!(result.unwrap_err().contains("unsaved edits"));
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "{}\n");
+}
+
+#[test]
 fn untracked_menu_preference_is_saved_immediately_in_both_directions_and_menus() {
     for actions in [false, true] {
         let (_dir, mut app) = fixture();
@@ -102,6 +156,7 @@ fn untracked_preference_survives_file_folder_and_stale_session_startup() {
                 global: saved(&app, SettingsScope::Global),
                 workspace: saved(&app, SettingsScope::Workspace),
                 session: restore.then_some(session),
+                incomplete_session_recovery: None,
             }.into_app(Default::default());
             assert_untracked_preference(&mut restarted, show);
             restarted.apply_effective_settings();
@@ -175,6 +230,7 @@ fn untracked_preference_in_remote_mode_is_saved_on_client_without_network_reques
         target: crate::startup::Target { root: remote.view_root.clone(), file: None, line: None, column: None },
         global: saved(&app, SettingsScope::Global),
         workspace: Settings::default(), session: None,
+        incomplete_session_recovery: None,
     }.into_app_with_remote(Default::default(), Some(remote));
     assert_untracked_preference(&mut restarted, false);
     assert_eq!(traffic.load(Ordering::Relaxed), before, "the preference is entirely local");

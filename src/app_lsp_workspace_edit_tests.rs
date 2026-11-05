@@ -113,6 +113,146 @@ fn workspace_edits_reject_changes_during_loading_without_partial_application() {
 }
 
 #[test]
+fn invalid_later_workspace_edit_target_keeps_earlier_documents_unchanged() {
+    let (mut app, server, temp, path) = fixture();
+    let broken_path = temp.path().join("broken.py");
+    let mut broken = Editor::test_with_text("value = 2\n");
+    broken.file_path = Some(broken_path.clone());
+    broken.load_failed = true;
+    broken.publish_document();
+    app.tabs.push(Tab::new_file(broken));
+    let mut edits = workspace(&[path.clone(), broken_path.clone()])
+        .changes
+        .unwrap();
+    let changes: Vec<_> = [&path, &broken_path]
+        .into_iter()
+        .map(|path| {
+            let uri = lsp_types::Url::from_file_path(path).unwrap();
+            let edits = edits.remove(&uri).unwrap();
+            json!({"textDocument": {"uri": uri, "version": null}, "edits": edits})
+        })
+        .collect();
+    let edit = serde_json::from_value(json!({"documentChanges": changes})).unwrap();
+    let process = app.lsp_manager.clients[0].child.id();
+    app.queue_lsp_workspace_edit(edit, "Rename".into(), Some((process, json!(7))), None);
+    assert!(app.poll_lsp_workspace_edits());
+    assert_eq!(server.take_messages()[0]["result"]["applied"], false);
+    assert_eq!(app.tabs[0].editor.rope, "value = 1\n");
+    assert!(!app.tabs[0].editor.modified);
+}
+
+#[test]
+fn workspace_edit_rejects_reopened_document_with_same_content_version() {
+    let (mut app, server, _temp, path) = fixture();
+    let process = app.lsp_manager.clients[0].child.id();
+    app.queue_lsp_workspace_edit(
+        workspace(std::slice::from_ref(&path)),
+        "Rename".into(),
+        Some((process, json!(7))),
+        None,
+    );
+    let version = app.tabs[0].editor.content_version;
+    let mut replacement = Editor::test_with_text("value = 9\n");
+    replacement.file_path = Some(path);
+    replacement.content_version = version;
+    replacement.publish_document();
+    app.tabs[0] = Tab::new_file(replacement);
+
+    assert!(app.poll_lsp_workspace_edits());
+    assert_eq!(server.take_messages()[0]["result"]["applied"], false);
+    assert_eq!(app.tabs[0].editor.rope, "value = 9\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn workspace_edit_rejects_duplicate_windows_paths_to_the_same_editor() {
+    let (mut app, server, _temp, path) = fixture();
+    let alias = path.with_file_name("OPEN.PY");
+    let process = app.lsp_manager.clients[0].child.id();
+    app.queue_lsp_workspace_edit(
+        workspace(&[path, alias]),
+        "Rename".into(),
+        Some((process, json!(7))),
+        None,
+    );
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.tabs.iter().all(|tab| !tab.editor.bg_loading)
+    });
+    assert!(app.poll_lsp_workspace_edits());
+    assert_eq!(server.take_messages()[0]["result"]["applied"], false);
+    assert_eq!(app.tabs[0].editor.rope, "value = 1\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn workspace_edit_targets_the_exact_case_with_a_different_sibling_active() {
+    let (mut app, server, temp, _) = fixture();
+    let folder = temp.path().join("case-sensitive");
+    std::fs::create_dir(&folder).unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(&folder) {
+        return;
+    }
+    let upper = folder.join("Script.py");
+    let lower = folder.join("script.py");
+    std::fs::write(&upper, "value = 1\n").unwrap();
+    std::fs::write(&lower, "value = 2\n").unwrap();
+    app.open_file(&upper);
+    app.open_file(&lower);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.tabs.iter().all(|tab| !tab.editor.bg_loading)
+    });
+    assert_eq!(app.editor().unwrap().file_path.as_deref(), Some(lower.as_path()));
+    let process = app.lsp_manager.clients[0].child.id();
+    app.queue_lsp_workspace_edit(
+        workspace(std::slice::from_ref(&upper)),
+        "Rename".into(),
+        Some((process, json!(7))),
+        None,
+    );
+    assert!(app.poll_lsp_workspace_edits());
+    assert_eq!(server.take_messages().into_iter().find(|message| message["id"] == 7).unwrap()["result"]["applied"], true);
+    assert_eq!(app.find_editor_mut_by_path(&upper).unwrap().rope, "renamed = 1\n");
+    assert_eq!(app.find_editor_mut_by_path(&lower).unwrap().rope, "value = 2\n");
+}
+
+#[test]
+fn active_revision_tab_cannot_intercept_an_edit_to_the_worktree_file() {
+    let (mut app, _server, _temp, path) = fixture();
+    let mut history = Editor::test_with_text("value = 0\n");
+    history.file_path = Some(path.clone());
+    history.read_only = true;
+    let mut tab = Tab::new_file(history);
+    tab.kind = crate::app::TabKind::GitRevision;
+    app.tabs.push(tab);
+    app.active_tab = 1;
+
+    app.queue_lsp_workspace_edit(workspace(&[path]), "Rename".into(), None, None);
+    assert!(app.poll_lsp_workspace_edits());
+    assert_eq!(app.tabs[0].editor.rope, "renamed = 1\n");
+    assert_eq!(app.tabs[1].editor.rope, "value = 0\n");
+}
+
+#[test]
+fn stalled_workspace_edit_has_a_deadline_even_without_loader_events() {
+    let (mut app, server, _temp, path) = fixture();
+    app.tabs[0].editor.bg_loading = true;
+    let process = app.lsp_manager.clients[0].child.id();
+    app.queue_lsp_workspace_edit(
+        workspace(&[path]),
+        "Rename".into(),
+        Some((process, json!(7))),
+        None,
+    );
+    assert!(!app.poll_lsp_workspace_edits());
+    assert!(app.lsp_workspace_edit_wait().unwrap() <= EDIT_TIMEOUT);
+    app.pending_lsp_workspace_edits[0].queued = Instant::now() - EDIT_TIMEOUT;
+    assert_eq!(app.lsp_workspace_edit_wait(), Some(Duration::ZERO));
+    assert!(app.poll_lsp_workspace_edits());
+    assert_eq!(server.take_messages()[0]["result"]["applied"], false);
+    assert!(app.lsp_workspace_edit_wait().is_none());
+}
+
+#[test]
 fn server_workspace_apply_edit_replies_only_after_validated_application() {
     let (mut app, server, _temp, path) = fixture();
     server.respond(json!({"id":"edit-1","method":"workspace/applyEdit","params":{"edit":workspace(&[path.clone()])}}));

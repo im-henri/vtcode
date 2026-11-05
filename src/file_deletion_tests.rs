@@ -273,6 +273,43 @@ fn mid_traversal_directory_replacement_cannot_delete_files_through_its_link() {
 
 #[cfg(windows)]
 #[test]
+fn deletion_guard_rejects_a_case_distinct_sibling() {
+    let fixture = tempfile::tempdir().unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(fixture.path()) {
+        return;
+    }
+    let selected = fixture.path().join("selected");
+    let sibling = fixture.path().join("Selected");
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(&sibling).unwrap();
+    let file = sibling.join("keep.txt");
+    std::fs::write(&file, "separate directory").unwrap();
+
+    let selected = selected.canonicalize().unwrap();
+    let mut guard = io::Root::new(&selected).unwrap();
+    let entry = walkdir::WalkDir::new(&file).into_iter().next().unwrap().unwrap();
+    assert!(guard.remove(&entry).is_err());
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "separate directory");
+}
+
+#[cfg(windows)]
+#[test]
+fn deletion_accepts_a_case_alias_in_an_insensitive_directory() {
+    let fixture = tempfile::tempdir().unwrap();
+    let actual = fixture.path().join("Mixed.txt");
+    let alias = fixture.path().join("mixed.txt");
+    std::fs::write(&actual, "remove this file").unwrap();
+    if !alias.exists() {
+        return;
+    }
+    let (_, progress) = run(vec![alias], &CancellationToken::new());
+    assert_eq!(progress.phase, Phase::Complete);
+    assert_eq!(progress.deleted, 1);
+    assert!(!actual.exists());
+}
+
+#[cfg(windows)]
+#[test]
 fn locked_windows_file_reports_partial_failure_and_retains_its_parent() {
     use std::os::windows::fs::OpenOptionsExt;
     let (_dir, root, paths) = tree();

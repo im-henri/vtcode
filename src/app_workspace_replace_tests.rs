@@ -120,6 +120,71 @@ fn workspace_replace_updates_closed_remote_files_and_preserves_hidden_unsaved_bu
     workspace.client.call(remote::Command::Shutdown).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_replace_changes_a_closed_file_once_through_a_linked_directory() {
+    replace_linked_file_once(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_replace_changes_a_closed_file_once_through_a_file_symlink() {
+    replace_linked_file_once(true);
+}
+
+#[cfg(unix)]
+fn replace_linked_file_once(link_file: bool) {
+    for remote in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("sources");
+        std::fs::create_dir(&directory).unwrap();
+        let file = directory.join("file.txt");
+        std::fs::write(&file, "needle").unwrap();
+        let target = if link_file { &file } else { &directory };
+        std::os::unix::fs::symlink(target, root.path().join("linked")).unwrap();
+        let workspace = remote.then(|| {
+            remote::workspace::Workspace::new(remote::tests::connection(
+                root.path(),
+                Arc::default(),
+                Arc::default(),
+            ))
+        });
+        let view_root = workspace.as_ref().map_or_else(
+            || root.path().to_path_buf(),
+            |workspace| workspace.view_root.clone(),
+        );
+        let mut app = App::new_deferred(view_root);
+        app.source_control_enabled = false;
+        app.remote_workspace = workspace.clone();
+        app.global_search_query = "needle".into();
+        app.global_search_replace_query = "needle!".into();
+
+        replace_and_wait(&mut app);
+
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "needle!",
+            "remote={remote}"
+        );
+        assert_eq!(app.global_search_results.len(), 1, "remote={remote}");
+
+        app.max_global_search_results = 1;
+        app.update_global_search();
+        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+        assert_eq!(app.global_search_results.len(), 1, "remote={remote}");
+        assert!(!app.global_search_truncated, "remote={remote}");
+        if link_file {
+            std::fs::hard_link(&file, directory.join("hardlink.txt")).unwrap();
+            app.update_global_search();
+            app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+            assert!(app.global_search_truncated, "remote={remote}");
+        }
+        if let Some(workspace) = workspace {
+            workspace.client.call(remote::Command::Shutdown).unwrap();
+        }
+    }
+}
+
 #[test]
 fn workspace_replace_local_edits_undo_typing_and_cancellation_do_not_wait_for_remote_ack() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

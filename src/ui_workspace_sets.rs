@@ -232,11 +232,11 @@ fn root_paths(set: &crate::workspace_sets::SavedSet) -> Vec<String> {
             crate::workspace_sets::Location::Local { path, .. } => {
                 root.local_path(&base).map_or_else(
                     |_| match path {
-                        crate::workspace_sets::NativePath::Utf8(text) => text.clone(),
-                        crate::workspace_sets::NativePath::Unix(bytes) => {
+                        crate::native_paths::NativePath::Utf8(text) => text.clone(),
+                        crate::native_paths::NativePath::Unix(bytes) => {
                             String::from_utf8_lossy(bytes).into_owned()
                         }
-                        crate::workspace_sets::NativePath::Windows(units) => {
+                        crate::native_paths::NativePath::Windows(units) => {
                             String::from_utf16_lossy(units)
                         }
                     },

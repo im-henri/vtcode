@@ -1,10 +1,19 @@
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
+use crate::fs_ops::open_lock_file;
+use std::fs::TryLockError;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use vtcode::file_source::FileLock;
 
 type UndoStack = Vec<crate::editor::UndoSnapshot>;
 pub(crate) const MAX_UNDO_ENTRIES: usize = 50;
 const UNDO_SEPARATOR: &[u8] = b"\n\x00\x01UNDO_SEP\x01\x00\n";
+const RECOVERY_FILE_PREFIX: &str = "tab_";
+const RECOVERY_FILE_RANDOM_LEN: usize = 6;
+const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
+const SESSION_WRITER_LOCK: &str = "session-write.lock";
+const RECOVERY_READER_LOCK: &str = "session-recovery.lock";
 
 #[path = "session_history.rs"]
 mod history;
@@ -31,7 +40,8 @@ pub struct SavedUndoEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedTab {
-    pub file_path: Option<String>,
+    #[serde(default, with = "crate::native_paths::optional_serde")]
+    pub file_path: Option<PathBuf>,
     pub cursor_line: usize,
     pub cursor_col: usize,
     pub scroll_offset: usize,
@@ -70,6 +80,24 @@ pub struct SavedTab {
 pub(crate) struct SessionRestore {
     pub id: u64,
     pub tab: SavedTab,
+    pub recovery_lease: RecoveryLease,
+}
+
+/// Keeps an older manifest's sidecars readable while its restore is pending.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RecoveryLease(Option<Arc<FileLock>>);
+
+impl RecoveryLease {
+    pub(crate) fn is_held(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl PartialEq for RecoveryLease {
+    fn eq(&self, _other: &Self) -> bool {
+        // The lease carries no session data and must not dirty the snapshot.
+        true
+    }
 }
 
 /// A saved editor group (split pane)
@@ -83,6 +111,10 @@ pub struct SavedGroup {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
+    #[serde(skip)]
+    pub(crate) recovery_lease: RecoveryLease,
+    #[serde(skip)]
+    pub(crate) recovery_incomplete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) remote_checkpoints: Option<crate::remote::RecoveryCheckpoints>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,6 +222,75 @@ pub(crate) fn unsaved_dir(project_root: &Path) -> PathBuf {
     crate::portable::workspace_dir(project_root).join("unsaved")
 }
 
+fn is_recovery_filename(name: &str) -> bool {
+    // Both the current and legacy writers use the tab_ prefix and portable
+    // names. Reject paths, alternate data streams and device names on load.
+    name.starts_with(RECOVERY_FILE_PREFIX)
+        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        && matches!(name.rsplit_once('.'), Some((_, "txt" | "json" | "bin")))
+}
+
+fn is_generated_recovery_filename(name: &str) -> bool {
+    let Some(name) = name.strip_prefix(RECOVERY_FILE_PREFIX) else {
+        return false;
+    };
+    [".txt", "_history.json", "_history.bin"]
+        .into_iter()
+        .any(|suffix| {
+            name.strip_suffix(suffix).is_some_and(|random| {
+                random.len() == RECOVERY_FILE_RANDOM_LEN
+                    && random.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            })
+        })
+}
+
+fn recovery_filename(name: &str) -> io::Result<&str> {
+    if is_recovery_filename(name) {
+        Ok(name)
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid recovery filename"))
+    }
+}
+
+fn require_recovery_directory(path: &Path) -> io::Result<()> {
+    if path.symlink_metadata()?.is_dir() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "Invalid session recovery directory",
+        ))
+    }
+}
+
+fn recovery_path(directory: &Path, filename: &str) -> io::Result<PathBuf> {
+    let name = recovery_filename(filename)?;
+    require_recovery_directory(directory)?;
+    Ok(directory.join(name))
+}
+
+fn open_recovery_file(path: &Path) -> io::Result<std::fs::File> {
+    vtcode::file_source::open_regular_file_no_follow(path).map(|(file, _)| file)
+}
+
+fn acquire_recovery_lease(manifest: &Path) -> io::Result<Arc<FileLock>> {
+    let path = manifest
+        .parent()
+        .expect("session storage directory")
+        .join(RECOVERY_READER_LOCK);
+    let file = match open_recovery_file(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound
+            && manifest.symlink_metadata().is_ok_and(|metadata| metadata.is_file()) => {
+            // Older manifests predate the lock. Create it only when there is
+            // an existing session to migrate, including on startup.
+            open_lock_file(&path)?
+        }
+        Err(error) => return Err(error),
+    };
+    FileLock::acquire_shared(file).map(Arc::new)
+}
+
 /// Write a new recovery file without overwriting one referenced by the current
 /// manifest or a background restore. The manifest is committed only after all
 /// of its recovery files have been written successfully.
@@ -200,8 +301,10 @@ fn save_recovery_file(
 ) -> std::io::Result<String> {
     let dir = unsaved_dir(project_root);
     std::fs::create_dir_all(&dir)?;
+    require_recovery_directory(&dir)?;
     let mut temporary = tempfile::Builder::new()
-        .prefix("tab_")
+        .prefix(RECOVERY_FILE_PREFIX)
+        .rand_bytes(RECOVERY_FILE_RANDOM_LEN)
         .suffix(suffix)
         .tempfile_in(&dir)?;
     {
@@ -236,9 +339,13 @@ impl<'a> RecoveryWrites<'a> {
 
 impl Drop for RecoveryWrites<'_> {
     fn drop(&mut self) {
-        if !self.committed {
+        if !self.committed && !self.created.is_empty() {
+            let dir = unsaved_dir(self.root);
+            if require_recovery_directory(&dir).is_err() {
+                return;
+            }
             for filename in &self.created {
-                let _ = std::fs::remove_file(unsaved_dir(self.root).join(filename));
+                let _ = std::fs::remove_file(dir.join(filename));
             }
         }
     }
@@ -252,13 +359,15 @@ struct RecoveredText {
 }
 
 fn load_unsaved_content(project_root: &Path, filename: &str) -> Option<RecoveredText> {
-    let path = unsaved_dir(project_root).join(filename);
-    std::fs::File::open(&path).and_then(|file| {
+    let load = || -> io::Result<_> {
+        let path = recovery_path(&unsaved_dir(project_root), filename)?;
+        let file = open_recovery_file(&path)?;
         let (content, sha256) = history::read_base(std::io::BufReader::with_capacity(64 * 1024, file))?;
         Ok(RecoveredText { content, sha256 })
-    }).map_err(|e| {
+    };
+    load().map_err(|e| {
         if e.kind() != std::io::ErrorKind::NotFound {
-            log_warn!("failed to read unsaved content '{}': {}", path.display(), e);
+            log_warn!("failed to read unsaved content {filename:?}: {e}");
         }
     }).ok()
 }
@@ -267,14 +376,16 @@ fn load_unsaved_content(project_root: &Path, filename: &str) -> Option<Recovered
 /// restores retain their original filenames, including undo content files.
 fn cleanup_unsaved_dir(project_root: &Path, retained: &std::collections::HashSet<String>) {
     let dir = unsaved_dir(project_root);
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    if require_recovery_directory(&dir).is_ok()
+        && let Ok(entries) = std::fs::read_dir(&dir)
+    {
         for entry in entries.flatten() {
-            if entry.file_type().is_ok_and(|kind| kind.is_file())
-                && !retained.contains(&entry.file_name().to_string_lossy().into_owned())
+            if entry.file_name().to_str().is_some_and(|name| {
+                is_generated_recovery_filename(name) && !retained.contains(name)
+            }) && entry.file_type().is_ok_and(|kind| kind.is_file())
+                && let Err(error) = std::fs::remove_file(entry.path())
             {
-                if let Err(error) = std::fs::remove_file(entry.path()) {
-                    log_warn!("failed to remove obsolete session recovery file '{}': {error}", entry.path().display());
-                }
+                log_warn!("failed to remove obsolete session recovery file '{}': {error}", entry.path().display());
             }
         }
     }
@@ -325,7 +436,9 @@ fn save_undo_history(
         redo_contents_file: String::new(),
     };
     let filename = writes.write("_history.json", |writer| {
-        serde_json::to_writer(writer, &history).map_err(std::io::Error::other)
+        serde_json::to_writer(&mut *writer, &history)?;
+        writer.flush()?;
+        check_manifest_size(writer.get_ref().metadata()?.len())
     })?;
     // These sidecars were just durably written. Do not reopen and parse them
     // to rediscover their names (particularly costly on shared storage).
@@ -387,19 +500,14 @@ impl SavedUndoHistory {
             _ => return Err(invalid()),
         };
         for file in &files {
-            let mut components = Path::new(file).components();
-            if !matches!(components.next(), Some(std::path::Component::Normal(_)))
-                || components.next().is_some() || file.contains(['/', '\\'])
-            {
-                return Err(invalid());
-            }
+            recovery_filename(file)?;
         }
         Ok(files)
     }
 }
 
 fn load_undo_stack(path: &Path, metadata: Vec<SavedUndoEntry>) -> std::io::Result<UndoStack> {
-    let mut reader = std::io::BufReader::with_capacity(64 * 1024, std::fs::File::open(path)?);
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, open_recovery_file(path)?);
     let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid undo recovery content");
     let mut contents = Vec::with_capacity(metadata.len());
     if metadata.iter().all(|entry| entry.content_bytes.is_some()) {
@@ -446,16 +554,9 @@ fn load_undo_history_cached(
     contents: &mut std::collections::HashMap<String, Option<RecoveredText>>,
 ) -> Option<(UndoStack, UndoStack)> {
     let dir = unsaved_dir(project_root);
-    let path = dir.join(filename);
-    let data = std::fs::read_to_string(&path).map_err(|e| {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            log_warn!("failed to read undo history '{}': {}", path.display(), e);
-        }
-    }).ok()?;
-    let parsed: SavedUndoHistory = serde_json::from_str(&data).map_err(|e| {
-        log_warn!("failed to parse undo history '{}': {}", path.display(), e);
-    }).ok()?;
-    let load = || -> std::io::Result<_> {
+    let mut load = || -> std::io::Result<_> {
+        let path = recovery_path(&dir, filename)?;
+        let parsed: SavedUndoHistory = read_manifest(&path)?;
         parsed.content_files()?;
         if parsed.version == 2 || parsed.version == 3 {
             let base = if parsed.version == 3 {
@@ -468,7 +569,7 @@ fn load_undo_history_cached(
                 }
                 Some(content.content)
             } else { None };
-            let file = std::fs::File::open(dir.join(parsed.contents_file.unwrap()))?;
+            let file = open_recovery_file(&dir.join(parsed.contents_file.unwrap()))?;
             let reader = std::io::BufReader::with_capacity(64 * 1024, file);
             if base.is_some() {
                 history::read_with_base(reader, parsed.undo, parsed.redo, parsed.contents_sha256.unwrap(), base)
@@ -480,14 +581,73 @@ fn load_undo_history_cached(
                 load_undo_stack(&dir.join(parsed.redo_contents_file), parsed.redo)?))
         }
     };
-    load().map_err(|error| log_warn!("failed to read undo history '{}': {error}", path.display())).ok()
+    load().map_err(|error| {
+        if error.kind() != io::ErrorKind::NotFound {
+            log_warn!("failed to read undo history {filename:?}: {error}");
+        }
+    }).ok()
+}
+
+fn check_manifest_size(size: u64) -> io::Result<()> {
+    if size > MAX_MANIFEST_BYTES {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Session manifest exceeds 16 MiB",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn read_manifest<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
+    let (file, metadata) = vtcode::file_source::open_regular_file_no_follow(path)?;
+    check_manifest_size(metadata.len())?;
+    let mut data = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut data)?;
+    check_manifest_size(data.len() as u64)?;
+    serde_json::from_slice(&data).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::File::options()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY)
+        .open(path)?
+        .sync_all()
 }
 
 /// Save session state to disk.
 pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::Result<()> {
+    if session.recovery_incomplete {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Some recovery files could not be read. The previous session backup was preserved.",
+        ));
+    }
     let path = session_path(project_root);
     let parent = path.parent().expect("session storage directory");
+    let recovery_dir = parent.join("unsaved");
     std::fs::create_dir_all(parent)?;
+    let writer = open_lock_file(&parent.join(SESSION_WRITER_LOCK))?;
+    let _writer = FileLock::try_acquire(writer).map_err(|error| match error {
+        TryLockError::WouldBlock => io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "Another VTCode window is saving this workspace session",
+        ),
+        TryLockError::Error(error) => error,
+    })?;
+    // Restore can fail while the manifest still contains the only references
+    // to unsaved work. Preserve that state even if the window opened empty.
+    if let Err(error) = read_manifest::<Session>(&path)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(io::Error::new(
+            error.kind(),
+            format!("Cannot replace session manifest '{}': {error}", path.display()),
+        ));
+    }
     let mut writes = RecoveryWrites::new(project_root);
     let mut session_out = session.clone();
     // Keep every referenced file until the new manifest is durable. This also
@@ -530,44 +690,113 @@ pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::R
         tab.redo_entries = None;
         if let Some(id)=document {documents.insert(id,(tab.unsaved_file.clone(),tab.undo_history_file.clone()));}
         if let Some(filename) = &tab.unsaved_file {
-            if !wrote_unsaved { std::fs::metadata(unsaved_dir(project_root).join(filename))?; }
+            if !wrote_unsaved { open_recovery_file(&recovery_path(&recovery_dir, filename)?)?; }
             retained.insert(filename.clone());
         }
         if let Some(filename) = &tab.undo_history_file {
             if wrote_history { continue; }
-            let history: SavedUndoHistory = serde_json::from_slice(
-                &std::fs::read(unsaved_dir(project_root).join(filename))?,
-            )?;
+            let history: SavedUndoHistory = read_manifest(&recovery_path(&recovery_dir, filename)?)?;
             retained.insert(filename.clone());
             for content_file in history.content_files()? {
-                std::fs::metadata(unsaved_dir(project_root).join(content_file))?;
+                open_recovery_file(&recovery_dir.join(content_file))?;
                 retained.insert(content_file.to_string());
             }
         }
     }
-    let json = serde_json::to_vec_pretty(&session_out)?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(&json)?;
+    {
+        let mut writer = io::BufWriter::new(temporary.as_file_mut());
+        serde_json::to_writer_pretty(&mut writer, &session_out)?;
+        writer.flush()?;
+    }
+    check_manifest_size(temporary.as_file().metadata()?.len())?;
     temporary.as_file().sync_all()?;
+    // Make new sidecar names durable before publishing their references.
+    #[cfg(unix)]
+    if !writes.created.is_empty() {
+        sync_directory(&recovery_dir)?;
+    }
     temporary.persist(&path).map_err(|error| error.error)?;
     writes.committed = true;
-    cleanup_unsaved_dir(project_root, &retained);
+    // A crash can otherwise restore the old manifest after its sidecars have
+    // been pruned. Keep both generations if syncing the rename fails.
+    #[cfg(unix)]
+    sync_directory(parent)?;
+    // A reader may hold an older manifest while its file load is queued.
+    // Publish the new manifest immediately and defer pruning if needed.
+    if let Ok(readers) = open_lock_file(&parent.join(RECOVERY_READER_LOCK))
+        && let Ok(_cleanup_lock) = FileLock::try_acquire(readers)
+    {
+        cleanup_unsaved_dir(project_root, &retained);
+    }
     Ok(())
 }
 
-/// Load only the small session manifest. Potentially large recovery payloads
-/// are hydrated by file-load workers so startup never reads them on the UI
-/// thread.
+#[cfg(test)]
 pub(crate) fn load_session(project_root: &Path) -> Option<Session> {
+    load_session_with_recovery_status(project_root).0
+}
+
+/// Load the manifest and retain its lease when it cannot be read. Recovery
+/// payloads are hydrated separately by file-load workers.
+pub(crate) fn load_session_with_recovery_status(
+    project_root: &Path,
+) -> (Option<Session>, Option<RecoveryLease>) {
+    load_session_inner(project_root, || {})
+}
+
+fn load_session_inner(
+    project_root: &Path,
+    before_manifest: impl FnOnce(),
+) -> (Option<Session>, Option<RecoveryLease>) {
     let path = session_path(project_root);
-    let data = std::fs::read_to_string(&path).map_err(|e| {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            log_warn!("failed to read session file '{}': {}", path.display(), e);
+    // Pin before opening the manifest so cleanup cannot retire its files
+    // between the atomic read and the eventual background restore.
+    let mut lease = RecoveryLease(acquire_recovery_lease(&path).ok());
+    before_manifest();
+    let manifest = read_manifest::<Session>(&path).and_then(|session| {
+        if lease.is_held() || !session.has_recovery_sidecars() {
+            return Ok(session);
         }
-    }).ok()?;
-    serde_json::from_str(&data).map_err(|e| {
-        log_warn!("failed to parse session file '{}': {}", path.display(), e);
-    }).ok()
+        // Another window can publish the first manifest after the initial
+        // lease attempt. Reload under the lease to pin the current sidecars.
+        lease.0 = Some(acquire_recovery_lease(&path).map_err(|error| {
+            io::Error::other(format!("Cannot lease session recovery files: {error}"))
+        })?);
+        read_manifest(&path)
+    });
+    let mut session = match manifest {
+        Ok(session) => session,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return (None, None),
+        Err(error) => {
+            log_warn!("failed to read session file '{}': {error}", path.display());
+            return (None, Some(lease));
+        }
+    };
+    if session.has_recovery_sidecars() {
+        session.recovery_lease = lease;
+    }
+    (Some(session), None)
+}
+
+impl Session {
+    pub(crate) fn has_recovery_sidecars(&self) -> bool {
+        self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(SavedTab::has_recovery_sidecars)
+    }
+}
+
+impl SavedTab {
+    pub(crate) fn has_recovery_sidecars(&self) -> bool {
+        self.unsaved_file.is_some() || self.undo_history_file.is_some()
+    }
+
+    /// Check after a restore worker has attempted to hydrate the sidecars.
+    pub(crate) fn recovery_read_failed(&self) -> bool {
+        (self.unsaved_file.is_some() && self.pending_unsaved_content.is_none())
+            || (self.undo_history_file.is_some()
+                && (self.undo_entries.is_none() || self.redo_entries.is_none()))
+    }
 }
 
 /// Resolve a tab's unsaved buffer and undo/redo data. Call only from a worker.
@@ -624,7 +853,7 @@ pub(crate) fn share_recovered_disk_snapshot<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::fs::{self, File};
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -669,7 +898,7 @@ mod tests {
 
         let session = Session {
             tabs: vec![SavedTab {
-                file_path: Some("dummy.txt".to_string()),
+                file_path: Some("dummy.txt".into()),
                 cursor_line: 0,
                 cursor_col: 0,
                 scroll_offset: 0,
@@ -698,7 +927,7 @@ mod tests {
 
     pub(super) fn recovery_test_tab(content: &str) -> SavedTab {
         SavedTab {
-            file_path: Some("test.txt".to_string()),
+            file_path: Some("test.txt".into()),
             cursor_line: 0, cursor_col: 0, scroll_offset: 0,
             horizontal_scroll: 0, pinned: false, preview: false,
             unsaved_file: None,
@@ -708,6 +937,253 @@ mod tests {
             redo_entries: Some(vec![("after".into(), 0, 0, vec![], vec![], None, true)]),
             bookmarks: Vec::new(), folded_ranges: Vec::new(),
         }
+    }
+
+    #[test]
+    fn recovery_manifest_rejects_paths_outside_its_sidecar_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        save_session(project, &Session {
+            tabs: vec![recovery_test_tab("original")], ..Session::default()
+        }).unwrap();
+        let manifest = fs::read(session_path(project)).unwrap();
+        let mut session = load_session(project).unwrap();
+        let dir = unsaved_dir(project);
+        let parent = dir.parent().unwrap();
+        let tab = &mut session.tabs[0];
+        let text = tab.unsaved_file.clone().unwrap();
+        let history = tab.undo_history_file.clone().unwrap();
+        fs::rename(dir.join(&text), parent.join(&text)).unwrap();
+        fs::rename(dir.join(&history), parent.join(&history)).unwrap();
+        tab.unsaved_file = Some(parent.join(&text).to_str().unwrap().to_owned());
+        tab.undo_history_file = Some(format!("../{history}"));
+        hydrate_saved_tab(project, tab);
+        assert!(tab.pending_unsaved_content.is_none());
+        assert!(tab.undo_entries.is_none());
+        assert_eq!(save_session(project, &session).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(session_path(project)).unwrap(), manifest);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_ignores_links_and_special_files_without_blocking() {
+        use std::os::unix::{ffi::OsStrExt, fs::symlink};
+
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let dir = unsaved_dir(project);
+        fs::create_dir_all(&dir).unwrap();
+        let outside = root.path().join("external.txt");
+        fs::write(&outside, "outside state").unwrap();
+        symlink(outside, dir.join("tab_link.txt")).unwrap();
+        let fifo = std::ffi::CString::new(dir.join("tab_fifo.txt").as_os_str().as_bytes()).unwrap();
+        // SAFETY: The path is NUL-terminated and inside the test recovery directory.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        for name in ["tab_link.txt", "tab_fifo.txt"] {
+            assert!(load_unsaved_content(project, name).is_none());
+            assert!(load_undo_history(project, name).is_none());
+        }
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn recovery_cleanup_preserves_unrelated_files() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let dir = unsaved_dir(project);
+        save_session(project, &Session {
+            tabs: vec![recovery_test_tab("old")], ..Session::default()
+        }).unwrap();
+        let unrelated = ["keep.txt", "tab_project_notes.txt", "tab_aBc123_report.bin"];
+        for name in unrelated {
+            fs::write(dir.join(name), "unrelated file").unwrap();
+        }
+        save_session(project, &Session::default()).unwrap();
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), unrelated.len());
+        for name in unrelated {
+            assert_eq!(fs::read_to_string(dir.join(name)).unwrap(), "unrelated file");
+        }
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn linked_recovery_directory_cannot_redirect_reads_writes_or_cleanup() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let dir = unsaved_dir(project);
+        fs::create_dir_all(dir.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), &dir).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_dir(outside.path(), &dir) {
+            if error.raw_os_error() == Some(1314) {
+                return;
+            }
+            panic!("could not create a recovery directory link: {error}");
+        }
+        let name = "tab_aBc123.txt";
+        let external_file = outside.path().join(name);
+        fs::write(&external_file, "outside recovery storage").unwrap();
+
+        assert!(load_unsaved_content(project, name).is_none());
+        save_session(project, &Session::default()).unwrap();
+        let manifest = fs::read(session_path(project)).unwrap();
+        let dirty = Session {
+            tabs: vec![recovery_test_tab("private draft")],
+            ..Session::default()
+        };
+        assert_eq!(
+            save_session(project, &dirty).unwrap_err().kind(),
+            io::ErrorKind::NotADirectory
+        );
+        assert_eq!(fs::read(session_path(project)).unwrap(), manifest);
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_to_string(external_file).unwrap(),
+            "outside recovery storage"
+        );
+
+        #[cfg(unix)]
+        fs::remove_file(&dir).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(&dir).unwrap();
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn oversized_manifest_cannot_replace_the_saved_session() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        save_session(project, &Session::default()).unwrap();
+        let path = session_path(project);
+        let previous = fs::read(&path).unwrap();
+        let oversized = Session {
+            global_search_query: "a".repeat(MAX_MANIFEST_BYTES as usize),
+            ..Session::default()
+        };
+        assert_eq!(save_session(project, &oversized).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn restore_rejects_oversized_session_and_undo_manifests() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let dir = unsaved_dir(project);
+        fs::create_dir_all(&dir).unwrap();
+        let filename = "tab_123456_history.json";
+        for path in [session_path(project), dir.join(filename)] {
+            File::create(path).unwrap().set_len(MAX_MANIFEST_BYTES + 1).unwrap();
+        }
+        assert!(load_session(project).is_none());
+        assert!(load_undo_history(project, filename).is_none());
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn save_preserves_unreadable_manifest_and_its_recovery_files() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        save_session(project, &Session {
+            tabs: vec![recovery_test_tab("recover this")], ..Session::default()
+        }).unwrap();
+        let mut saved = load_session(project).unwrap();
+        let text = unsaved_dir(project).join(saved.tabs.remove(0).unsaved_file.unwrap());
+        drop(saved);
+
+        let manifest = session_path(project);
+        fs::write(&manifest, b"{truncated").unwrap();
+        assert!(load_session(project).is_none());
+        assert_eq!(save_session(project, &Session::default()).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&manifest).unwrap(), b"{truncated");
+        assert_eq!(fs::read_to_string(&text).unwrap(), "recover this");
+        fs::remove_dir_all(manifest.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn busy_session_writer_rejects_another_save_before_creating_sidecars() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let manifest = session_path(project);
+        let directory = manifest.parent().unwrap();
+        save_session(project, &Session::default()).unwrap();
+        let original = fs::read(&manifest).unwrap();
+        let writer = open_lock_file(&directory.join(SESSION_WRITER_LOCK)).unwrap();
+        writer.try_lock().unwrap();
+        let new = Session {
+            tabs: vec![recovery_test_tab("another window")],
+            ..Session::default()
+        };
+        assert_eq!(save_session(project, &new).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(fs::read(&manifest).unwrap(), original);
+        assert!(!unsaved_dir(project).exists());
+
+        drop(writer);
+        save_session(project, &new).unwrap();
+        assert_eq!(load_session(project).unwrap().tabs.len(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn queued_restore_keeps_older_sidecars_after_another_window_saves() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let mut tab = recovery_test_tab("older unsaved buffer");
+        tab.file_path = None;
+        save_session(project, &Session { tabs: vec![tab], ..Session::default() }).unwrap();
+        let original = load_session(project).unwrap();
+        let dir = unsaved_dir(project);
+        let content = dir.join(original.tabs[0].unsaved_file.as_deref().unwrap());
+        let mut app = crate::app::App::new(project.to_owned());
+        app.restore_session(&original);
+        drop(original);
+
+        save_session(project, &Session::default()).unwrap();
+        assert!(load_session(project).unwrap().tabs.is_empty());
+        assert!(content.is_file());
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            app.editor().is_some_and(|editor| !editor.bg_loading)
+        });
+        let editor = app.editor().unwrap();
+        assert_eq!(editor.rope, "older unsaved buffer");
+        assert_eq!(editor.export_undo_stack()[0].0, "before");
+
+        save_session(project, &Session::default()).unwrap();
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn first_manifest_published_during_startup_gets_a_recovery_lease() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path();
+        let dirty = Session {
+            tabs: vec![recovery_test_tab("draft from another window")],
+            ..Session::default()
+        };
+        assert!(!session_path(project).exists());
+        let (session, incomplete) = load_session_inner(project, || {
+            save_session(project, &dirty).unwrap();
+        });
+        assert!(incomplete.is_none());
+        let session = session.unwrap();
+        let filename = session.tabs[0].unsaved_file.as_deref().unwrap();
+        let path = unsaved_dir(project).join(filename);
+
+        save_session(project, &Session::default()).unwrap();
+        assert!(
+            path.is_file(),
+            "the first manifest's recovery file was pruned during startup"
+        );
+        assert!(session.recovery_lease.is_held());
+        drop(session);
+
+        save_session(project, &Session::default()).unwrap();
+        assert!(!path.exists());
+        fs::remove_dir_all(session_path(project).parent().unwrap()).unwrap();
     }
 
     #[test]
@@ -807,6 +1283,8 @@ mod tests {
         assert_eq!(loaded.groups[0].tabs[0].undo_entries.as_ref().unwrap()[0].0, "before");
         let manifest = std::fs::read_to_string(session_path(&project_root)).unwrap();
         assert!(!manifest.contains("pending tab"));
+        drop(loaded);
+        drop(pending);
         save_session(&project_root, &Session::default()).unwrap();
         assert_eq!(std::fs::read_dir(unsaved_dir(&project_root)).unwrap().count(), 0);
         std::fs::remove_dir_all(crate::portable::workspace_dir(&project_root)).unwrap();
@@ -898,7 +1376,7 @@ mod tests {
 
         let session = Session {
             tabs: vec![SavedTab {
-                file_path: Some("test.rs".to_string()),
+                file_path: Some("test.rs".into()),
                 cursor_line: 42,
                 cursor_col: 15,
                 scroll_offset: 30,
@@ -921,7 +1399,7 @@ mod tests {
         let loaded = load_session(&project_root).expect("session should load");
         assert_eq!(loaded.tabs.len(), 1);
         let tab = &loaded.tabs[0];
-        assert_eq!(tab.file_path.as_deref(), Some("test.rs"));
+        assert_eq!(tab.file_path.as_deref(), Some(Path::new("test.rs")));
         assert_eq!(tab.cursor_line, 42);
         assert_eq!(tab.cursor_col, 15);
         assert_eq!(tab.scroll_offset, 30);
@@ -942,7 +1420,7 @@ mod tests {
         let session = Session {
             tabs: vec![
                 SavedTab {
-                    file_path: Some("a.rs".to_string()),
+                    file_path: Some("a.rs".into()),
                     cursor_line: 0, cursor_col: 0, scroll_offset: 0,
                     horizontal_scroll: 0, pinned: false, preview: false,
                     unsaved_file: None, pending_unsaved_content: None,
@@ -951,7 +1429,7 @@ mod tests {
                     bookmarks: Vec::new(), folded_ranges: Vec::new(),
                 },
                 SavedTab {
-                    file_path: Some("b.rs".to_string()),
+                    file_path: Some("b.rs".into()),
                     cursor_line: 100, cursor_col: 50, scroll_offset: 80,
                     horizontal_scroll: 20, pinned: true, preview: false,
                     unsaved_file: None, pending_unsaved_content: None,
@@ -982,7 +1460,7 @@ mod tests {
         let content = "fn main() {\n    println!(\"hello\");\n}\n";
         let session = Session {
             tabs: vec![SavedTab {
-                file_path: Some("main.rs".to_string()),
+                file_path: Some("main.rs".into()),
                 cursor_line: 1, cursor_col: 4, scroll_offset: 0,
                 horizontal_scroll: 0, pinned: false, preview: false,
                 unsaved_file: None,
@@ -1043,7 +1521,7 @@ mod tests {
 
         let session = Session {
             tabs: vec![SavedTab {
-                file_path: Some("main.rs".to_string()),
+                file_path: Some("main.rs".into()),
                 cursor_line: 0, cursor_col: 0, scroll_offset: 0,
                 horizontal_scroll: 0, pinned: false, preview: false,
                 unsaved_file: None, pending_unsaved_content: None,
@@ -1053,7 +1531,7 @@ mod tests {
             }],
             groups: vec![SavedGroup {
                 tabs: vec![SavedTab {
-                    file_path: Some("lib.rs".to_string()),
+                    file_path: Some("lib.rs".into()),
                     cursor_line: 10, cursor_col: 5, scroll_offset: 0,
                     horizontal_scroll: 0, pinned: false, preview: false,
                     unsaved_file: None, pending_unsaved_content: None,
@@ -1071,7 +1549,7 @@ mod tests {
         save_session(&project_root, &session).unwrap();
         let loaded = load_session(&project_root).expect("session should load");
         assert_eq!(loaded.groups.len(), 1);
-        assert_eq!(loaded.groups[0].tabs[0].file_path.as_deref(), Some("lib.rs"));
+        assert_eq!(loaded.groups[0].tabs[0].file_path.as_deref(), Some(Path::new("lib.rs")));
         assert_eq!(loaded.groups[0].tabs[0].cursor_line, 10);
 
         let _ = std::fs::remove_dir_all(&project_root); // Error OK: dir may not exist
@@ -1093,7 +1571,7 @@ mod tests {
     fn session_serde_round_trip_in_memory() {
         let session = Session {
             tabs: vec![SavedTab {
-                file_path: Some("hello.txt".to_string()),
+                file_path: Some("hello.txt".into()),
                 cursor_line: 5,
                 cursor_col: 10,
                 scroll_offset: 3,
@@ -1182,7 +1660,7 @@ mod tests {
     #[test]
     fn saved_tab_serde_skips_transient_fields() {
         let tab = SavedTab {
-            file_path: Some("test.rs".to_string()),
+            file_path: Some("test.rs".into()),
             cursor_line: 0, cursor_col: 0,
             scroll_offset: 0, horizontal_scroll: 0,
             pinned: false,
@@ -1198,6 +1676,30 @@ mod tests {
         // Transient fields should not be serialized
         assert!(loaded.undo_entries.is_none());
         assert!(loaded.redo_entries.is_none());
+    }
+
+    #[test]
+    fn saved_tab_paths_read_legacy_strings_and_preserve_non_unicode_names() {
+        let mut tab = recovery_test_tab("recovery text");
+        let legacy = serde_json::to_value(&tab).unwrap();
+        assert_eq!(legacy["filePath"], "test.txt");
+        let restored: SavedTab = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.file_path, tab.file_path);
+
+        #[cfg(unix)]
+        let opaque = {
+            use std::os::unix::ffi::OsStrExt;
+            PathBuf::from(std::ffi::OsStr::from_bytes(b"tab-\xff.txt"))
+        };
+        #[cfg(windows)]
+        let opaque = {
+            use std::os::windows::ffi::OsStringExt;
+            PathBuf::from(std::ffi::OsString::from_wide(&[0xd800, b'a' as u16]))
+        };
+        tab.file_path = Some(opaque);
+        let bytes = serde_json::to_vec(&tab).unwrap();
+        let restored: SavedTab = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(restored.file_path, tab.file_path);
     }
 
     #[test]

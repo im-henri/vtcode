@@ -1,6 +1,27 @@
 use super::*;
 use std::io::Write;
 
+#[cfg(windows)]
+#[test]
+fn checkpoint_rejects_embedded_drive_and_stream_names() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path().canonicalize().unwrap();
+    for name in [r"missing\X:\outside.txt", r"missing\file.txt:stream"] {
+        assert!(storage::checked_path(&root, Path::new(name)).is_err(), "{name}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn agent_file_resolution_rejects_embedded_drive_and_stream_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = crate::acp::files::Workspace::new(directory.path()).unwrap();
+    for name in [r"missing\X:\outside.txt", r"missing\file.txt:stream"] {
+        let path = workspace.root().join(name);
+        assert!(workspace.resolve(&path).is_err(), "{}", path.display());
+    }
+}
+
 #[test]
 fn accepted_checkpoints_remain_reversible_after_git_gc_and_restart() {
     let mut f = Fixture::new();
@@ -71,6 +92,62 @@ fn interrupted(f: &mut Fixture) -> Plan {
         f.journal.replace(item).unwrap();
     }
     plan
+}
+
+#[test]
+fn rollback_backup_slots_cannot_overlap_targets_or_each_other() {
+    let mut f = Fixture::new();
+    for name in ["a", "b"] {
+        f.write(name, "original");
+    }
+    f.begin();
+    for name in ["a", "b"] {
+        f.write(name, "agent");
+    }
+    f.finish();
+    let plan = f.journal.plan("agent", "chat", &Selection::All).unwrap();
+    let backup = PathBuf::from(".vtcode-rollback-shared");
+
+    let mut shared = plan.clone();
+    for item in &mut shared.replacements {
+        item.backup = Some(backup.clone());
+    }
+    assert!(f.journal.validate_plan(&shared).is_err());
+
+    let mut overlaps = plan;
+    overlaps.replacements[0].backup = Some(backup.clone());
+    overlaps.replacements[1].path = backup;
+    assert!(f.journal.validate_plan(&overlaps).is_err());
+}
+
+#[test]
+fn recovery_refuses_to_install_a_replaced_rollback_backup() {
+    let mut f = Fixture::new();
+    f.write("a", "original");
+    f.begin();
+    f.write("a", "agent");
+    f.finish();
+    let mut interrupted = f.journal.state.clone();
+    f.decline(Selection::All).unwrap();
+    let plan = f.journal.state.completed.last().unwrap().plan.clone();
+    let backup = f.root.path().join(plan.replacements[0].backup.as_ref().unwrap());
+    let retained = f.root.path().join("retained-displaced-file");
+    fs::rename(&backup, &retained).unwrap();
+    fs::write(&backup, "unrelated file").unwrap();
+
+    interrupted.next = f.journal.state.next;
+    interrupted.transaction = Some(plan);
+    f.journal.save(interrupted).unwrap();
+    let Fixture { root, data, journal } = f;
+    drop(journal);
+    let mut journal = Journal::open(root.path(), data.path()).unwrap();
+
+    let error = journal.recover().unwrap_err();
+    assert!(error.contains("Rollback backup was replaced"), "{error}");
+    assert!(journal.interrupted());
+    assert_eq!(fs::read_to_string(root.path().join("a")).unwrap(), "original");
+    assert_eq!(fs::read_to_string(retained).unwrap(), "agent");
+    assert_eq!(fs::read_to_string(backup).unwrap(), "unrelated file");
 }
 
 #[test]

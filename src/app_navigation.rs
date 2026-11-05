@@ -173,6 +173,22 @@ impl NavigationHistory {
         }
     }
 
+    #[cfg(windows)]
+    pub(crate) fn redirect_file_open(&mut self, from: u64, to: u64, path: &Path) {
+        for entry in &mut self.entries {
+            if entry.editor_id == from {
+                entry.editor_id = to;
+                entry.path = Some(path.to_owned());
+            }
+        }
+        if let Some(pending) = &mut self.pending_file
+            && pending.editor_id == from
+        {
+            pending.editor_id = to;
+            pending.path = path.to_owned();
+        }
+    }
+
     fn record(&mut self, location: NavigationLocation) {
         if self.restoring {
             return;
@@ -260,7 +276,7 @@ impl NavigationHistory {
     pub(crate) fn remove_path(&mut self, path: &Path) {
         self.retain(|entry| {
             !entry.path.as_ref().is_some_and(|candidate| {
-                App::same_open_path(candidate, path) || candidate.starts_with(path)
+                crate::native_paths::strip_spelling_prefix(candidate, path).is_some()
             })
         });
     }
@@ -488,7 +504,7 @@ impl App {
             .pending_file
             .as_ref()
             .is_some_and(|pending| {
-                Self::same_open_path(&pending.path, path)
+                crate::native_paths::same_spelling(&pending.path, path)
                     && self
                         .editor()
                         .is_some_and(|editor| editor.navigation_id == pending.editor_id)
@@ -505,7 +521,7 @@ impl App {
                     !entry
                         .path
                         .as_ref()
-                        .is_some_and(|candidate| Self::same_open_path(candidate, path))
+                        .is_some_and(|candidate| crate::native_paths::same_spelling(candidate, path))
                 })
                 .count()
         });

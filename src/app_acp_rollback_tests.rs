@@ -34,6 +34,26 @@ fn checkpoint_guards_match_windows_case_aliases() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn editor_review_ignores_a_case_distinct_siblings_changes() {
+    let (root, _data, mut app, _) = seeded();
+    let directory = root.path().join("case-sensitive");
+    std::fs::create_dir(&directory).unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(&directory) {
+        return;
+    }
+    let upper = directory.join("Mixed.txt");
+    let lower = directory.join("mixed.txt");
+    std::fs::write(&upper, "upper\n").unwrap();
+    std::fs::write(&lower, "lower\n").unwrap();
+    let mut review = app.chat.rollback.inline_reviews[0].clone();
+    review.path = upper.canonicalize().unwrap();
+    app.chat.rollback.inline_reviews = Arc::new(vec![review]);
+    assert!(app.editor_file_review(&upper).is_some());
+    assert!(app.editor_file_review(&lower).is_none());
+}
+
 #[cfg(any(unix, windows))]
 #[test]
 fn checkpoint_guards_protect_buffers_opened_through_a_directory_alias() {

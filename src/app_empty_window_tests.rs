@@ -700,12 +700,12 @@ fn empty_launch_child() {
     let mut defaults = crate::settings::Settings::default();
     defaults.validate();
     assert_eq!(prepared.workspace, defaults);
-    let probe = root.join("cwd-probe.txt").to_string_lossy().into_owned();
+    let probe = root.join("cwd-probe.txt");
     assert!(prepared.session.as_ref().is_none_or(|session| {
         session
             .tabs
             .iter()
-            .all(|tab| tab.file_path.as_deref() != Some(probe.as_str()))
+            .all(|tab| tab.file_path.as_deref() != Some(probe.as_path()))
     }));
     let app = prepared.into_app(UiWake::default());
     assert!(!app.has_open_folder());

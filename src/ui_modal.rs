@@ -658,7 +658,7 @@ pub(crate) fn save_target(app: &mut App) -> Option<(PathBuf, bool)> {
     } else if app.active_extension_view().is_none() && app.editor().is_some_and(|editor|
         app.tabs.iter().chain(app.groups.iter().flat_map(|g| &g.tabs)).any(|tab|
             tab.kind == crate::app::TabKind::File && tab.editor.save_identity != editor.save_identity
-                && tab.editor.file_path.as_ref().is_some_and(|other| App::same_open_path(other, &path))))
+                && tab.editor.file_path.as_ref().is_some_and(|other| App::paths_may_share_entry(other, &path))))
     {
         Some("This file is already open. Close it before replacing it, or choose another name.")
     } else {

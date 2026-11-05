@@ -7,6 +7,60 @@ fn frame_prefix_matches_the_advertised_protocol_version() {
 }
 
 #[test]
+fn message_growth_caps_reserved_capacity_at_the_message_limit() {
+    let mut data = Vec::with_capacity(8);
+    data.extend_from_slice(b"12345678");
+    append_with_bounded_growth(&mut data, b"abc", 11);
+    assert_eq!(data, b"12345678abc");
+    assert_eq!(data.capacity(), 11);
+}
+
+#[test]
+fn compressed_remote_messages_require_exactly_one_complete_zlib_stream() {
+    let value = "compressible message".repeat(100);
+    let mut packet = encode(&value).unwrap();
+    assert_eq!(packet.remove(0), 1);
+    assert_eq!(decode_compressed(&packet).unwrap(), serde_json::to_vec(&value).unwrap());
+
+    let mut trailing = packet.clone();
+    trailing.extend_from_slice(b"trailing bytes");
+    assert_eq!(decode_compressed(&trailing).unwrap_err().kind(), io::ErrorKind::InvalidData);
+
+    let mut truncated = packet.clone();
+    truncated.pop();
+    assert!(decode_compressed(&truncated).is_err());
+
+    let mut bad_checksum = packet;
+    *bad_checksum.last_mut().unwrap() ^= 0x01;
+    assert!(decode_compressed(&bad_checksum).is_err());
+}
+
+#[test]
+fn decoder_rejects_unknown_encodings_before_reserving_a_transfer() {
+    let mut frames = Vec::new();
+    write_message(&mut frames, 'S', 42, 7, &vec![2; CHUNK + 1]).unwrap();
+    let first = frames.split_inclusive(|byte| *byte == b'\n').next().unwrap();
+    let mut decoder = Decoder::new('S', 42);
+    assert!(decoder.line(first).is_err());
+    assert!(!decoder.in_progress(7));
+    assert_eq!(decoder.bytes, 0);
+}
+
+#[test]
+fn decoder_rejects_non_utf8_in_an_active_record_but_keeps_binary_shell_output() {
+    let mut decoder = Decoder::new('S', 42);
+    let invalid = format!("{PREFIX}S:{:016x}:1:0:1:", 42);
+    let mut packet = invalid.into_bytes();
+    packet.extend_from_slice(b"\xff\n");
+    assert!(decoder.line_with_output(&packet, |_| panic!("protocol bytes reached shell output")).is_err());
+
+    let output = b"shell output \xff\n";
+    let mut observed = Vec::new();
+    assert!(decoder.line_with_output(output, |line| observed.extend_from_slice(line)).unwrap().is_none());
+    assert_eq!(observed, output);
+}
+
+#[test]
 fn search_output_discards_obsolete_batches_and_finishes_partial_frames() {
     let hit = |label: &str| search::Hit { path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
         line: 1, start: 0, end: 1, text: label.into() };
@@ -21,7 +75,7 @@ fn search_output_discards_obsolete_batches_and_finishes_partial_frames() {
     queue.step(&mut bytes, 42).unwrap();
     assert!(queue.packets.front().unwrap().offset > 0);
     queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: vec![hit("obsolete")] }) }).unwrap();
-    queue.push(Response { id: 7, result: Ok(Reply::Search { hits: Vec::new(), truncated: false }) }).unwrap();
+    queue.push(Response { id: 7, result: Ok(Reply::Search { hits: Vec::new(), truncated: false, draft_aliases: Vec::new() }) }).unwrap();
     queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 8, hits: vec![hit("current")] }) }).unwrap();
     queue.discard_obsolete_search(8).unwrap();
     while !queue.is_empty() { queue.step(&mut bytes, 42).unwrap(); }
@@ -74,7 +128,7 @@ fn search_progress_batches_finish_before_their_terminal_reply_without_blocking_o
     queue.step(&mut bytes, 42).unwrap();
     assert!(!queue.is_empty(), "exercise a partially written progress event");
     queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: vec![hit("second".into())] }) }).unwrap();
-    queue.push(Response { id: 7, result: Ok(Reply::Search { hits: Vec::new(), truncated: false }) }).unwrap();
+    queue.push(Response { id: 7, result: Ok(Reply::Search { hits: Vec::new(), truncated: false, draft_aliases: Vec::new() }) }).unwrap();
     queue.push(Response { id: 8, result: Ok(Reply::Done) }).unwrap();
     while !queue.is_empty() { queue.step(&mut bytes, 42).unwrap(); }
     let mut decoder = Decoder::new('S', 42);

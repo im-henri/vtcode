@@ -4,6 +4,7 @@ use super::*;
 use crate::{
     background::CancellationToken,
     git_repositories::{Discovery, Scan},
+    native_paths::{same_spelling, strip_possible_alias_prefix, strip_spelling_prefix},
 };
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
@@ -156,24 +157,12 @@ pub(crate) fn merge_worktree(files: &mut Vec<GitFileChange>, changed: Vec<GitFil
     }
 }
 
-fn native_key(path: &Path) -> Cow<'_, Path> {
-    #[cfg(windows)]
-    {
-        Cow::Owned(PathBuf::from(
-            path_key(&path.to_string_lossy(), true).as_ref(),
-        ))
-    }
-    #[cfg(not(windows))]
-    {
-        Cow::Borrowed(path)
-    }
-}
-
 fn event_paths(
     paths: FxHashSet<PathBuf>,
     workspace: &Path,
-    canonical: &Path,
+    discovery: &Discovery,
 ) -> Option<Vec<PathBuf>> {
+    let canonical = &discovery.workspace;
     let absolute_workspace = if workspace.is_absolute() {
         workspace.to_owned()
     } else {
@@ -204,15 +193,32 @@ fn event_paths(
                 return repository_relative_path(canonical, &path)
                     .map(|relative| canonical.join(relative));
             }
-            Some(
-                if let Some(relative) =
-                    crate::native_paths::strip_prefix(&path, &absolute_workspace)
-                {
-                    canonical.join(relative)
-                } else {
-                    path
-                },
-            )
+            let path = if let Some(relative) = strip_spelling_prefix(&path, &absolute_workspace) {
+                canonical.join(relative)
+            } else if cfg!(windows)
+                && strip_possible_alias_prefix(&path, &absolute_workspace).is_some()
+                && let Some(relative) = repository_relative_path(canonical, &path)
+            {
+                canonical.join(relative)
+            } else {
+                path
+            };
+            // Watchers usually report the entry's own spelling. Verify any
+            // alternate spelling of a nested worktree once per event.
+            if cfg!(windows)
+                && let Some(verified) = discovery.roots.iter().chain(discovery.parent.iter()).find_map(|root| {
+                    if strip_spelling_prefix(&path, root).is_none()
+                        && strip_possible_alias_prefix(&path, root).is_some()
+                    {
+                        repository_relative_path(root, &path).map(|relative| root.join(relative))
+                    } else {
+                        None
+                    }
+                })
+            {
+                return Some(verified);
+            }
+            Some(path)
         })
         .collect()
 }
@@ -242,12 +248,8 @@ pub(crate) fn collect_with_paths<P: Ord>(
         return Vec::new();
     }
     let revalidate = changed.as_ref().is_some_and(|events| events.revalidate);
-    let changed = changed.and_then(|events| event_paths(events.paths, workspace, &discovery.workspace));
-    let boundaries: FxHashSet<_> = discovery
-        .roots
-        .iter()
-        .map(|path| native_key(path).into_owned())
-        .collect();
+    let changed = changed.and_then(|events| event_paths(events.paths, workspace, discovery));
+    let boundaries: FxHashSet<_> = discovery.roots.iter().cloned().collect();
     let mut scans = Vec::new();
     for workdir in roots {
         if cancel.is_cancelled() {
@@ -262,12 +264,16 @@ pub(crate) fn collect_with_paths<P: Ord>(
             let mut prefixes = Vec::new();
             let mut full = false;
             for path in changed {
-                if crate::native_paths::strip_prefix(&workdir, path).is_some() {
+                if strip_spelling_prefix(&workdir, path).is_some()
+                    || (cfg!(windows)
+                        && strip_possible_alias_prefix(&workdir, path).is_some()
+                        && !workdir.exists())
+                {
                     // Repository root/ancestor deletion or replacement.
                     full = true;
                     break;
                 }
-                let Some(mut relative) = crate::native_paths::strip_prefix(path, &workdir) else {
+                let Some(mut relative) = strip_spelling_prefix(path, &workdir) else {
                     continue;
                 };
                 if path
@@ -286,14 +292,12 @@ pub(crate) fn collect_with_paths<P: Ord>(
                 // Changes inside a nested worktree can dirty its superproject's
                 // gitlink (or untracked repository entry). Ask for that boundary,
                 // rather than a child filename that the outer index cannot see.
-                let lookup = native_key(path);
-                for (ancestor, lookup) in path.ancestors().skip(1).zip(lookup.ancestors().skip(1)) {
-                    if crate::native_paths::same(ancestor, &workdir) {
+                for ancestor in path.ancestors().skip(1) {
+                    if same_spelling(ancestor, &workdir) {
                         break;
                     }
-                    if boundaries.contains(lookup) {
-                        relative = crate::native_paths::strip_prefix(ancestor, &workdir)
-                            .unwrap_or(relative);
+                    if boundaries.contains(ancestor) {
+                        relative = strip_spelling_prefix(ancestor, &workdir).unwrap_or(relative);
                     }
                 }
                 // Local status rows currently use UTF-8 display paths. An

@@ -554,11 +554,11 @@ fn extensionless_blame_diff_and_historical_file_inherit_selected_language() {
 
 #[cfg(windows)]
 #[test]
-fn windows_language_paths_match_git_slashes_and_editor_case_without_io() {
+fn windows_language_paths_match_git_slashes_and_keep_file_case_distinct() {
     use std::path::Path;
     for (left, right) in [
         (r"C:\project\script", "C:/project/script"),
-        (r"C:\Project\SCRIPT", "c:/project/script"),
+        (r"C:\Project\SCRIPT", "c:/Project/SCRIPT"),
         (r"C:\project\.\script", "C:/project//script"),
         (r"\\server\share\script", "//SERVER/share/script"),
     ] {
@@ -567,6 +567,7 @@ fn windows_language_paths_match_git_slashes_and_editor_case_without_io() {
     }
     for (left, right) in [
         (r"C:\project\script", r"C:\project\script2"),
+        (r"C:\project\script", r"C:\project\SCRIPT"),
         (r"C:\project\script", r"D:\project\script"),
         (r"C:\project", r"C:\project\script"),
         (r"C:\project\script", r"C:\other\script"),

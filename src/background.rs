@@ -337,7 +337,8 @@ pub struct FilesystemActionOutcome {
     pub message: String,
     pub renames: Vec<(PathBuf, PathBuf)>,
     pub deleted: Vec<PathBuf>,
-    pub clear_explorer_clipboard: bool,
+    pub completed_cut_paths: Vec<PathBuf>,
+    pub cut_clipboard: Option<Arc<str>>,
     pub warning: bool,
     pub check_deleted_paths: Vec<PathBuf>,
 }
@@ -553,6 +554,12 @@ pub enum BackgroundResult {
     },
     /// Recovery content for an untitled editor, matched by its restore ID.
     SessionUntitledLoaded { restore: crate::session::SessionRestore },
+    #[cfg(windows)]
+    NativeOpenResolved {
+        generation: u64,
+        request: crate::app_tabs::native_open::Request,
+        source: Option<crate::app_tabs::native_open::Candidate>,
+    },
     /// File content loaded in background
     FileLoaded {
         workspace_generation: u64,
@@ -1602,7 +1609,7 @@ impl WorkspaceEventBurst {
                 self.watcher_failed = true;
                 listing_changed = true;
             }
-            if crate::formatters::is_temporary_path(&path) || crate::editor::is_save_temporary_path(&path) {
+            if is_temporary_workspace_path(&path) {
                 continue;
             }
             if is_git_metadata_event(root, &path) {
@@ -1693,13 +1700,19 @@ pub(crate) fn inspect_workspace_path(path: PathBuf) -> WorkspacePathChange {
 /// Git's private storage is handled by Git metadata invalidation. Project paths
 /// remain eligible regardless of directory names or search exclusion settings.
 fn is_ignored_workspace_event(root: &std::path::Path, path: &std::path::Path) -> bool {
-    if crate::formatters::is_temporary_path(path) || crate::editor::is_save_temporary_path(path) {
+    if is_temporary_workspace_path(path) {
         return true;
     }
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
     relative.components().any(|component| component.as_os_str() == ".git")
+}
+
+fn is_temporary_workspace_path(path: &std::path::Path) -> bool {
+    crate::editor::is_save_temporary_path(path)
+        || crate::formatters::is_temporary_path(path)
+        || crate::fs_ops::is_copy_temporary_path(path)
 }
 
 fn is_git_metadata_event(root: &std::path::Path, path: &std::path::Path) -> bool {
@@ -1724,7 +1737,7 @@ pub(crate) fn workspace_path_is_watched(root: &std::path::Path, path: &std::path
 }
 
 pub(crate) fn coalesce_workspace_event_paths(root: &std::path::Path, mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    paths.retain(|path| !crate::formatters::is_temporary_path(path) && !crate::editor::is_save_temporary_path(path)
+    paths.retain(|path| !is_temporary_workspace_path(path)
         && (!is_ignored_workspace_event(root, path)
             || path.parent().is_some_and(|parent| workspace_path_is_watched(root, parent))));
     paths.sort_unstable();

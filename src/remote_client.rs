@@ -571,8 +571,15 @@ impl Client {
     }
     pub(crate) fn set_git_output(&self, log: &super::diagnostics::Log) {
         let mut logs = self.0.shared.git_output.lock().unwrap();
-        logs.entry(self.hello().root_uri.clone()).or_insert_with(|| log.clone());
-        self.0.shared.git_logging.store(true, Ordering::Relaxed);
+        let root = &self.hello().root_uri;
+        if let Some(current) = logs.get_mut(root) {
+            if !current.same(log) {
+                *current = log.clone();
+            }
+        } else {
+            logs.insert(root.clone(), log.clone());
+            self.0.shared.git_logging.store(true, Ordering::Relaxed);
+        }
     }
     pub(crate) fn release_git_output(&self) {
         let mut logs = self.0.shared.git_output.lock().unwrap();
@@ -1140,8 +1147,9 @@ impl Client {
         mut query: search::Query,
         cancel: &crate::background::CancellationToken,
         mut consume: impl FnMut(Vec<search::Hit>) -> io::Result<()>,
-    ) -> io::Result<bool> {
+    ) -> io::Result<(bool, Vec<usize>)> {
         query.stream = true;
+        let open_files = query.open_files.len();
         let (id, replies) = self.submit_inner(Command::Search(query), Some((Duration::from_secs(120), Some(cancel))))?;
         // A healthy scan on a slow remote filesystem has no fixed total
         // deadline. Transport EOF and I/O errors handle disconnection.
@@ -1155,9 +1163,14 @@ impl Client {
             if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
             match reply {
                 Reply::SearchProgress { request, hits } if request == id => consume(hits)?,
-                Reply::Search { hits, truncated } => {
+                Reply::Search { hits, truncated, draft_aliases } => {
+                    if draft_aliases.iter().any(|&index| index >= open_files)
+                        || draft_aliases.windows(2).any(|pair| pair[0] >= pair[1])
+                    {
+                        return Err(io::Error::other("Invalid remote search draft aliases"));
+                    }
                     if !hits.is_empty() { consume(hits)?; }
-                    return Ok(truncated);
+                    return Ok((truncated, draft_aliases));
                 }
                 _ => return Err(io::Error::other("Invalid remote search reply")),
             }

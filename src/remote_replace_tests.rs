@@ -242,3 +242,38 @@ fn workspace_replace_node_rejects_duplicate_targets_before_io_and_keeps_stale_fi
     client.call(Command::Ping).unwrap();
     client.call(Command::Shutdown).unwrap();
 }
+
+#[test]
+fn workspace_replace_node_rejects_alias_targets_before_any_write() {
+    let root = tempfile::tempdir().unwrap();
+    let actual = root.path().join("Sources");
+    let alias = root.path().join("sources");
+    std::fs::create_dir(&actual).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&actual, &alias).unwrap();
+    if !alias.is_dir() {
+        return;
+    }
+    let original = actual.join("file");
+    let unrelated = root.path().join("unrelated");
+    for path in [&original, &unrelated] {
+        std::fs::write(path, "foo").unwrap();
+    }
+    let client = super::super::tests::connection(root.path(), Arc::default(), Arc::default());
+
+    let result = client.call(Command::Replace(Replace {
+        options: options(),
+        files: ["unrelated", "Sources/file", "sources/file"]
+            .into_iter()
+            .map(|name| File {
+                path: path(name),
+                matches: vec![(1, 0, 3)],
+            })
+            .collect(),
+    }));
+
+    assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "foo");
+    assert_eq!(std::fs::read_to_string(&original).unwrap(), "foo");
+    assert!(result.is_err());
+    client.call(Command::Shutdown).unwrap();
+}

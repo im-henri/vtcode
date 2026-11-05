@@ -126,16 +126,7 @@ fn roots(targets: Vec<PathBuf>, cancel: &CancellationToken) -> std::io::Result<V
             return Err(std::io::ErrorKind::Interrupted.into());
         }
         let absolute = std::path::absolute(target)?;
-        let name = absolute
-            .file_name()
-            .ok_or_else(|| std::io::Error::other("Cannot delete a filesystem root"))?;
-        // Resolve the parent only: deleting a symlink removes the link itself.
-        // All traversal and canonicalization happen on the worker.
-        let parent = absolute
-            .parent()
-            .ok_or_else(|| std::io::Error::other("Invalid deletion path"))?;
-        let resolved = std::fs::canonicalize(parent)?.join(name);
-        roots.push(resolved);
+        roots.push(io::selected_path(&absolute)?);
     }
     roots.sort_unstable();
     roots.dedup();

@@ -418,7 +418,7 @@ fn cancelling_set_actions_returns_to_the_origin_and_keeps_action_focus() {
 
 #[test]
 fn directory_preview_keeps_foreign_paths_and_escapes_control_characters() {
-    use crate::workspace_sets::NativePath;
+    use crate::native_paths::NativePath;
     let (_root, mut app) = fixture();
     app.workspaces.sets.catalog.sets[0].roots = vec![Location::Local {
         path: NativePath::Utf8("/other-system/project\nλ".into()),

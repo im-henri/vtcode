@@ -337,6 +337,27 @@ fn git_output_routes_remote_git_requests_without_extra_wire_bytes() {
 }
 
 #[test]
+fn remote_git_output_can_be_rebound_for_the_same_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let _repo = git2::Repository::init(root.path()).unwrap();
+    let first = Log::default();
+    let next = Log::default();
+    let (client, _) = super::tests::connect(root.path(), None);
+    let branches = || Command::GitBranches { repo: path("") };
+
+    client.set_git_output(&first);
+    client.call(branches()).unwrap();
+    let first_version = first.version();
+    assert!(first.report().contains("Git branches · Completed"));
+
+    client.set_git_output(&next);
+    client.call(branches()).unwrap();
+    assert!(next.report().contains("Git branches · Completed"));
+    assert_eq!(first.version(), first_version);
+    client.call(Command::Shutdown).unwrap();
+}
+
+#[test]
 fn stalled_request_is_visible_before_completion_and_disconnect_identifies_pending_work() {
     use std::{io::Read, sync::mpsc};
     struct Silent(mpsc::Receiver<()>);

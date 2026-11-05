@@ -243,6 +243,10 @@ fn notice_does_not_take_keyboard_focus_or_block_output() {
     app.show_output();
     draw(&mut app, 110, 32);
     assert!(app.side_notice.visible());
+    assert_eq!(
+        app.side_notice.area.unwrap().bottom(),
+        app.panel_area.unwrap().y
+    );
     assert!(crate::ui_logs::key(
         &mut app,
         KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)

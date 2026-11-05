@@ -789,7 +789,9 @@ impl FileExplorer {
                     .take_while(|_| !cancel.is_some_and(|token| token.is_cancelled()))
                     .filter_map(Result::ok)
                     .filter_map(|e| {
-                        if e.file_name().to_str().is_some_and(|name| name.starts_with(crate::formatters::TEMP_DIR_PREFIX)) {
+                        let name = e.file_name();
+                        if crate::fs_ops::is_copy_temporary_name(&name)
+                            || name.to_str().is_some_and(|name| name.starts_with(crate::formatters::TEMP_DIR_PREFIX)) {
                             return None;
                         }
                         let ft = e.file_type().ok()?;

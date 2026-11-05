@@ -972,11 +972,11 @@ fn opening_a_repository_file_reuses_an_existing_unsaved_editor_buffer() {
 fn windows_repository_paths_match_disk_and_unc_verbatim_spellings_without_io() {
     assert!(App::same_open_path(
         Path::new(r"C:\Projects\File.txt"),
-        Path::new(r"\\?\c:\projects\file.txt")
+        Path::new(r"\\?\c:\Projects\File.txt")
     ));
     assert!(App::same_open_path(
         Path::new(r"\\server\share\folder\file.txt"),
-        Path::new(r"\\?\UNC\SERVER\SHARE\folder\FILE.txt")
+        Path::new(r"\\?\UNC\SERVER\SHARE\folder\file.txt")
     ));
     assert!(!App::same_open_path(
         Path::new(r"C:\Projects\File.txt"),

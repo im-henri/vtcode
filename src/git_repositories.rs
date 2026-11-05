@@ -306,7 +306,8 @@ pub(crate) fn discover(workspace: &Path, cancel: &CancellationToken) -> Discover
             };
             if !kind.is_dir() || kind.is_symlink() { continue; }
             let name = child.file_name();
-            if name == ".git" || name.to_string_lossy().starts_with(crate::formatters::TEMP_DIR_PREFIX) {
+            if name == ".git" || crate::fs_ops::is_copy_temporary_name(&name)
+                || name.to_string_lossy().starts_with(crate::formatters::TEMP_DIR_PREFIX) {
                 continue;
             }
             stack.push((child.path(), context));

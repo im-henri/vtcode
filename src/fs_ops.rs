@@ -1,16 +1,64 @@
 //! Shared filesystem operations with explicit replacement semantics.
-use std::path::Path;
+use std::{
+    ffi::OsStr,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
-pub(crate) use vtcode::file_source::open_document_source;
+pub(crate) use vtcode::file_source::{open_document_source, rename_no_replace};
+
+/// Open an advisory lock file without following links or truncating it.
+pub(crate) fn open_lock_file(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Lock path must be a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+const COPY_TEMP_PREFIX: &str = ".vtcode-copy-";
+const COPY_TEMP_RANDOM_LEN: usize = 12;
+const COPY_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const COPY_TEMP_GIT_IGNORE: &str = ".vtcode-copy-????????????/";
+
+pub(crate) fn is_copy_temporary_name(name: &OsStr) -> bool {
+    name.as_encoded_bytes()
+        .strip_prefix(COPY_TEMP_PREFIX.as_bytes())
+        .is_some_and(|suffix| {
+            suffix.len() == COPY_TEMP_RANDOM_LEN && suffix.iter().all(u8::is_ascii_alphanumeric)
+        })
+}
+
+pub(crate) fn is_copy_temporary_path(path: &Path) -> bool {
+    path.components()
+        .any(|part| is_copy_temporary_name(part.as_os_str()))
+}
 
 /// Copy a tree without merging into existing entries or following directory
-/// links. Iterative traversal cannot overflow the stack on deeply nested trees.
+/// links. Publish only the complete copy, even if the operation is cancelled
+/// or another process creates the destination while it is being staged.
 pub(crate) fn copy_no_replace(
     source: &Path,
     destination: &Path,
     cancelled: impl Fn() -> bool,
-) -> std::io::Result<()> {
-    use std::{fs, io};
+) -> io::Result<()> {
     let check = || {
         if cancelled() {
             Err(io::Error::from(io::ErrorKind::Interrupted))
@@ -19,83 +67,362 @@ pub(crate) fn copy_no_replace(
         }
     };
     check()?;
-    fn leaf(source: &Path, destination: &Path) -> io::Result<()> {
-        let metadata = fs::symlink_metadata(source)?;
-        if metadata.file_type().is_symlink() {
-            let target = fs::read_link(source)?;
-            #[cfg(unix)]
-            {
-                std::os::unix::fs::symlink(target, destination)
-            }
-            #[cfg(windows)]
-            {
-                if source.is_dir() {
-                    std::os::windows::fs::symlink_dir(target, destination)
-                } else {
-                    std::os::windows::fs::symlink_file(target, destination)
-                }
-            }
-        } else {
-            let (mut input, source_metadata) = open_document_source(source, false)?;
-            let mut output = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(destination)?;
-            io::copy(&mut input, &mut output)?;
-            output.set_permissions(source_metadata.permissions())
-        }
+    match fs::symlink_metadata(destination) {
+        Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
     let metadata = fs::symlink_metadata(source)?;
-    if !metadata.is_dir() {
-        return leaf(source, destination);
-    }
-    let source_root = fs::canonicalize(source)?;
-    let parent = fs::canonicalize(
-        destination
-            .parent()
-            .ok_or_else(|| io::Error::other("Copy destination has no parent"))?,
-    )?;
-    if parent.starts_with(&source_root) {
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if metadata.is_dir() && fs::canonicalize(parent)?.starts_with(fs::canonicalize(source)?) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Cannot copy a folder into itself",
         ));
     }
-    fs::create_dir(destination)?;
-    let mut stack = vec![(
-        fs::read_dir(source)?,
-        destination.to_owned(),
-        metadata.permissions(),
-    )];
-    while let Some((entries, target, _)) = stack.last_mut() {
-        check()?;
-        match entries.next() {
-            Some(entry) => {
-                let entry = entry?;
-                let destination = target.join(entry.file_name());
-                if entry.file_type()?.is_dir() {
-                    fs::create_dir(&destination)?;
-                    stack.push((
-                        fs::read_dir(entry.path())?,
-                        destination,
-                        entry.metadata()?.permissions(),
-                    ));
+    let mut builder = tempfile::Builder::new();
+    builder
+        .prefix(COPY_TEMP_PREFIX)
+        .rand_bytes(COPY_TEMP_RANDOM_LEN);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    let staging = builder.tempdir_in(parent)?;
+    let item = staging.path().join("item");
+    #[cfg(unix)]
+    let mut restricted_dirs = Vec::new();
+    let result = (|| {
+        if metadata.is_dir() {
+            fs::create_dir(&item)?;
+            let mut stack = vec![(fs::read_dir(source)?, item.clone(), metadata.permissions())];
+            while let Some((entries, target, _)) = stack.last_mut() {
+                check()?;
+                if let Some(entry) = entries.next() {
+                    let entry = entry?;
+                    let source = entry.path();
+                    let destination = target.join(entry.file_name());
+                    let metadata = entry.metadata()?;
+                    if metadata.is_dir() {
+                        fs::create_dir(&destination)?;
+                        stack.push((fs::read_dir(source)?, destination, metadata.permissions()));
+                    } else {
+                        copy_leaf(&source, &destination, metadata.file_type(), &check)?;
+                    }
                 } else {
-                    leaf(&entry.path(), &destination)?;
+                    let (_, path, permissions) = stack.pop().unwrap();
+                    #[cfg(unix)]
+                    let restricts_cleanup = {
+                        use std::os::unix::fs::PermissionsExt;
+                        permissions.mode() & 0o700 != 0o700
+                    };
+                    fs::set_permissions(&path, copied_permissions(permissions))?;
+                    #[cfg(unix)]
+                    if restricts_cleanup {
+                        restricted_dirs.push(path);
+                    }
                 }
             }
-            None => {
-                let (_, destination, permissions) = stack.pop().unwrap();
-                fs::set_permissions(destination, permissions)?;
+        } else {
+            copy_leaf(source, &item, metadata.file_type(), &check)?;
+        }
+        check()?;
+        rename_no_replace(&item, destination)
+    })();
+    #[cfg(unix)]
+    if result.is_err() {
+        use std::os::unix::fs::PermissionsExt;
+        // Restore access top-down so TempDir can remove a failed copy of a
+        // tree that contains read-only directories.
+        for path in restricted_dirs.into_iter().rev() {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+        }
+    }
+    result
+}
+
+fn copy_leaf(
+    source: &Path,
+    destination: &Path,
+    file_type: fs::FileType,
+    check: &impl Fn() -> io::Result<()>,
+) -> io::Result<()> {
+    if file_type.is_symlink() {
+        let target = fs::read_link(source)?;
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, destination);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::{FileTypeExt, symlink_dir, symlink_file};
+            return if file_type.is_symlink_dir() {
+                symlink_dir(target, destination)
+            } else {
+                symlink_file(target, destination)
+            };
+        }
+    }
+
+    use io::Read;
+    let (mut input, source_metadata) = vtcode::file_source::open_regular_file_no_follow(source)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    loop {
+        check()?;
+        if io::copy(&mut input.by_ref().take(COPY_CHUNK_BYTES), &mut output)? < COPY_CHUNK_BYTES {
+            break;
+        }
+    }
+    output.set_permissions(copied_permissions(source_metadata.permissions()))
+}
+
+fn copied_permissions(permissions: fs::Permissions) -> fs::Permissions {
+    #[cfg(unix)]
+    let permissions = {
+        use std::os::unix::fs::PermissionsExt;
+        // Copies are newly owned. Setuid/setgid could grant the owner's or
+        // destination group's privileges to an executable from another user.
+        fs::Permissions::from_mode(permissions.mode() & 0o1777)
+    };
+    permissions
+}
+
+pub(crate) fn paste_items(
+    sources: Vec<PathBuf>,
+    directory: &Path,
+    cut: bool,
+    cancelled: impl Fn() -> bool,
+) -> io::Result<crate::background::FilesystemActionOutcome> {
+    if cancelled() {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
+    if !fs::metadata(directory)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "Paste destination is not a directory",
+        ));
+    }
+    let mut outcome = crate::background::FilesystemActionOutcome::default();
+    let mut failed = 0;
+    let mut last_error = None;
+    let mut stopped = false;
+    for source in sources {
+        if cancelled() {
+            stopped = true;
+            break;
+        }
+        let result =
+            paste_destination(&source, directory, cut, &cancelled).and_then(|destination| {
+                if cancelled() {
+                    return Err(io::ErrorKind::Interrupted.into());
+                }
+                if cut {
+                    rename_no_replace(&source, &destination)?;
+                } else {
+                    copy_no_replace(&source, &destination, &cancelled)?;
+                }
+                Ok(destination)
+            });
+        match result {
+            Ok(destination) => {
+                if cut {
+                    if source != destination {
+                        outcome.renames.push((source.clone(), destination.clone()));
+                    }
+                    outcome.completed_cut_paths.push(source);
+                }
+                outcome.pasted_paths.push(destination);
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted && cancelled() => {
+                stopped = true;
+                break;
+            }
+            Err(error) => {
+                failed += 1;
+                last_error = Some(io::Error::new(
+                    error.kind(),
+                    format!("{}: {error}", source.display()),
+                ));
             }
         }
     }
-    Ok(())
+    let processed = outcome.pasted_paths.len();
+    if processed == 0 {
+        return Err(last_error.unwrap_or_else(|| {
+            if stopped {
+                io::ErrorKind::Interrupted.into()
+            } else {
+                io::Error::other("Nothing to paste")
+            }
+        }));
+    }
+    let verb = if cut { "Moved" } else { "Pasted" };
+    outcome.message = if processed == 1 && failed == 0 && !stopped {
+        format!("{verb}: {}", outcome.pasted_paths[0].display())
+    } else {
+        format!("{verb} {processed} items")
+    };
+    if let Some(error) = last_error {
+        outcome
+            .message
+            .push_str(&format!(". {failed} failed ({error})"));
+    }
+    if stopped {
+        outcome.message.push_str(". Paste cancelled");
+    }
+    outcome.warning = failed != 0 || stopped;
+    Ok(outcome)
+}
+
+fn paste_destination(
+    source: &Path,
+    directory: &Path,
+    cut: bool,
+    cancelled: &impl Fn() -> bool,
+) -> io::Result<PathBuf> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| io::Error::other("Cannot paste a filesystem root"))?;
+    let destination = directory.join(name);
+    let available = |path: &Path| {
+        if cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        }
+    };
+    if (cut && source == destination) || available(&destination)? {
+        return Ok(destination);
+    }
+    // Keep the native spelling, including names that cannot round-trip UTF-8.
+    let stem = source.file_stem().unwrap_or(name);
+    let extension = source.extension();
+    for suffix in 1..=10_000 {
+        let mut name = stem.to_os_string();
+        name.push(format!(" ({suffix})"));
+        if let Some(extension) = extension {
+            name.push(".");
+            name.push(extension);
+        }
+        let destination = directory.join(name);
+        if available(&destination)? {
+            return Ok(destination);
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "Could not choose an unused copy name",
+    ))
 }
 
 #[cfg(test)]
 mod copy_tests {
     use super::*;
+    use std::cell::Cell;
+
+    #[cfg(unix)]
+    #[test]
+    fn copying_executables_preserves_normal_mode_without_copying_privilege_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let destination = dir.path().join("copy");
+        fs::write(&source, "executable content").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o6751)).unwrap();
+        copy_no_replace(&source, &destination, || false).unwrap();
+        assert_eq!(
+            fs::metadata(&source).unwrap().permissions().mode() & 0o7777,
+            0o6751
+        );
+        assert_eq!(
+            fs::metadata(&destination).unwrap().permissions().mode() & 0o7777,
+            0o751
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paste_collision_suffix_preserves_native_filename_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join(OsStr::from_bytes(b"name\xff.ext\xfe"));
+        let expected = dir.path().join(OsStr::from_bytes(b"name\xff (1).ext\xfe"));
+        fs::write(&source, "text").unwrap();
+        let outcome = paste_items(vec![source], dir.path(), false, || false).unwrap();
+        assert_eq!(outcome.pasted_paths, [expected.clone()]);
+        assert_eq!(fs::read_to_string(expected).unwrap(), "text");
+    }
+
+    #[test]
+    fn cancelling_during_a_file_copy_removes_the_unpublished_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        fs::File::create(&source)
+            .unwrap()
+            .set_len(COPY_CHUNK_BYTES + 1)
+            .unwrap();
+        let destination = dir.path().join("copy");
+        let checks = Cell::new(0);
+        let result = copy_no_replace(&source, &destination, || {
+            checks.set(checks.get() + 1);
+            checks.get() == 3
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(!destination.exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn publishing_a_copy_preserves_a_destination_created_during_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        fs::write(&source, "original").unwrap();
+        let destination = dir.path().join("copy");
+        let checks = Cell::new(0);
+        let result = copy_no_replace(&source, &destination, || {
+            checks.set(checks.get() + 1);
+            if checks.get() == 3 {
+                fs::write(&destination, "concurrent").unwrap();
+            }
+            false
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(destination).unwrap(), "concurrent");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_a_tree_copy_cleans_up_readonly_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let child = source.join("readonly");
+        fs::create_dir_all(&child).unwrap();
+        fs::write(child.join("file"), "original").unwrap();
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o500)).unwrap();
+        let destination = dir.path().join("copy");
+        let checks = Cell::new(0);
+        let result = copy_no_replace(&source, &destination, || {
+            checks.set(checks.get() + 1);
+            checks.get() == 6
+        });
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(!destination.exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
     #[test]
     fn copy_rejects_descendants_collisions_and_pre_cancelled_operations() {
         let dir = tempfile::tempdir().unwrap();
@@ -129,85 +456,32 @@ mod copy_tests {
             std::path::PathBuf::from(".")
         );
     }
-}
 
-/// Move the directory entry itself, without following symlinks or replacing a
-/// destination that another process may have created since it was last checked.
-pub(crate) fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if source == destination {
-        return std::fs::symlink_metadata(source).map(|_| ());
-    }
     #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use std::path::{Component, Prefix};
-        fn wide_path(path: &Path) -> std::io::Result<Vec<u16>> {
-            let absolute = std::path::absolute(path)?;
-            let wide: Vec<u16> = absolute.as_os_str().encode_wide().collect();
-            if wide.contains(&0) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Path contains a null character",
-                ));
+    #[test]
+    fn copy_preserves_the_type_of_a_dangling_directory_link() {
+        use std::os::windows::fs::{FileTypeExt, symlink_dir};
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let destination = dir.path().join("copy");
+        if let Err(error) = symlink_dir("missing-directory", &source) {
+            // Windows hosts without Developer Mode or SeCreateSymbolicLinkPrivilege.
+            if error.raw_os_error() == Some(1314) {
+                return;
             }
-            // Match std::fs support for long paths, retaining non-Unicode
-            // filenames and UNC paths without resolving a source symlink.
-            let mut wide: Vec<u16> = match absolute.components().next() {
-                Some(Component::Prefix(prefix)) => match prefix.kind() {
-                    Prefix::Disk(_) => r"\\?\".encode_utf16().chain(wide).collect(),
-                    Prefix::UNC(_, _) => r"\\?\UNC\"
-                        .encode_utf16()
-                        .chain(wide.into_iter().skip(2))
-                        .collect(),
-                    _ => wide,
-                },
-                _ => wide,
-            };
-            wide.push(0);
-            Ok(wide)
+            panic!("could not create a directory link: {error}");
         }
-        let source = wide_path(source)?;
-        let destination = wide_path(destination)?;
-        // SAFETY: both paths are terminated, contain no embedded NULs, and
-        // remain alive for the call. No replacement/cross-volume copy flags.
-        if unsafe {
-            windows_sys::Win32::Storage::FileSystem::MoveFileExW(
-                source.as_ptr(),
-                destination.as_ptr(),
-                0,
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        let source = std::ffi::CString::new(source.as_os_str().as_bytes())?;
-        let destination = std::ffi::CString::new(destination.as_os_str().as_bytes())?;
-        // SAFETY: CString owns both terminated paths for the whole call.
-        if unsafe {
-            libc::renameat2(
-                libc::AT_FDCWD,
-                source.as_ptr(),
-                libc::AT_FDCWD,
-                destination.as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        } == 0
-        {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error())
-        }
-    }
-    #[cfg(not(any(windows, target_os = "linux")))]
-    {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "Safe rename is unsupported on this platform",
-        ))
+        copy_no_replace(&source, &destination, || false).unwrap();
+        assert!(
+            fs::symlink_metadata(&destination)
+                .unwrap()
+                .file_type()
+                .is_symlink_dir()
+        );
+        assert_eq!(
+            fs::read_link(&destination).unwrap(),
+            fs::read_link(&source).unwrap()
+        );
     }
 }

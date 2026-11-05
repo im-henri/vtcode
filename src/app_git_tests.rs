@@ -159,12 +159,15 @@ fn make_clean_file_tab(path: &Path, contents: &str) -> Tab {
 }
 
 #[test]
-fn formatter_working_copies_never_appear_in_source_control() {
+fn temporary_working_copies_never_appear_in_source_control() {
     let dir = tempfile::tempdir().unwrap();
     git2::Repository::init(dir.path()).unwrap();
-    let copy = dir.path().join(".vtcode-format-test");
-    std::fs::create_dir(&copy).unwrap();
-    std::fs::write(copy.join("main.py"), "temporary text").unwrap();
+    let staging_names = [".vtcode-format-test", ".vtcode-copy-ABcd12345678"];
+    for name in staging_names {
+        let copy = dir.path().join(name);
+        std::fs::create_dir(&copy).unwrap();
+        std::fs::write(copy.join("main.py"), "temporary text").unwrap();
+    }
     std::fs::write(dir.path().join("main.py"), "value=1\n").unwrap();
     let status = collect_source_control_status(dir.path().to_path_buf());
     assert_eq!(status.files.len(), 1);
@@ -178,7 +181,9 @@ fn formatter_working_copies_never_appear_in_source_control() {
     assert_eq!(index.get(0).unwrap().path, b"main.py");
     super::commit_repository(dir.path(), "Formatting fixture", true).unwrap();
     let tree = repo.head().unwrap().peel_to_tree().unwrap();
-    assert!(tree.get_path(Path::new(".vtcode-format-test/main.py")).is_err());
+    for name in staging_names {
+        assert!(tree.get_path(Path::new(name)).is_err());
+    }
     assert!(!dir.path().join(".gitignore").exists());
 }
 
@@ -1607,6 +1612,26 @@ fn source_control_deleted_file_diff_uses_an_empty_read_only_target() {
 
     drop(app);
     std::fs::remove_dir_all(repo_dir).expect("remove temp repo");
+}
+
+#[cfg(windows)]
+#[test]
+fn repository_relative_path_rejects_a_case_distinct_worktree_sibling() {
+    let directory = tempfile::tempdir().unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(directory.path()) {
+        return;
+    }
+    let workdir = directory.path().join("Repo");
+    let sibling = directory.path().join("repo");
+    std::fs::create_dir(&workdir).unwrap();
+    std::fs::create_dir(&sibling).unwrap();
+    let file = sibling.join("file.txt");
+    std::fs::write(&file, "sibling\n").unwrap();
+
+    assert_eq!(repository_relative_path(&sibling, &file).as_deref(), Some(Path::new("file.txt")));
+    assert!(repository_relative_path(&workdir, &file).is_none());
+    std::fs::remove_file(&file).unwrap();
+    assert!(repository_relative_path(&workdir, &file).is_none());
 }
 
 #[test]

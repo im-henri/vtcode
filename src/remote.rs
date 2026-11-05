@@ -727,9 +727,17 @@ pub(crate) enum Reply {
     Search {
         hits: Vec<search::Hit>,
         truncated: bool,
+        /// Indices into the search request's open-file list.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        draft_aliases: Vec<usize>,
     },
     SearchProgress { request: u64, hits: Vec<search::Hit> },
-    SearchScope { indices: Vec<usize> },
+    SearchScope {
+        indices: Vec<usize>,
+        /// Old nodes do not report whether the decision is purely lexical.
+        #[serde(default)]
+        cacheable: bool,
+    },
     Replaced(crate::workspace_replace::Outcome),
     Filesystem(fs::Outcome),
     DeletionProgress {

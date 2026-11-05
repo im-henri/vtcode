@@ -274,7 +274,7 @@ pub(crate) fn execute<P: AsRef<Path>>(
         }
         Task::StageAll => {
             let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
-            repo.add_ignore_rule(&format!("{}*/", crate::formatters::TEMP_DIR_PREFIX))
+            crate::app_git::ignore_working_copies(&repo)
                 .map_err(|error| error.to_string())?;
             let mut index = repo.index().map_err(|error| error.to_string())?;
             crate::app_git::changes::prepare_conflicts_for_stage_all(&repo, &mut index)?;

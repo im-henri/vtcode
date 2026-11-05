@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::app::{ActivePane, App, SidebarView};
 
@@ -7,7 +8,7 @@ pub(crate) struct FileClipboard {
     pub cut: bool,
     // Terminals can translate Ctrl+V into a bracketed text paste. Only our
     // own file-list payload may trigger a filesystem operation from that event.
-    terminal_text: String,
+    terminal_text: Arc<str>,
 }
 
 pub(crate) use crate::fs_ops::rename_no_replace;
@@ -116,6 +117,20 @@ impl App {
             self.explorer_multi_selected = paths.into();
         }
     }
+
+    pub(crate) fn finish_explorer_cut(&mut self, outcome: &crate::background::FilesystemActionOutcome) {
+        let Some(snapshot) = &outcome.cut_clipboard else { return; };
+        let Some(clipboard) = self.explorer_clipboard.as_mut().filter(|clipboard| {
+            clipboard.cut && Arc::ptr_eq(snapshot, &clipboard.terminal_text)
+        }) else { return; };
+        let moved: rustc_hash::FxHashSet<_> = outcome.completed_cut_paths.iter().collect();
+        clipboard.paths.retain(|path| !moved.contains(path));
+        // Keep accepting the original terminal payload for the remaining paths.
+        if clipboard.paths.is_empty() {
+            self.explorer_clipboard = None;
+        }
+    }
+
     pub(crate) fn display_path(&self, path: &Path) -> String {
         let display = self.remote_workspace.as_ref().and_then(|remote| remote.display_path(path).ok())
             .unwrap_or_else(|| path.display().to_string());
@@ -160,9 +175,15 @@ impl App {
     pub(crate) fn run_remote_filesystem_action(&mut self, action: &'static str, task: crate::remote::fs::Task,
         finish_rename: Option<std::path::PathBuf>) {
         let Some(remote) = self.remote_workspace.clone() else { return; };
+        let cut_clipboard = if matches!(task, crate::remote::fs::Task::Paste { cut: true, .. }) {
+            self.explorer_clipboard.as_ref().map(|clipboard| clipboard.terminal_text.clone())
+        } else {
+            None
+        };
         self.run_filesystem_action_async("remote-filesystem", action, move || {
             let mut result = remote.filesystem(task, &crate::background::CancellationToken::new(), |_| {}).map_err(|error| error.to_string())?;
             result.finish_rename = finish_rename;
+            result.cut_clipboard = cut_clipboard;
             Ok(result)
         });
     }
@@ -273,7 +294,7 @@ impl App {
                     // Keep internal file ownership even if the system clipboard
                     // is unavailable (for example a terminal without OSC 52).
                     let _ = crate::clipboard::set_text(&terminal_text);
-                    self.explorer_clipboard = Some(FileClipboard { paths: targets, cut, terminal_text });
+                    self.explorer_clipboard = Some(FileClipboard { paths: targets, cut, terminal_text: terminal_text.into() });
                     let verb = if cut { "Cut" } else { "Copied" };
                     if copied_count == 1 {
                         self.notify(format!("{verb}: {copied_name}"));
@@ -284,106 +305,23 @@ impl App {
             }
             "Paste File" => {
                 if let Some(clipboard) = &self.explorer_clipboard {
-                    let sources = clipboard.paths.clone();
-                    let is_cut = clipboard.cut;
+                    let cut = clipboard.cut;
+                    let directory = self.explorer_target_directory(self.explorer_context_target.as_deref());
                     if let Some(remote) = self.remote_workspace.clone() {
                         let task = (|| -> std::io::Result<_> { Ok(crate::remote::fs::Task::Paste {
-                            sources: sources.iter().map(|path| remote.remote_path(path)).collect::<std::io::Result<_>>()?,
-                            directory: remote.remote_path(&self.explorer_target_directory(self.explorer_context_target.as_deref()))?, cut: is_cut,
+                            sources: clipboard.paths.iter().map(|path| remote.remote_path(path)).collect::<std::io::Result<_>>()?,
+                            directory: remote.remote_path(&directory)?, cut,
                         }) })();
                         match task { Ok(task) => self.run_remote_filesystem_action("Paste", task, None), Err(error) => self.notify_error(error.to_string()) }
                         return false;
                     }
-                    let target = self.explorer_context_target.clone();
-                    let root = self.explorer.root.clone();
+                    let sources = clipboard.paths.clone();
+                    let cut_clipboard = cut.then(|| clipboard.terminal_text.clone());
                     self.run_filesystem_action_async("explorer-paste", "Paste", move || {
-                        let dest_dir = match target {
-                            Some(target) if target.is_dir() => target,
-                            Some(target) => {
-                                target.parent().map(Path::to_path_buf).unwrap_or(target)
-                            }
-                            None => root,
-                        };
-                        let mut failed = 0usize;
-                        let mut last_error = None;
-                        let mut pasted_paths = Vec::new();
-                        let mut renames = Vec::new();
-                        'sources: for src in sources {
-                            let file_name = src.file_name().unwrap_or_default();
-                            let mut dest = dest_dir.join(file_name);
-                            if (!is_cut || dest != src) && std::fs::symlink_metadata(&dest).is_ok() {
-                                let stem = dest
-                                    .file_stem()
-                                    .and_then(|stem| stem.to_str())
-                                    .unwrap_or("file")
-                                    .to_string();
-                                let extension = dest
-                                    .extension()
-                                    .and_then(|extension| extension.to_str())
-                                    .map(|extension| format!(".{extension}"))
-                                    .unwrap_or_default();
-                                for suffix in 1.. {
-                                    let candidate =
-                                        dest_dir.join(format!("{stem} ({suffix}){extension}"));
-                                    match std::fs::symlink_metadata(&candidate) {
-                                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                                            dest = candidate;
-                                            break;
-                                        }
-                                        Err(error) => {
-                                            failed += 1;
-                                            last_error = Some(error.to_string());
-                                            continue 'sources;
-                                        }
-                                        Ok(_) => {}
-                                    }
-                                }
-                            }
-                            let result = if is_cut {
-                                rename_no_replace(&src, &dest)
-                            } else {
-                                crate::fs_ops::copy_no_replace(&src, &dest, || false)
-                            };
-                            match result {
-                                Ok(()) => {
-                                    if is_cut && src != dest {
-                                        renames.push((src, dest.clone()));
-                                    }
-                                    pasted_paths.push(dest);
-                                }
-                                Err(error) => {
-                                    failed += 1;
-                                    last_error = Some(error.to_string());
-                                }
-                            }
-                        }
-                        let processed = pasted_paths.len();
-                        if processed == 0 {
-                            return Err(
-                                last_error.unwrap_or_else(|| "nothing was copied".to_string())
-                            );
-                        }
-                        let verb = if is_cut { "Moved" } else { "Pasted" };
-                        let message = if processed == 1 && failed == 0 {
-                            format!("{verb}: {}", pasted_paths[0].display())
-                        } else if failed == 0 {
-                            format!("{verb} {processed} items")
-                        } else {
-                            format!(
-                                "Processed {processed} items; {failed} failed{}",
-                                last_error
-                                    .as_deref()
-                                    .map(|error| format!(": {error}"))
-                                    .unwrap_or_default()
-                            )
-                        };
-                        Ok(crate::background::FilesystemActionOutcome {
-                            message,
-                            pasted_paths,
-                            renames,
-                            clear_explorer_clipboard: is_cut,
-                            ..Default::default()
-                        })
+                        let mut outcome = crate::fs_ops::paste_items(sources, &directory, cut, || false)
+                            .map_err(|error| error.to_string())?;
+                        outcome.cut_clipboard = cut_clipboard;
+                        Ok(outcome)
                     });
                 } else {
                     self.notify("Nothing to paste. Copy or cut a file first.");
@@ -686,8 +624,8 @@ impl App {
         let identity = editor.save_identity;
         if self.pending_save_as.contains_key(&identity)
             || self.pending_file_saves.keys().chain(self.deferred_file_saves.keys()).any(|pending|
-                Self::same_open_path(pending, &path)
-                    || editor.file_path.as_ref().is_some_and(|source| Self::same_open_path(pending, source)))
+                Self::paths_may_share_entry(pending, &path)
+                    || editor.file_path.as_ref().is_some_and(|source| Self::paths_may_share_entry(pending, source)))
         {
             self.modal.error = Some("Wait for the current save to finish before using Save As.".into());
             return;

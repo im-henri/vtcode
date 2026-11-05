@@ -243,6 +243,7 @@ impl QuickOpenIndex {
             .filter_entry(|entry| {
                 !rules.excludes(&crate::search_paths::Candidate::new(entry.path()), root)
                     && !crate::editor::is_save_temporary_path(entry.path())
+                    && !crate::fs_ops::is_copy_temporary_name(entry.file_name())
             })
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())

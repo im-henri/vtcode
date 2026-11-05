@@ -291,5 +291,34 @@ fn deletion_events_close_tabs_with_verbatim_or_differently_cased_windows_paths()
     let mut app = App::test_new();
     app.tabs.push(loaded(&alias));
     send(&mut app, BackgroundResult::FileDiskState(missing(&deleted)));
+    app.wait_for_background(Duration::from_secs(5), |app| app.tabs.is_empty());
     assert!(app.tabs.is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn deleting_a_case_distinct_file_leaves_the_other_editor_attached() {
+    let root = tempfile::tempdir().unwrap();
+    if !crate::native_paths::enable_case_sensitive_test_directory(root.path()) {
+        return;
+    }
+    let deleted = root.path().join("Sample.txt");
+    let keep = root.path().join("sample.txt");
+    std::fs::write(&deleted, "remove this\n").unwrap();
+    std::fs::write(&keep, "original\n").unwrap();
+    let mut app = App::test_new();
+    app.tabs = vec![loaded(&deleted), loaded(&keep)];
+    app.tabs[1].editor.insert_char('!');
+    std::fs::remove_file(&deleted).unwrap();
+
+    send(&mut app, BackgroundResult::FileDiskState(missing(&deleted)));
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.background.active_job_count() == 0 && !app.background.has_pending_results()
+    });
+    assert_eq!(app.tabs.len(), 1);
+    let editor = &app.tabs[0].editor;
+    assert_eq!(editor.file_path.as_deref(), Some(keep.as_path()));
+    assert_eq!(editor.rope, "!original\n");
+    assert!(editor.modified);
+    assert_eq!(std::fs::read_to_string(keep).unwrap(), "original\n");
 }

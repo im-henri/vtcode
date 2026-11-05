@@ -7,11 +7,32 @@ use std::{
     time::{Duration, Instant},
 };
 
-type DocumentEdits = (PathBuf, Option<i32>, Vec<TextEdit>);
+const EDIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct DocumentEdits {
+    path: PathBuf,
+    server_version: Option<i32>,
+    edits: Vec<TextEdit>,
+    identity: Option<u64>,
+    version: Option<u64>,
+}
+
+impl DocumentEdits {
+    fn new(path: PathBuf, server_version: Option<i32>, edits: Vec<TextEdit>) -> Self {
+        Self {
+            path,
+            server_version,
+            edits,
+            identity: None,
+            version: None,
+        }
+    }
+}
 
 pub(crate) struct PendingWorkspaceEdit {
     documents: Vec<DocumentEdits>,
-    versions: HashMap<PathBuf, u64>,
+    #[cfg(windows)]
+    unresolved_versions: HashMap<PathBuf, u64>,
     reply: Option<(u32, serde_json::Value)>,
     command: Option<(PathBuf, lsp_types::Command)>,
     title: String,
@@ -48,11 +69,15 @@ fn documents(edit: WorkspaceEdit) -> Result<Vec<DocumentEdits>, String> {
                     lsp_types::OneOf::Right(edit) => edit.text_edit,
                 })
                 .collect();
-            result.push((path, document.text_document.version, edits));
+            result.push(DocumentEdits::new(
+                path,
+                document.text_document.version,
+                edits,
+            ));
         }
     } else if let Some(changes) = edit.changes {
         for (uri, edits) in changes {
-            result.push((
+            result.push(DocumentEdits::new(
                 uri.to_file_path()
                     .map_err(|_| "Workspace edits require a local file")?,
                 None,
@@ -62,10 +87,7 @@ fn documents(edit: WorkspaceEdit) -> Result<Vec<DocumentEdits>, String> {
     }
     // Repeated entries use sequential versions; do not apply them as a single snapshot.
     let mut paths = std::collections::HashSet::new();
-    if result
-        .iter()
-        .any(|(path, _, _)| !paths.insert(path.clone()))
-    {
+    if result.iter().any(|document| !paths.insert(&document.path)) {
         return Err("Workspace edit contains repeated versions of the same file".into());
     }
     Ok(result)
@@ -113,21 +135,44 @@ impl LspManager {
 }
 
 impl App {
+    #[cfg(windows)]
+    pub(crate) fn resolve_workspace_edit_open_alias(
+        &mut self,
+        request: &crate::app_tabs::native_open::Request,
+        source: &crate::app_tabs::native_open::Candidate,
+    ) {
+        for edit in &mut self.pending_lsp_workspace_edits {
+            for document in &mut edit.documents {
+                if document.identity == Some(request.document) && document.path == request.path {
+                    document.path.clone_from(&source.path);
+                    document.identity = Some(source.document);
+                    document.version = document.version
+                        .or_else(|| edit.unresolved_versions.get(&source.path).copied())
+                        .or(source.version);
+                }
+            }
+        }
+    }
+
     pub(crate) fn queue_lsp_workspace_edit_snapshot(
         &mut self,
         edit: WorkspaceEdit,
         title: String,
-        versions: HashMap<PathBuf, u64>,
+        mut versions: HashMap<PathBuf, u64>,
         command: Option<(PathBuf, lsp_types::Command)>,
     ) {
         let previous = self.pending_lsp_workspace_edits.len();
         self.queue_lsp_workspace_edit(edit, title, None, command);
         if self.pending_lsp_workspace_edits.len() > previous {
             let pending = self.pending_lsp_workspace_edits.back_mut().unwrap();
-            for (path, version) in versions {
-                if pending.documents.iter().any(|document| document.0 == path) {
-                    pending.versions.insert(path, version);
+            for document in &mut pending.documents {
+                if let Some(version) = versions.remove(&document.path) {
+                    document.version = Some(version);
                 }
+            }
+            #[cfg(windows)]
+            if pending.documents.iter().any(|document| document.version.is_none()) {
+                pending.unresolved_versions = versions;
             }
         }
     }
@@ -139,7 +184,7 @@ impl App {
         reply: Option<(u32, serde_json::Value)>,
         command: Option<(PathBuf, lsp_types::Command)>,
     ) {
-        let documents = match documents(edit) {
+        let mut documents = match documents(edit) {
             Ok(documents) => documents,
             Err(error) => {
                 self.lsp_manager
@@ -148,20 +193,30 @@ impl App {
                 return;
             }
         };
-        let mut versions = HashMap::new();
-        for (path, _, _) in &documents {
-            if let Some(editor) = self.find_editor_mut_by_path(path) {
-                if !editor.bg_loading {
-                    versions.insert(path.clone(), editor.content_version);
-                }
-            } else {
-                self.open_file(path);
+        let snapshot = |editor: &mut crate::editor::Editor| {
+            (
+                editor.save_identity,
+                (!editor.bg_loading).then_some(editor.content_version),
+            )
+        };
+        for document in &mut documents {
+            let editor = self
+                .find_editor_mut_by_path(&document.path)
+                .map(snapshot)
+                .or_else(|| {
+                    self.open_file(&document.path);
+                    self.find_editor_mut_by_path(&document.path).map(snapshot)
+                });
+            if let Some((identity, version)) = editor {
+                document.identity = Some(identity);
+                document.version = version;
             }
         }
         self.pending_lsp_workspace_edits
             .push_back(PendingWorkspaceEdit {
                 documents,
-                versions,
+                #[cfg(windows)]
+                unresolved_versions: HashMap::new(),
                 reply,
                 command,
                 title,
@@ -169,57 +224,83 @@ impl App {
             });
     }
 
+    pub(crate) fn lsp_workspace_edit_wait(&self) -> Option<Duration> {
+        self.pending_lsp_workspace_edits
+            .front()
+            .map(|pending| EDIT_TIMEOUT.saturating_sub(pending.queued.elapsed()))
+    }
+
     pub(crate) fn poll_lsp_workspace_edits(&mut self) -> bool {
         let Some(mut pending) = self.pending_lsp_workspace_edits.pop_front() else {
             return false;
         };
-        let mut ready = true;
-        let validation: Result<(), String> = (|| {
-            for (path, version, edits) in &pending.documents {
-                if version.is_some_and(|version| {
-                    self.lsp_manager.doc_versions.get(path) != Some(&version)
-                }) {
+        let snapshots = (|| -> Result<Option<Vec<ropey::Rope>>, String> {
+            if pending.queued.elapsed() >= EDIT_TIMEOUT {
+                return Err("Timed out loading files for the language server edit".into());
+            }
+            let mut ready = true;
+            let mut snapshots = Vec::with_capacity(pending.documents.len());
+            let mut seen = rustc_hash::FxHashSet::default();
+            for document in &mut pending.documents {
+                let server_version_matches = document.server_version.is_none_or(|version| {
+                    self.lsp_manager.doc_versions.get(&document.path) == Some(&version)
+                });
+                let editor = self
+                    .find_editor_mut_by_path(&document.path)
+                    .ok_or("An edit target was closed or could not be opened")?;
+                if *document.identity.get_or_insert(editor.save_identity) != editor.save_identity {
+                    return Err("An edit target was closed and reopened".into());
+                }
+                if !seen.insert(editor.save_identity) {
+                    return Err(
+                        "Workspace edit targets the same open document more than once".into(),
+                    );
+                }
+                if editor.bg_loading {
+                    ready = false;
+                    continue;
+                }
+                if !server_version_matches {
                     return Err(
                         "The document changed before the language server edit could be applied"
                             .into(),
                     );
                 }
-                let editor = self
-                    .find_editor_mut_by_path(path)
-                    .ok_or("An edit target was closed or could not be opened")?;
-                if editor.bg_loading {
-                    ready = false;
-                    continue;
-                }
-                if editor.read_only {
-                    return Err("An edit target is read-only".into());
-                }
-                let expected = pending
-                    .versions
-                    .entry(path.clone())
-                    .or_insert(editor.content_version);
-                if *expected != editor.content_version {
+                app_lsp_edits::ensure_writable(editor)?;
+                if *document.version.get_or_insert(editor.content_version) != editor.content_version
+                {
                     return Err("The document changed while the edit was loading".into());
                 }
-                app_lsp_edits::prepare(&editor.rope, edits)?;
+                snapshots.push(editor.rope.clone());
             }
-            if pending.queued.elapsed() > Duration::from_secs(30) {
-                return Err("Timed out loading files for the language server edit".into());
-            }
-            Ok(())
+            Ok(ready.then_some(snapshots))
         })();
-        if validation.is_ok() && !ready {
-            self.pending_lsp_workspace_edits.push_front(pending);
-            return false;
-        }
-        let result = validation.and_then(|()| {
+        let snapshots = match snapshots {
+            Ok(None) => {
+                self.pending_lsp_workspace_edits.push_front(pending);
+                return false;
+            }
+            Ok(Some(snapshots)) => Ok(snapshots),
+            Err(error) => Err(error),
+        };
+        let result = snapshots.and_then(|snapshots| {
+            let prepared = pending
+                .documents
+                .iter()
+                .zip(snapshots)
+                .map(|(document, rope)| app_lsp_edits::prepare(&rope, &document.edits))
+                .collect::<Result<Vec<_>, _>>()?;
             let mut count = 0;
-            for (path, _, edits) in &pending.documents {
-                count += app_lsp_edits::apply(self.find_editor_mut_by_path(path).unwrap(), edits)?;
+            for (document, edits) in pending.documents.iter().zip(prepared) {
+                let editor = self
+                    .find_editor_mut_by_path(&document.path)
+                    .ok_or("An edit target was closed or could not be opened")?;
+                count += app_lsp_edits::apply_prepared(editor, edits)?;
             }
             Ok(count)
         });
-        self.completion_index_sync.buffers_changed |= result.as_ref().is_ok_and(|count| *count != 0);
+        self.completion_index_sync.buffers_changed |=
+            result.as_ref().is_ok_and(|count| *count != 0);
         self.lsp_manager
             .reply_workspace_edit(pending.reply, &result);
         match result {

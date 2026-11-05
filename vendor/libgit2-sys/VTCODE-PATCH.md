@@ -16,3 +16,13 @@ Without this patch the test returned a stale value and corrupted the heap.
 
 VTCode enables `git2`'s `vendored-libgit2` feature so release builds always
 include this fix instead of selecting an unpatched system library.
+
+`vtcode_git_hash_blob_stream` uses libgit2's collision-detecting Git blob
+hash on bytes supplied by a caller. Rollback can hash an already verified
+file handle and reuse existing objects without opening the source by name.
+Object write streams also propagate hash update and finalization errors.
+
+Stash save retains the original index timestamp when diffing a copy of its
+entries. Otherwise the copied stat cache can hide edits that share the index's
+timestamp, and stash can reset those edits without saving them. Index load and
+copy failures also preserve their native error codes.

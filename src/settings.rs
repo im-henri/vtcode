@@ -1,10 +1,14 @@
 use crate::animation_config::clamp_animation_duration_ms;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::fs;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 pub(crate) type ExcludePatterns = std::collections::BTreeMap<String, serde_json::Value>;
 pub(crate) const DEFAULT_SEARCH_DEBOUNCE_MS: u64 = 300;
+const MAX_SETTINGS_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) fn default_files_exclude() -> ExcludePatterns {
     ["**/.git", "**/.svn", "**/.hg", "**/.jj", "**/.DS_Store", "**/Thumbs.db"]
@@ -682,37 +686,356 @@ pub(crate) fn project_settings_path(project_root: &Path) -> PathBuf {
 
 /// Load settings from a JSON file. Returns default if file doesn't exist.
 pub(crate) fn load_from_file(path: &Path) -> Settings {
-    match std::fs::read_to_string(path) {
-        Ok(content) => match serde_json::from_str(&content) {
+    match read_text(path) {
+        Ok(Some((content, _))) => match serde_json::from_str(&content) {
             Ok(settings) => settings,
             Err(e) => {
                 log_warn!("failed to parse settings from {}: {e}", path.display());
                 Settings::default()
             }
         },
-        Err(_) => Settings::default(),
+        Ok(None) | Err(_) => Settings::default(),
     }
 }
 
-/// Save settings to a JSON file, creating parent dirs as needed.
-pub(crate) fn save_to_file(path: &Path, settings: &Settings) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+fn read_text(path: &Path) -> io::Result<Option<(String, fs::Metadata)>> {
+    let (file, metadata) = match crate::fs_ops::open_document_source(path, false) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if metadata.len() > MAX_SETTINGS_BYTES {
+        return Err(settings_too_large());
     }
-    // Scope files contain overrides only. Omitting unset fields keeps an empty
-    // workspace file readable (`{}`) and makes hand-editing pleasant.
-    let mut value = serde_json::to_value(settings)?;
-    if let Some(object) = value.as_object_mut() {
-        object.retain(|_, value| !value.is_null());
+    let mut text = String::with_capacity(metadata.len() as usize);
+    file.take(MAX_SETTINGS_BYTES + 1).read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_SETTINGS_BYTES {
+        return Err(settings_too_large());
     }
-    let mut json = serde_json::to_string_pretty(&value)?;
-    json.push('\n');
-    std::fs::write(path, json)
+    Ok(Some((text, metadata)))
+}
+
+fn settings_too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "Settings file exceeds 16 MiB")
+}
+
+fn destination(path: &Path) -> io::Result<PathBuf> {
+    match path.symlink_metadata() {
+        Ok(metadata) if metadata.is_symlink() => path.canonicalize(),
+        Ok(_) => Ok(path.to_owned()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(path.to_owned()),
+        Err(error) => Err(error),
+    }
+}
+
+fn settings_parent(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+pub(crate) fn ensure_file(path: &Path) -> io::Result<()> {
+    match path.symlink_metadata() {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let parent = settings_parent(path);
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(b"{}\n")?;
+    temporary.as_file().sync_all()?;
+    match temporary.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.error),
+    }
+}
+
+fn update_document(
+    path: &Path,
+    edit: impl FnOnce(&mut Map<String, Value>, bool) -> io::Result<()>,
+) -> io::Result<Settings> {
+    let target = destination(path)?;
+    let parent = settings_parent(&target);
+    let mut lock_name = target
+        .file_name()
+        .ok_or_else(|| io::Error::other("Missing settings filename"))?
+        .to_os_string();
+    lock_name.push(".lock");
+    fs::create_dir_all(parent)?;
+    let lock = crate::fs_ops::open_lock_file(&parent.join(lock_name))?;
+    let _lock = vtcode::file_source::ExclusiveFileLock::try_acquire(lock).map_err(|error| match error {
+        fs::TryLockError::WouldBlock => io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "Another VTCode window is saving these settings",
+        ),
+        fs::TryLockError::Error(error) => error,
+    })?;
+
+    let before = read_text(&target)?;
+    let mut document = match &before {
+        Some((text, metadata)) => {
+            if metadata.permissions().readonly() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Settings file is read-only",
+                ));
+            }
+            serde_json::from_str(text)?
+        }
+        None => Map::new(),
+    };
+    edit(&mut document, before.is_some())?;
+    let settings = serde_json::from_value(Value::Object(document.clone()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        let mut writer = io::BufWriter::new(temporary.as_file_mut());
+        serde_json::to_writer_pretty(&mut writer, &document)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+    }
+    if temporary.as_file().metadata()?.len() > MAX_SETTINGS_BYTES {
+        return Err(settings_too_large());
+    }
+    if let Some((_, metadata)) = &before {
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())?;
+    }
+    temporary.as_file().sync_all()?;
+    // The lock coordinates VTCode writers. Recheck external changes and link
+    // retargeting before publication, including a newly created settings file.
+    let unchanged = match (&before, read_text(&target)?) {
+        (Some((old, old_metadata)), Some((current, metadata))) => {
+            old == &current && old_metadata.permissions() == metadata.permissions()
+        }
+        (None, None) => true,
+        _ => false,
+    };
+    if !unchanged || destination(path)? != target {
+        return Err(io::Error::other("Settings changed on disk while saving"));
+    }
+    if before.is_some() {
+        temporary.persist(&target).map_err(|error| error.error)?;
+    } else {
+        temporary
+            .persist_noclobber(&target)
+            .map_err(|error| error.error)?;
+    }
+    Ok(settings)
+}
+
+fn settings_object(settings: &Settings) -> io::Result<Map<String, Value>> {
+    let Value::Object(object) = serde_json::to_value(settings)? else {
+        unreachable!("Settings serialize as a JSON object");
+    };
+    Ok(object)
+}
+
+fn remove_alias(document: &mut Map<String, Value>, key: &str) {
+    let alias = match key {
+        "workbench.editor.mouseBackForwardToNavigate" => "mouseBackForwardToNavigate",
+        "maxGlobalSearchResults" => "search.maxResults",
+        "searchUseIgnoreFiles" => "search.useIgnoreFiles",
+        "searchUseGlobalIgnoreFiles" => "search.useGlobalIgnoreFiles",
+        "searchUseParentIgnoreFiles" => "search.useParentIgnoreFiles",
+        "searchFollowSymlinks" => "search.followSymlinks",
+        _ => return,
+    };
+    document.shift_remove(alias);
+}
+
+pub(crate) fn patch_file(
+    path: &Path,
+    key: &str,
+    patch: impl FnOnce(&mut Settings),
+) -> io::Result<Settings> {
+    update_document(path, |document, _| {
+        let mut settings: Settings = serde_json::from_value(Value::Object(document.clone()))?;
+        patch(&mut settings);
+        let value = settings_object(&settings)?
+            .shift_remove(key)
+            .unwrap_or_else(|| {
+                if matches!(key, "files.exclude" | "search.exclude") {
+                    Value::Object(Map::new())
+                } else {
+                    Value::Null
+                }
+            });
+        remove_alias(document, key);
+        document.insert(key.to_owned(), value);
+        Ok(())
+    })
+}
+
+pub(crate) fn save_changes(
+    path: &Path,
+    previous: &Settings,
+    updated: &Settings,
+) -> io::Result<Settings> {
+    let previous = settings_object(previous)?;
+    let updated = settings_object(updated)?;
+    update_document(path, |document, exists| {
+        if !exists {
+            // A scope can have in-memory overrides before its first save.
+            document.extend(previous.iter().filter(|(_, value)| !value.is_null())
+                .map(|(key, value)| (key.clone(), value.clone())));
+        }
+        apply_changes(document, &previous, &updated, true);
+        Ok(())
+    })
+}
+
+fn apply_changes(
+    document: &mut Map<String, Value>,
+    previous: &Map<String, Value>,
+    updated: &Map<String, Value>,
+    scope: bool,
+) {
+    for key in previous
+        .keys()
+        .chain(updated.keys().filter(|key| !previous.contains_key(*key)))
+    {
+        let before = previous.get(key).filter(|value| !scope || !value.is_null());
+        let after = updated.get(key).filter(|value| !scope || !value.is_null());
+        if before == after {
+            continue;
+        }
+        if scope {
+            remove_alias(document, key);
+        }
+        match after {
+            Some(Value::Object(new)) if document.get(key).is_some_and(Value::is_object) => {
+                let current = document
+                    .get_mut(key)
+                    .and_then(Value::as_object_mut)
+                    .unwrap();
+                let empty = Map::new();
+                apply_changes(
+                    current,
+                    before.and_then(Value::as_object).unwrap_or(&empty),
+                    new,
+                    false,
+                );
+            }
+            Some(value) => {
+                document.insert(key.clone(), value.clone());
+            }
+            None if before.is_some_and(Value::is_object)
+                && document.get(key).is_some_and(Value::is_object) =>
+            {
+                let current = document
+                    .get_mut(key)
+                    .and_then(Value::as_object_mut)
+                    .unwrap();
+                apply_changes(
+                    current,
+                    before.and_then(Value::as_object).unwrap(),
+                    &Map::new(),
+                    false,
+                );
+                if current.is_empty() {
+                    document.shift_remove(key);
+                }
+            }
+            None => {
+                document.shift_remove(key);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn save_to_file(path: &Path, settings: &Settings) -> io::Result<()> {
+    let mut object = settings_object(settings)?;
+    object.retain(|_, value| !value.is_null());
+    update_document(path, |document, _| {
+        *document = object;
+        Ok(())
+    })
+    .map(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
     use super::Settings;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn settings_releases_its_lock_even_if_a_child_keeps_the_descriptor() {
+        use std::os::fd::{FromRawFd, OwnedFd};
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let path = root.join("settings.json");
+        let lock_path = root.join("settings.json.lock");
+        let mut inherited = None;
+        super::update_document(&path, |_, _| {
+            let descriptor: i32 = std::fs::read_dir("/proc/self/fd")?
+                .filter_map(Result::ok)
+                .find_map(|entry| {
+                    if entry.path().read_link().ok()? != lock_path {
+                        return None;
+                    }
+                    entry.file_name().to_str()?.parse().ok()
+                })
+                .expect("settings transaction holds its lock descriptor");
+            // SAFETY: the transaction keeps the original descriptor open.
+            // The duplicate shares its open-file description, as after fork.
+            let duplicate = unsafe { libc::fcntl(descriptor, libc::F_DUPFD_CLOEXEC, 0) };
+            if duplicate < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: fcntl returned a new descriptor owned by this test.
+            inherited = Some(unsafe { OwnedFd::from_raw_fd(duplicate) });
+            Ok(())
+        })
+        .unwrap();
+
+        super::update_document(&path, |_, _| Ok(())).unwrap();
+        drop(inherited);
+    }
+
+    #[test]
+    fn settings_update_rejects_changes_made_during_the_transaction() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        std::fs::write(&path, r#"{"tabSize": 4}"#).unwrap();
+        let external = r#"{"tabSize": 6, "external": true}"#;
+        let result = super::update_document(&path, |document, _| {
+            document.insert("tabSize".into(), 2.into());
+            std::fs::write(&path, external)
+        });
+        assert_eq!(result.unwrap_err().to_string(), "Settings changed on disk while saving");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+    }
+
+    #[test]
+    fn changes_to_a_legacy_setting_replace_its_alias_and_preserve_unknown_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        std::fs::write(&path, r#"{"search.maxResults": 25, "external": 7}"#).unwrap();
+        let previous = super::load_from_file(&path);
+        let mut updated = previous.clone();
+        updated.max_global_search_results = Some(40);
+        super::save_changes(&path, &previous, &updated).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved, serde_json::json!({"maxGlobalSearchResults": 40, "external": 7}));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_settings_save_preserves_a_link_to_the_settings_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let actual = directory.path().join("actual.json");
+        let path = directory.path().join("settings.json");
+        std::fs::write(&actual, r#"{"tabSize": 4}"#).unwrap();
+        std::os::unix::fs::symlink(&actual, &path).unwrap();
+        super::patch_file(&path, "tabSize", |settings| settings.tab_size = Some(2)).unwrap();
+        assert_eq!(std::fs::read_link(&path).unwrap(), actual);
+        assert_eq!(super::load_from_file(&path).tab_size, Some(2));
+    }
 
     #[test]
     fn diagnostic_delay_roundtrips_inherits_and_clamps_without_losing_zero() {

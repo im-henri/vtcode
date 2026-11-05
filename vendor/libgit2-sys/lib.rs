@@ -4061,6 +4061,13 @@ extern "C" {
 
     pub fn git_odb_hashfile(out: *mut git_oid, path: *const c_char, otype: git_object_t) -> c_int;
 
+    pub fn vtcode_git_hash_blob_stream(
+        out: *mut git_oid,
+        length: u64,
+        read_chunk: unsafe extern "C" fn(*mut c_void, *mut c_void, size_t) -> c_int,
+        payload: *mut c_void,
+    ) -> c_int;
+
     pub fn git_odb_exists_prefix(
         out: *mut git_oid,
         odb: *mut git_odb,

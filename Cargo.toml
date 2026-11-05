@@ -1,6 +1,6 @@
 [package]
 name = "vtcode"
-version = "0.5.9"
+version = "0.5.10"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -24,6 +24,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 wasmtime = "30"
 arboard = { version = "3", features = ["wayland-data-control"] }
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
+libgit2-sys = { version = "0.18", default-features = false }
 regex = "1"
 # Magika's current native Rust runtime embeds its model and uses fixed-shape,
 # single-thread CPU inference. Pin the source until its next crates.io release.
@@ -71,7 +72,7 @@ notify = { path = "vendor/notify" }
 # TextMate fidelity fixes and embedding from the root grammars/bundled catalog.
 # See vendor/irosashi/VTCODE-PATCH.md.
 irosashi = { path = "vendor/irosashi" }
-# Keep failed configuration reads from exposing invalid native entries.
+# Fix native config errors and hash checkpoint bytes from an open handle.
 # See vendor/libgit2-sys/VTCODE-PATCH.md.
 libgit2-sys = { path = "vendor/libgit2-sys" }
 

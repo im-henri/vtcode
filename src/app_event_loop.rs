@@ -2705,6 +2705,7 @@ pub(crate) fn background_workspace_wait(app: &App, closing_workspaces: bool) -> 
     let mut waits = vec![
         app.remote_connection.next_wait(),
         app.formatting.next_wait(),
+        app.lsp_workspace_edit_wait(),
         app.chat.rollback.next_capture_deadline().map(|deadline| deadline.saturating_duration_since(now)),
         app.lsp_manager.diagnostic_publication.next_wait(now),
         crate::extension_scheduler::next_wait(app),
@@ -2740,6 +2741,9 @@ fn next_event_wait(
     if let Some(reconnect_wait) = app.remote_connection.next_wait() { include(reconnect_wait); }
     if let Some(format_wait) = app.formatting.next_wait() {
         include(format_wait);
+    }
+    if let Some(wait) = app.lsp_workspace_edit_wait() {
+        include(wait);
     }
     if let Some(wait) = app.loading.next_wait(app.terminal_has_focus, std::time::Instant::now()) {
         include(wait);
@@ -3720,8 +3724,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
         }
         if app.exit_discard_quit && app.custom_exit_remaining == 0 && text_saves_done && !app.shutdown_anim_active {
-            let unsaved_path = crate::session::unsaved_dir(&app.explorer.root);
-            let _ = std::fs::remove_dir_all(&unsaved_path); // Error OK: dir may not exist
             app.shutdown_anim_active = true;
             app.shutdown_anim_start = std::time::Instant::now();
         }

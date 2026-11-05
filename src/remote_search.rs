@@ -5,6 +5,7 @@ use super::*;
 use crate::{
     app::App, app_global_search::GlobalSearchSpec, background::CancellationToken,
     search_regex::SearchRegex,
+    search_walk::{MatchedFiles, OpenFileAliases},
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -21,6 +22,9 @@ pub(crate) struct Query {
     /// Opt in so older clients still receive one complete reply.
     #[serde(default)]
     pub stream: bool,
+    /// Clients that request alias indices can search those drafts locally.
+    #[serde(default)]
+    pub report_open_aliases: bool,
     pub text: String,
     pub case_sensitive: bool,
     pub whole_word: bool,
@@ -69,6 +73,7 @@ pub(crate) fn scope(root: &Path, query: Scope, cancel: &CancellationToken) -> io
     let include = crate::search_paths::SearchPaths::cached(root, &query.include);
     let exclude = crate::search_paths::SearchPaths::cached(root, &query.exclude);
     let settings = crate::search_paths::ExcludeRules::new(&query.files_exclude, &query.search_exclude);
+    let aliases = crate::search_paths::PathAliases::default();
     let mut indices = Vec::new();
     for (index, path) in query.open_files.iter().enumerate() {
         if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
@@ -76,11 +81,16 @@ pub(crate) fn scope(root: &Path, query: Scope, cancel: &CancellationToken) -> io
         let candidate = crate::search_paths::Candidate::new(&native);
         let excluded = if query.history { settings.excludes(&candidate, Path::new("")) }
             else { settings.excludes_tree(&native, root) };
-        if include.includes_open(&candidate) && !exclude.excludes(&candidate, root) && !excluded {
+        if include.includes_open_with_aliases(&candidate, &aliases)
+            && !exclude.excludes_with_aliases(&candidate, root, &aliases)
+            && !excluded
+        {
             indices.push(index);
         }
     }
-    Ok(Reply::SearchScope { indices })
+    // Siblings and alias targets can change independently of the request.
+    let cacheable = !aliases.checked_filesystem() && !settings.requires_siblings();
+    Ok(Reply::SearchScope { indices, cacheable })
 }
 
 impl workspace::Workspace {
@@ -102,13 +112,11 @@ impl workspace::Workspace {
             files_exclude: files_exclude.clone(), search_exclude: search_exclude.clone(),
             history: false,
             open_files: paths.iter().map(|path| self.remote_path(path)).collect::<io::Result<_>>()? };
-        // A sibling can be created or deleted without changing the open paths.
-        let cacheable = !files_exclude.values().chain(search_exclude.values()).any(serde_json::Value::is_object);
         if let Some((previous, indices)) = &self.search_scope_cache.lock().unwrap().0
-            && cacheable && previous == &query {
+            && previous == &query {
             return Ok(indices.clone());
         }
-        let Reply::SearchScope { indices } = self.client.call_cancellable(Command::SearchScope(query.clone()), cancel)? else {
+        let Reply::SearchScope { indices, cacheable } = self.client.call_cancellable(Command::SearchScope(query.clone()), cancel)? else {
             return Err(io::Error::other("Invalid remote search scope reply"));
         };
         if indices.iter().any(|&index| index >= paths.len())
@@ -132,7 +140,7 @@ impl workspace::Workspace {
         let query = Scope { include: String::new(), exclude: String::new(), files_exclude: excludes.clone(),
             search_exclude: Default::default(), history: true,
             open_files: native.iter().map(|(_,path)| path.clone()).collect() };
-        let Reply::SearchScope { indices } = self.client.call_cancellable(Command::SearchScope(query), cancel)? else {
+        let Reply::SearchScope { indices, .. } = self.client.call_cancellable(Command::SearchScope(query), cancel)? else {
             return Err(io::Error::other("Invalid remote history scope reply"));
         };
         if indices.iter().any(|&i| i >= native.len()) || indices.windows(2).any(|p| p[0] >= p[1]) {
@@ -182,22 +190,55 @@ pub(crate) fn replace(
     let program =
         crate::app_search::SnapshotReplacer::workspace(&query.options).map_err(io::Error::other)?;
     let mut outcome = crate::workspace_replace::Outcome::default();
+    let mut destinations = rustc_hash::FxHashSet::default();
+    let mut targets = Vec::with_capacity(query.files.len());
     for file in query.files {
+        if cancel.is_cancelled() {
+            outcome.cancelled = true;
+            return Ok(Reply::Replaced(outcome));
+        }
+        let path = file.path.resolve(root);
+        let destination = if file.matches.is_empty() {
+            path
+        } else {
+            path.and_then(|path| path.canonicalize())
+        };
+        if !file.matches.is_empty()
+            && let Ok(path) = &destination
+            && !destinations.insert(path.clone())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Replacement paths refer to the same destination",
+            ));
+        }
+        targets.push((file, destination));
+    }
+    drop(destinations);
+
+    for (file, destination) in targets {
         if cancel.is_cancelled() {
             outcome.cancelled = true;
             break;
         }
-        let result = file.path.resolve(root).and_then(|native| {
-            crate::workspace_replace::file(&native, file.matches, &program, cancel)
+        let result = destination.and_then(|native| {
+            let (count, written) =
+                crate::workspace_replace::file(&native, file.matches, &program, cancel)?;
+            if written {
+                changed(&file.path);
+                if let Ok(actual) = git::from_native(&native, root)
+                    && actual != file.path
+                {
+                    changed(&actual);
+                }
+            }
+            Ok((count, written))
         });
         match result {
             Ok((count, written)) => {
                 outcome.replacements += count;
                 outcome.files_changed += usize::from(count > 0);
                 outcome.written_files += usize::from(written);
-                if written {
-                    changed(&file.path);
-                }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                 outcome.cancelled = true;
@@ -212,10 +253,11 @@ pub(crate) fn replace(
 
 pub(crate) fn execute(root: &Path, query: Query, cancel: &CancellationToken) -> io::Result<Reply> {
     let mut collected = Vec::new();
-    let Reply::Search { hits, truncated } = execute_with_workers(root, query, cancel, 1, |hits| {
-        collected.extend(hits);
-        Ok(())
-    })?
+    let Reply::Search { hits, truncated, draft_aliases } =
+        execute_with_workers(root, query, cancel, 1, |hits| {
+            collected.extend(hits);
+            Ok(())
+        })?
     else {
         unreachable!()
     };
@@ -223,6 +265,7 @@ pub(crate) fn execute(root: &Path, query: Query, cancel: &CancellationToken) -> 
     Ok(Reply::Search {
         hits: collected,
         truncated,
+        draft_aliases,
     })
 }
 
@@ -244,6 +287,7 @@ struct Batches<F> {
     total: usize,
     limit: usize,
     truncated: bool,
+    matched_files: Option<MatchedFiles>,
     published: bool,
     last_publish: std::time::Instant,
     publish: F,
@@ -270,16 +314,24 @@ impl<F: FnMut(Vec<Hit>) -> io::Result<()>> Batches<F> {
     fn append(
         &mut self,
         root: &Path,
+        path: &Path,
+        is_symlink: bool,
         matches: Vec<crate::app::GlobalSearchResult>,
         limited: bool,
     ) -> io::Result<()> {
+        if (!matches.is_empty() || limited)
+            && let Some(matched_files) = &mut self.matched_files
+            && !matched_files.insert(path, is_symlink)
+        {
+            return self.flush_due();
+        }
         let remaining = self.limit.saturating_sub(self.total);
         self.truncated |= limited || matches.len() > remaining;
-        let Some(first) = matches.first() else {
+        if matches.is_empty() {
             return self.flush_due();
-        };
+        }
         // Encode match paths once per file, rather than once per match.
-        let path = git::from_native(&first.file_path, root)?;
+        let path = git::from_native(path, root)?;
         for found in matches.into_iter().take(remaining) {
             let size = found
                 .line_text
@@ -328,11 +380,26 @@ fn execute_with_workers(
         &query.files_exclude,
         &query.search_exclude,
     ));
-    let open_files = query
+    let native_open_files = query
         .open_files
         .iter()
-        .map(|path| git::from_native(&path.resolve(root)?, root))
+        .map(|path| path.resolve(root))
+        .collect::<io::Result<Vec<_>>>()?;
+    let open_files = native_open_files
+        .iter()
+        .map(|path| git::from_native(path, root))
         .collect::<io::Result<rustc_hash::FxHashSet<_>>>()?;
+    let open_aliases = if query.report_open_aliases {
+        OpenFileAliases::new(
+            native_open_files.iter().map(PathBuf::as_path).enumerate(),
+            &includes,
+            query.follow_links,
+            cancel,
+        )
+    } else {
+        None
+    };
+    let draft_aliases = std::sync::Mutex::new(rustc_hash::FxHashSet::default());
     let deduplicate = includes.roots().count() > 1;
     let visited = std::sync::Mutex::new(rustc_hash::FxHashSet::default());
     let selected = |path: &Path| -> io::Result<bool> {
@@ -343,11 +410,21 @@ fn execute_with_workers(
         }
         // Preserve the node's identity normalization for absolute includes,
         // including ordinary/extended Windows spellings of an open file.
-        let path = git::from_native(path, root)?;
-        Ok(!open_files.contains(&path) && (!deduplicate || visited.lock().unwrap().insert(path)))
+        let wire_path = git::from_native(path, root)?;
+        if open_files.contains(&wire_path) {
+            return Ok(false);
+        }
+        if let Some(index) = open_aliases.as_ref().and_then(|aliases| aliases.get(path)) {
+            draft_aliases.lock().unwrap().insert(index);
+            return Ok(false);
+        }
+        Ok(!deduplicate || visited.lock().unwrap().insert(wire_path))
     };
     let options = crate::search_walk::Options {
         follow_links: query.follow_links,
+        workers,
+        open_aliases: open_aliases.clone(),
+        path_aliases: Default::default(),
     };
     let limit = query.limit.min(100_000);
     let spec = GlobalSearchSpec {
@@ -365,12 +442,13 @@ fn execute_with_workers(
         total: 0,
         limit,
         truncated: false,
+        matched_files: query.follow_links.then(MatchedFiles::default),
         published: false,
         last_publish: std::time::Instant::now(),
         publish,
     };
     if workers == 1 {
-        for path in
+        for (path, is_symlink) in
             crate::search_walk::paths(root, includes, excludes, setting_excludes, options, cancel)
         {
             if cancel.is_cancelled() {
@@ -392,7 +470,7 @@ fn execute_with_workers(
                 &mut truncated,
                 cancel,
             );
-            batches.append(root, results, truncated)?;
+            batches.append(root, &path, is_symlink, results, truncated)?;
             if batches.truncated {
                 break;
             }
@@ -421,8 +499,7 @@ fn execute_with_workers(
                     setting_excludes,
                     options,
                     &scan_cancel_worker,
-                    workers,
-                    |path| {
+                    |path, is_symlink| {
                         if scan_cancel_worker.is_cancelled() {
                             return;
                         }
@@ -448,7 +525,7 @@ fn execute_with_workers(
                             &scan_cancel_worker,
                         );
                         if !results.is_empty() || truncated {
-                            let _ = sender.send(Ok((results, truncated)));
+                            let _ = sender.send(Ok((path.to_path_buf(), is_symlink, results, truncated)));
                         }
                     },
                 );
@@ -460,8 +537,8 @@ fn execute_with_workers(
                     }
                     match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
                         Ok(matches) => {
-                            let (results, truncated) = matches?;
-                            batches.append(root, results, truncated)?;
+                            let (path, is_symlink, results, truncated) = matches?;
+                            batches.append(root, &path, is_symlink, results, truncated)?;
                             accepted.store(batches.total, Ordering::Relaxed);
                             if batches.truncated {
                                 break;
@@ -482,8 +559,11 @@ fn execute_with_workers(
     if cancel.is_cancelled() {
         return Err(io::ErrorKind::Interrupted.into());
     }
+    let mut draft_aliases: Vec<_> = draft_aliases.into_inner().unwrap().into_iter().collect();
+    draft_aliases.sort_unstable();
     Ok(Reply::Search {
         hits: batches.hits,
         truncated: batches.truncated,
+        draft_aliases,
     })
 }

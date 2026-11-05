@@ -18,19 +18,26 @@ fn workspace() -> (tempfile::TempDir, FileExplorer) {
 }
 
 #[test]
-fn formatter_working_copies_are_hidden_from_explorer_and_filename_search() {
+fn temporary_working_copies_are_hidden_from_explorer_and_filename_search() {
     let (temp, mut explorer) = workspace();
-    let copy = temp.path().join(".vtcode-format-test");
-    std::fs::create_dir(&copy).unwrap();
-    std::fs::write(copy.join("main.rs"), "temporary text").unwrap();
+    let copies = [".vtcode-format-test", ".vtcode-copy-ABcd12345678"]
+        .map(|name| temp.path().join(name));
+    for copy in &copies {
+        std::fs::create_dir(copy).unwrap();
+        std::fs::write(copy.join("main.rs"), "temporary text").unwrap();
+    }
     refresh(&mut explorer);
-    assert!(!explorer.entries.iter().any(|entry| entry.path.starts_with(&copy)));
+    for copy in &copies {
+        assert!(!explorer.entries.iter().any(|entry| entry.path.starts_with(copy)));
+    }
     explorer.find.open = true;
     explorer.find.filter = true;
     explorer.find.query = "main.rs".into();
     refresh(&mut explorer);
     assert_eq!(explorer.find.results.count, 3);
-    assert!(!explorer.entries.iter().any(|entry| entry.path.starts_with(copy.as_path())));
+    for copy in &copies {
+        assert!(!explorer.entries.iter().any(|entry| entry.path.starts_with(copy)));
+    }
 }
 
 #[test]

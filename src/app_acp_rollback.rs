@@ -2,6 +2,7 @@
 use super::{ChatAction, Choice, Picker};
 use crate::app::{App, TabKind};
 use std::{
+    borrow::Cow,
     collections::{BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{
@@ -50,7 +51,7 @@ struct ReviewSnapshot {
 impl ReviewSnapshot {
     fn new(journal: &Journal) -> Self {
         Self {
-            root: normalize(journal.workspace_root()),
+            root: journal.workspace_root().to_path_buf(),
             files: journal.inline_reviews(),
         }
     }
@@ -116,24 +117,19 @@ struct CheckpointJob {
     run: Box<dyn FnOnce() -> Result<Reply, String> + Send>,
 }
 
-fn normalize(path: &Path) -> PathBuf {
-    if crate::remote::workspace::is_view_key(path) { return path.to_path_buf(); }
-    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.into());
-    let text = absolute.to_string_lossy().replace('/', "\\");
-    #[cfg(windows)]
-    {
-        let text = if let Some(unc) = text.strip_prefix("\\\\?\\UNC\\") {
-            format!("\\\\{unc}")
-        } else {
-            text.strip_prefix("\\\\?\\").unwrap_or(&text).to_owned()
-        };
-        PathBuf::from(text.to_lowercase())
+fn absolute(path: &Path) -> Cow<'_, Path> {
+    if path.is_absolute() || crate::remote::workspace::is_view_key(path) {
+        return Cow::Borrowed(path);
     }
-    #[cfg(not(windows))]
-    {
-        let _ = text;
-        absolute
+    std::path::absolute(path).map_or(Cow::Borrowed(path), Cow::Owned)
+}
+
+/// A possible alias can delay an operation or schedule a fresh read.
+fn may_be_beneath(path: &Path, root: &Path) -> bool {
+    if crate::remote::workspace::is_view_key(path) || crate::remote::workspace::is_view_key(root) {
+        return path.starts_with(root);
     }
+    crate::native_paths::strip_possible_alias_prefix(path, root).is_some()
 }
 
 /// Resolve directory aliases even for a new/deleted file. This is used only
@@ -284,55 +280,56 @@ impl ReviewState {
         }
     }
     pub(crate) fn file_busy(&self, path: &Path) -> bool {
-        let path = self.path_key(path);
+        self.key_busy(&self.path_key(path))
+    }
+    fn key_busy(&self, path: &Path) -> bool {
         self.write_paths
             .iter()
-            .any(|p| p == &path || p.starts_with(&path) || path.starts_with(p))
+            .any(|p| may_be_beneath(path, p) || may_be_beneath(p, path))
     }
     pub(crate) fn defer_disk_change(
         &self,
         change: &crate::background::WorkspacePathChange,
     ) -> bool {
         let path = self.path_key(&change.path);
-        self.file_busy(&path)
+        self.key_busy(&path)
             || self.disk_barriers.iter().any(|(p, time)| {
-                (p == &path || path.starts_with(p) || (!change.exists && p.starts_with(&path)))
-                    && change.observed_at <= *time
+                change.observed_at <= *time
+                    && (may_be_beneath(&path, p) || (!change.exists && may_be_beneath(p, &path)))
             })
     }
     pub(crate) fn note_disk_write_finished(&mut self, path: &Path) {
         self.disk_barriers.insert(self.path_key(path), Instant::now());
     }
     fn relative(&self, path: &Path) -> Option<PathBuf> {
-        let path = normalize(path);
+        self.relative_absolute(&absolute(path)).map(Path::to_path_buf)
+    }
+
+    fn relative_absolute<'a>(&self, path: &'a Path) -> Option<&'a Path> {
         [&self.root, &self.inline_root]
             .into_iter()
             .filter(|root| !root.as_os_str().is_empty())
-            .find_map(|root| {
-                path.strip_prefix(normalize(root))
-                    .ok()
-                    .map(Path::to_path_buf)
-            })
+            .find_map(|root| crate::native_paths::strip_spelling_prefix(path, &absolute(root)))
     }
 
     fn path_key(&self, path: &Path) -> PathBuf {
-        let path = normalize(path);
+        let path = absolute(path);
         // Journal paths are canonical; editor paths retain the caller's
         // spelling. Translate the workspace alias using the worker's cached
         // root, never by resolving paths or locking the journal while drawing.
         if !self.inline_root.as_os_str().is_empty()
-            && let Some(relative) = self.relative(&path)
+            && let Some(relative) = self.relative_absolute(&path)
         {
             return self.inline_root.join(relative);
         }
-        path
+        path.into_owned()
     }
 
     fn file_review(&self, path: &Path) -> Option<&FileReview> {
         let path = self.path_key(path);
         self.inline_reviews
             .iter()
-            .find(|file| normalize(&file.path) == path)
+            .find(|file| App::same_open_path(&absolute(&file.path), &path))
     }
     pub fn note_user_save(&mut self, path: &Path) {
         if self.turns.is_empty() {
@@ -342,7 +339,7 @@ impl ReviewState {
         // here, outside rendering, so the protected path matches the snapshot.
         let path = resolve_review_path(path);
         let root = resolve_review_path(&self.root);
-        if let Ok(relative) = normalize(&path).strip_prefix(normalize(&root)) {
+        if let Some(relative) = crate::native_paths::strip_spelling_prefix(&path, &root) {
             for turn in self.turns.values_mut() {
                 turn.protected.insert(relative.to_path_buf());
             }
@@ -592,7 +589,7 @@ impl App {
         let Ok(journal) = journal.try_lock() else {
             return;
         };
-        self.chat.rollback.inline_root = normalize(journal.workspace_root());
+        self.chat.rollback.inline_root = journal.workspace_root().to_path_buf();
         self.chat.rollback.active = journal.active().is_some();
         let chat = &mut self.chat;
         for state in std::iter::once(&mut chat.connection).chain(chat.connections.values_mut()) {
@@ -875,7 +872,7 @@ impl App {
                 .filter_map(|t| t.editor.file_path.as_ref())
                 .filter(|path| {
                     let path = self.chat.rollback.path_key(path);
-                    completed_paths.iter().any(|p| path.starts_with(p))
+                    completed_paths.iter().any(|p| may_be_beneath(&path, p))
                 })
                 .cloned()
                 .collect();
@@ -1103,10 +1100,11 @@ impl App {
             return Some("Wait for remote files to finish opening or saving. No files were changed.".into());
         }
         for path in paths {
-            let canonical = normalize(&resolve_review_path(path));
+            let target = absolute(path);
+            let canonical = resolve_review_path(path);
             let same = |other: &Path| {
-                Self::same_open_path(&normalize(other), &normalize(path))
-                    || Self::same_open_path(&normalize(&resolve_review_path(other)), &canonical)
+                Self::paths_may_share_entry(&absolute(other), &target)
+                    || Self::paths_may_share_entry(&resolve_review_path(other), &canonical)
             };
             if self.pending_file_saves.keys().any(|p| same(p))
                 || self
@@ -1251,9 +1249,6 @@ impl App {
             }
             return;
         }
-        let Some(relative) = self.chat.rollback.relative(path) else {
-            return;
-        };
         // Check the captured identity again: a stale click must not act on a
         // different tab, file, or a chunk that was resolved in the meantime.
         let Some(file) = self.chat.rollback.file_review(path) else {
@@ -1276,6 +1271,9 @@ impl App {
             self.accept_changes(true, chunks);
             return;
         }
+        let Some(relative) = self.chat.rollback.relative(&file.path) else {
+            return;
+        };
         let selection = chunk.map_or(Selection::File(relative), |(id, index)| {
             Selection::Chunk(id, index)
         });

@@ -89,6 +89,33 @@ fn malformed_unsupported_and_unknown_fields_are_never_silently_discarded() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn remote_targets_rejects_nonregular_catalog_sources() {
+    assert_eq!(
+        read(Path::new("/dev/null")).unwrap_err().kind(),
+        io::ErrorKind::InvalidInput
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_targets_refuses_a_lock_that_links_to_another_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("remote-targets.json");
+    let unrelated = temp.path().join("unrelated");
+    let lock = path.with_extension("lock");
+    fs::write(&unrelated, "original").unwrap();
+    std::os::unix::fs::symlink(&unrelated, &lock).unwrap();
+    let mut store = Store::load(&path).unwrap();
+
+    assert!(store.save(vec![target("Test")]).is_err());
+    assert!(!path.exists());
+    assert_eq!(fs::read_to_string(unrelated).unwrap(), "original");
+    fs::remove_file(lock).unwrap();
+    store.save(vec![target("Test")]).unwrap();
+}
+
 #[test]
 fn a_stale_window_cannot_overwrite_another_windows_targets() {
     let temp = tempfile::tempdir().unwrap();

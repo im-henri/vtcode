@@ -12,7 +12,7 @@ mod tests;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     path::{Path, PathBuf},
 };
 pub type Result<T> = std::result::Result<T, String>;
@@ -119,28 +119,20 @@ impl Summary {
     /// Match canonical absolute paths from Workspace::write without filesystem I/O.
     /// Exact workspace-relative matching; a/b.rs must never match b.rs.
     pub fn pending_file(&self, path: &Path) -> Option<&Edit> {
-        let normalize = |path: &Path| {
+        #[cfg(windows)]
+        let ordinary;
+        let relative = match path.strip_prefix(&self.root) {
+            Ok(relative) => relative,
             #[cfg(windows)]
-            {
-                // Hosted files use opaque, case-sensitive view keys. Their
-                // spelling must not acquire the client's Windows semantics.
-                if self.root.as_os_str().as_encoded_bytes().contains(&0) {
-                    return path.to_path_buf();
-                }
-                let text = path.to_string_lossy().replace('/', "\\");
-                PathBuf::from(text.strip_prefix("\\\\?\\").unwrap_or(&text).to_lowercase())
+            Err(_) if !self.root.as_os_str().as_encoded_bytes().contains(&0) => {
+                ordinary = crate::acp::files::agent_path(path);
+                ordinary.strip_prefix(crate::acp::files::agent_path(&self.root)).ok()?
             }
-            #[cfg(not(windows))]
-            {
-                path.to_path_buf()
-            }
+            Err(_) => return None,
         };
-        let path = normalize(path);
-        let root = normalize(&self.root);
-        let relative = path.strip_prefix(root).ok()?;
         self.edits
             .iter()
-            .find(|e| e.pending() > 0 && normalize(&e.path) == relative)
+            .find(|e| e.path == relative && e.pending() > 0)
     }
 }
 
@@ -185,6 +177,8 @@ struct Replacement {
     before: Option<FileState>,
     after: Option<FileState>,
     backup: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backup_identity: Option<storage::BackupIdentity>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -228,16 +222,6 @@ struct State {
     completed: Vec<Completed>,
 }
 
-// Closing a descriptor alone does not release a Unix flock while a concurrent
-// fork/dup still holds the same open file description. End this owner's lease
-// explicitly, including error paths before the Journal is fully initialized.
-struct JournalLock(File);
-impl Drop for JournalLock {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
-}
-
 pub struct Journal {
     root: PathBuf,
     repository: PathBuf,
@@ -246,7 +230,7 @@ pub struct Journal {
     state: State,
     persistence_failed: bool,
     // OS lock is released on crash. A second editor cannot race this journal.
-    _lock: JournalLock,
+    _lock: crate::file_source::ExclusiveFileLock,
 }
 
 impl Journal {
@@ -279,10 +263,9 @@ impl Journal {
             .write(true)
             .open(repo.path().join("vtcode-rollback.lock"))
             .map_err(|e| e.to_string())?;
-        lock.try_lock().map_err(|_| {
+        let lock = crate::file_source::ExclusiveFileLock::try_acquire(lock).map_err(|_| {
             "Another vtcode window is using this workspace's rollback history".to_string()
         })?;
-        let lock = JournalLock(lock);
         let history = match fs::read(directory.join("state.json")) {
             Ok(bytes) => Some(bytes),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -489,22 +472,25 @@ impl Journal {
         let mut paths = BTreeSet::new();
         for item in &plan.replacements {
             storage::checked_path(&self.root, &item.path)?;
-            let key = storage::path_key(&item.path);
-            if !paths.insert(key) {
+            if !paths.insert(&item.path) {
                 return Err(
                     "Two rollback paths refer to the same file; no automatic restore is safe"
                         .into(),
                 );
             }
             if let Some(backup) = &item.backup {
-                if backup.parent() != item.path.parent()
+                if item.before.is_none()
+                    || backup.parent() != item.path.parent()
                     || !backup
                         .file_name()
                         .is_some_and(|n| n.to_string_lossy().starts_with(".vtcode-rollback-"))
+                    || !paths.insert(backup)
                 {
                     return Err("Invalid rollback backup path".into());
                 }
                 storage::checked_path(&self.root, backup)?;
+            } else if item.backup_identity.is_some() {
+                return Err("Missing rollback backup path".into());
             }
             for state in [&item.before, &item.after].into_iter().flatten() {
                 if state.blob.hash.len() != 40 || git2::Oid::from_str(&state.blob.hash).is_err() {
@@ -525,6 +511,29 @@ impl Journal {
             return Err("Missing prior rollback record".into());
         }
         Ok(())
+    }
+
+    fn checked_restore_targets<'a>(
+        &'a self,
+        plan: &'a Plan,
+    ) -> impl Iterator<Item = Result<(&'a Replacement, PathBuf)>> + 'a {
+        #[cfg(windows)]
+        let mut targets = BTreeSet::new();
+        plan.replacements.iter().map(move |item| {
+            let path = storage::checked_path(&self.root, &item.path)?;
+            #[cfg(windows)]
+            {
+                let backup = item.backup.as_deref()
+                    .map(|backup| storage::checked_path(&self.root, backup))
+                    .transpose()?;
+                for slot in std::iter::once(&path).chain(backup.as_ref()) {
+                    if !targets.insert(storage::restore_target_key(slot)?) {
+                        return Err("Two rollback paths refer to the same file; no automatic restore is safe".into());
+                    }
+                }
+            }
+            Ok((item, path))
+        })
     }
 
     fn save(&mut self, mut state: State) -> Result<()> {
@@ -1157,10 +1166,24 @@ impl Journal {
     }
 
     fn editor_selected(&self, selection: &Selection) -> Result<Vec<(u64, usize)>> {
+        #[cfg(windows)]
+        let verified = match selection {
+            Selection::File(path) if !self.state.edits.iter().any(|edit| edit.path == *path) => {
+                storage::checked_path(&self.root, path)
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    .and_then(|path| path.strip_prefix(&self.root).ok().map(Path::to_path_buf))
+            }
+            _ => None,
+        };
         let mut selected = Vec::new();
         for edit in &self.state.edits {
             let matches = match selection {
-                Selection::File(path) => storage::path_key(&edit.path) == storage::path_key(path),
+                Selection::File(path) => {
+                    #[cfg(windows)]
+                    let path = verified.as_ref().unwrap_or(path);
+                    edit.path == *path
+                }
                 Selection::Chunk(id, _) => edit.id == *id,
                 _ => return Err("Editor review requires a file or chunk".into()),
             };
@@ -1315,6 +1338,7 @@ impl Journal {
                         before: current.clone(),
                         after: current,
                         backup: None,
+                        backup_identity: None,
                     },
                 );
             }
@@ -1364,6 +1388,7 @@ impl Journal {
                 before: current,
                 after: wanted,
                 backup: None,
+                backup_identity: None,
             });
         }
         Ok(Plan {
@@ -1406,8 +1431,8 @@ impl Journal {
         if plan.version != self.state.version {
             return Err("Changes were updated; review them again".into());
         }
-        for item in &plan.replacements {
-            let path = storage::checked_path(&self.root, &item.path)?;
+        for target in self.checked_restore_targets(&plan) {
+            let (item, path) = target?;
             if storage::capture(&self.repository, &path)? != item.before {
                 return Err(format!(
                     "{} changed after review. No files were changed.",
@@ -1422,6 +1447,7 @@ impl Journal {
             }
         }
         let mut pins = Snapshot::new();
+        let mut slots: BTreeSet<_> = plan.paths().map(Path::to_path_buf).collect();
         for (i, item) in plan.replacements.iter_mut().enumerate() {
             if let Some(before) = &item.before {
                 pins.insert(PathBuf::from(format!("{i}/before")), before.clone());
@@ -1429,20 +1455,17 @@ impl Journal {
             if let Some(after) = &item.after {
                 pins.insert(PathBuf::from(format!("{i}/after")), after.clone());
             }
-            let path = storage::checked_path(&self.root, &item.path)?;
             if item.before.is_some() {
-                let tmp = tempfile::Builder::new()
-                    .prefix(".vtcode-rollback-")
-                    .tempfile_in(path.parent().unwrap())
-                    .map_err(|e| e.to_string())?;
-                let backup = tmp.path().to_path_buf();
-                tmp.close().map_err(|e| e.to_string())?;
-                item.backup = Some(
-                    backup
-                        .strip_prefix(&self.root)
-                        .map_err(|e| e.to_string())?
-                        .into(),
-                );
+                let path = storage::checked_path(&self.root, &item.path)?;
+                let identity = storage::backup_identity(&path)?
+                    .ok_or_else(|| format!("{} disappeared during rollback", item.path.display()))?;
+                let backup = storage::fresh_backup_path(path.parent().unwrap(), ".vtcode-rollback-")?;
+                let relative = backup.strip_prefix(&self.root).map_err(|e| e.to_string())?;
+                if !slots.insert(relative.to_path_buf()) {
+                    return Err("Rollback backup name overlaps another transaction path".into());
+                }
+                item.backup = Some(relative.to_path_buf());
+                item.backup_identity = Some(identity);
             }
         }
         self.pin(self.state.next, "transaction", &pins)?;
@@ -1466,16 +1489,20 @@ impl Journal {
         if storage::capture(&self.repository, &path)? != item.before {
             return Err(format!("{} changed during rollback", item.path.display()));
         }
-        // Keep the actual displaced file, not just an earlier read. This closes
-        // the check/replace data-loss window even with noncooperating writers.
+        // Keep the actual displaced file so writes through an earlier handle
+        // remain recoverable, even if they race the final contents check.
         if let Some(backup) = &item.backup {
             let backup = storage::checked_path(&self.root, backup)?;
-            if backup.exists() {
-                return Err("Rollback backup path is already occupied".into());
+            if let Some(expected) = &item.backup_identity
+                && storage::backup_identity(&path)?.as_ref() != Some(expected)
+            {
+                return Err(format!("{} was replaced during rollback", item.path.display()));
             }
-            fs::rename(&path, &backup).map_err(|e| e.to_string())?;
-            storage::sync_directory(path.parent().unwrap())?;
-            if storage::capture(&self.repository, &backup)? != item.before {
+            storage::displace_to_backup(&path, &backup)?;
+            if storage::capture(&self.repository, &backup)? != item.before
+                || (item.backup_identity.is_some()
+                    && storage::backup_identity(&backup)? != item.backup_identity)
+            {
                 return Err(format!(
                     "{} changed during replacement; its actual contents remain in {}",
                     item.path.display(),
@@ -1569,17 +1596,18 @@ impl Journal {
             .clone()
             .ok_or("No interrupted rollback")?;
         let mut restore = Vec::new();
-        for item in &plan.replacements {
-            let path = storage::checked_path(&self.root, &item.path)?;
+        for target in self.checked_restore_targets(&plan) {
+            let (item, path) = target?;
             let current = storage::capture(&self.repository, &path)?;
             if current == item.before {
                 continue;
             }
             let mut before = item.before.clone();
             if let Some(backup) = &item.backup {
-                let saved = storage::capture(
+                let saved = storage::capture_displaced(
                     &self.repository,
                     &storage::checked_path(&self.root, backup)?,
+                    item.backup_identity.as_ref(),
                 )?;
                 if let Some(saved) = saved {
                     before = Some(saved);
@@ -1612,13 +1640,8 @@ impl Journal {
             }
             if expected.is_some() {
                 // Retain any intervening file as well, until manually inspected.
-                let tmp = tempfile::Builder::new()
-                    .prefix(".vtcode-rollback-recovery-")
-                    .tempfile_in(path.parent().unwrap())
-                    .map_err(|e| e.to_string())?;
-                let (_, saved) = tmp.keep().map_err(|e| e.to_string())?;
-                fs::rename(&path, &saved).map_err(|e| e.to_string())?;
-                storage::sync_directory(path.parent().unwrap())?;
+                let saved = storage::fresh_backup_path(path.parent().unwrap(), ".vtcode-rollback-recovery-")?;
+                storage::displace_to_backup(&path, &saved)?;
                 if storage::capture(&self.repository, &saved)? != expected {
                     return Err(format!(
                         "File changed during recovery; retained in {}",

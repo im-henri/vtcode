@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 #[path = "terminal_resize.rs"]
@@ -25,6 +25,7 @@ mod row;
 pub(crate) use row::TermRow;
 
 const MAX_SCROLLBACK_LINES: usize = 5000;
+static NEXT_TEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// A single cell in the terminal grid.
 #[derive(Clone, Debug, PartialEq)]
@@ -76,6 +77,9 @@ enum ConptyResize {
 pub struct TermGrid {
     pub cells: Vec<TermRow>,
     pub scrollback: std::collections::VecDeque<TermRow>,
+    // Search can reuse its index between output/resize batches. Revisions
+    // are unique across PTYs, including after the terminal is replaced.
+    text_revision: u64,
     pub cursor_row: usize,
     pub cursor_col: usize,
     pub width: usize,
@@ -132,6 +136,7 @@ impl TermGrid {
         Self {
             cells: vec![TermRow::from(vec![TermCell::default(); width]); height],
             scrollback: std::collections::VecDeque::new(),
+            text_revision: NEXT_TEXT_REVISION.fetch_add(1, Ordering::Relaxed),
             cursor_row: 0,
             cursor_col: 0,
             width,
@@ -173,6 +178,17 @@ impl TermGrid {
 
     fn new_row(&self) -> TermRow {
         vec![TermCell::default(); self.width].into()
+    }
+
+    fn text_changed(&mut self) {
+        self.text_revision = NEXT_TEXT_REVISION.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn advance_output(&mut self, parser: &mut vte::Parser, bytes: &[u8]) {
+        for &byte in bytes {
+            parser.advance(self, byte);
+        }
+        self.text_changed();
     }
 
     fn put_char(&mut self, c: char) {
@@ -434,6 +450,7 @@ impl TermGrid {
 
     pub(crate) fn resize(&mut self, width: usize, height: usize) {
         if width == 0 || height == 0 || (width, height) == (self.width, self.height) { return; }
+        self.text_changed();
         self.clear_selection();
         if self.alt_saved.is_some() {
             // Full-screen applications redraw at fixed coordinates after SIGWINCH.
@@ -1226,9 +1243,7 @@ impl TerminalEmulator {
         if self.output_batch.is_empty() { return input_changed; }
         loop {
             let end = (self.output_offset + PTY_PARSE_QUANTUM).min(self.output_batch.len());
-            for &byte in &self.output_batch[self.output_offset..end] {
-                self.parser.advance(&mut self.grid, byte);
-            }
+            self.grid.advance_output(&mut self.parser, &self.output_batch[self.output_offset..end]);
             self.output_offset = end;
             if end == self.output_batch.len() || !continue_processing() { break; }
         }

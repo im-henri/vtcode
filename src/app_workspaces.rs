@@ -1070,6 +1070,11 @@ impl App {
     }
 
     pub(crate) fn save_finished_workspace(&mut self) -> io::Result<()> {
+        // The earlier backup is still needed. Finishing a workspace can skip
+        // its layout save after the user has saved or discarded current edits.
+        if self.incomplete_session_recovery.is_some() {
+            return Ok(());
+        }
         let mut session = self.build_session();
         if self.exit_discard_quit {
             for tab in session

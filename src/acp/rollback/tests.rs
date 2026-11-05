@@ -265,8 +265,109 @@ fn review_markers_do_not_confuse_files_with_the_same_suffix() {
 }
 
 #[cfg(windows)]
+fn case_sensitive_fixture() -> Option<Fixture> {
+    let f = Fixture::new();
+    let directory = f.root.path().join("case-sensitive");
+    fs::create_dir(&directory).unwrap();
+    let output = std::process::Command::new("fsutil.exe")
+        .args(["file", "setCaseSensitiveInfo"])
+        .arg(directory)
+        .arg("enable")
+        .output()
+        .unwrap();
+    if !output.status.success() {
+        eprintln!("Case-sensitive test directory unavailable: {}", String::from_utf8_lossy(&output.stdout));
+        return None;
+    }
+    f.write("case-sensitive/Mixed.txt", "before upper\n");
+    f.write("case-sensitive/mixed.txt", "before lower\n");
+    Some(f)
+}
+
+#[cfg(windows)]
+fn case_distinct_reviews() -> Option<Fixture> {
+    let mut f = case_sensitive_fixture()?;
+    f.begin();
+    f.write("case-sensitive/Mixed.txt", "after upper\n");
+    f.write("case-sensitive/mixed.txt", "after lower\n");
+    f.finish();
+    Some(f)
+}
+
+#[cfg(windows)]
 #[test]
-fn review_markers_match_windows_path_spellings_after_file_is_deleted() {
+fn review_markers_use_the_exact_case_sensitive_file() {
+    let Some(f) = case_distinct_reviews() else { return; };
+    let summary = f.journal.summary("agent", "chat");
+    let lower = Path::new("case-sensitive/mixed.txt");
+    let path = f.journal.workspace_root().join(lower);
+    assert_eq!(summary.pending_file(&path).unwrap().path, lower);
+}
+
+#[cfg(windows)]
+#[test]
+fn accepting_a_review_leaves_the_case_distinct_sibling_pending() {
+    let Some(mut f) = case_distinct_reviews() else { return; };
+    let upper = Path::new("case-sensitive/Mixed.txt");
+    let lower = Path::new("case-sensitive/mixed.txt");
+    f.journal.accept_editor(&Selection::File(upper.to_path_buf())).unwrap();
+    let summary = f.journal.summary("agent", "chat");
+    assert_eq!(summary.edits.iter().find(|edit| edit.path == upper).unwrap().pending(), 0);
+    assert_eq!(summary.edits.iter().find(|edit| edit.path == lower).unwrap().pending(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn rolling_back_both_case_distinct_files_restores_their_own_contents() {
+    let Some(mut f) = case_distinct_reviews() else { return; };
+    f.decline(Selection::All).unwrap();
+    assert_eq!(f.read("case-sensitive/Mixed.txt"), "before upper\n");
+    assert_eq!(f.read("case-sensitive/mixed.txt"), "before lower\n");
+    drop(f.journal);
+    assert!(Journal::open(f.root.path(), f.data.path()).is_ok());
+}
+
+#[cfg(windows)]
+fn deleted_case_distinct_files() -> Option<Fixture> {
+    let mut f = case_sensitive_fixture()?;
+    f.begin();
+    for name in ["case-sensitive/Mixed.txt", "case-sensitive/mixed.txt"] {
+        fs::remove_file(f.root.path().join(name)).unwrap();
+    }
+    f.finish();
+    Some(f)
+}
+
+#[cfg(windows)]
+#[test]
+fn rollback_recreates_both_deleted_case_distinct_files() {
+    let Some(mut f) = deleted_case_distinct_files() else { return; };
+    f.decline(Selection::All).unwrap();
+    assert_eq!(f.read("case-sensitive/Mixed.txt"), "before upper\n");
+    assert_eq!(f.read("case-sensitive/mixed.txt"), "before lower\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn rollback_refuses_missing_targets_that_have_become_case_aliases() {
+    let Some(mut f) = deleted_case_distinct_files() else { return; };
+    let plan = f.journal.plan("agent", "chat", &Selection::All).unwrap();
+    let directory = f.root.path().join("case-sensitive");
+    let output = std::process::Command::new("fsutil.exe")
+        .args(["file", "setCaseSensitiveInfo"])
+        .arg(&directory)
+        .arg("disable")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    assert!(f.journal.apply(plan).unwrap_err().contains("same file"));
+    assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
+    assert!(!f.journal.summary("agent", "chat").interrupted);
+}
+
+#[cfg(windows)]
+#[test]
+fn review_markers_match_windows_prefixes_after_file_is_deleted() {
     let mut f = Fixture::new();
     f.write("a", "old");
     f.begin();
@@ -275,7 +376,7 @@ fn review_markers_match_windows_path_spellings_after_file_is_deleted() {
     let summary = f.journal.summary("agent", "chat");
     let canonical = f.journal.workspace_root().join("a");
     let ordinary = crate::acp::files::agent_path(&canonical);
-    let alternate = PathBuf::from(ordinary.to_string_lossy().replace('\\', "/").to_uppercase());
+    let alternate = PathBuf::from(ordinary.to_string_lossy().replace('\\', "/"));
 
     fs::remove_file(&canonical).unwrap();
     for path in [&canonical, &ordinary, &alternate] {
@@ -283,6 +384,7 @@ fn review_markers_match_windows_path_spellings_after_file_is_deleted() {
         let sibling = path.parent().unwrap().join("nested/a");
         assert!(summary.pending_file(&sibling).is_none());
     }
+    assert!(summary.pending_file(&canonical.with_file_name("A")).is_none());
 }
 
 #[test]

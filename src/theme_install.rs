@@ -2,11 +2,12 @@
 //! Extension code and build scripts never run.
 use crate::vscode_theme::{parse_jsonc, slug};
 use serde_json::Value;
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) const MAX_PACKAGE_SIZE: u64 = 100 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 256 * 1024 * 1024;
+const MAX_THEME_DATA: u64 = 8 * 1024 * 1024;
 
 pub(crate) fn install(
     source: &str,
@@ -75,23 +76,45 @@ fn install_local(local: &Path, root: &Path) -> Result<Vec<crate::app_theme::Them
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("json") || e.eq_ignore_ascii_case("jsonc"))
     {
-        return install_single(local, root, staging.path());
+        return install_single(local, root, staging);
     } else {
-        let file = std::fs::File::open(local).map_err(err)?;
-        if file.metadata().map_err(err)?.len() > MAX_PACKAGE_SIZE {
+        let (file, metadata) = crate::fs_ops::open_document_source(local, false).map_err(err)?;
+        if metadata.len() > MAX_PACKAGE_SIZE {
             return Err("Theme package exceeds 100 MiB".into());
         }
         extract(file, &unpacked)?;
         find_package(&unpacked)?
     };
-    install_package(&package_root, root, staging.path())
+    install_package(&package_root, root, staging)
 }
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 fn read_json(path: &Path) -> Result<Value, String> {
-    parse_jsonc(&std::fs::read_to_string(path).map_err(err)?)
+    let data = read_theme_data(&path.canonicalize().map_err(err)?)?;
+    parse_jsonc(std::str::from_utf8(&data).map_err(err)?)
+}
+
+fn read_theme_data(path: &Path) -> Result<Vec<u8>, String> {
+    let (file, metadata) = vtcode::file_source::open_regular_file_no_follow(path).map_err(err)?;
+    if metadata.len() > MAX_THEME_DATA {
+        return Err("Theme data file exceeds 8 MiB".into());
+    }
+    let mut data = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_THEME_DATA + 1).read_to_end(&mut data).map_err(err)?;
+    if data.len() as u64 > MAX_THEME_DATA {
+        return Err("Theme data file exceeds 8 MiB".into());
+    }
+    Ok(data)
+}
+
+fn resolve_reference(directory: &Path, reference: &str) -> Result<PathBuf, String> {
+    let path = Path::new(reference);
+    if path.has_root() || matches!(path.components().next(), Some(Component::Prefix(_))) {
+        return Err("Theme references must use relative paths".into());
+    }
+    Ok(directory.join(path))
 }
 fn contributions(package: &Value) -> Result<&Vec<Value>, String> {
     package
@@ -175,13 +198,13 @@ fn find_package(root: &Path) -> Result<PathBuf, String> {
 fn install_package(
     source: &Path,
     root: &Path,
-    staging: &Path,
+    staging: tempfile::TempDir,
 ) -> Result<Vec<crate::app_theme::ThemeFile>, String> {
     let package = read_json(&source.join("package.json"))?;
     let publisher = manifest_id(&package, "publisher")?;
     let name = manifest_id(&package, "name")?;
     let items = contributions(&package)?;
-    let prepared = staging.join("prepared");
+    let prepared = staging.path().join("prepared");
     let extension = prepared.join(format!("{publisher}.{name}"));
     std::fs::create_dir_all(&extension).map_err(err)?;
     let safe_manifest = serde_json::json!({ "name": name, "publisher": publisher, "version": package.get("version"), "contributes": {"themes": items} });
@@ -197,7 +220,7 @@ fn install_package(
             .get("path")
             .and_then(Value::as_str)
             .ok_or("Theme contribution has no path")?;
-        copy_theme_data(&source, &source.join(path), &extension, &mut copied, 0)?;
+        copy_theme_data(&source, &resolve_reference(&source, path)?, &extension, &mut copied, 0)?;
     }
     for name in ["package.nls.json", "LICENSE", "LICENSE.txt", "LICENSE.md"] {
         if source.join(name).is_file() {
@@ -214,6 +237,7 @@ fn install_package(
         &extension,
         &root.join(format!("{publisher}.{name}")),
         staging,
+        crate::fs_ops::rename_no_replace,
     )?;
     Ok(themes)
 }
@@ -237,13 +261,11 @@ fn copy_theme_data(
     if !copied.insert(path.clone()) {
         return Ok(());
     }
-    let data = std::fs::read(&path).map_err(err)?;
-    if data.len() > 8 * 1024 * 1024 {
-        return Err("Theme data file exceeds 8 MiB".into());
-    }
+    let data = read_theme_data(&path)?;
     let output = destination.join(relative);
     std::fs::create_dir_all(output.parent().unwrap()).map_err(err)?;
-    std::fs::write(output, &data).map_err(err)?;
+    std::fs::OpenOptions::new().create_new(true).write(true).open(output)
+        .and_then(|mut file| file.write_all(&data)).map_err(err)?;
     if path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("json") || e.eq_ignore_ascii_case("jsonc"))
@@ -253,7 +275,7 @@ fn copy_theme_data(
             if let Some(reference) = value.get(key).and_then(Value::as_str) {
                 copy_theme_data(
                     root,
-                    &path.parent().unwrap().join(reference),
+                    &resolve_reference(path.parent().unwrap(), reference)?,
                     destination,
                     copied,
                     depth + 1,
@@ -263,15 +285,29 @@ fn copy_theme_data(
     }
     Ok(())
 }
-fn publish(prepared: &Path, destination: &Path, staging: &Path) -> Result<(), String> {
-    let backup = staging.join("previous");
-    let existed = destination.exists();
+fn publish(
+    prepared: &Path,
+    destination: &Path,
+    staging: tempfile::TempDir,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<(), String> {
+    let backup = staging.path().join("previous");
+    let existed = match destination.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() => true,
+        Ok(_) => return Err("Theme installation destination must be a directory".into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(err(error)),
+    };
     if existed {
-        std::fs::rename(destination, &backup).map_err(err)?;
+        rename(destination, &backup).map_err(err)?;
     }
-    if let Err(error) = std::fs::rename(prepared, destination) {
-        if existed {
-            std::fs::rename(&backup, destination).map_err(|restore| format!("Install failed: {error}; restore failed: {restore}; previous installation at {}", backup.display()))?;
+    if let Err(error) = rename(prepared, destination) {
+        if existed && let Err(restore) = rename(&backup, destination) {
+            let backup = staging.keep().join("previous");
+            return Err(format!(
+                "Could not install theme ({error}). Could not restore previous installation ({restore}). Backup kept at {}",
+                backup.display()
+            ));
         }
         return Err(err(error));
     }
@@ -280,11 +316,10 @@ fn publish(prepared: &Path, destination: &Path, staging: &Path) -> Result<(), St
 fn install_single(
     path: &Path,
     root: &Path,
-    staging: &Path,
+    staging: tempfile::TempDir,
 ) -> Result<Vec<crate::app_theme::ThemeFile>, String> {
     let path = path.canonicalize().map_err(err)?;
-    let theme = crate::vscode_theme::load_theme_file(&path, None, None)?;
-    let source = staging.join("single");
+    let source = staging.path().join("single");
     std::fs::create_dir_all(&source).map_err(err)?;
     copy_theme_data(
         path.parent().unwrap(),
@@ -293,7 +328,10 @@ fn install_single(
         &mut Default::default(),
         0,
     )?;
-    let manifest = serde_json::json!({"name": slug(&theme.name), "publisher": "local", "version": "1", "contributes": {"themes": [{"label": theme.name, "path": path.file_name().unwrap().to_string_lossy()}]}});
+    let name = path.file_name().unwrap();
+    // Parse only after dependencies have been confined and bounded in staging.
+    let theme = crate::vscode_theme::load_theme_file(&source.join(name), None, None)?;
+    let manifest = serde_json::json!({"name": slug(&theme.name), "publisher": "local", "version": "1", "contributes": {"themes": [{"label": theme.name, "path": name.to_string_lossy()}]}});
     std::fs::write(
         source.join("package.json"),
         serde_json::to_vec(&manifest).map_err(err)?,
@@ -317,6 +355,53 @@ mod tests {
         }
         writer.finish().unwrap();
     }
+
+    #[test]
+    fn failed_publish_and_restore_keep_the_previous_installation_and_racing_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("theme");
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(destination.join("original.json"), "previous").unwrap();
+        let staging = tempfile::tempdir_in(temp.path()).unwrap();
+        let prepared = staging.path().join("prepared");
+        let backup = staging.path().join("previous");
+        std::fs::create_dir(&prepared).unwrap();
+
+        let result = publish(&prepared, &destination, staging, |from, to| {
+            if from == prepared {
+                std::fs::create_dir(to)?;
+                std::fs::write(to.join("concurrent.json"), "concurrent")?;
+            }
+            crate::fs_ops::rename_no_replace(from, to)
+        });
+        assert!(result.unwrap_err().contains(backup.to_str().unwrap()));
+        assert_eq!(std::fs::read_to_string(backup.join("original.json")).unwrap(), "previous");
+        assert_eq!(std::fs::read_to_string(destination.join("concurrent.json")).unwrap(), "concurrent");
+    }
+
+    #[test]
+    fn single_theme_checks_dependencies_before_parsing_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("themes");
+        let root = temp.path().join("installed");
+        std::fs::create_dir(&source).unwrap();
+        let theme = source.join("custom.json");
+        let local_data = source.join("local.json");
+        std::fs::write(temp.path().join("outside.json"), "invalid JSON").unwrap();
+        std::fs::File::create(&local_data).unwrap().set_len(MAX_THEME_DATA + 1).unwrap();
+
+        for (include, expected) in [
+            ("../outside.json", "escapes extension directory"),
+            (local_data.to_str().unwrap(), "must use relative paths"),
+            ("local.json", "exceeds 8 MiB"),
+        ] {
+            std::fs::write(&theme, serde_json::json!({"include": include}).to_string()).unwrap();
+            let error = install_local(&theme, &root).err().expect("unsafe theme must fail");
+            assert!(error.contains(expected), "{error}");
+            assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        }
+    }
+
 
     #[test]
     fn vsix_installs_all_variants_and_preserves_the_previous_install_on_failure() {

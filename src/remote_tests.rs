@@ -90,6 +90,31 @@ fn remote_filesystem_roots_keep_native_root_identity_and_stop_at_real_roots() {
 }
 
 #[test]
+fn remote_posix_file_urls_match_native_escaping_and_preserve_drive_like_names() {
+    let hello = Hello {
+        version: VERSION,
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        root: "/workspace".into(),
+        root_uri: "file:///workspace/".into(),
+        session: 42,
+    };
+    let client = client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), hello).unwrap();
+    let workspace = workspace::Workspace::new(client);
+    for (path, expected) in [
+        (b"/run/credentials/getty@tty1.service".as_slice(), "file:///run/credentials/getty@tty1.service"),
+        (b"/mount/a=1+b&c;!/$%#?\\\xff", "file:///mount/a=1+b&c;!/$%25%23%3F%5C%FF"),
+        (b"/C|/file", "file:///C%7C/file"),
+        (b"/D:/file", "file:///D%3A/file"),
+    ] {
+        let key = workspace.view_key(&RemotePath::absolute(path).unwrap());
+        let local_uri = url::Url::from_file_path(&key).unwrap();
+        let remote_uri = workspace.lsp_uri(local_uri.as_str(), true).unwrap();
+        assert_eq!(remote_uri, expected);
+        assert_eq!(workspace.file_uri_key(&remote_uri), Some(key));
+    }
+}
+
+#[test]
 fn displayed_remote_paths_roundtrip_all_roots_and_filename_bytes() {
     for (native, uri) in [
         ("/repo space λ", "file:///repo%20space%20%CE%BB/"),
@@ -1435,10 +1460,12 @@ fn remote_branch_stash_amend_and_push_share_the_native_repository_implementation
         .unwrap()
         .set_bool("core.autocrlf", false)
         .unwrap();
-    let file = dir.path().join("code.rs");
+    let name = Path::new("code.rs");
+    let file = dir.path().join(name);
     std::fs::write(&file, "one\n").unwrap();
     let mut index = repo.index().unwrap();
-    index.add_path(Path::new("code.rs")).unwrap();
+    index.add_path(name).unwrap();
+    let original_blob = index.get_path(name, 0).unwrap().id;
     index.write().unwrap();
     let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
     let signature = git2::Signature::now("Remote test", "remote@example.test").unwrap();
@@ -1476,6 +1503,25 @@ fn remote_branch_stash_amend_and_push_share_the_native_repository_implementation
         branch_name: original.clone(),
     });
     std::fs::write(&file, "two\n").unwrap();
+    // Model an edit in the same filesystem timestamp tick as the index.
+    // Its cached stat data matches the worktree while its object ID differs.
+    index.read(true).unwrap();
+    index.add_path(name).unwrap();
+    let mut entry = index.get_path(name, 0).unwrap();
+    entry.id = original_blob;
+    index.add(&entry).unwrap();
+    index.write().unwrap();
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(repo.path().join("index"))
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert_eq!(
+        git2::Repository::open(dir.path()).unwrap().status_file(name).unwrap(),
+        git2::Status::WT_MODIFIED
+    );
     action(crate::git_tasks::Task::Stash {
         stash_message: "test".into(),
         label: "test".into(),
@@ -3150,6 +3196,34 @@ fn remote_explorer_clipboard_shortcuts_and_terminal_paste_preserve_the_local_buf
         assert_eq!(app.active_pane, ActivePane::Explorer);
         workspace.client.call(Command::Shutdown).unwrap();
     }
+}
+
+#[test]
+fn remote_explorer_partial_cut_reports_exact_sources_that_succeeded() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("destination")).unwrap();
+    std::fs::write(dir.path().join("source.rs"), "move").unwrap();
+    std::fs::write(dir.path().join("destination/stays.rs"), "keep").unwrap();
+    let workspace = workspace::Workspace::new(connection(dir.path(), Arc::default(), Arc::default()));
+    let path = |name: &str| RemotePath::new(name.as_bytes().to_vec()).unwrap();
+    let outcome = workspace.filesystem(
+        fs::Task::Paste {
+            sources: vec![path("source.rs"), path("missing.rs"), path("destination/stays.rs")],
+            directory: path("destination"),
+            cut: true,
+        },
+        &crate::background::CancellationToken::new(),
+        |_| {},
+    ).unwrap();
+    assert!(outcome.warning);
+    assert_eq!(outcome.completed_cut_paths, [
+        workspace.view_key(&path("source.rs")),
+        workspace.view_key(&path("destination/stays.rs")),
+    ]);
+    assert_eq!(outcome.renames.len(), 1);
+    assert_eq!(std::fs::read_to_string(dir.path().join("destination/source.rs")).unwrap(), "move");
+    assert_eq!(std::fs::read_to_string(dir.path().join("destination/stays.rs")).unwrap(), "keep");
+    workspace.client.call(Command::Shutdown).unwrap();
 }
 
 #[test]

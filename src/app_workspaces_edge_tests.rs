@@ -19,6 +19,7 @@ fn ready_open(app: &mut App, root: &Path) {
                 global: Default::default(),
                 workspace: Default::default(),
                 session: None,
+                incomplete_session_recovery: None,
             },
             remote: None,
             equivalent_roots: Vec::new(),

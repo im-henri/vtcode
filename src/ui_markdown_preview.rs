@@ -250,9 +250,9 @@ impl PreviewService {
         slot.wanted = key.clone();
         slot.frame = frame;
         slot.visible = true;
-        for slot in &mut self.slots {
-            slot.poll();
-        }
+        // The event loop owns other panes' repaint signals. Consuming their
+        // results here can leave an already drawn pane showing its old layout.
+        slot.poll();
         self.trim(Some(view), frame, background);
         let slot = self
             .slots
