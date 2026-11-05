@@ -366,6 +366,8 @@ pub(crate) fn draw_content(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = focused(app);
     let mouse = (app.mouse_col, app.mouse_row);
     let text_focused = focused && app.logs.focus.is_none();
+    let viewport = app.text_input_viewport(crate::text_input::TextInputId::OutputFind);
+    app.logs.reader().set_find_viewport(viewport);
     app.logs.visible = !area.is_empty();
     app.logs
         .reader()
@@ -638,7 +640,9 @@ pub(crate) fn mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if blocked(app) {
         return false;
     }
-    if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
+        | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
         && app.text_input_area(crate::text_input::TextInputId::OutputFind)
             .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
         && app.handle_background_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
@@ -865,6 +869,7 @@ pub(crate) fn key(app: &mut App, key: KeyEvent) -> bool {
         return true;
     }
     if app.logs.reader().search_focused() {
+        app.reveal_text_input_navigation(crate::text_input::TextInputId::OutputFind, key.code);
         app.logs.reader().key(key);
         return true;
     }

@@ -3132,12 +3132,15 @@ fn remote_explorer_clipboard_shortcuts_and_terminal_paste_preserve_the_local_buf
             crate::app_event_loop::handle_paste_input(&mut app, &payload);
         }
         app.wait_for_background(Duration::from_secs(10), |app| {
-            !app.bg_filesystem_action_running
+            !app.bg_filesystem_action_running && !app.bg_explorer_refresh_running
         });
         assert_eq!(
             std::fs::read_to_string(directory.path().join("destination/source.rs")).unwrap(),
             "saved remote content\n"
         );
+        let pasted = workspace.target_key("destination/source.rs").unwrap();
+        assert_eq!(app.explorer.entries[app.explorer.selected].path, pasted);
+        assert_eq!(app.explorer_multi_selected.as_slice(), [pasted]);
         assert_eq!(directory.path().join("source.rs").exists(), !cut);
         assert_eq!(
             app.editor().unwrap().rope.to_string(),

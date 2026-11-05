@@ -31,6 +31,8 @@ pub(crate) struct Outcome {
     clear_clipboard: bool,
     warning: bool,
     open_file: Option<RemotePath>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pasted_paths: Vec<RemotePath>,
 }
 
 pub(crate) fn execute(
@@ -83,54 +85,55 @@ pub(crate) fn execute(
             if !directory.is_dir() {
                 return Err(io::Error::other("Paste destination is not a directory"));
             }
-            let mut done = 0;
             let mut failed = 0;
             let mut last_error = None;
             for path in sources {
                 if cancel.is_cancelled() {
                     break;
                 }
-                let source = path.resolve(root)?;
-                let name = source
-                    .file_name()
-                    .ok_or_else(|| io::Error::other("Cannot copy a filesystem root"))?;
-                let mut destination = directory.join(name);
-                if cut && source == destination {
-                    crate::fs_ops::rename_no_replace(&source, &destination)?;
-                    done += 1;
-                    continue;
-                }
-                // symlink_metadata recognizes dangling symlinks as occupied.
-                if std::fs::symlink_metadata(&destination).is_ok() {
-                    let stem = source.file_stem().unwrap_or(name).to_string_lossy();
-                    let extension = source
-                        .extension()
-                        .map(|s| format!(".{}", s.to_string_lossy()))
-                        .unwrap_or_default();
-                    let mut found = false;
-                    for suffix in 1..=10_000 {
-                        destination = directory.join(format!("{stem} ({suffix}){extension}"));
-                        if matches!(std::fs::symlink_metadata(&destination), Err(error) if error.kind() == io::ErrorKind::NotFound)
-                        {
-                            found = true;
-                            break;
+                let operation = (|| {
+                    let source = path.resolve(root)?;
+                    let name = source
+                        .file_name()
+                        .ok_or_else(|| io::Error::other("Cannot copy a filesystem root"))?;
+                    let mut destination = directory.join(name);
+                    // symlink_metadata recognizes dangling symlinks as occupied.
+                    if (!cut || source != destination)
+                        && std::fs::symlink_metadata(&destination).is_ok()
+                    {
+                        let stem = source.file_stem().unwrap_or(name).to_string_lossy();
+                        let extension = source
+                            .extension()
+                            .map(|s| format!(".{}", s.to_string_lossy()))
+                            .unwrap_or_default();
+                        let mut found = false;
+                        for suffix in 1..=10_000 {
+                            destination = directory.join(format!("{stem} ({suffix}){extension}"));
+                            if matches!(std::fs::symlink_metadata(&destination), Err(error) if error.kind() == io::ErrorKind::NotFound)
+                            {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            return Err(io::Error::other("Could not choose an unused copy name"));
                         }
                     }
-                    if !found {
-                        return Err(io::Error::other("Could not choose an unused copy name"));
+                    if cut {
+                        crate::fs_ops::rename_no_replace(&source, &destination)?;
+                    } else {
+                        crate::fs_ops::copy_no_replace(&source, &destination, || {
+                            cancel.is_cancelled()
+                        })?;
                     }
-                }
-                let operation = if cut {
-                    crate::fs_ops::rename_no_replace(&source, &destination)
-                } else {
-                    crate::fs_ops::copy_no_replace(&source, &destination, || cancel.is_cancelled())
-                };
+                    Ok((source, destination))
+                })();
                 match operation {
-                    Ok(()) => {
-                        done += 1;
-                        if cut {
-                            result.renames.push((source, destination));
+                    Ok((source, destination)) => {
+                        if cut && source != destination {
+                            result.renames.push((source, destination.clone()));
                         }
+                        result.pasted_paths.push(destination);
                     }
                     Err(error) => {
                         failed += 1;
@@ -138,6 +141,7 @@ pub(crate) fn execute(
                     }
                 }
             }
+            let done = result.pasted_paths.len();
             if done == 0
                 && let Some(error) = last_error
             {
@@ -177,6 +181,11 @@ pub(crate) fn execute(
         warning: result.warning,
         clear_clipboard: result.clear_explorer_clipboard,
         open_file: result.open_file.map(convert).transpose()?,
+        pasted_paths: result
+            .pasted_paths
+            .into_iter()
+            .map(convert)
+            .collect::<io::Result<_>>()?,
     })
 }
 
@@ -214,6 +223,11 @@ impl workspace::Workspace {
             clear_explorer_clipboard: outcome.clear_clipboard,
             warning: outcome.warning,
             open_file: outcome.open_file.as_ref().map(|path| self.view_key(path)),
+            pasted_paths: outcome
+                .pasted_paths
+                .iter()
+                .map(|path| self.view_key(path))
+                .collect(),
             finish_rename: None,
         })
     }

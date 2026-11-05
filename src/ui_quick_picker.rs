@@ -594,7 +594,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         f.render_widget(input, rows[1]);
         Some(
             InputField::new(&query)
-        .theme_colors(&colors)
+                .viewport(app.text_input_viewport(id))
+                .theme_colors(&colors)
                 .prefix("  ", colors.ui.description_color(input_bg))
                 .placeholder_text(placeholder)
                 .cursor_marker("│")

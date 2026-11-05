@@ -119,6 +119,7 @@ mod app_tab_close;
 mod tab_collection;
 mod app_wrap;
 mod app_terminal;
+mod app_terminal_find;
 mod app_terminal_selection;
 mod app_text_fields;
 mod app_theme;
@@ -144,6 +145,7 @@ mod basic_operations_audit_tests;
 mod editor;
 mod editor_ai_review;
 mod diff_context;
+mod diff_wrap;
 mod diff_selection;
 mod diff_scope_source;
 mod editor_comments;
@@ -193,6 +195,8 @@ mod extension_wasm;
 mod extensions;
 mod helpers;
 mod highlight;
+mod language_detection;
+mod app_language_detection;
 mod input;
 mod input_dialogs;
 mod input_keyboard;
@@ -240,6 +244,7 @@ mod keyboard_protocol_tests;
 #[cfg(windows)]
 mod windows_mouse;
 mod text_input;
+mod text_wrap;
 mod commit_input;
 mod commit_details;
 mod commit_review;
@@ -482,7 +487,7 @@ fn run_main() -> io::Result<()> {
     } else { None };
     let remote_root = remote_workspace.as_ref().map(|remote| remote.view_root.clone());
     let loader = startup::Loader::start(wake.clone(), move || match remote_root {
-        Some(root) => startup::Prepared::load_remote(root),
+        Some(root) => Ok(startup::Prepared::load_remote(root)),
         None => startup::Prepared::load(raw_arg),
     })?;
     let Some(prepared) = loader.wait(&mut terminal, &mut events)? else {
@@ -491,7 +496,7 @@ fn run_main() -> io::Result<()> {
         return Ok(());
     };
     startup_timings.mark("manifest_ready");
-    let mut app = prepared.into_app_with_remote(wake, remote_workspace);
+    let mut app = prepared?.into_app_with_remote(wake, remote_workspace);
     startup_timings.mark("workbench_ready");
     let res = app_event_loop::run_app(&mut terminal, &mut app, events, Some(startup_timings));
 

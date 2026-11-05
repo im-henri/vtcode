@@ -42,6 +42,7 @@ struct Key {
     area: Rect,
     version: u64,
     wrap_revision: u64,
+    wrap: (bool, usize),
     cursor: (usize, usize),
     selection: Option<(usize, usize, usize, usize)>,
     scroll: (usize, usize, usize),
@@ -65,6 +66,7 @@ impl Key {
             area,
             version: editor.content_version,
             wrap_revision: editor.wrap_revision,
+            wrap: (editor.word_wrap, editor.word_wrap_column),
             cursor: (editor.cursor_line, editor.cursor_col),
             selection: editor.selection_range(),
             scroll: (

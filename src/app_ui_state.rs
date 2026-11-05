@@ -4,6 +4,15 @@ use crate::app::{compute_file_diff, ActivePane, App, DiffMode, NotifyLevel, Side
 
 pub(crate) const BINARY_DIFF_MESSAGE: &str = "Diff is unavailable for binary files.";
 
+pub(crate) struct SearchResultClick {
+    result: crate::app::GlobalSearchResult,
+    position: (u16, u16),
+    time: std::time::Instant,
+    serial: u64,
+    workspace: u64,
+    search: u64,
+}
+
 #[cfg(test)]
 #[path = "palette_theme_tests.rs"]
 mod palette_theme_tests;
@@ -183,6 +192,7 @@ impl App {
     }
 
     pub(crate) fn clear_drag_states(&mut self) {
+        if let Some(peek) = self.hunk_peek.as_mut() { peek.cancel_drag(); }
         crate::ui_extension_info::cancel_drag(self);
         self.keybindings_ui.cancel_drag();
         self.context_menu_button_drag = None;
@@ -593,6 +603,7 @@ impl App {
         self.activity_bar_selected = 1;
         self.active_pane = ActivePane::Explorer;
         self.global_search_active = true;
+        self.global_search_results_focused = false;
         self.search_focus_field = 0;
         self.search_input_focused = false;
         self.terminal_panel_focused = false;
@@ -622,21 +633,58 @@ impl App {
         false
     }
 
+    pub(crate) fn click_global_search_result(&mut self, index: usize, column: u16, row: u16) {
+        let Some(result) = self.global_search_results.get(index).cloned() else { return; };
+        let time = std::time::Instant::now();
+        let position = (column, row);
+        let keep_open = self.global_search_result_click.as_ref().is_some_and(|last| {
+            last.serial.wrapping_add(1) == self.mouse_press_serial
+                && last.position == position
+                && last.workspace == self.workspace_generation
+                && last.search == self.search_generation
+                && time.duration_since(last.time) < std::time::Duration::from_millis(400)
+                && last.result.file_path == result.file_path
+                && last.result.line_num == result.line_num
+                && last.result.col_start == result.col_start
+                && last.result.col_end == result.col_end
+        });
+        self.global_search_result_click = Some(SearchResultClick {
+            result: result.clone(), position, time, serial: self.mouse_press_serial,
+            workspace: self.workspace_generation, search: self.search_generation,
+        });
+        self.global_search_selected_header = None;
+        self.global_search_selected = index;
+        self.preview_global_search_result();
+        if keep_open && self.tabs.get(self.active_tab).is_some_and(|tab| {
+            tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_deref()
+                .is_some_and(|path| Self::same_open_path(path, &result.file_path))
+        }) {
+            self.pin_preview_tab();
+        }
+    }
+
     /// Show the selected match while keeping keyboard focus in search.
     pub(crate) fn preview_global_search_result(&mut self) {
-        let sidebar_search = self.apply_global_search_collapsed_visibility();
         if !matches!(self.global_search_selected_row(), Some(crate::search_results::SearchRow::Header(_))) {
             self.open_global_search_result();
         }
-        if sidebar_search { self.focus_global_search_results(); }
+        self.focus_global_search_results();
         self.reveal_global_search_selection();
     }
 
     pub(crate) fn focus_global_search_results(&mut self) {
         self.active_pane = ActivePane::Explorer;
-        self.global_search_active = false;
+        self.global_search_active = !self.apply_global_search_collapsed_visibility();
+        self.global_search_results_focused = true;
         self.search_input_focused = false;
         self.terminal_panel_focused = false;
+    }
+
+    pub(crate) fn close_global_search(&mut self) {
+        let sidebar = self.apply_global_search_collapsed_visibility();
+        self.global_search_active = false;
+        self.global_search_results_focused = sidebar && self.active_pane == ActivePane::Explorer;
+        if !sidebar { self.active_pane = ActivePane::Editor; }
     }
 
     pub(crate) fn global_search_selected_row(&self) -> Option<crate::search_results::SearchRow> {

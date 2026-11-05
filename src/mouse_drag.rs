@@ -276,13 +276,12 @@ pub(crate) fn code_area_to_buffer_pos(
     let screen_row = row.saturating_sub(code_area.y) as usize;
     let screen_col = col.saturating_sub(code_area.x) as usize;
     if let Some(rows) = &ed.diff_display_rows {
-        let line = rows.get(screen_row).copied().flatten()
+        let mapped = rows.get(screen_row).copied().flatten()
             .or_else(|| rows.iter().skip(screen_row).copied().flatten().next())
-            .or_else(|| rows.iter().take(screen_row).rev().copied().flatten().next())
-            .unwrap_or(ed.cursor_line);
-        let column = ed.source_column_at_cell(line, ed.horizontal_scroll, ed.line_len(line),
-            screen_col.saturating_sub(ed.diff_text_inset)).0;
-        return (line, column);
+            .or_else(|| rows.iter().take(screen_row).rev().copied().flatten().next());
+        return mapped.map_or((ed.cursor_line, ed.cursor_col), |row| {
+            (row.line_idx, ed.column_on_wrapped_row(&row, screen_col.saturating_sub(ed.diff_text_inset)))
+        });
     }
     if ed.ai_review.active {
         let mapped = ed.ai_review.source_rows.get(screen_row).copied().flatten()

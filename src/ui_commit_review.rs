@@ -292,6 +292,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     }
     let mode = crate::commit_review::mode(app, area.width);
     let context = app.commit_details.diff_context;
+    let width = area.width.saturating_sub(3);
+    let wrap = app.editor().map_or((app.default_word_wrap, app.word_wrap_column), |editor| {
+        (editor.word_wrap, editor.word_wrap_column)
+    });
     if app.commit_details.review.mode != Some(mode) {
         app.commit_details.review.mode = Some(mode);
         app.commit_details.review.heights.clear();
@@ -300,13 +304,18 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     if let Some(file) = app.commit_details.diff_file
         && app.commit_details.diff_full_cache.is_some()
     {
-        let height = crate::commit_review::rows(&app.diff_render_cache, mode)
-            .max(1)
-            .saturating_add(4);
-        app.commit_details.review.heights.insert(file, height);
+        let mut scroll = std::mem::take(&mut app.diff_inline_scroll);
+        if let Some(editor) = app.editor() {
+            let height = crate::commit_review::file_height(
+                &mut scroll, &app.diff_render_cache, editor, mode, width,
+                app.diff_split_ratio, &app.animation_settings,
+            );
+            app.commit_details.review.heights.insert(file, height);
+        }
+        app.diff_inline_scroll = scroll;
     }
     for (&file, view) in &mut app.commit_details.review.cached {
-        let height = view.review_height(context, mode);
+        let height = view.review_height(context, mode, width, wrap, &app.animation_settings);
         app.commit_details.review.heights.insert(file, height);
     }
     // Native keyboard/search navigation keeps the target row in the outer
@@ -317,9 +326,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
             .commit_details
             .review
             .caret
-            .is_some_and(|previous| previous != (file, editor.cursor_line))
+            .is_some_and(|previous| previous != (file, editor.cursor_line, if wrap.0 { editor.cursor_col } else { 0 }))
     {
-        let row = if mode == crate::app::DiffMode::SideBySide {
+        let logical = if mode == crate::app::DiffMode::SideBySide {
             app.diff_render_cache
                 .aligned_row_for_target_line(editor.cursor_line)
         } else {
@@ -327,6 +336,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
                 .inline_text_row_for_target_line(editor.cursor_line)
                 .unwrap_or_else(|| app.diff_render_cache.inline_row_for_target_line(editor.cursor_line))
         };
+        let row = app.diff_inline_scroll.wrap.row_for_column(logical, false, editor.cursor_col);
         let start: usize = filtered
             .iter()
             .take_while(|index| **index != file)
@@ -447,7 +457,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     app.commit_details.review.caret = app
         .commit_details
         .diff_file
-        .zip(app.editor().map(|editor| editor.cursor_line));
+        .and_then(|file| app.editor().map(|editor| (file, editor.cursor_line, if wrap.0 { editor.cursor_col } else { 0 })));
     app.commit_details.layout.as_mut().unwrap().patch = selected_body;
     app.commit_details.review.visible = visible;
     app.commit_details.diff_loading = app.commit_details.review.pending.is_some()

@@ -297,7 +297,10 @@ fn extensionless_language_rejects_long_non_shebang_lines_and_preserves_interpret
         ("#! powershell", "PowerShell"),
         ("#! unknown\npython", "Plain Text"),
         (&format!("界{}#!python", "x".repeat(65536)), "Plain Text"),
-        (&format!("#!{}python", "x".repeat(8192)), "Python"),
+        // A pathological first line must not make status rendering scan
+        // unbounded text. Background detection has its own bounded sample.
+        (&format!("#!{}python", "x".repeat(8192)), "Plain Text"),
+        (&format!("#!python {}", "x".repeat(8192)), "Python"),
     ] {
         for path in [None, Some(std::path::PathBuf::from("script"))] {
             let mut editor = fixture(source, 0);

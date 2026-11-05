@@ -497,6 +497,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         return false;
     }
     if app.completion_index_ui.editing.is_some() {
+        app.reveal_text_input_navigation(crate::text_input::TextInputId::CompletionNumber, key.code);
         match key.code {
             KeyCode::Esc => {
                 app.completion_index_ui.editing = None;
@@ -619,7 +620,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.completion_index_ui.open {
         return false;
     }
-    if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
+        | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
         && app.text_input_area(crate::text_input::TextInputId::CompletionNumber)
             .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
         && app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {

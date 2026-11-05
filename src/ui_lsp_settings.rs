@@ -760,6 +760,7 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect) {
                 crate::ui_settings::settings_control_style(&app.colors, "text", bg, focused);
             let input_bg = input_style.bg.unwrap_or(bg);
             let input = InputField::new(&field.text)
+                .viewport(app.text_input_viewport(TextInputId::LspSetting(*id)))
                 .theme_control(&app.colors, app.colors.ui.settings_control("text"), bg)
                 .prefix(" ", app.colors.ui.description_color(input_bg))
                 .bg(input_bg)

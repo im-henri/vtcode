@@ -2,6 +2,65 @@ use super::*;
 use notify::{Event, EventKind, event::{DataChange, ModifyKind}};
 
 #[test]
+fn ten_minute_build_has_bounded_notifications_and_a_final_quiet_flush() {
+    let start = Instant::now();
+    let mut burst = Burst::default();
+    let mut deliveries = Vec::new();
+    // The reported build produces a batch approximately every 300 ms for ten
+    // minutes. Every relevant event extends the quiet deadline, not the cap.
+    for index in 0..2_000 {
+        let now = start + Duration::from_millis(index * 300);
+        burst.note_activity(now);
+        if burst.next_wait(now).is_zero() {
+            deliveries.push(now);
+            burst = Burst::default();
+        }
+    }
+    assert!(deliveries.len() <= 60, "a build must not emit thousands of batches");
+    assert!(deliveries.len() >= 50, "sustained activity must still make progress");
+    for pair in deliveries.windows(2) { assert!(pair[1].duration_since(pair[0]) >= MAX_DELAY); }
+    let last = start + Duration::from_millis(1_999 * 300);
+    assert_eq!(burst.next_wait(last), QUIET);
+    assert!(burst.next_wait(last + QUIET).is_zero());
+    assert!(Burst::default().next_wait(last).is_zero(), "idle/control wakes add no timer");
+}
+
+#[test]
+fn only_relevant_writes_extend_the_quiet_deadline() {
+    let root = Path::new("workspace");
+    let mut burst = Burst::default();
+    burst.push(root, Ok(Event::new(EventKind::Create(notify::event::CreateKind::File))
+        .add_path(root.join("source.rs"))));
+    let initial = burst.activity.unwrap();
+    for path in [root.join("source.rs"), root.join(".git/objects/object")] {
+        burst.push(root, Ok(Event::new(EventKind::Access(notify::event::AccessKind::Open(
+            notify::event::AccessMode::Read))).add_path(path)));
+    }
+    burst.push(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)))
+        .add_path(root.join(".git/objects/object"))));
+    assert_eq!(burst.activity, Some(initial), "read and private Git noise cannot starve delivery");
+    // An already buffered file must extend the deadline, despite deduplication.
+    burst.activity = Some((initial.0, initial.1 - QUIET));
+    burst.push(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)))
+        .add_path(root.join("source.rs"))));
+    assert!(burst.activity.unwrap().1 >= initial.1);
+    assert_eq!(burst.event.paths, [root.join("source.rs")]);
+    let external = PathBuf::from("metadata");
+    burst.activity = None;
+    burst.push_with_dependencies(root, Ok(Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)))
+        .add_path(external.join("HEAD"))), &[external]);
+    assert!(burst.activity.is_some(), "external Git writes share the batching policy");
+    burst.event.rescan = true;
+    let activity = burst.activity;
+    burst.push(root, Ok(Event::new(EventKind::Access(notify::event::AccessKind::Open(
+        notify::event::AccessMode::Read))).add_path(root.join("source.rs"))));
+    assert_eq!(burst.activity, activity, "reads must not extend an overflow's quiet deadline either");
+    assert!(!burst.next_wait(Instant::now()).is_zero(), "large bursts must not bypass the quiet interval");
+    burst.event.watcher_failed = true;
+    assert!(burst.next_wait(Instant::now()).is_zero(), "failed coverage must be reported promptly");
+}
+
+#[test]
 fn filename_invalidation_reports_new_events_independently_of_the_buffered_burst() {
     let root = Path::new("workspace");
     let mut burst = Burst::default();

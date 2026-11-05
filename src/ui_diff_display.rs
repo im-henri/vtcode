@@ -10,7 +10,9 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::App;
+use crate::app::{App, DiffMode, DiffRenderCache};
+use crate::diff_wrap::Widths;
+use crate::editor::Editor;
 use crate::ui_editor_highlight::{draw_horizontal_scrollbar, draw_minimap_separator, HScrollbarParams};
 use crate::ui_editor::refresh_cached_editor_diagnostics;
 use crate::ui_editor_minimap::{
@@ -77,6 +79,43 @@ pub(crate) fn side_by_side_diff_layout(area: Rect, ratio: f32) -> SideBySideDiff
     }
 }
 
+pub(crate) fn measure_wrap(
+    cache: &DiffRenderCache,
+    editor: &Editor,
+    mode: DiffMode,
+    width: u16,
+    split_ratio: f32,
+    minimap: Option<u16>,
+    scope_rail: bool,
+) -> Option<Widths> {
+    if !editor.word_wrap || editor.large_file_mode {
+        return None;
+    }
+    let area = Rect::new(0, 0, width, 2);
+    let (left, right) = if mode == DiffMode::SideBySide {
+        let panes = side_by_side_diff_layout(area, split_ratio);
+        let gutter = crate::ui_editor::line_number_width(editor.line_count()) as u16
+            + 2 + u16::from(scope_rail);
+        let minimap = minimap.filter(|_| panes.right.width > 80).unwrap_or(0);
+        let code = crate::ui_editor::editor_columns(panes.right, gutter, minimap)[1];
+        (original_text_width(cache, panes.left), code.width.saturating_sub(2) as usize)
+    } else {
+        let layout = inline_diff_layout(area, minimap.is_some(), minimap.unwrap_or(0));
+        let width = (layout.code_area.width as usize)
+            .saturating_sub(inline_number_width(cache, editor.line_count()) * 2 + 4);
+        (width, width)
+    };
+    Widths::new(editor, left, right)
+}
+
+fn original_text_width(cache: &DiffRenderCache, pane: Rect) -> usize {
+    (pane.width as usize).saturating_sub(digit_count(cache.max_left_line).max(2) + 4)
+}
+
+fn inline_number_width(cache: &DiffRenderCache, line_count: usize) -> usize {
+    digit_count(cache.max_left_line.max(line_count)).max(4)
+}
+
 fn diff_labels(app: &App) -> (&str, &str) {
     app.diff_labels
         .as_ref()
@@ -114,26 +153,39 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
     draw_diff_header(f, app, layout.left_header, base, false);
     draw_diff_header(f, app, layout.right_header, target, unsaved);
 
-    if app.context_diff_active() || crate::commit_review::painting_row(app).is_some() {
-        crate::diff_context::draw_compact_side_by_side(f, app, area);
-    } else {
-        let word_wrap = app.editor().is_some_and(|editor| editor.word_wrap);
-        let cursor_visible = app.cursor_visible;
-        if app.diff_selection_owns_cursor() {
-            app.cursor_visible = false;
-        }
-        if let Some(editor) = app.editor_mut() {
-            editor.word_wrap = false;
-            editor.diff_display_rows = None;
-        }
-        crate::ui_editor::draw_editor(f, app, layout.right);
-        app.cursor_visible = cursor_visible;
-        if let Some(editor) = app.editor_mut() {
-            editor.word_wrap = word_wrap;
-        }
-        layout_aligned_diff_scroll(app, area);
-        draw_diff_original(f, app, layout.left);
-        draw_diff_target_overlay(f, app);
+    let compact = app.context_diff_active() || crate::commit_review::painting_row(app).is_some();
+    let show_minimap = app.show_minimap;
+    let cursor_visible = app.cursor_visible;
+    let has_overlay = !app.compare_diff_lines.is_empty();
+    let word_wrap = app.editor().is_some_and(|editor| editor.word_wrap);
+    app.show_minimap &= !compact;
+    let widths = app.editor().and_then(|editor| {
+        has_overlay.then(|| measure_wrap(
+            &app.diff_render_cache, editor, DiffMode::SideBySide, area.width,
+            app.diff_split_ratio, app.show_minimap.then_some(app.minimap_width),
+            app.animation_settings.scope_enabled_for(editor),
+        )).flatten()
+    });
+    app.diff_inline_scroll.prepare_wrap(&app.diff_render_cache, true, widths);
+    if app.diff_selection_owns_cursor() {
+        app.cursor_visible = false;
+    }
+    if let Some(editor) = app.editor_mut() {
+        // The shared editor supplies the right pane's chrome. The comparison
+        // below owns text layout, so the editor cannot independently wrap it.
+        editor.word_wrap = word_wrap && !has_overlay;
+        editor.diff_display_rows = None;
+    }
+    crate::ui_editor::draw_editor(f, app, layout.right);
+    app.cursor_visible = cursor_visible;
+    app.show_minimap = show_minimap;
+    if let Some(editor) = app.editor_mut() {
+        editor.word_wrap = word_wrap;
+    }
+    layout_aligned_diff_scroll(app, area);
+    draw_diff_original(f, app, layout.left);
+    draw_diff_target_overlay(f, app);
+    if has_overlay {
         crate::diff_context::map_visible_rows(app, true);
         crate::diff_context::draw_scrollbar(f, app);
         crate::diff_context::draw_search_matches(f, app);
@@ -163,21 +215,16 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// Keep an exact aligned row anchor even when many original rows map to the
 /// same target line. Both full and compact comparisons use this scroll state.
-pub(crate) fn layout_aligned_diff_scroll(app: &mut App, area: Rect) {
+fn layout_aligned_diff_scroll(app: &mut App, area: Rect) {
     let layout = side_by_side_diff_layout(area, app.diff_split_ratio);
     let mut scroll = std::mem::take(&mut app.diff_inline_scroll);
-    if !scroll.aligned {
-        scroll = Default::default();
-        scroll.aligned = true;
-    }
     scroll.area = area;
     scroll.text_area = app.code_area.unwrap_or_default();
     // Either side can reserve a horizontal scrollbar independently. Retain
     // enough vertical travel to expose the last source row on the shorter side.
-    let left_gutter = digit_count(app.diff_render_cache.max_left_line).max(2) + 1;
-    let left_width = (layout.left.width as usize).saturating_sub(left_gutter + 3);
+    let left_width = original_text_width(&app.diff_render_cache, layout.left);
     let left_height = layout.left.height.saturating_sub(u16::from(
-        app.diff_render_cache.max_left_text_width > left_width && layout.left.height > 1,
+        !scroll.wrap.enabled() && app.diff_render_cache.max_left_text_width > left_width && layout.left.height > 1,
     ));
     scroll.text_area.height = scroll.text_area.height.min(left_height);
     scroll.vertical_area = app.scrollbar_area.unwrap_or_default();
@@ -248,16 +295,16 @@ fn draw_diff_cursor(
     };
     // Scroll anchors can include deletions or hidden-context markers. Locate
     // the actual target among only painted rows, without scanning the diff.
-    let Some((screen_row, row)) = (0..area.height as usize).find_map(|offset| {
-        let index = row_scroll.checked_add(offset)?;
-        let row = if aligned {
-            cache.rows.get(index)?
-        } else {
-            let entry = cache.inline_rows.get(index).filter(|row| row.kind != '-')?;
-            cache.rows.get(entry.aligned_row)?
-        };
-        (row.hidden_lines == 0 && row.right_line == Some(editor.cursor_line))
-            .then_some((offset, row))
+    let wrap = &app.diff_inline_scroll.wrap;
+    let Some((screen_row, display, row)) = (0..area.height as usize).find_map(|offset| {
+        let display = wrap.row_at(row_scroll.checked_add(offset)?);
+        let row = display.target(cache, aligned)?;
+        let cursor = editor.cursor_col.min(row.right_char_len());
+        let contains_cursor = display.columns(false).is_none_or(|(start, end)| {
+            start <= cursor && (cursor < end || end == row.right_char_len())
+        });
+        (row.hidden_lines == 0 && row.right_line == Some(editor.cursor_line) && contains_cursor)
+            .then_some((offset, display, row))
     }) else {
         // Diff lines omit the terminal empty Rope line. Keep that real source
         // position navigable without inventing a diff hunk or changing text.
@@ -267,11 +314,11 @@ fn draw_diff_cursor(
             && editor.rope.line(editor.cursor_line).len_chars() == 0
             && editor.horizontal_scroll == 0
         {
-            let terminal_row = if aligned {
+            let terminal_row = wrap.first_row(if aligned {
                 cache.rows.len()
             } else {
                 cache.inline_rows.len()
-            };
+            });
             if let Some(offset) = terminal_row
                 .checked_sub(row_scroll)
                 .filter(|offset| *offset < area.height as usize)
@@ -287,18 +334,11 @@ fn draw_diff_cursor(
         }
         return None;
     };
-    let (text, char_start, padding) = if aligned {
-        (
-            row.right_text_window(editor.horizontal_scroll, width),
-            editor.horizontal_scroll,
-            0,
-        )
-    } else {
-        if app.diff_inline_scroll.column > row.right_cell_len() {
-            return None;
-        }
-        row.right_inline_text_window(app.diff_inline_scroll.column, width)
-    };
+    let pan = if aligned { editor.horizontal_scroll } else { app.diff_inline_scroll.column };
+    if !aligned && pan > row.right_cell_len() {
+        return None;
+    }
+    let (text, char_start, padding) = display.window(row, false, aligned, pan, width);
     let cursor = editor.cursor_col.min(row.right_char_len());
     let mut source_col = char_start;
     let mut cell_col = padding;
@@ -897,8 +937,9 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
     let rows = &diff_cache.rows;
     let row_scroll = app.aligned_diff_scroll_row(editor_scroll_offset);
     let gutter_width = digit_count(diff_cache.max_left_line).max(2) + 1;
-    let display_width = (area.width as usize).saturating_sub(gutter_width + 3);
-    let show_h_scrollbar = diff_cache.max_left_text_width > display_width && area.height > 1;
+    let display_width = original_text_width(&diff_cache, area);
+    let wrap = &app.diff_inline_scroll.wrap;
+    let show_h_scrollbar = !wrap.enabled() && diff_cache.max_left_text_width > display_width && area.height > 1;
     let content_area = Rect::new(
         area.x,
         area.y,
@@ -912,7 +953,9 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         content_area.height,
     );
     app.diff_left_code_area = Some(left_code_area);
-    let max_scroll = diff_cache.max_left_text_width.saturating_sub(display_width);
+    let max_scroll = if wrap.enabled() { 0 } else {
+        diff_cache.max_left_text_width.saturating_sub(display_width)
+    };
     app.diff_left_horizontal_scroll = app.diff_left_horizontal_scroll.min(max_scroll);
     let left_horizontal_scroll = app.diff_left_horizontal_scroll;
     let visible_lines = content_area.height as usize;
@@ -923,7 +966,8 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
     let _ = write!(left_num_pad, "{:>width$} ", " ", width = gutter_width);
     let mut left_num_buf = String::with_capacity(gutter_width + 2);
     for row in 0..visible_lines {
-        let row_idx = row_scroll + row;
+        let display = wrap.row_at(row_scroll + row);
+        let row_idx = display.logical;
         let Some(diff_row) = rows.get(row_idx) else {
             let filler = crate::helpers::spaces(content_area.width as usize);
             lines_out.push(Line::from(Span::styled(
@@ -948,7 +992,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let status = diff_row.left_kind;
 
-        if diff_row.left_line.is_none() {
+        if diff_row.left_line.is_none() || display.padding(true) {
             let spacer_bg = app.colors.bg_dark;
             let starts_block = row_idx == 0
                 || rows
@@ -977,7 +1021,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             _ => base_bg,
         };
 
-        let line_num_span = if diff_row.left_line.is_some() {
+        let line_num_span = if display.continuation == 0 {
             left_num_buf.clear();
             let _ = write!(
                 left_num_buf,
@@ -995,7 +1039,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             )
         };
 
-        let indicator = match status {
+        let indicator = match if display.continuation == 0 { status } else { ' ' } {
             '-' => Span::styled("- ", Style::default().fg(app.colors.fg_diff_removed).bg(bg)),
             '+' => Span::styled("+ ", Style::default().fg(app.colors.fg_diff_added).bg(bg)),
             _ => Span::styled("  ", Style::default().fg(app.colors.fg_dim).bg(bg)),
@@ -1006,11 +1050,13 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             _ => None,
         };
         let mut row_spans = vec![line_num_span, indicator];
+        let (start, count) = display.columns(true)
+            .map_or((left_horizontal_scroll, display_width), |(start, end)| (start, end - start));
         if diff_row.left_char_len() > crate::highlight::MAX_SYNTAX_LINE_CHARS {
             row_spans.extend(render_plain_diff_window(
-                diff_row.left_text_window(left_horizontal_scroll, display_width),
-                left_horizontal_scroll,
-                display_width,
+                diff_row.left_text_window(start, count),
+                start,
+                count,
                 bg,
                 bg_hl,
                 diff_row.left_char_highlights.as_deref(),
@@ -1028,14 +1074,17 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
                 cached.as_ref(),
                 &diff_row.left_text,
                 diff_row.left_char_len(),
-                || diff_row.left_text_window(left_horizontal_scroll, display_width),
-                display_width,
-                left_horizontal_scroll,
+                || diff_row.left_text_window(start, count),
+                count,
+                start,
                 bg,
                 bg_hl,
                 diff_row.left_char_highlights.as_deref(),
                 app.colors.fg_text,
             ));
+        }
+        if display.columns(true).is_some() {
+            pad_wrapped_diff_row(&mut row_spans, gutter_width + 3 + display_width, bg);
         }
         style_diff_spans(&mut row_spans, &app.colors, status, &mut contrast);
         lines_out.push(Line::from(row_spans));
@@ -1101,6 +1150,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
     }
     let diff_cache = std::sync::Arc::clone(&app.diff_render_cache);
     let rows = &diff_cache.rows;
+    let wrap = &app.diff_inline_scroll.wrap;
     let row_scroll = app.aligned_diff_scroll_row(editor_scroll_offset);
     let visible_rows = code_area.height as usize;
     let h_scroll = editor_h_scroll;
@@ -1140,7 +1190,8 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
     ));
 
     for row in 0..visible_rows {
-        let row_idx = row_scroll + row;
+        let display = wrap.row_at(row_scroll + row);
+        let row_idx = display.logical;
         let Some(diff_row) = rows.get(row_idx) else {
             gutter_lines.push(tilde_line.clone());
             code_lines.push(blank_line.clone());
@@ -1153,7 +1204,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             code_lines.push(Line::default());
             continue;
         }
-        if diff_row.right_line.is_none() {
+        if diff_row.right_line.is_none() || display.padding(false) {
             let gutter_bg = app.colors.bg_dark;
             let spacer_bg = app.colors.bg_editor;
             let starts_block = row_idx == 0
@@ -1194,7 +1245,8 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             _ => base_bg,
         };
 
-        let (diff_char, diff_style) = match diff_row.right_kind {
+        let marker_kind = if display.continuation == 0 { diff_row.right_kind } else { ' ' };
+        let (diff_char, diff_style) = match marker_kind {
             '+' => (
                 "+",
                 Style::default()
@@ -1212,7 +1264,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             _ => (" ", Style::default().fg(row_bg).bg(row_bg)),
         };
         let line_num = if show_line_numbers {
-            if let Some(line) = diff_row.right_line {
+            if let Some(line) = diff_row.right_line.filter(|_| display.continuation == 0) {
                 num_buf.clear();
                 let _ = write!(num_buf, "{:>width$}", line + 1, width = num_width);
                 let s = std::mem::take(&mut num_buf);
@@ -1250,7 +1302,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             '-' => app.colors.fg_diff_removed,
             _ => app.colors.fg_text,
         };
-        let marker = match diff_row.right_kind {
+        let marker = match marker_kind {
             '+' => Span::styled(
                 "+ ",
                 Style::default().fg(app.colors.fg_diff_added).bg(row_bg),
@@ -1268,11 +1320,13 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         };
         let text_width = visible_width.saturating_sub(2);
         let mut row_spans = vec![marker];
+        let (start, count) = display.columns(false)
+            .map_or((h_scroll, text_width), |(start, end)| (start, end - start));
         if diff_row.right_char_len() > crate::highlight::MAX_SYNTAX_LINE_CHARS {
             row_spans.extend(render_plain_diff_window(
-                diff_row.right_text_window(h_scroll, text_width),
-                h_scroll,
-                text_width,
+                diff_row.right_text_window(start, count),
+                start,
+                count,
                 row_bg,
                 bg_hl,
                 diff_row.right_char_highlights.as_deref(),
@@ -1290,19 +1344,26 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
                 cached.as_ref(),
                 &diff_row.right_text,
                 diff_row.right_char_len(),
-                || diff_row.right_text_window(h_scroll, text_width),
-                text_width,
-                h_scroll,
+                || diff_row.right_text_window(start, count),
+                count,
+                start,
                 row_bg,
                 bg_hl,
                 diff_row.right_char_highlights.as_deref(),
                 fg,
             ));
         }
+        if display.columns(false).is_some() {
+            pad_wrapped_diff_row(&mut row_spans, visible_width, row_bg);
+        }
         style_diff_spans(&mut row_spans, &app.colors, diff_row.right_kind, &mut contrast);
         code_lines.push(Line::from(row_spans));
     }
 
+    if wrap.enabled() {
+        f.render_widget(Clear, gutter_area);
+        f.render_widget(Clear, code_area);
+    }
     f.render_widget(
         Paragraph::new(gutter_lines).style(
             Style::default()
@@ -1325,8 +1386,10 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
     if has_hidden_rows {
         let style = Style::default()
             .fg(app.colors.ui.description_color(app.colors.bg_dark)).bg(app.colors.bg_dark);
-        for (offset, row) in rows.iter().skip(row_scroll).take(visible_rows).enumerate() {
-            if row.hidden_lines > 0 {
+        for offset in 0..visible_rows {
+            if let Some(row) = rows.get(wrap.row_at(row_scroll + offset).logical)
+                && row.hidden_lines > 0
+            {
                 let area = Rect::new(
                     gutter_area.x,
                     code_area.y + offset as u16,
@@ -1343,6 +1406,11 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             }
         }
     }
+}
+
+fn pad_wrapped_diff_row(spans: &mut Vec<Span<'_>>, width: usize, bg: Color) {
+    let used: usize = spans.iter().map(Span::width).sum();
+    spans.push(Span::styled(crate::helpers::spaces(width.saturating_sub(used)), Style::default().bg(bg)));
 }
 
 /// Inline diff view rendered from library-produced diff lines.
@@ -1434,9 +1502,10 @@ fn draw_inline_scrollbar(
     f: &mut Frame,
     params: ScrollbarParams,
     cache: &crate::app::DiffRenderCache,
+    wrap: &crate::diff_wrap::Layout,
 ) {
     #[cfg(test)]
-    if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) {
+    if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) && !wrap.enabled() {
         let matches: Vec<_> = params
             .search_matches
             .iter()
@@ -1462,7 +1531,7 @@ fn draw_inline_scrollbar(
         );
         return;
     }
-    draw_mapped_scrollbar(f, params, cache.inline_target_text_rows());
+    draw_mapped_scrollbar(f, params, cache.inline_target_text_rows(), |row| wrap.logical_boundary(row));
 }
 
 pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1480,12 +1549,11 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let diff_cache = std::sync::Arc::clone(&app.diff_render_cache);
     let review_row = crate::commit_review::painting_row(app);
     let mut layout = inline_diff_layout(area, app.show_minimap && !app.context_diff_active() && review_row.is_none(), app.minimap_width);
-    let number_width = digit_count(diff_cache.max_left_line.max(
-        app.editor().map_or(1, |editor| editor.line_count()),
-    )).max(4);
+    let number_width = inline_number_width(&diff_cache, app.editor().map_or(1, Editor::line_count));
     let gutter_width = (number_width * 2 + 4).min(layout.code_area.width as usize);
     let text_width = layout.code_area.width.saturating_sub(gutter_width as u16);
-    let horizontal_area = if diff_cache.max_inline_text_width > text_width as usize
+    let widths = app.editor().and_then(|editor| Widths::new(editor, text_width as usize, text_width as usize));
+    let horizontal_area = if widths.is_none() && diff_cache.max_inline_text_width > text_width as usize
         && layout.code_area.height > 1 && text_width > 0
     {
         layout.code_area.height -= 1;
@@ -1514,7 +1582,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     app.scrollbar_area = Some(layout.scrollbar_area);
 
     let mut scroll = std::mem::take(&mut app.diff_inline_scroll);
-    if scroll.aligned { scroll = Default::default(); }
+    scroll.prepare_wrap(&diff_cache, false, widths);
     scroll.area = Rect::new(area.x, layout.code_area.y, area.width, area.bottom().saturating_sub(layout.code_area.y));
     scroll.text_area = text_area;
     scroll.vertical_area = layout.scrollbar_area;
@@ -1550,7 +1618,8 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let mut contrast = crate::ui_colors::TextContrastCache::new(&app.colors.ui);
     let mut render_lines: Vec<Line<'_>> = Vec::new();
     for row in 0..visible {
-        let idx = scroll + row;
+        let display = app.diff_inline_scroll.wrap.row_at(scroll + row);
+        let idx = display.logical;
         if idx >= diff_cache.inline_rows.len() {
             render_lines.push(Line::from(Span::styled(
                 " ",
@@ -1630,8 +1699,8 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                 app.colors.fg_text,
             ),
         };
-        let old_disp = old_ln.map(|n| n + 1);
-        let new_disp = new_ln.map(|n| n + 1);
+        let old_disp = old_ln.filter(|_| display.continuation == 0).map(|n| n + 1);
+        let new_disp = new_ln.filter(|_| display.continuation == 0).map(|n| n + 1);
         let mut line_head = String::with_capacity(16);
         if let Some(n) = old_disp {
             let _ = write!(line_head, "{n:>number_width$}");
@@ -1645,18 +1714,12 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             line_head.push_str(&crate::helpers::spaces(number_width));
         }
         line_head.push(' ');
-        line_head.push_str(prefix);
+        line_head.push_str(if display.continuation == 0 { prefix } else { "  " });
         let available = width.saturating_sub(UnicodeWidthStr::width(line_head.as_str()));
         let mut row_spans = vec![Span::styled(line_head, Style::default().fg(fg).bg(bg))];
-        let window = || {
-            if cached_row.kind == '-' {
-                aligned_row.left_inline_text_window(horizontal_scroll, available)
-            } else {
-                aligned_row.right_inline_text_window(horizontal_scroll, available)
-            }
-        };
+        let window = || display.window(aligned_row, cached_row.kind == '-', false, horizontal_scroll, available);
         #[cfg(test)]
-        let (text, char_start, padding) = if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) {
+        let (text, char_start, padding) = if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) && widths.is_none() {
             inline_diff_text_window(_source_text, horizontal_scroll, available)
         } else {
             window()
@@ -1724,7 +1787,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         layout.code_area,
     );
 
-    if app.context_diff_active() {
+    if app.context_diff_active() || widths.is_some() {
         crate::diff_context::map_visible_rows(app, false);
         crate::diff_context::draw_search_matches(f, app);
     }
@@ -1749,12 +1812,13 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             change_rows: &app.diff_inline_scroll.change_rows,
             cursor_line: app
                 .diff_inline_scroll
-                .cursor_row_for_line(&diff_cache, editor.cursor_line),
+                .cursor_row(&diff_cache, editor.cursor_line, editor.cursor_col),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
         },
         &diff_cache,
+        &app.diff_inline_scroll.wrap,
     );
     // A two-column bar reserves its first column for the thumb. A single-column
     // bar (beside a minimap) must retain the shared renderer's change markers;
@@ -2244,6 +2308,15 @@ mod tests {
                         .unwrap();
                     let left = app.diff_left_code_area.unwrap();
                     let right = app.code_area.unwrap();
+                    if word_wrap {
+                        assert!(app.diff_left_h_scrollbar_area.is_none());
+                        assert!(app.h_scrollbar_area.is_none());
+                        diff_wheel(&mut app, (left.x, left.y), forward, modifiers);
+                        diff_wheel(&mut app, (right.x, right.y), forward, modifiers);
+                        assert_eq!(app.diff_left_horizontal_scroll, 0);
+                        assert_eq!(app.editor().unwrap().horizontal_scroll, 0);
+                        continue;
+                    }
                     let bar = app.diff_left_h_scrollbar_area.unwrap();
 
                     // Text, gutter, header and scrollbar all belong to the original pane.
@@ -2272,12 +2345,10 @@ mod tests {
                         assert_eq!(app.diff_left_horizontal_scroll, 0);
                     }
 
-                    if !word_wrap {
-                        diff_wheel(&mut app, (right.x, right.y), forward, modifiers);
-                        assert_eq!(app.editor().unwrap().horizontal_scroll, 6);
-                        assert_eq!(app.diff_left_horizontal_scroll, 0);
-                        diff_wheel(&mut app, (right.x, right.y), backward, modifiers);
-                    }
+                    diff_wheel(&mut app, (right.x, right.y), forward, modifiers);
+                    assert_eq!(app.editor().unwrap().horizontal_scroll, 6);
+                    assert_eq!(app.diff_left_horizontal_scroll, 0);
+                    diff_wheel(&mut app, (right.x, right.y), backward, modifiers);
                     for _ in 0..40 {
                         diff_wheel(&mut app, (left.x, left.y), forward, modifiers);
                     }

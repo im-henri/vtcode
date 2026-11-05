@@ -492,21 +492,15 @@ impl App {
                         equivalent_roots: Vec::new(),
                     })
                 } else {
-                    if !path.is_dir() {
-                        return Err(io::Error::other("Choose a folder"));
-                    }
-                    // Keep the launch/session path spelling stable; lexical
-                    // aliases are already normalized by the folder picker.
-                    let root = crate::folder_browser::normalized_path(&path);
-                    let canonical = std::fs::canonicalize(&root)?;
+                    let folder = crate::startup::LocalFolder::resolve(&path)?;
                     let equivalent_roots = open_roots
                         .into_iter()
                         .filter(|opened| {
-                            std::fs::canonicalize(opened).is_ok_and(|other| canonical == other)
+                            std::fs::canonicalize(opened).is_ok_and(|other| folder.canonical == other)
                         })
                         .collect();
                     Ok(Prepared {
-                        startup: crate::startup::Prepared::load(Some(root.into_os_string())),
+                        startup: folder.prepare()?,
                         remote: None,
                         equivalent_roots,
                     })
@@ -539,7 +533,10 @@ impl App {
         let wake = self.background.wake_handle();
         self.workspaces.opening = Some(Opening { receiver, foreground: false, close_after: Some(self.workspaces.active) });
         self.background.spawn("prepare-local-window", move || {
-            let _ = sender.send(Ok(Prepared { startup: crate::startup::Prepared::load(None), remote: None, equivalent_roots: Vec::new() }));
+            let result = crate::startup::Prepared::load(None)
+                .map(|startup| Prepared { startup, remote: None, equivalent_roots: Vec::new() })
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
             wake.notify();
         });
         true

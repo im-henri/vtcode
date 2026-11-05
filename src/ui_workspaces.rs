@@ -242,6 +242,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     {
         return true;
     }
+    if let Some(id) = focused_input(app) {
+        app.reveal_text_input_navigation(id, key.code);
+    }
     let list = !app.workspaces.popup.close
         && (app.workspaces.popup.sets.mode.is_none()
             || matches!(
@@ -312,7 +315,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         dismiss(app);
         return false;
     }
-    if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
+        | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
         && [
             crate::text_input::TextInputId::WorkspaceFilter,
             crate::text_input::TextInputId::WorkspaceName,

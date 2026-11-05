@@ -80,7 +80,7 @@ impl Snapshot {
     pub(crate) fn prepare(
         self,
         text: String,
-        smart: bool,
+        allow_line_copy: bool,
         cancel: &CancellationToken,
     ) -> Result<Prepared, String> {
         if cancel.is_cancelled() {
@@ -91,7 +91,7 @@ impl Snapshot {
         self.view.clone().install(&mut editor);
         let first = editor.earliest_edit_line();
         // The scratch view never wraps or renders the million-line payload.
-        editor.paste_snapshot_text(&text, smart, Some(self.line_copy));
+        editor.paste_snapshot_text(&text, allow_line_copy, Some(self.line_copy));
         if cancel.is_cancelled() {
             return Err("Paste cancelled; the document was not changed".into());
         }

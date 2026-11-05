@@ -123,7 +123,8 @@ impl App {
         }
     }
 
-    fn focus_terminal_surface(&mut self, surface: TerminalSurface) {
+    pub(crate) fn focus_terminal_surface(&mut self, surface: TerminalSurface) {
+        self.terminal_find.focused = None;
         if let Some(group) = surface.group {
             self.switch_group(group);
             if let Some(tab) = self

@@ -277,9 +277,11 @@ pub(crate) fn list(
     if space >= 4 {
         let rect = Rect::new(inner.x + 1, top, inner.width.saturating_sub(2), 1);
         let input_foreground = secondary(app).fg.unwrap();
+        let viewport = app.text_input_viewport(crate::text_input::TextInputId::WorkspaceFilter);
         let search = &mut app.workspaces.popup.search;
         search.input = Some(
             crate::ui_widgets::InputField::new(&search.text)
+                .viewport(viewport)
                 .prefix("⌕ ", input_foreground)
                 .cursor_pos(search.cursor)
                 .selection_range(App::inline_selection_range(search.cursor, search.anchor))

@@ -909,6 +909,7 @@ fn source_control_diff_refresh_updates_inactive_splits_after_saving_and_staging(
         app.should_render_diff_for_active_editor() && !app.diff_tabs.refresh_running
     });
     let staged_cache = app.diff_render_cache.clone();
+    app.pin_preview_tab();
     app.open_source_control_diff_tab(&path, false, false);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
         app.should_render_diff_for_active_editor() && !app.diff_tabs.refresh_running
@@ -1078,6 +1079,7 @@ fn source_control_staged_and_unstaged_diffs_use_separate_revisions_and_tabs() {
     // never install working-tree content or a diff in the staged tab.
     app.open_source_control_diff(1);
     let unstaged_tab = app.active_tab;
+    app.pin_preview_tab();
     let staged_change = app.source_control_files[0].clone();
     app.open_source_control_context_menu(0, 0, staged_change);
     let view_diff = app
@@ -1291,6 +1293,7 @@ fn source_control_diff_tabs_survive_multiple_files_and_split_rendering() {
     let first_cache = app.diff_render_cache.clone();
     app.execute_palette_command("toggle_diff_layout");
     assert!(app.diff_mode == DiffMode::Inline);
+    app.pin_preview_tab();
     app.open_source_control_diff_tab(&repo_dir.join("second.txt"), false, false);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| app.diff_mode == DiffMode::Inline);
     app.execute_palette_command("toggle_diff_layout");

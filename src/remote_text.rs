@@ -397,6 +397,8 @@ impl Store {
         self.transfers.remove(&transfer);
         self.contexts.close(transfer);
     }
+    #[cfg(test)]
+    pub(super) fn live_transfers(&self) -> usize { self.transfers.len() }
 }
 
 struct Close<'a> {

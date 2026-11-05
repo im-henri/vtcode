@@ -76,9 +76,9 @@ fn remote_markdown_directory_link_reveals_explorer_and_keeps_preview_tabs() {
     app.toggle_markdown_preview_tab();
     let before = app.tabs.len();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 25)).unwrap();
-    terminal
-        .draw(|frame| draw_markdown_preview(frame, &mut app, Rect::new(0, 0, 90, 25)))
-        .unwrap();
+    settle_preview_for_test(&mut app, |app| {
+        terminal.draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, 90, 25))).unwrap();
+    });
     let view = app
         .editor()
         .unwrap()
@@ -276,9 +276,9 @@ fn ctrl_click_anchor_navigates_without_changing_the_markdown_source() {
     app.active_tab = 0;
     app.toggle_markdown_preview_tab();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 25)).unwrap();
-    terminal
-        .draw(|frame| draw_markdown_preview(frame, &mut app, Rect::new(0, 0, 90, 25)))
-        .unwrap();
+    settle_preview_for_test(&mut app, |app| {
+        terminal.draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, 90, 25))).unwrap();
+    });
     let view = app
         .editor()
         .unwrap()
@@ -363,7 +363,6 @@ fn pathological_nesting_and_embedded_images_have_bounded_output() {
 
 #[test]
 fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
-    PREVIEWS.with_borrow_mut(Vec::clear);
     let source = format!(
         "# Intro\n\n{}\n```rust\nfn main() {{ let text = \"café 世界 👩‍💻\"; }}\n```\n\n{}\n```python\ndef test():\n    return 1\n```",
         "Paragraph.\n\n".repeat(30),
@@ -375,20 +374,19 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
     app.tabs = vec![crate::app::Tab::new_file(editor)];
     app.active_tab = 0;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 20)).unwrap();
-    terminal
-        .draw(|f| draw_markdown_preview(f, &mut app, Rect::new(0, 0, 90, 20)))
-        .unwrap();
-    let (first, second, source_rows, text_rows) = PREVIEWS.with_borrow(|cache| {
-        let entry = &cache[0];
+    settle_preview_for_test(&mut app, |app| {
+        terminal.draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20))).unwrap();
+    });
+    let (first, second, source_rows, text_rows) = with_preview_for_test(&app, |entry| {
         assert!(
-            entry.document.highlighted.borrow().is_empty(),
+            entry.document.highlighted().is_empty(),
             "opening a document must not highlight offscreen code"
         );
         (
             entry.code_views[0].clone(),
             entry.code_views[1].block,
-            Rc::clone(&entry.source_rows),
-            Rc::clone(&entry.text_rows),
+            Arc::clone(&entry.source_rows),
+            Arc::clone(&entry.text_rows),
         )
     });
     let editor = app.editor_mut().unwrap();
@@ -397,15 +395,14 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
     view.select_all();
     let selected = view.selected_text();
     editor.scroll_offset = view.source_scroll;
-    terminal
-        .draw(|f| draw_markdown_preview(f, &mut app, Rect::new(0, 0, 90, 20)))
-        .unwrap();
-    let code = PREVIEWS.with_borrow(|cache| {
-        let entry = &cache[0];
-        assert!(entry.document.highlighted.borrow().contains(&first.block));
-        assert!(!entry.document.highlighted.borrow().contains(&second));
-        assert!(Rc::ptr_eq(&source_rows, &entry.source_rows));
-        assert!(Rc::ptr_eq(&text_rows, &entry.text_rows));
+    settle_preview_for_test(&mut app, |app| {
+        terminal.draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20))).unwrap();
+    });
+    let code = with_preview_for_test(&app, |entry| {
+        assert!(entry.document.highlighted().contains(&first.block));
+        assert!(!entry.document.highlighted().contains(&second));
+        assert!(Arc::ptr_eq(&source_rows, &entry.source_rows));
+        assert!(Arc::ptr_eq(&text_rows, &entry.text_rows));
         let (syntaxes, themes) = app.highlighter.shared_sets();
         let expected = render_document(
             &source,
@@ -417,7 +414,7 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
             format!("{:?}", &entry.rows[first.rows.clone()]),
             format!("{:?}", &expected[first.rows.clone()])
         );
-        Rc::clone(&entry.document.code.borrow()[&first.block])
+        Arc::clone(&entry.document.code()[&first.block])
     });
     assert_eq!(
         app.editor()
@@ -428,13 +425,13 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
             .selected_text(),
         selected
     );
-    terminal
-        .draw(|f| draw_markdown_preview(f, &mut app, Rect::new(0, 0, 90, 20)))
-        .unwrap();
-    PREVIEWS.with_borrow(|cache| {
-        assert!(Rc::ptr_eq(
+    settle_preview_for_test(&mut app, |app| {
+        terminal.draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20))).unwrap();
+    });
+    with_preview_for_test(&app, |entry| {
+        assert!(Arc::ptr_eq(
             &code,
-            &cache[0].document.code.borrow()[&first.block]
+            &entry.document.code()[&first.block]
         ))
     });
 }

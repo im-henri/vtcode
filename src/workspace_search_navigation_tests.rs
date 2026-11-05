@@ -81,8 +81,10 @@ fn assert_selected_match(app: &App, selected: usize, preview: bool) {
 fn arrows_open_each_match_keep_search_focus_and_honor_the_preview_setting() {
     for preview in [false, true] {
         let (_root, mut app) = fixture(preview);
+        app.preview_global_search_result();
+        wait_for_files(&mut app);
+        assert_selected_match(&app, 0, preview);
         for (code, selected) in [
-            (KeyCode::Down, 0),
             (KeyCode::Down, 1),
             (KeyCode::Down, 2),
             (KeyCode::Down, 3),
@@ -103,7 +105,8 @@ fn arrows_open_each_match_keep_search_focus_and_honor_the_preview_setting() {
 #[test]
 fn rapid_arrows_reuse_loading_previews_and_keep_the_latest_match_position() {
     let (_root, mut app) = fixture(true);
-    for code in [KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Up] {
+    app.preview_global_search_result();
+    for code in [KeyCode::Down, KeyCode::Down, KeyCode::Up] {
         key(&mut app, code);
     }
     wait_for_files(&mut app);
@@ -118,6 +121,7 @@ fn rapid_arrows_reuse_loading_previews_and_keep_the_latest_match_position() {
 #[test]
 fn arrows_skip_collapsed_files_and_handle_missing_or_stale_selections() {
     let (root, mut app) = fixture(true);
+    app.focus_global_search_results();
     app.global_search_results
         .set_collapsed(&root.path().join("b.txt"), true);
     for (code, selected) in [
@@ -153,15 +157,14 @@ fn arrows_skip_collapsed_files_and_handle_missing_or_stale_selections() {
 fn popup_arrows_keep_search_open_and_continue_through_matches() {
     let (_root, mut app) = fixture(true);
     app.show_explorer = false;
+    key(&mut app, KeyCode::Tab);
+    assert!(app.global_search_results_focused);
     for (code, selected) in [(KeyCode::Down, 1), (KeyCode::Down, 2), (KeyCode::Up, 1)] {
         key(&mut app, code);
         wait_for_files(&mut app);
         assert_eq!(app.global_search_selected, selected);
         assert!(app.global_search_active);
-        assert_eq!(
-            app.focused_text_input_id(),
-            Some(TextInputId::GlobalSearch(0))
-        );
+        assert_eq!(app.focused_text_input_id(), None);
         assert_eq!(
             app.editor().unwrap().file_path.as_ref(),
             Some(&app.global_search_results[selected].file_path)
@@ -169,6 +172,13 @@ fn popup_arrows_keep_search_open_and_continue_through_matches() {
         assert!(app.tabs[app.active_tab].preview);
         assert_eq!(app.tabs.len(), 1);
     }
+    key(&mut app, KeyCode::BackTab);
+    assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+    key(&mut app, KeyCode::Tab);
+    assert!(app.global_search_results_focused);
+    key(&mut app, KeyCode::Enter);
+    assert!(!app.global_search_active);
+    assert_eq!(app.active_pane, ActivePane::Editor);
 }
 
 #[test]
@@ -186,6 +196,10 @@ fn enter_focuses_the_editor_and_tab_and_escape_return_to_search_fields() {
             Some(TextInputId::GlobalSearch(0))
         );
         key(&mut app, KeyCode::Down);
+        assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+        assert_eq!(app.global_search_selected, 1);
+        app.focus_text_input(TextInputId::GlobalSearch(3));
+        key(&mut app, KeyCode::Tab);
         assert_selected_match(&app, 1, true);
     }
     key(&mut app, KeyCode::Enter);
@@ -198,4 +212,37 @@ fn enter_focuses_the_editor_and_tab_and_escape_return_to_search_fields() {
     assert!(app.editor().unwrap().modified);
     assert!(!app.tabs[app.active_tab].preview);
     assert_eq!(app.global_search_query, "needle");
+}
+
+#[test]
+fn search_fields_browse_history_with_existing_results_without_opening_matches() {
+    for sidebar in [false, true] {
+        for field in 0..if sidebar { 4 } else { 1 } {
+            for modifiers in [KeyModifiers::NONE, KeyModifiers::ALT] {
+                let (_root, mut app) = fixture(true);
+                app.show_explorer = sidebar;
+                app.global_search_replace_visible = true;
+                app.focus_text_input(TextInputId::GlobalSearch(field));
+                *app.global_search_field_state_mut(field).0 = "draft".into();
+                *app.global_search_field_history_mut(field) = crate::search_history::History::restore(
+                    &["older".into(), "recent".into()]);
+                for (code, expected) in [(KeyCode::Up, "recent"), (KeyCode::Up, "older"),
+                    (KeyCode::Down, "recent"), (KeyCode::Down, "draft")] {
+                    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, modifiers));
+                    assert_eq!(app.global_search_field_state_mut(field).0, expected);
+                    assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(field)));
+                    assert!(!app.global_search_results_focused);
+                    assert_eq!(app.global_search_selected, 0);
+                    assert!(app.tabs.is_empty(), "history navigation must not open a match");
+                }
+                for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SHIFT] {
+                    for code in [KeyCode::Up, KeyCode::Down] {
+                        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, modifiers));
+                        assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(field)));
+                        assert!(app.tabs.is_empty());
+                    }
+                }
+            }
+        }
+    }
 }

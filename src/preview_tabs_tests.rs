@@ -258,6 +258,26 @@ fn preview_tabs_are_reused_within_their_own_split_group() {
 }
 
 #[test]
+fn snapshot_and_agent_diffs_follow_the_preview_setting() {
+    for enabled in [false, true] {
+        let (directory, mut app) = workspace();
+        app.set_preview_tabs_enabled(enabled);
+        app.new_snapshot_diff_tab();
+        assert_eq!(app.tabs[app.active_tab].preview, enabled);
+        app.open_acp_diff(&vtcode::acp::protocol::Diff::new(directory.path().join("a.txt"), "new\n").old_text("old\n"));
+        assert_eq!(app.tabs.len(), if enabled { 1 } else { 2 });
+        assert_eq!(app.tabs[app.active_tab].preview, enabled);
+        assert!(app.should_render_diff_for_active_editor());
+        assert_eq!(app.compare_base_content.as_deref(), Some("old\n"));
+        app.pin_preview_tab();
+        app.new_snapshot_diff_tab();
+        assert_eq!(app.tabs.len(), if enabled { 2 } else { 3 });
+        assert_eq!(app.tabs[app.active_tab].preview, enabled);
+        assert!(!app.tabs[app.active_tab - 1].preview);
+    }
+}
+
+#[test]
 fn preview_tab_is_italic_when_active_and_double_click_keeps_it_open() {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};

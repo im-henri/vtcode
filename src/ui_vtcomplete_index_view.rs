@@ -331,6 +331,7 @@ fn number(
             .push((rect, control, back, enabled));
     }
     app.completion_index_ui.values.push((value, control));
+    let viewport = app.text_input_viewport(crate::text_input::TextInputId::CompletionNumber);
     if let Some(edit) = app
         .completion_index_ui
         .editing
@@ -339,6 +340,7 @@ fn number(
     {
         edit.hit_map = Some(
             crate::ui_widgets::InputField::new(&edit.text)
+                .viewport(viewport)
                 .theme_control(&app.colors, app.colors.ui.input_colors, bg)
                 .prefix("", normal.fg.unwrap_or(Color::Reset))
                 .cursor_pos(edit.cursor)

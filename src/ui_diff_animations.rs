@@ -29,6 +29,7 @@ struct GeometryKey {
     area: Rect,
     first: usize,
     pan: usize,
+    wrap: Option<crate::diff_wrap::Widths>,
     primary: Option<CursorUnderlay>,
 }
 
@@ -54,6 +55,7 @@ impl GeometryKey {
             area,
             first,
             pan,
+            wrap: app.diff_inline_scroll.wrap.widths(),
             primary,
         })
     }
@@ -69,6 +71,7 @@ impl GeometryKey {
             && self.area == other.area
             && self.first == other.first
             && self.pan == other.pan
+            && self.wrap == other.wrap
             && self.primary == other.primary
     }
 }
@@ -200,12 +203,16 @@ fn geometry(app: &App, original: bool, aligned: bool) -> Option<(Geometry, Rect)
     let mut geometry = Geometry::new(area, true);
     geometry.set_diff_projection(pan, !aligned);
     let cache = &app.diff_render_cache;
+    let wrap = &app.diff_inline_scroll.wrap;
+    if let Some(widths) = wrap.widths() {
+        geometry.set_wrapped(if original && aligned { widths.left } else { widths.right });
+    }
     for screen_row in 0..area.height as usize {
-        let display_row = first.saturating_add(screen_row);
-        let (index, row_original) = if aligned {
-            (display_row, original)
+        let display = wrap.row_at(first.saturating_add(screen_row));
+        let (index, row_original, display_original) = if aligned {
+            (display.logical, original, original)
         } else {
-            let Some(entry) = cache.inline_rows.get(display_row) else {
+            let Some(entry) = cache.inline_rows.get(display.logical) else {
                 continue;
             };
             (
@@ -215,6 +222,7 @@ fn geometry(app: &App, original: bool, aligned: bool) -> Option<(Geometry, Rect)
                 } else {
                     entry.kind == '-'
                 },
+                entry.kind == '-',
             )
         };
         let Some(row) = cache.rows.get(index) else {
@@ -226,33 +234,26 @@ fn geometry(app: &App, original: bool, aligned: bool) -> Option<(Geometry, Rect)
             geometry.obstacle(screen_row, 0, area.width as usize);
             continue;
         }
-        let Some(line) = source_line(row, row_original) else {
+        let Some(line) = source_line(row, row_original).filter(|_| !display.padding(display_original)) else {
             // Alignment hatching belongs to the other revision, not source
             // indentation through which a rail may route.
             geometry.obstacle(screen_row, 0, area.width as usize);
             continue;
         };
         if original == row_original {
-            geometry.map_source_row(line, screen_row);
+            if let Some((start, _)) = display.columns(display_original) {
+                geometry.map_scope_row(line, start, screen_row);
+            } else {
+                geometry.map_source_row(line, screen_row);
+            }
         }
         let char_len = if row_original {
             row.left_char_len()
         } else {
             row.right_char_len()
         };
-        let (text, mut column, mut x) = if aligned {
-            let text = if row_original {
-                row.left_text_window(pan, area.width as usize)
-            } else {
-                row.right_text_window(pan, area.width as usize)
-            };
-            (text, pan, 0)
-        } else if row_original {
-            row.left_inline_text_window(pan, area.width as usize)
-        } else {
-            row.right_inline_text_window(pan, area.width as usize)
-        };
-        let selected = app.diff_scope_selection_columns(row_original, display_row, line);
+        let (text, mut column, mut x) = display.window(row, display_original, aligned, pan, area.width as usize);
+        let selected = app.diff_scope_selection_columns(row_original, display.logical, line);
         let visible_start = column;
         let cursor_here = original == row_original && cursor.0 == line && cursor.1 >= visible_start;
         let mut cursor_protected = false;

@@ -14,6 +14,9 @@ use crate::app::{
 #[path = "diff_refresh_tests.rs"]
 mod refresh_tests;
 
+#[path = "diff_recent.rs"]
+mod recent;
+
 // Ordinary diff tabs allocate IDs starting at one. The single commit browsing
 // tab owns zero so it shares the same cache, input and split-group lifecycle.
 pub(crate) const COMMIT_DIFF_ID: u64 = 0;
@@ -53,6 +56,7 @@ pub(crate) struct DiffTabs {
     refresh_generation: u64,
     pub(crate) refresh_running: bool,
     dirty: rustc_hash::FxHashSet<u64>,
+    recent: recent::Cache,
 }
 
 struct SourceControlIdentity {
@@ -62,6 +66,7 @@ struct SourceControlIdentity {
     epoch: u64,
     dirty: Dirty,
     inflight: Dirty,
+    validating_cached: Option<std::time::Instant>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -144,7 +149,10 @@ fn prepare_remote_refresh(remote: &crate::remote::workspace::Workspace, request:
     let (base, mut target, revisions, mut target_read) = refresh_sources(&request, sources);
     let mut missing = request.missing;
     if !request.staged && request.dirty.worktree {
-        target = match remote.load(&request.path) {
+        let baseline = request.target.remote_checkpoint.as_ref().map(|checkpoint| crate::remote::workspace::Baseline {
+            checkpoint: checkpoint.clone(), rope: request.target.rope.clone(), encoding: request.target.encoding,
+        });
+        target = match remote.reload(&request.path, baseline.as_ref()) {
             Ok(loaded) => { missing = false; loaded },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 missing = true;
@@ -277,14 +285,22 @@ impl CommitFileView {
     pub(crate) fn pan(&mut self, col: u16, row: u16, delta: isize) {
         self.view.pan(&mut self.editor, col, row, delta);
     }
-    pub(crate) fn review_height(&mut self, context: crate::commit_details::DiffContext, mode: DiffMode) -> usize {
+    pub(crate) fn review_height(
+        &mut self, context: crate::commit_details::DiffContext, mode: DiffMode, width: u16,
+        wrap: (bool, usize), animations: &crate::animation_config::AnimationSettings,
+    ) -> usize {
         if self.view.cache.context_lines != context.changes_only.then_some(context.lines) {
             self.view.cache = if context.changes_only { Arc::new(self.full.with_context(context.lines)) }
                 else { self.full.clone() };
             self.view.inline_scroll = Default::default();
             self.revealed = None;
         }
-        crate::commit_review::rows(&self.view.cache, mode).max(1).saturating_add(4)
+        self.editor.word_wrap = wrap.0 && !self.editor.large_file_mode;
+        self.editor.word_wrap_column = wrap.1;
+        crate::commit_review::file_height(
+            &mut self.view.inline_scroll, &self.view.cache, &self.editor,
+            mode, width, self.view.split_ratio, animations,
+        )
     }
 
     pub(crate) fn discard(self, animations: &mut crate::animations::AnimationState) {
@@ -295,7 +311,7 @@ impl CommitFileView {
 
 impl DiffViewState {
     fn pan(&mut self, editor: &mut crate::editor::Editor, col: u16, row: u16, delta: isize) {
-        if self.mode == DiffMode::SideBySide && scroll_original_diff_at(
+        if self.mode == DiffMode::SideBySide && !self.inline_scroll.wrap.enabled() && scroll_original_diff_at(
             self.split_area, self.left_code_area, self.split_ratio,
             self.cache.max_left_text_width, &mut self.left_scroll, (col, row).into(), delta)
         { return; }
@@ -372,6 +388,7 @@ impl App {
         let point = (col, row).into();
         if horizontal
             && self.diff_mode == DiffMode::SideBySide
+            && !self.diff_inline_scroll.wrap.enabled()
             && self.should_render_diff_for_active_editor()
             && scroll_original_diff_at(
                 self.diff_split_area,
@@ -404,6 +421,7 @@ impl App {
             let Some(view) = self.diff_tabs.views.get_mut(&id) else { continue };
             if horizontal
                 && view.mode == DiffMode::SideBySide
+                && !view.inline_scroll.wrap.enabled()
                 && scroll_original_diff_at(
                     view.split_area,
                     view.left_code_area,
@@ -443,6 +461,7 @@ impl App {
     }
 
     pub(crate) fn cancel_source_control_diff_refresh(&mut self) {
+        self.diff_tabs.recent.entries.clear();
         self.diff_tabs.refresh_generation = self.diff_tabs.refresh_generation.wrapping_add(1);
         self.diff_tabs.refresh_running = false;
         for (&id, origin) in &mut self.diff_tabs.source_control {
@@ -500,6 +519,8 @@ impl App {
             scopes.set_ignore_case(cfg!(windows));
             Some(scopes)
         });
+        self.diff_tabs.recent.entries.retain(|entry| scopes.as_ref().is_some_and(|scopes|
+            entry.staged || !scopes.contains(&relative(&entry.path).to_string_lossy())));
         for tab in self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)) {
             let TabKind::Diff(id) = tab.kind else { continue; };
             let Some(origin) = self.diff_tabs.source_control.get_mut(&id) else { continue; };
@@ -542,7 +563,7 @@ impl App {
                         .or_else(|| self.repository_hint_for_path(path)),
                     staged: origin.staged,
                     base: base.clone(),
-                    target: crate::editor::LoadedTextFile { remote_checkpoint: None, rope: tab.editor.rope.clone(), encoding: tab.editor.encoding, file_size: tab.editor.file_size, last_disk_modified: tab.editor.last_disk_modified },
+                    target: crate::editor::LoadedTextFile { remote_checkpoint: tab.editor.remote_checkpoint.clone(), rope: tab.editor.rope.clone(), encoding: tab.editor.encoding, file_size: tab.editor.file_size, last_disk_modified: tab.editor.last_disk_modified },
                     missing: tab.editor.disk_unavailable,
                     revisions: origin.revisions,
                     dirty: origin.dirty,
@@ -654,8 +675,12 @@ impl App {
                 self.diff_tabs.dirty.insert(id);
                 continue;
             }
+            let was_cached = self.diff_tabs.source_control.get_mut(&id).unwrap().validating_cached.take().is_some();
             match update.result {
                 Ok(prepared) => {
+                    if active && was_cached && self.status_message.starts_with("Updating diff:") {
+                        self.status_message = format!("Opened diff: {}", self.editor().unwrap().file_display_name());
+                    }
                     self.diff_tabs.source_control.get_mut(&id).unwrap().revisions = Some(prepared.revisions);
                     let Some(tab) = self
                         .tabs
@@ -687,6 +712,7 @@ impl App {
                         editor.horizontal_scroll = horizontal;
                     }
                     editor.last_disk_modified = prepared.target.last_disk_modified;
+                    editor.remote_checkpoint = prepared.target.remote_checkpoint;
                     editor.encoding = prepared.target.encoding;
                     changed |= editor.disk_unavailable != prepared.missing;
                     editor.disk_unavailable = prepared.missing;
@@ -720,6 +746,7 @@ impl App {
                 Err(error) => {
                     if active {
                         self.clear_diff_state();
+                        if was_cached { self.status_message = format!("Diff refresh failed: {error}"); }
                         self.notify_error(error);
                     } else {
                         self.forget_cached_diff_view(id);
@@ -959,8 +986,7 @@ impl App {
         let mut tab = Tab::new_file(self.new_editor());
         tab.kind = TabKind::Diff(id);
         tab.editor.read_only = true;
-        self.tabs.push(tab);
-        self.active_tab = self.tabs.len() - 1;
+        self.push_previewable_tab(tab, self.enable_preview_tabs);
         self.diff_tabs.owner = Some(id);
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;
@@ -1017,7 +1043,12 @@ impl App {
             self.switch_group(group);
             self.active_tab = index;
         } else {
-            let mut editor = if deleted || staged {
+            let limit = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
+            let cached = self.diff_tabs.recent.take(&path, repository.as_deref(), staged, deleted,
+                limit, std::time::Instant::now());
+            let mut editor = if let Some(cached) = &cached {
+                cached.editor(self.new_editor(), limit)
+            } else if deleted || staged {
                 let mut editor = self.new_editor();
                 editor.file_path = Some(path.clone());
                 editor.disk_unavailable = deleted;
@@ -1028,17 +1059,23 @@ impl App {
             };
             editor.read_only = true;
             editor.language_override = self.language_override_for_path(&path);
-            editor.language_associations = self.language_associations.clone();
+            editor.set_language_associations(&self.language_associations);
             editor.tab_size = self.default_tab_size;
             self.diff_tabs.next_id += 1;
             self.diff_tabs.source_control.insert(self.diff_tabs.next_id, SourceControlIdentity {
-                staged, repository, revisions: None, epoch: 0, dirty: Dirty::default(), inflight: Dirty::default(),
+                staged, repository, revisions: cached.as_ref().map(|cached| cached.revisions), epoch: 0,
+                dirty: if cached.is_some() { Dirty::ALL } else { Dirty::default() }, inflight: Dirty::default(),
+                validating_cached: cached.as_ref().map(|cached| cached.closed),
             });
             let mut tab = Tab::new_file(editor);
             tab.kind = TabKind::Diff(self.diff_tabs.next_id);
-            self.tabs.push(tab);
-            self.active_tab = self.tabs.len() - 1;
-            if !deleted && !staged {
+            self.push_previewable_tab(tab, self.enable_preview_tabs);
+            if let Some(cached) = cached {
+                let id = self.active_diff_tab_id().unwrap();
+                self.diff_tabs.views.insert(id, cached.view);
+                self.diff_tabs.dirty.insert(id);
+                self.status_message = format!("Updating diff: {}", self.editor().unwrap().file_display_name());
+            } else if !deleted && !staged {
                 self.queue_background_file_load(path, true);
             }
         }
@@ -1076,8 +1113,7 @@ impl App {
         let id = self.diff_tabs.next_id;
         let mut tab = Tab::new_file(editor);
         tab.kind = TabKind::Diff(id);
-        self.tabs.push(tab);
-        self.active_tab = self.tabs.len() - 1;
+        self.push_previewable_tab(tab, self.enable_preview_tabs);
         self.clear_diff_state();
         self.diff_tabs.owner = Some(id);
         self.diff_tabs.blame_revisions.insert(id, (history.previous_revision, history.revision));
@@ -1108,8 +1144,7 @@ impl App {
         let id = self.diff_tabs.next_id;
         let mut tab = Tab::new_file(editor);
         tab.kind = TabKind::Diff(id);
-        self.tabs.push(tab);
-        self.active_tab = self.tabs.len() - 1;
+        self.push_previewable_tab(tab, self.enable_preview_tabs);
         self.clear_diff_state();
         self.diff_tabs.owner = Some(id);
         self.compare_base_content = Some(diff.old_text.clone().unwrap_or_default().into());

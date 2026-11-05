@@ -339,18 +339,20 @@ impl Watch {
                 {
                     return;
                 }
+                let mut initial = true;
                 while requests.recv().is_ok() && !worker_stop.load(Ordering::Acquire) {
                     if !worker_delivery.visible() { continue; }
                     let mut resumed = worker_delivery.take_resume();
-                    let deadline =
-                        std::time::Instant::now() + std::time::Duration::from_millis(300);
-                    while !resumed && worker_delivery.visible() && !worker_stop.load(Ordering::Acquire)
-                        && requests
-                            .recv_timeout(
-                                deadline.saturating_duration_since(std::time::Instant::now()),
-                            )
-                            .is_ok()
-                    { if worker_delivery.take_resume() { resumed = true; break; } }
+                    let initializing = std::mem::take(&mut initial);
+                    while !resumed && !initializing && worker_delivery.visible() && !worker_stop.load(Ordering::Acquire) {
+                        let remaining = burst.lock().unwrap().next_wait(std::time::Instant::now());
+                        if remaining.is_zero() { break; }
+                        match requests.recv_timeout(remaining) {
+                            Ok(()) => if worker_delivery.take_resume() { resumed = true; },
+                            Err(mpsc::RecvTimeoutError::Timeout) => {},
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
                     if worker_stop.load(Ordering::Acquire) { break; }
                     if !worker_delivery.visible() { continue; }
                     // Only discovery changes alter subscriptions. This is not
@@ -507,6 +509,48 @@ impl workspace::Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sustained_build_waits_for_quiet_and_preserves_the_final_file_states() {
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_owned();
+        let observation = Arc::new(Observation::default());
+        let (output, received) = mpsc::sync_channel(32);
+        let watch = Watch::start(root.clone(), output, observation).unwrap();
+        let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(first.result, Ok(Reply::WorkspaceChanges(Batch { active: Some(true), .. }))));
+        // Resume acknowledges the initial control wake before generating files.
+        watch.resume().unwrap();
+        loop {
+            let response = received.recv_timeout(Duration::from_secs(5)).unwrap();
+            if matches!(response.result, Ok(Reply::WorkspaceChanges(Batch { active: Some(true), .. }))) { break; }
+        }
+        let mut expected = Vec::new();
+        for index in 0..8 {
+            let path = root.join(format!("object-{index}.o"));
+            std::fs::write(&path, format!("build output {index}")).unwrap();
+            expected.push(git::from_native(&path, &root).unwrap());
+            // Writes continue beyond several old 300 ms delivery windows.
+            assert!(matches!(received.recv_timeout(Duration::from_millis(150)),
+                Err(mpsc::RecvTimeoutError::Timeout)), "build notifications must wait for quiet");
+        }
+        std::fs::remove_file(root.join("object-0.o")).unwrap();
+        std::fs::write(root.join("object-1.o"), "final output").unwrap();
+        let response = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        let Ok(Reply::WorkspaceChanges(batch)) = response.result else { panic!("expected final changes") };
+        assert!(batch.structural && !batch.rescan);
+        assert_eq!(batch.states.len(), expected.len());
+        let removed = git::from_native(&root.join("object-0.o"), &root).unwrap();
+        let updated = git::from_native(&root.join("object-1.o"), &root).unwrap();
+        for path in expected {
+            let state = batch.states.iter().find(|state| state.path == path).unwrap();
+            assert_eq!(state.exists, path != removed);
+        }
+        assert_eq!(batch.states.iter().find(|state| state.path == updated).unwrap().size, Some(12));
+        assert!(matches!(received.recv_timeout(Duration::from_millis(200)), Err(mpsc::RecvTimeoutError::Timeout)),
+            "the quiet flush must not schedule another notification");
+    }
 
     #[test]
     fn retiring_subscription_cannot_clear_a_replacement_observation() {

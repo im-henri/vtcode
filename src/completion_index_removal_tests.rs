@@ -4,6 +4,7 @@ fn synchronous(root: &Path, cache: &Path) -> (CompletionIndex, Worker) {
     let shared = Arc::new(Shared {
         root: root.to_owned(),
         cache_dir: cache.to_owned(),
+        cache_session: None,
         buffer_only: false,
         control: Mutex::new(Control::default()),
         available: Condvar::new(),

@@ -67,6 +67,31 @@ fn open_folder_and_ctrl_o_replace_while_add_folder_keeps_existing_workbenches() 
     assert!(app.workspace_set_confirmation().is_none());
 }
 
+#[cfg(windows)]
+#[test]
+fn opening_a_folder_with_different_capitalization_loads_its_existing_settings() {
+    let project = Project::new();
+    let actual = crate::startup::LocalFolder::resolve(project.path()).unwrap().root;
+    let alias = actual.with_file_name(actual.file_name().unwrap().to_string_lossy().to_ascii_uppercase());
+    if !alias.is_dir() {
+        return;
+    }
+    assert_ne!(actual, alias);
+    let settings_path = crate::settings::project_settings_path(&actual);
+    crate::settings::save_to_file(&settings_path, &crate::settings::Settings {
+        tab_size: Some(7),
+        ..Default::default()
+    }).unwrap();
+
+    let mut app = App::new_startup(PathBuf::new(), Default::default());
+    choose(&mut app, &alias);
+    finish_without_confirmation(&mut app);
+    assert_eq!(app.explorer.root, actual);
+    assert_eq!(app.settings_workspace.tab_size, Some(7));
+    assert!(!crate::portable::workspace_dir(&alias).exists());
+    std::fs::remove_file(settings_path).unwrap();
+}
+
 #[test]
 fn open_folder_warns_before_closing_all_folders_and_keeps_unsaved_edits_for_recovery() {
     let a = Project::new();

@@ -48,6 +48,7 @@ fn benchmark_vtcode_index_capacity() {
         let shared = Arc::new(Shared {
             root: root.clone(),
             cache_dir,
+            cache_session: None,
             buffer_only: false,
             control: Mutex::new(Control::default()),
             available: Condvar::new(),

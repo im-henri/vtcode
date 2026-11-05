@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ratatui::layout::Rect;
 
 use crate::app::{App, DiffMode, DiffRenderCache};
+use crate::diff_wrap::{Layout, Widths};
 use crate::editor::Editor;
 
 /// Scroll in rendered diff rows, including rows with no modified-file line.
@@ -16,10 +17,11 @@ pub(crate) struct InlineDiffScroll {
     pub vertical_area: Rect,
     pub horizontal_area: Option<Rect>,
     pub cache: Arc<DiffRenderCache>,
+    pub wrap: Layout,
     pub change_rows: crate::ui_editor_minimap::ChangeRows,
     overview_geometry: Option<(usize, usize, bool)>,
     source_scroll: Option<usize>,
-    cursor_line: Option<usize>,
+    cursor: Option<(usize, usize)>,
     terminal_empty_line: Option<usize>,
     pub(crate) original_terminal: bool,
     vertical_grab: usize,
@@ -43,18 +45,21 @@ pub(crate) fn scrollbar_thumb(
 }
 
 impl InlineDiffScroll {
-    pub fn row_count(&self) -> usize {
-        let rows = if self.aligned {
+    fn content_rows(&self) -> usize {
+        self.wrap.first_row(if self.aligned {
             self.cache.rows.len()
         } else {
             self.cache.inline_rows.len()
-        };
-        rows + usize::from(
+        })
+    }
+
+    pub fn row_count(&self) -> usize {
+        self.content_rows() + usize::from(
             self.terminal_empty_line.is_some() || self.aligned && self.original_terminal,
         )
     }
 
-    pub(crate) fn row_for_line(&self, cache: &DiffRenderCache, line: usize) -> usize {
+    fn row_for_line(&self, cache: &DiffRenderCache, line: usize) -> usize {
         if self.terminal_empty_line == Some(line) {
             return if self.aligned {
                 cache.rows.len()
@@ -69,14 +74,39 @@ impl InlineDiffScroll {
         }
     }
 
-    pub(crate) fn cursor_row_for_line(&self, cache: &DiffRenderCache, line: usize) -> usize {
-        if !self.aligned && self.terminal_empty_line != Some(line) {
+    pub(crate) fn cursor_row(&self, cache: &DiffRenderCache, line: usize, column: usize) -> usize {
+        let row = if !self.aligned && self.terminal_empty_line != Some(line) {
             // Scroll anchors include removed blocks; caret visibility follows
             // the target text after those blocks.
             cache.inline_text_row_for_target_line(line)
                 .unwrap_or_else(|| self.row_for_line(cache, line))
         } else {
             self.row_for_line(cache, line)
+        };
+        self.wrap.row_for_column(row, false, column)
+    }
+
+    pub(crate) fn prepare_wrap(
+        &mut self,
+        cache: &Arc<DiffRenderCache>,
+        aligned: bool,
+        widths: Option<Widths>,
+    ) {
+        if self.aligned != aligned {
+            *self = Self { aligned, ..Self::default() };
+        }
+        let anchor = self.wrap.row_at(self.row);
+        let enabling = widths.is_some() && !self.wrap.enabled();
+        if self.wrap.update(cache, aligned, widths) {
+            self.overview_geometry = None;
+            if enabling {
+                self.cursor = None;
+            }
+            if Arc::ptr_eq(&self.cache, cache) {
+                let original = anchor.columns(false).is_none() && anchor.columns(true).is_some();
+                let column = anchor.columns(original).map_or(0, |(start, _)| start);
+                self.row = self.wrap.row_for_column(anchor.logical, original, column);
+            }
         }
     }
 
@@ -90,47 +120,53 @@ impl InlineDiffScroll {
     }
 
     pub fn max_column(&self) -> usize {
+        if self.wrap.enabled() {
+            return 0;
+        }
         self.cache
             .max_inline_text_width
             .saturating_sub(self.text_area.width as usize)
     }
 
     pub fn layout(&mut self, cache: Arc<DiffRenderCache>, editor: &mut Editor) {
+        let same_cache = Arc::ptr_eq(&self.cache, &cache);
+        if !same_cache {
+            self.prepare_wrap(&cache, self.aligned, self.wrap.widths());
+        }
         let last = editor.line_count().saturating_sub(1);
         self.terminal_empty_line = (cache.context_lines.is_none()
             && last == cache.target_content_lines()
             && editor.rope.line(last).len_chars() == 0)
             .then_some(last);
+        self.cache = cache;
         let height = self.vertical_area.height as usize;
-        let total = if self.aligned {
-            cache.rows.len()
-        } else {
-            cache.inline_rows.len()
-        };
-        let total = total
-            + usize::from(
-                self.terminal_empty_line.is_some() || self.aligned && self.original_terminal,
-            );
+        let total = self.row_count();
         let geometry = (height, total, self.aligned);
-        if !Arc::ptr_eq(&self.cache, &cache) || self.overview_geometry != Some(geometry) {
+        if !same_cache || self.overview_geometry != Some(geometry) {
             self.overview_geometry = Some(geometry);
             self.change_rows =
                 crate::ui_editor_minimap::ChangeRows::project(height, total, |start, end| {
-                    cache.overview_status_in_range(self.aligned, start, end)
+                    if start >= end { return None; }
+                    let first = self.wrap.row_at(start).logical;
+                    let last = self.wrap.row_at(end.saturating_sub(1)).logical;
+                    self.cache.overview_status_in_range(self.aligned, first, last + 1)
                 });
         }
-        if !Arc::ptr_eq(&self.cache, &cache) || self.source_scroll != Some(editor.scroll_offset) {
-            self.row = if cache.target_content_lines() == 0 {
+        if !same_cache || self.source_scroll != Some(editor.scroll_offset) {
+            self.row = if self.cache.target_content_lines() == 0 {
                 0
             } else {
-                self.row_for_line(&cache, editor.scroll_offset)
+                self.wrap.first_row(self.row_for_line(&self.cache, editor.scroll_offset))
             };
         }
-        if self
-            .cursor_line
-            .is_some_and(|line| line != editor.cursor_line)
-        {
-            let cursor = self.cursor_row_for_line(&cache, editor.cursor_line);
+        let cursor_moved = self.cursor.map_or(
+            self.wrap.enabled() && editor.cursor_col > 0,
+            |(line, column)| {
+                line != editor.cursor_line || self.wrap.enabled() && column != editor.cursor_col
+            },
+        );
+        if cursor_moved {
+            let cursor = self.cursor_row(&self.cache, editor.cursor_line, editor.cursor_col);
             if cursor < self.row {
                 self.row = cursor;
             } else if cursor >= self.row + self.text_area.height as usize {
@@ -139,8 +175,7 @@ impl InlineDiffScroll {
                     .saturating_sub(self.text_area.height as usize);
             }
         }
-        self.cursor_line = Some(editor.cursor_line);
-        self.cache = cache;
+        self.cursor = Some((editor.cursor_line, editor.cursor_col));
         self.row = self.row.min(self.max_row());
         self.column = editor.horizontal_scroll.min(self.max_column());
         editor.viewport_height = self.text_area.height.max(1) as usize;
@@ -149,19 +184,15 @@ impl InlineDiffScroll {
     }
 
     pub fn sync_editor(&mut self, editor: &mut Editor) {
-        let content_rows = if self.aligned {
-            self.cache.rows.len()
-        } else {
-            self.cache.inline_rows.len()
-        };
-        editor.scroll_offset = (if self.row == content_rows
+        let logical = self.wrap.row_at(self.row).logical;
+        editor.scroll_offset = (if self.row == self.content_rows()
             && let Some(line) = self.terminal_empty_line
         {
             line
         } else if self.aligned {
-            self.cache.target_line_for_aligned_row(self.row)
+            self.cache.target_line_for_aligned_row(logical)
         } else {
-            self.cache.target_line_for_inline_row(self.row)
+            self.cache.target_line_for_inline_row(logical)
         })
         .min(editor.line_count().saturating_sub(1));
         editor.horizontal_scroll = self.column;
@@ -178,7 +209,7 @@ impl InlineDiffScroll {
     }
 
     pub(crate) fn center_cursor(&mut self, editor: &mut Editor) {
-        let cursor = self.cursor_row_for_line(&self.cache, editor.cursor_line);
+        let cursor = self.cursor_row(&self.cache, editor.cursor_line, editor.cursor_col);
         self.row = cursor
             .saturating_sub(self.text_area.height as usize / 2)
             .min(self.max_row());
@@ -258,6 +289,65 @@ impl App {
     pub(crate) fn row_diff_active(&self) -> bool {
         self.inline_diff_active()
             || self.diff_mode == DiffMode::SideBySide && self.should_render_diff_for_active_editor()
+    }
+
+    pub(crate) fn wrapped_diff_vertical_navigation(
+        &mut self, key: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        if !matches!(key, KeyCode::Up | KeyCode::Down)
+            || !(modifiers - KeyModifiers::SHIFT).is_empty()
+            || !self.row_diff_active()
+        {
+            return false;
+        }
+        let scroll = &self.diff_inline_scroll;
+        let wrap = &scroll.wrap;
+        let cache = &self.diff_render_cache;
+        let Some(editor) = self.editor().filter(|editor| editor.extra_cursors.is_empty()) else {
+            return false;
+        };
+        if !wrap.enabled() || !Arc::ptr_eq(&scroll.cache, cache) {
+            return false;
+        }
+        let line = editor.cursor_line;
+        let down = key == KeyCode::Down;
+        let step = if down { 1 } else { -1 };
+        let visual = scroll.cursor_row(cache, line, editor.cursor_col);
+        let current = wrap.row_at(visual);
+        let desired = editor.desired_col.unwrap_or_else(|| {
+            current.target(cache, scroll.aligned).map_or(0, |row| current.cell_column(row, false, editor.cursor_col))
+        });
+        let next = wrap.row_at(visual.saturating_add_signed(step));
+        let same_line = next.logical == current.logical && next.continuation != current.continuation
+            && !next.padding(false);
+        let next_line = if same_line {
+            line
+        } else if cache.context_lines.is_some() {
+            let lines = &cache.visible_target_lines;
+            let index = lines.partition_point(|&candidate| if down { candidate <= line } else { candidate < line });
+            let index = if down { Some(index) } else { index.checked_sub(1) };
+            index.and_then(|index| lines.get(index)).copied().unwrap_or(line)
+        } else {
+            line.saturating_add_signed(step).min(editor.line_count().saturating_sub(1))
+        };
+        let column = if !same_line && next_line == line {
+            if down { editor.line_len(line) } else { 0 }
+        } else {
+            let next = if same_line { next } else {
+                wrap.row_at(scroll.cursor_row(cache, next_line, if down { 0 } else { usize::MAX }))
+            };
+            next.target(cache, scroll.aligned).filter(|row| row.right_line == Some(next_line))
+                .map_or(0, |row| next.column_at_cell(row, false, desired))
+        };
+        if let Some(editor) = self.editor_mut() {
+            if modifiers.contains(KeyModifiers::SHIFT) { editor.start_selection(); }
+            else { editor.clear_selection(); }
+            editor.cursor_line = next_line;
+            editor.cursor_col = column.min(editor.line_len(next_line));
+            editor.desired_col = Some(desired);
+        }
+        true
     }
 
     pub(crate) fn inline_diff_scrollbar_input(
@@ -599,9 +689,8 @@ mod tests {
     }
 
     #[test]
-    fn inline_diff_horizontal_wheel_works_even_with_word_wrap_enabled() {
+    fn inline_diff_horizontal_wheel_works_with_word_wrap_disabled() {
         let mut app = comparison(&format!("{} END\n", "long ".repeat(30)), "short\n");
-        app.editor_mut().unwrap().word_wrap = true;
         let mut terminal = Terminal::new(TestBackend::new(60, 10)).unwrap();
         draw(&mut app, &mut terminal);
         let code = app.code_area.unwrap();

@@ -415,7 +415,12 @@ impl DiffScopePaintState {
         let (pan, inline) = geometry
             .diff_projection
             .unwrap_or((options.source.horizontal_scroll, false));
-        let origin = if inline {
+        let origin = if geometry.wrap_width.is_some() {
+            let index = geometry.scope_rows.partition_point(|&(line, col, _)| (line, col) <= endpoint.attachment);
+            let start = geometry.scope_rows.get(index.wrapping_sub(1))
+                .filter(|row| row.0 == position.0).map_or(0, |row| row.1);
+            self.cell_column(options, (position.0, start))?
+        } else if inline {
             pan
         } else {
             self.cell_column(options, (position.0, pan))?

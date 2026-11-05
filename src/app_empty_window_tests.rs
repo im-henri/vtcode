@@ -695,7 +695,7 @@ fn empty_launch_child() {
         return;
     };
     let root = PathBuf::from(root);
-    let prepared = Prepared::load(None);
+    let prepared = Prepared::load(None).unwrap();
     assert!(prepared.target.root.as_os_str().is_empty());
     let mut defaults = crate::settings::Settings::default();
     defaults.validate();

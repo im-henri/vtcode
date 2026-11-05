@@ -10,6 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{ActivePane, AlignedDiffRow, App, DiffMode, DiffRenderCache};
+use crate::diff_wrap::{Layout, Row};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Domain {
@@ -89,29 +90,10 @@ impl<'a> SourceLine<'a> {
         })
     }
 
-    fn column_at_cell(&self, cell: usize) -> usize {
-        self.row.map_or(0, |row| {
-            if self.original { row.left_column_at_cell(cell) }
-            else { row.right_column_at_cell(cell) }
-        })
-    }
-
-    fn window(&self, domain: Domain, geometry: Geometry) -> (&'a str, usize, usize) {
-        if domain == Domain::Inline {
-            self.row.map_or(("", 0, 0), |row| {
-                if self.original {
-                    row.left_inline_text_window(geometry.pan, geometry.area.width as usize)
-                } else {
-                    row.right_inline_text_window(geometry.pan, geometry.area.width as usize)
-                }
-            })
-        } else {
-            (
-                self.chars(geometry.pan, geometry.area.width as usize),
-                geometry.pan,
-                0,
-            )
-        }
+    fn window(&self, domain: Domain, geometry: Geometry, display: Row) -> (&'a str, usize, usize) {
+        self.row.map_or(("", geometry.pan, 0), |row| display.window(
+            row, self.original, domain != Domain::Inline, geometry.pan, geometry.area.width as usize,
+        ))
     }
 }
 
@@ -304,6 +286,7 @@ impl DiffSelection {
     fn hit(
         &self,
         cache: &DiffRenderCache,
+        wrap: &Layout,
         domain: Domain,
         col: u16,
         row: u16,
@@ -322,33 +305,52 @@ impl DiffSelection {
         let clicked = geometry.first.saturating_add(screen_row);
         // Resolve alignment holes within the visible viewport, never by walking
         // a potentially enormous deleted/added run on every pointer sample.
-        let index = if self.line(cache, domain, clicked).is_some() {
+        let visible_line = |index| self.visible_line(cache, wrap, domain, index);
+        let index = if visible_line(clicked).is_some() {
             clicked
         } else {
             (0..geometry.area.height as usize)
                 .map(|offset| geometry.first.saturating_add(offset))
-                .filter(|index| self.line(cache, domain, *index).is_some())
+                .filter(|index| visible_line(*index).is_some())
                 .min_by_key(|index| index.abs_diff(clicked))?
         };
-        let line = self.line(cache, domain, index)?;
+        let (display, line) = visible_line(index)?;
         let cell = col.saturating_sub(geometry.area.x).min(geometry.area.width) as usize;
-        let (text, mut source, padding) = line.window(domain, geometry);
+        let (text, mut source, padding) = line.window(domain, geometry, display);
         let mut x = padding;
+        let mut last = source;
         for grapheme in text.graphemes(true) {
             let width = rendered_width(grapheme);
             if width > 0 && cell < x.saturating_add(width) {
                 return Some(Position {
-                    row: index,
+                    row: display.logical,
                     column: source.min(line.len),
                 });
             }
+            last = source;
             source += grapheme.chars().count();
             x += width;
         }
+        if display.columns(line.original).is_some() && source < line.len && !clamp {
+            source = last;
+        }
         Some(Position {
-            row: index,
+            row: display.logical,
             column: source.min(line.len),
         })
+    }
+
+    fn visible_line<'a>(
+        &self, cache: &'a DiffRenderCache, wrap: &Layout, domain: Domain, visual: usize,
+    ) -> Option<(Row, SourceLine<'a>)> {
+        let display = wrap.row_at(visual);
+        let line = self.line(cache, domain, display.logical)?;
+        (!display.padding(line.original)).then_some((display, line))
+    }
+
+    fn visual_row(&self, cache: &DiffRenderCache, wrap: &Layout, domain: Domain, position: Position) -> usize {
+        let original = self.line(cache, domain, position.row).is_some_and(|line| line.original);
+        wrap.row_for_column(position.row, original, position.column)
     }
 
     fn sync_target(&mut self, app: &mut App) {
@@ -605,11 +607,13 @@ impl DiffSelection {
             return;
         };
         let geometry = self.geometry(domain);
+        let cache = &app.diff_render_cache;
+        let visual = self.visual_row(cache, &app.diff_inline_scroll.wrap, domain, self.cursor);
         let height = geometry.area.height.max(1) as usize;
-        let first = if self.cursor.row < geometry.first {
-            self.cursor.row
-        } else if self.cursor.row >= geometry.first.saturating_add(height) {
-            self.cursor.row.saturating_add(1).saturating_sub(height)
+        let first = if visual < geometry.first {
+            visual
+        } else if visual >= geometry.first.saturating_add(height) {
+            visual.saturating_add(1).saturating_sub(height)
         } else {
             geometry.first
         };
@@ -629,8 +633,9 @@ impl DiffSelection {
             }
         }
         let cache = &app.diff_render_cache;
-        if let Some(line) = self.line(cache, domain, self.cursor.row)
-            && caret_column(&line, domain, geometry, self.cursor.column).is_none()
+        if !app.diff_inline_scroll.wrap.enabled()
+            && let Some(line) = self.line(cache, domain, self.cursor.row)
+            && caret_column(&line, domain, geometry, Row::default(), self.cursor.column).is_none()
         {
             let pan = if domain == Domain::Inline {
                 line.cell_column(self.cursor.column)
@@ -729,6 +734,7 @@ fn caret_column(
     line: &SourceLine<'_>,
     domain: Domain,
     geometry: Geometry,
+    display: Row,
     cursor: usize,
 ) -> Option<(usize, usize)> {
     if line.row.is_none() && geometry.pan > 0 {
@@ -746,7 +752,7 @@ fn caret_column(
     {
         return None;
     }
-    let (text, mut source, mut column) = line.window(domain, geometry);
+    let (text, mut source, mut column) = line.window(domain, geometry, display);
     if cursor < source {
         return None;
     }
@@ -956,7 +962,7 @@ impl App {
         } else {
             Domain::Target
         };
-        let Some(position) = state.hit(&self.diff_render_cache, domain, col, row, false) else {
+        let Some(position) = state.hit(&self.diff_render_cache, &self.diff_inline_scroll.wrap, domain, col, row, false) else {
             let consumed = state.geometry(domain).area.contains((col, row).into());
             if consumed {
                 // A spacer/omitted-context-only viewport has no source
@@ -1065,7 +1071,7 @@ impl App {
             }
             state.refresh(self, domain != Domain::Inline);
         }
-        if let Some(position) = state.hit(&self.diff_render_cache, domain, col, row, true) {
+        if let Some(position) = state.hit(&self.diff_render_cache, &self.diff_inline_scroll.wrap, domain, col, row, true) {
             state.drag_position(&self.diff_render_cache, domain, position);
             state.sync_target(self);
         }
@@ -1216,8 +1222,11 @@ impl App {
                 }
             }
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
-                let desired = state.desired.unwrap_or_else(|| state
-                    .line(cache, domain, cursor.row).map_or(0, |line| line.cell_column(cursor.column)));
+                let wrap = &self.diff_inline_scroll.wrap;
+                let mut visual = state.visual_row(cache, wrap, domain, cursor);
+                let desired = state.desired.unwrap_or_else(|| line.row.map_or(0, |row| {
+                    wrap.row_at(visual).cell_column(row, line.original, cursor.column)
+                }));
                 let count = if matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
                     state.geometry(domain).area.height.max(1) as usize
                 } else {
@@ -1225,12 +1234,21 @@ impl App {
                 };
                 let down = matches!(key, KeyCode::Down | KeyCode::PageDown);
                 for _ in 0..count {
-                    let Some(next) = state.adjacent(cache, domain, cursor, down) else {
+                    let neighbor = visual.saturating_add_signed(if down { 1 } else { -1 });
+                    if neighbor != visual && wrap.row_at(neighbor).logical == cursor.row
+                        && state.visible_line(cache, wrap, domain, neighbor).is_some()
+                    {
+                        visual = neighbor;
+                    } else if let Some(next) = state.adjacent(cache, domain, cursor, down) {
+                        cursor.row = next.row;
+                        cursor.column = if down { 0 } else { usize::MAX };
+                        visual = state.visual_row(cache, wrap, domain, cursor);
+                    } else {
                         break;
-                    };
-                    cursor = next;
-                    cursor.column = state.line(cache, domain, cursor.row)
-                        .map_or(0, |line| line.column_at_cell(desired));
+                    }
+                    cursor.column = state.line(cache, domain, cursor.row).map_or(0, |line| {
+                        line.row.map_or(0, |row| wrap.row_at(visual).column_at_cell(row, line.original, desired))
+                    });
                 }
                 state.desired = Some(desired);
             }
@@ -1268,6 +1286,8 @@ pub(crate) fn draw(
     let mut state = std::mem::take(&mut app.diff_selection);
     state.refresh(app, aligned);
     let native = app.editor().and_then(|editor| editor.selection_range());
+    let cache = &app.diff_render_cache;
+    let wrap = &app.diff_inline_scroll.wrap;
     let domains: &[Domain] = if aligned {
         &[Domain::Original, Domain::Target]
     } else {
@@ -1276,10 +1296,11 @@ pub(crate) fn draw(
     for &domain in domains {
         let geometry = state.geometry(domain);
         for offset in 0..geometry.area.height as usize {
-            let index = geometry.first.saturating_add(offset);
-            let Some(line) = state.line(&app.diff_render_cache, domain, index) else {
+            let visual = geometry.first.saturating_add(offset);
+            let Some((display, line)) = state.visible_line(cache, wrap, domain, visual) else {
                 continue;
             };
+            let index = display.logical;
             let range = if state.focus == Some(domain) {
                 let (start, end) = state.range();
                 (start != end && index >= start.row && index <= end.row).then_some((
@@ -1311,7 +1332,7 @@ pub(crate) fn draw(
             let Some((from, to)) = range.filter(|(from, to)| from < to) else {
                 continue;
             };
-            let (text, mut source, mut x) = line.window(domain, geometry);
+            let (text, mut source, mut x) = line.window(domain, geometry, display);
             let y = geometry.area.y + offset as u16;
             for grapheme in text.graphemes(true) {
                 let end = source + grapheme.chars().count();
@@ -1340,14 +1361,13 @@ pub(crate) fn draw(
     {
         let domain = state.focus.unwrap();
         let geometry = state.geometry(domain);
-        if let Some(offset) = state
-            .cursor
-            .row
+        let visual = state.visual_row(cache, wrap, domain, state.cursor);
+        if let Some(offset) = visual
             .checked_sub(geometry.first)
             .filter(|offset| *offset < geometry.area.height as usize)
-            && let Some(line) = state.line(&app.diff_render_cache, domain, state.cursor.row)
+            && let Some((display, line)) = state.visible_line(cache, wrap, domain, visual)
             && let Some((column, cells)) =
-                caret_column(&line, domain, geometry, state.cursor.column)
+                caret_column(&line, domain, geometry, display, state.cursor.column)
         {
             let x = geometry.area.x + column as u16;
             let y = geometry.area.y + offset as u16;
@@ -1431,16 +1451,16 @@ mod tests {
             pan: 0,
         };
         assert_eq!(
-            caret_column(&line, Domain::Target, geometry, 0),
+            caret_column(&line, Domain::Target, geometry, Row::default(), 0),
             Some((0, 2))
         );
         assert_eq!(
-            caret_column(&line, Domain::Target, geometry, 2),
+            caret_column(&line, Domain::Target, geometry, Row::default(), 2),
             Some((2, 1))
         );
         let geometry = Geometry { pan: 1, ..geometry };
         assert_eq!(
-            caret_column(&line, Domain::Target, geometry, 3),
+            caret_column(&line, Domain::Target, geometry, Row::default(), 3),
             Some((1, 1))
         );
     }
@@ -1462,14 +1482,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            state.hit(&cache, Domain::Target, 10, 2 + row as u16, false),
+            state.hit(&cache, &Layout::default(), Domain::Target, 10, 2 + row as u16, false),
             Some(Position { row, column: 1 })
         );
         assert_eq!(
-            state.hit(&cache, Domain::Target, 11, 2 + row as u16, false),
+            state.hit(&cache, &Layout::default(), Domain::Target, 11, 2 + row as u16, false),
             Some(Position { row, column: 3 })
         );
-        assert!(state.hit(&cache, Domain::Target, 7, 2, false).is_none());
+        assert!(state.hit(&cache, &Layout::default(), Domain::Target, 7, 2, false).is_none());
     }
 
     #[test]
@@ -1516,26 +1536,26 @@ mod tests {
                         continue;
                     };
                     assert_eq!(
-                        state.hit(&cache, domain, 1, row as u16, false),
+                        state.hit(&cache, &Layout::default(), domain, 1, row as u16, false),
                         Some(Position { row, column: 2 })
                     );
                     assert_eq!(
-                        state.hit(&cache, domain, 2, row as u16, false),
+                        state.hit(&cache, &Layout::default(), domain, 2, row as u16, false),
                         Some(Position { row, column: 3 })
                     );
                     assert_eq!(line.chars(2, 1), "b");
-                    assert_eq!(caret_column(&line, domain, geometry, 2), Some((1, 1)));
+                    assert_eq!(caret_column(&line, domain, geometry, Row::default(), 2), Some((1, 1)));
                 }
             }
             let only_control =
                 DiffRenderCache::new(&crate::app::compute_file_diff("", &format!("{control}")));
             let line = state.line(&only_control, Domain::Target, 0).unwrap();
             assert_eq!(
-                caret_column(&line, Domain::Target, geometry, 0),
+                caret_column(&line, Domain::Target, geometry, Row::default(), 0),
                 Some((0, 1))
             );
             assert_eq!(
-                caret_column(&line, Domain::Target, geometry, 1),
+                caret_column(&line, Domain::Target, geometry, Row::default(), 1),
                 Some((0, 1))
             );
         }

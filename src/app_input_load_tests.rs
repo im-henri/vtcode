@@ -126,7 +126,7 @@ fn multiline_typing_keeps_normal_autoindent_pairing_undo_and_completion() {
             assert!(actual.vtcomplete_input_batch.submissions > 0);
             // This checks completion correctness, not worker latency under the
             // full release suite's competing background jobs.
-            actual.wait_for_background(Duration::from_secs(10), |app| app.vtcomplete_active);
+            actual.wait_for_background(Duration::from_secs(30), |app| app.vtcomplete_active);
             assert!(actual.vtcomplete_suggestions.iter().any(|word| word == "value"));
         }
         for _ in 0..15 {

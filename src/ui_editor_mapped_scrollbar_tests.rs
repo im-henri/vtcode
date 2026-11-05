@@ -31,7 +31,7 @@ fn render(
                 active: !hovered,
             };
             if let Some(mapping) = mapping {
-                draw_mapped_scrollbar(frame, params, mapping);
+                draw_mapped_scrollbar(frame, params, mapping, std::convert::identity);
             } else {
                 draw_scrollbar(frame, params);
             }
@@ -200,7 +200,7 @@ fn benchmark_mapped_diff_scrollbar() {
                             active: false,
                         };
                         if optimized {
-                            draw_mapped_scrollbar(frame, params, &mapping);
+                            draw_mapped_scrollbar(frame, params, &mapping, std::convert::identity);
                         } else {
                             draw_scrollbar(frame, params);
                         }

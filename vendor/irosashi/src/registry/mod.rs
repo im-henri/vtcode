@@ -238,7 +238,7 @@ impl RegistryBuilder {
     /// Maps a file extension (without the dot) to a grammar name.
     pub fn extension(mut self, ext: &str, lang: &str) -> Self {
         self.extensions
-            .push((ext.to_ascii_lowercase(), lang.to_owned()));
+            .push((ext.to_owned(), lang.to_owned()));
         self
     }
 
@@ -319,6 +319,7 @@ impl RegistryBuilder {
             themes,
             aliases: HashMap::new(),
             ext_index: HashMap::new(),
+            exact_ext_index: HashMap::new(),
             filename_index: HashMap::new(),
             scope_index: HashMap::new(),
             injection_index: HashMap::new(),
@@ -331,9 +332,7 @@ impl RegistryBuilder {
 
         if self.default_tables {
             for (ext, lang) in DEFAULT_EXTENSIONS {
-                registry
-                    .ext_index
-                    .insert((*ext).to_owned(), (*lang).to_owned());
+                registry.index_extension(ext, lang, true);
             }
             for (file, lang) in DEFAULT_FILENAMES {
                 registry
@@ -347,7 +346,7 @@ impl RegistryBuilder {
             }
         }
         for (ext, lang) in self.extensions {
-            registry.ext_index.insert(ext, lang);
+            registry.index_extension(&ext, &lang, true);
         }
         for (file, lang) in self.filenames {
             registry.filename_index.insert(file, lang);
@@ -369,6 +368,7 @@ pub struct Registry {
     themes: BTreeMap<String, ThemeEntry>,
     aliases: HashMap<String, String>,
     ext_index: HashMap<String, String>,
+    exact_ext_index: HashMap<String, String>,
     filename_index: HashMap<String, String>,
     scope_index: HashMap<String, String>,
     injection_index: HashMap<String, Vec<String>>,
@@ -422,6 +422,17 @@ impl Registry {
             .collect()
     }
 
+    fn index_extension(&mut self, extension: &str, language: &str, replace: bool) {
+        let folded = extension.to_ascii_lowercase();
+        if replace {
+            self.exact_ext_index.insert(extension.to_owned(), language.to_owned());
+            self.ext_index.insert(folded, language.to_owned());
+        } else {
+            self.exact_ext_index.entry(extension.to_owned()).or_insert_with(|| language.to_owned());
+            self.ext_index.entry(folded).or_insert_with(|| language.to_owned());
+        }
+    }
+
     fn index_grammar(
         &mut self,
         name: &str,
@@ -446,15 +457,11 @@ impl Registry {
                 .push(name.to_owned());
         }
         for ext in &meta.file_types {
-            let ext = ext.trim_start_matches('.').to_ascii_lowercase();
+            let ext = ext.trim_start_matches('.');
             if ext.is_empty() {
                 continue;
             }
-            if ext_overrides {
-                self.ext_index.insert(ext, name.to_owned());
-            } else {
-                self.ext_index.entry(ext).or_insert_with(|| name.to_owned());
-            }
+            self.index_extension(ext, name, ext_overrides);
         }
         if let Some(pattern) = &meta.first_line_match {
             self.first_line
@@ -488,6 +495,7 @@ impl Registry {
             themes: self.themes.clone(),
             aliases: self.aliases.clone(),
             ext_index: self.ext_index.clone(),
+            exact_ext_index: self.exact_ext_index.clone(),
             filename_index: self.filename_index.clone(),
             scope_index: self.scope_index.clone(),
             injection_index: self.injection_index.clone(),
@@ -552,8 +560,7 @@ impl Registry {
     /// Maps a file extension (without the dot) to a grammar name.
     pub fn with_extension(&self, ext: &str, lang: &str) -> Self {
         let mut next = self.copy();
-        next.ext_index
-            .insert(ext.to_ascii_lowercase(), lang.to_owned());
+        next.index_extension(ext, lang, true);
         next
     }
 
@@ -633,15 +640,17 @@ impl Registry {
         Ok(ThemeColors::from_theme(&theme))
     }
 
-    /// Exact file name first, then the lowercased extension.
+    /// Exact file name first, then exact extension, then a case-insensitive fallback.
     pub fn detect_by_filename(&self, filename: &str) -> Option<&str> {
         let path = Path::new(filename);
         let base = path.file_name()?.to_str()?;
         if let Some(lang) = self.filename_index.get(base) {
             return Some(lang);
         }
-        let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-        self.ext_index.get(&ext).map(String::as_str)
+        let ext = path.extension()?.to_str()?;
+        self.exact_ext_index.get(ext)
+            .or_else(|| self.ext_index.get(&ext.to_ascii_lowercase()))
+            .map(String::as_str)
     }
 
     /// The first grammar (in name order) whose `firstLineMatch` matches the line.
@@ -724,6 +733,47 @@ mod tests {
             .unwrap();
         assert_eq!(custom.detect_by_filename("x.foo"), Some("go"));
         assert_eq!(custom.detect_by_filename("BUILD"), Some("python"));
+    }
+
+    #[test]
+    fn exact_extension_mappings_keep_case_distinct_across_registry_updates() {
+        let lower = br#"{"scopeName":"source.lower","fileTypes":["c"],"patterns":[]}"#;
+        let upper = br#"{"scopeName":"source.upper","fileTypes":["C"],"patterns":[]}"#;
+        let r = RegistryBuilder::without_bundled_assets()
+            .without_default_tables()
+            .grammar("lower", &lower[..]).unwrap()
+            .grammar("upper", &upper[..]).unwrap()
+            .extension("RS", "lower")
+            .build().unwrap();
+        assert_eq!(r.detect_by_filename("src/main.c"), Some("lower"));
+        assert_eq!(r.detect_by_filename("src/main.C"), Some("upper"));
+        assert_eq!(r.detect_by_filename("src/main.rs"), Some("lower"));
+        assert_eq!(r.detect_by_filename("src/main.rS"), Some("lower"));
+        let next = r.with_extension("C", "new-upper")
+            .with_filename("special.c", "upper");
+        assert_eq!(next.detect_by_filename("main.c"), Some("lower"));
+        assert_eq!(next.detect_by_filename("main.C"), Some("new-upper"));
+        assert_eq!(next.detect_by_filename("special.c"), Some("upper"));
+        assert_eq!(r.detect_by_filename("main.C"), Some("upper"));
+        let replacement = br#"{"scopeName":"source.replacement","fileTypes":["C"],"patterns":[]}"#;
+        let next = next.with_grammar("replacement", &replacement[..]).unwrap();
+        assert_eq!(next.detect_by_filename("main.c"), Some("lower"));
+        assert_eq!(next.detect_by_filename("main.C"), Some("replacement"));
+    }
+
+    #[test]
+    fn explicit_extension_registrations_preserve_both_cases() {
+        let r = RegistryBuilder::without_bundled_assets()
+            .without_default_tables()
+            .extension("c", "lower")
+            .extension("C", "upper")
+            .extension("m", "objective-c")
+            .extension("M", "objective-cpp")
+            .build().unwrap();
+        for (file, language) in [("main.c", "lower"), ("main.C", "upper"),
+            ("main.m", "objective-c"), ("main.M", "objective-cpp")] {
+            assert_eq!(r.detect_by_filename(file), Some(language));
+        }
     }
 
     #[test]

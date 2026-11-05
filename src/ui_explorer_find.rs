@@ -374,6 +374,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     );
     let input_focused = focused && find.focus == Focus::Input;
     let hit_map = InputField::new(&find.query)
+        .viewport(app.text_input_viewport(TextInputId::ExplorerFind))
         .theme_control(&app.colors, app.colors.ui.input_colors, bg)
         .placeholder_text("File or folder name")
         .prefix("", Color::Reset)

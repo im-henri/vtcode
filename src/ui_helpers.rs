@@ -293,6 +293,16 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
         return;
     }
 
+    // Terminal editor tabs expose the same mouse-driven Find as the dock.
+    // Keep a fixed toolbar so opening Find does not reflow terminal output.
+    let toolbar = Rect::new(area.x, area.y, area.width, area.height.min(1));
+    f.render_widget(Paragraph::new(format!(" {}", app.terminals[idx].name)).style(
+        Style::default().fg(app.colors.ui.readable_foreground(app.colors.ui.fg_panel_inactive,
+            app.colors.ui.bg_panel, 4.5)).bg(app.colors.ui.bg_panel)), toolbar);
+    if toolbar.width >= 8 {
+        crate::app_terminal_find::draw_button(f, app, Rect::new(toolbar.right() - 8, toolbar.y, 8, toolbar.height), idx);
+    }
+    let area = Rect::new(area.x, area.y + toolbar.height, area.width, area.height.saturating_sub(toolbar.height));
     let content = crate::terminal_scrollbar::content_area(area);
     let width = content.width as usize;
     let height = content.height as usize;
@@ -309,14 +319,16 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
             index: idx, area: content, group: Some(group),
         };
         app.terminal_surfaces.push(surface);
-        draw_terminal_emulator(
+        draw_terminal_emulator_with_cursor(
             f,
             pty,
             content,
             &app.colors.ui,
             app.cursor_visible,
+            app.focused_terminal_find() != Some(app.terminals[idx].find.id),
         );
         crate::terminal_scrollbar::draw(f, app, surface, area);
+        crate::app_terminal_find::draw(f, app, idx, content);
     } else {
         draw_terminal_launch_error(
             f,
@@ -327,12 +339,14 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
             app.colors.fg_error,
             app.colors.bg_dark,
         );
+        crate::app_terminal_find::draw(f, app, idx, content);
     }
 }
 
 /// Render a parsed VT grid and expose the PTY cursor to Ratatui. Calling
 /// `Frame::set_cursor_position` is important: without it the backend hides the
 /// host cursor after every frame, even though the shell is tracking one.
+#[cfg(test)]
 pub(crate) fn draw_terminal_emulator(
     f: &mut Frame,
     pty: &crate::terminal::TerminalEmulator,
@@ -340,13 +354,25 @@ pub(crate) fn draw_terminal_emulator(
     palette: &crate::theme_workbench::WorkbenchColors,
     blink_visible: bool,
 ) {
+    draw_terminal_emulator_with_cursor(f, pty, area, palette, blink_visible, true);
+}
+
+pub(crate) fn draw_terminal_emulator_with_cursor(
+    f: &mut Frame,
+    pty: &crate::terminal::TerminalEmulator,
+    area: Rect,
+    palette: &crate::theme_workbench::WorkbenchColors,
+    blink_visible: bool,
+    allow_cursor: bool,
+) {
     let width = area.width as usize;
     let height = area.height as usize;
     let default_fg = palette.fg_terminal;
     let default_bg = palette.bg_terminal;
     let grid = &pty.grid;
-    let steady_cursor = matches!(grid.cursor_shape, 2 | 4 | 6);
-    let show_cursor = grid.cursor_visible
+    let awaiting_input = pty.remote_input_progress().pending;
+    let steady_cursor = awaiting_input || matches!(grid.cursor_shape, 2 | 4 | 6);
+    let show_cursor = allow_cursor && grid.cursor_visible
         && !grid.has_selection()
         && grid.scroll_view == 0
         && (steady_cursor || blink_visible)
@@ -394,7 +420,9 @@ pub(crate) fn draw_terminal_emulator(
         }
     }
 
-    if show_cursor {
+    // The host cursor has its own blink clock. While input is unacknowledged,
+    // show only the steady buffer cursor so it cannot blink or flicker anyway.
+    if show_cursor && !awaiting_input {
         f.set_cursor_position((
             area.x + grid.cursor_col as u16,
             area.y + grid.cursor_row as u16,

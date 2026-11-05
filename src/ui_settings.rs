@@ -327,6 +327,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         !app.settings_focus_categories && !app.settings_focus_control && !app.settings_value_editing && !app.settings_dropdown_open);
     let search_bg = search_style.bg.unwrap_or(bg);
     let search_field = InputField::new(&app.settings_editor_search)
+        .viewport(app.text_input_viewport(TextInputId::SettingsSearch))
         .theme_control(&app.colors, app.colors.ui.settings_control("text"), bg)
         .prefix(" ", app.colors.ui.description_color(search_bg))
         .placeholder_text("Search settings by name or description")
@@ -1122,6 +1123,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                         1,
                     );
                     let field = InputField::new(&app.settings_value_buffer)
+                        .viewport(app.text_input_viewport(TextInputId::SettingsValue))
                         .theme_control(&app.colors, app.colors.ui.settings_control(kind), row_bg)
                         .prefix(" ", fg_dim)
                         .bg(control_bg)

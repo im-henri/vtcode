@@ -10,6 +10,11 @@ use std::{
 #[cfg(test)]
 #[path = "remote_performance_tests.rs"]
 mod performance_tests;
+#[cfg(test)]
+#[path = "remote_service_cache_tests.rs"]
+mod cache_tests;
+#[path = "remote_read_pool.rs"]
+mod read_pool;
 
 #[derive(Clone)]
 pub(super) struct Document {
@@ -18,36 +23,28 @@ pub(super) struct Document {
     pub(super) revision: Revision,
 }
 
-/// Read and mutation workers share immutable saved checkpoints. The root is
-/// part of the cache identity; a delayed read from another workspace can only
-/// evict an optimization, never become a baseline for the wrong file. No disk
-/// I/O or decoding runs while this lock is held.
+/// Read and mutation workers share immutable saved checkpoints. Workspace
+/// identity is part of each key, so alternating folders neither evicts all
+/// checkpoints nor mixes same-named files. One budget covers every root.
+/// No disk I/O or decoding runs while this lock is held.
 #[derive(Default)]
 struct Documents {
-    root: Option<PathBuf>,
-    entries: cache::Cache<Document>,
+    entries: cache::Cache<Document, (PathBuf, RemotePath)>,
 }
 impl Documents {
     fn get(&mut self, root: &Path, path: &RemotePath) -> Option<Document> {
-        (self.root.as_deref() == Some(root))
-            .then(|| self.entries.get(path).cloned())
-            .flatten()
+        self.entries.get(&(root.to_owned(), path.clone())).cloned()
     }
     fn insert(&mut self, root: &Path, path: RemotePath, document: Document) {
-        if self.root.as_deref() != Some(root) {
-            self.entries = Default::default();
-            self.root = Some(root.into());
-        }
-        self.entries
-            .insert(path, document.rope.len_bytes(), document);
+        let bytes = document.rope.len_bytes().saturating_add(root.as_os_str().len()).saturating_add(path.0.len());
+        self.entries.insert((root.to_owned(), path), bytes, document);
     }
     fn remove(&mut self, root: &Path, path: &RemotePath, subtree: bool) {
-        if self.root.as_deref() == Some(root) {
-            if subtree {
-                self.entries.remove_under(path);
-            } else {
-                self.entries.remove(path);
-            }
+        if subtree {
+            self.entries.remove_matching(|(cached_root, key)| cached_root == root && (key == path
+                || (key.1 == path.1 && (path.0.is_empty() || key.0.strip_prefix(path.0.as_slice()).is_some_and(|tail| tail.starts_with(b"/"))))));
+        } else {
+            self.entries.remove(&(root.to_owned(), path.clone()));
         }
     }
 }
@@ -58,6 +55,8 @@ pub(crate) struct Service {
     processes: Option<process::Manager>,
     process_ownership: Option<process::Ownership>,
     index: Option<FileIndex>,
+    recent_indexes: cache::Cache<FileIndex, PathBuf>,
+    index_version: u64,
     watchers: HashMap<PathBuf, watch::Watch>,
     output: Option<std::sync::mpsc::SyncSender<Response>>,
     histories: Option<history::Manager>,
@@ -79,6 +78,7 @@ struct FileIndex {
     excludes: Option<crate::settings::ExcludePatterns>,
     watch_stamp: watch::Stamp,
     _observation: std::sync::Arc<watch::Observation>,
+    retained_bytes: usize,
 }
 pub(super) fn read_document(
     native: &Path,
@@ -112,6 +112,8 @@ impl Service {
             processes: None,
             process_ownership: None,
             index: None,
+            recent_indexes: cache::Cache::with_limits(4, 32 * 1024 * 1024),
+            index_version: 0,
             watchers: HashMap::new(),
             output: None,
             histories: None,
@@ -123,6 +125,18 @@ impl Service {
             observations: Default::default(),
             git_observation: None,
         }
+    }
+    fn switch_root(&mut self, root: PathBuf) {
+        if self.root == root { return; }
+        let next = self.recent_indexes.take(&root);
+        if let Some(index) = self.index.take() {
+            self.recent_indexes.insert(self.root.clone(), index.retained_bytes, index);
+        }
+        self.index = next;
+        self.root = root;
+        self.explorer = None;
+        // Process/history IDs and saved checkpoints belong to the connection.
+        // Their resources retain their own workspace identities.
     }
     fn set_workspace_watch(&mut self, root: PathBuf, state: WatchState) -> io::Result<()> {
         if state == WatchState::Active {
@@ -841,7 +855,7 @@ impl Service {
         if cancel.is_cancelled() {
             return Err(io::ErrorKind::Interrupted.into());
         }
-        let labels = if include_hidden {
+        let labels: Vec<String> = if include_hidden {
             files
                 .iter()
                 .map(|path| path.display().to_lowercase())
@@ -849,10 +863,16 @@ impl Service {
         } else {
             Vec::new()
         };
-        let version = self
-            .index
-            .as_ref()
-            .map_or(1, |index| index.version + u64::from(index.files != files));
+        let version = if let Some(index) = self.index.as_ref().filter(|index| index.files == files) {
+            index.version
+        } else {
+            // Never reuse a version after changing roots or evicting a cache:
+            // the client may still hold the old snapshot for that workspace.
+            self.index_version = self.index_version.wrapping_add(1).max(1);
+            self.index_version
+        };
+        let retained_bytes = files.capacity() * std::mem::size_of::<RemotePath>() + bytes
+            + labels.capacity() * std::mem::size_of::<String>() + labels.iter().map(String::capacity).sum::<usize>();
         self.index = Some(FileIndex {
             generation,
             built: std::time::Instant::now(),
@@ -863,6 +883,7 @@ impl Service {
             excludes: excludes.cloned(),
             watch_stamp,
             _observation: observation,
+            retained_bytes,
         });
         Ok(())
     }
@@ -1080,11 +1101,12 @@ fn serve_service(
     let mut active_search: Option<crate::background::CancellationToken> = None;
     let files =
         actor("headless-files", service, output.clone(), cancels.clone())?.drain_on_disconnect();
-    let mut read_service = new_service();
-    read_service.documents = documents.clone();
-    let mut reads = LazyActor::new(
-        "headless-reads",
-        read_service,
+    let mut reads = read_pool::ReadPool::new(
+        || {
+            let mut service = new_service();
+            service.documents = documents.clone();
+            service
+        },
         output.clone(),
         cancels.clone(),
     );
@@ -1599,8 +1621,10 @@ impl ResourceCloses {
 }
 
 type ActorRequest = (Request, Option<crate::background::CancellationToken>);
+type ActorMessage = Option<(u64, ActorRequest)>;
 struct Actor {
-    sender: std::sync::mpsc::SyncSender<Option<(u64, ActorRequest)>>,
+    sender: std::sync::mpsc::SyncSender<ActorMessage>,
+    read_load: Option<std::sync::Arc<read_pool::ReadLoad>>,
     // Only the connection reader enqueues work. Tickets preserve ordering when
     // a cancelled history start is still queued when its Close arrives.
     queued: std::cell::Cell<u64>,
@@ -1619,7 +1643,13 @@ impl Actor {
             .get()
             .checked_add(1)
             .expect("remote work ticket overflow");
-        self.sender.try_send(Some((ticket, (request, cancel))))?;
+        if let Some(load) = &self.read_load && !load.submitted(&request.command) {
+            return Err(std::sync::mpsc::TrySendError::Full(Some((ticket, (request, cancel)))));
+        }
+        if let Err(error) = self.sender.try_send(Some((ticket, (request, cancel)))) {
+            if let Some(load) = &self.read_load { load.rejected(); }
+            return Err(error);
+        }
         self.queued.set(ticket);
         Ok(())
     }
@@ -1676,16 +1706,30 @@ impl Drop for Actor {
 }
 fn actor(
     name: &'static str,
-    mut service: Service,
+    service: Service,
     output: std::sync::mpsc::SyncSender<Response>,
     cancels: std::sync::Arc<std::sync::Mutex<HashMap<u64, crate::background::CancellationToken>>>,
 ) -> io::Result<Actor> {
-    let default_root = service.root.clone();
     let join = service.processes.is_some();
     let (sender, requests) =
-        std::sync::mpsc::sync_channel::<Option<(u64, ActorRequest)>>(if join { 128 } else { 8 });
+        std::sync::mpsc::sync_channel::<ActorMessage>(if join { 128 } else { 8 });
+    actor_with_inbox(name, service, output, cancels, sender, requests.into_iter(), None)
+}
+
+fn actor_with_inbox(
+    name: &'static str,
+    mut service: Service,
+    output: std::sync::mpsc::SyncSender<Response>,
+    cancels: Cancellations,
+    sender: std::sync::mpsc::SyncSender<ActorMessage>,
+    requests: impl Iterator<Item = ActorMessage> + Send + 'static,
+    read_load: Option<std::sync::Arc<read_pool::ReadLoad>>,
+) -> io::Result<Actor> {
+    let default_root = service.root.clone();
+    let join = service.processes.is_some();
     let closes = std::sync::Arc::new(ResourceCloses::default());
     let worker_closes = closes.clone();
+    let worker_load = read_load.clone();
     let worker = std::thread::Builder::new()
         .name(name.into())
         .spawn(move || {
@@ -1702,6 +1746,8 @@ fn actor(
                 let Some((ticket, (request, cancel))) = message else {
                     continue;
                 };
+                let _read = read_pool::ReadJob::new(worker_load.clone());
+                let source_read = matches!(request.command, Command::Open { .. } | Command::OpenLocation { .. } | Command::Reload { .. });
                 let root = request.workspace.as_ref().map_or_else(
                     || Ok(default_root.clone()),
                     |root| {
@@ -1726,10 +1772,10 @@ fn actor(
                         continue;
                     }
                 };
-                if matches!(request.command, Command::Close { .. }) && service.root != root {
-                    // There is no checkpoint for this old root in the current
-                    // cache. Do not switch roots just to evict a nonexistent
-                    // entry, or evict a same-named file in the current folder.
+                if let Command::Close { path } = &request.command && service.root != root {
+                    // Closing an old folder's file must not switch the worker
+                    // or evict a same-named checkpoint in the current folder.
+                    service.documents.lock().unwrap().remove(&root, path, false);
                     completed = ticket;
                     worker_closes.apply(&mut service, completed, &mut ready);
                     if request.id != 0 {
@@ -1740,20 +1786,14 @@ fn actor(
                     }
                     continue;
                 }
-                if service.root != root {
-                    service.root = root;
-                    service.index = None;
-                    service.explorer = None;
-                    // Process and history IDs are connection-wide. Their
-                    // resources and watchers retain their own workspace roots.
-                }
+                service.switch_root(root);
                 let process_id = match &request.command {
                     Command::ProcessInput { process, .. }
                     | Command::ProcessResize { process, .. }
                     | Command::ProcessCredit { process, .. } => Some(*process),
                     _ => None,
                 };
-                let result = if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
+                let mut result = if cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
                     Err(io::Error::from(io::ErrorKind::Interrupted))
                 } else {
                     match request.command {
@@ -1894,6 +1934,16 @@ fn actor(
                     }
                 }
                 .map_err(Failure::from);
+                // A filesystem syscall or mutex acquisition cannot always be
+                // interrupted. If the user abandoned this read meanwhile,
+                // discard its result and release any newly allocated lease.
+                // Durable writes must still report their committed outcome.
+                if source_read && cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled()) {
+                    if let Ok(Reply::Text(text::Reply::Opened { transfer, .. })) = &result {
+                        service.text.lock().unwrap().close(*transfer);
+                    }
+                    result = Err(io::Error::from(io::ErrorKind::Interrupted).into());
+                }
                 completed = ticket;
                 worker_closes.apply(&mut service, completed, &mut ready);
                 cancels.lock().unwrap().remove(&request.id);
@@ -1936,6 +1986,7 @@ fn actor(
         })?;
     Ok(Actor {
         sender,
+        read_load,
         queued: std::cell::Cell::new(0),
         closes,
         worker: Some(worker),

@@ -274,9 +274,15 @@ impl App {
                 });
             }
             "toggle_word_wrap" => {
+                let diff = self.row_diff_active();
                 if let Some(ed) = self.editor_mut() {
                     let wrap_width = ed.effective_wrap_width();
-                    if ed.word_wrap {
+                    if diff {
+                        ed.word_wrap = !ed.word_wrap;
+                        if ed.word_wrap {
+                            ed.horizontal_scroll = 0;
+                        }
+                    } else if ed.word_wrap {
                         let cursor_wrap_row =
                             ed.wrapped_row_for_position(ed.cursor_line, ed.cursor_col, wrap_width);
                         let cursor_screen_row = cursor_wrap_row

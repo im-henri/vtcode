@@ -1294,6 +1294,23 @@ pub(crate) fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
     crate::editor_blame::draw(f, app, area);
 }
 
+pub(crate) fn line_number_width(line_count: usize) -> usize {
+    (digit_count(line_count).max(GUTTER_MIN_DIGITS) + 1).min(GUTTER_MAX_WIDTH)
+}
+
+pub(crate) fn editor_columns(area: Rect, gutter: u16, minimap: u16) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(gutter),
+            Constraint::Min(1),
+            Constraint::Length(u16::from(minimap > 0)),
+            Constraint::Length(minimap),
+            Constraint::Length(if minimap > 0 { 1 } else { 2 }),
+        ])
+        .split(area)
+}
+
 pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     if crate::ui_animation_frame::begin_editor(f, app, area) {
         return;
@@ -1335,7 +1352,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     // Gutter width
     let total_lines = editor.rope.len_lines();
     let gutter_width = if render_line_numbers {
-        (digit_count(total_lines).max(GUTTER_MIN_DIGITS) + 1).min(GUTTER_MAX_WIDTH)
+        line_number_width(total_lines)
     } else {
         0
     };
@@ -1396,7 +1413,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let code_width_estimate = area
         .width
         .saturating_sub(gutter_width as u16 + 2 + scope_rail_width + minimap_est + 1);
-    let show_h_scrollbar = max_line_width > code_width_estimate as usize && !effective_word_wrap;
+    let wrapped_diff = app.diff_inline_scroll.aligned && app.diff_inline_scroll.wrap.enabled()
+        && app.should_render_diff_for_active_editor();
+    let show_h_scrollbar = max_line_width > code_width_estimate as usize
+        && !effective_word_wrap && !wrapped_diff;
 
     // Split vertically: editor content | optional horizontal scrollbar
     let v_layout = Layout::default()
@@ -1418,17 +1438,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         0
     };
     let minimap_sep_width: u16 = u16::from(minimap_width > 0);
-    let scrollbar_width: u16 = if minimap_width > 0 { 1 } else { 2 };
-    let editor_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(gutter_width as u16 + 2 + scope_rail_width),
-            Constraint::Min(1),
-            Constraint::Length(minimap_sep_width),
-            Constraint::Length(minimap_width),
-            Constraint::Length(scrollbar_width),
-        ])
-        .split(editor_row_area);
+    let editor_layout = editor_columns(
+        editor_row_area, gutter_width as u16 + 2 + scope_rail_width, minimap_width,
+    );
 
     let full_gutter_area = editor_layout[0];
     let gutter_area = Rect {

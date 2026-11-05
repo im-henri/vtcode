@@ -430,6 +430,28 @@ fn commit_review_follows_target_cursor_after_a_large_inline_replacement() {
 }
 
 #[test]
+fn commit_review_scrolls_to_the_wrapped_tail_of_a_file_card() {
+    let target = format!("{}WRAPPED_TAIL\n", "word ".repeat(80));
+    for mode in [crate::app::DiffMode::SideBySide, crate::app::DiffMode::Inline] {
+        let mut app = fixture();
+        app.commit_details.data.files.truncate(1);
+        set_diff(&mut app, "old\n", &target);
+        app.commit_details.review.forced_mode = Some(mode);
+        app.commit_details.focus = Focus::Diff;
+        let editor = app.editor_mut().unwrap();
+        editor.word_wrap = true;
+        editor.word_wrap_column = 15;
+        let mut terminal = Terminal::new(TestBackend::new(110, 22)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(app.commit_details.review.total > 22);
+        app.editor_mut().unwrap().set_cursor(0, 400);
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert!(buffer.content.iter().map(|cell| cell.symbol()).collect::<String>().contains("WRAPPED_TAIL"));
+    }
+}
+
+#[test]
 fn ui_combinations_find_focus_does_not_block_commit_review_wheel_or_card_controls() {
     let mut app = review_fixture(6);
     app.search_active = true;
@@ -796,7 +818,7 @@ fn commit_inspector_context_uses_native_layouts_syntax_selection_and_scrollbars(
             .as_ref()
             .unwrap()
             .iter()
-            .position(|line| *line == Some(20))
+            .position(|row| row.is_some_and(|row| row.line_idx == 20))
             .unwrap();
         let x = code.x + editor.diff_text_inset as u16;
         let y = code.y + screen_row as u16;
@@ -978,7 +1000,8 @@ fn commit_inspector_context_reveals_find_results_without_changing_the_setting() 
                 .diff_display_rows
                 .as_ref()
                 .unwrap()
-                .contains(&Some(70))
+                .iter()
+                .any(|row| row.is_some_and(|row| row.line_idx == 70))
         );
         app.search_active = false;
         terminal
@@ -1930,6 +1953,49 @@ fn commit_inspector_is_an_editor_tab_and_workbench_shortcuts_still_work() {
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.tabs[0].kind, crate::app::TabKind::File);
     assert!(!app.commit_details.active);
+}
+
+#[test]
+fn commit_filter_wheel_moves_the_view_without_changing_the_query_or_panes() {
+    let mut app = fixture();
+    app.commit_details.query = "a界e\u{301}z".repeat(60);
+    app.commit_details.query_cursor = app.commit_details.query.len();
+    app.commit_details.query_anchor = Some(0);
+    app.commit_details.focus = Focus::Message;
+    let saved_query = app.commit_details.query.clone();
+    let mut terminal = Terminal::new(TestBackend::new(100, 36)).unwrap();
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    let area = current_layout(&app).filter;
+    let x = area.x + 4;
+    let y = area.y;
+    let original = app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y);
+    let scrolls = (app.commit_details.message_scroll, app.commit_details.review.scroll);
+    for (left, right) in [
+        (MouseEventKind::ScrollUp, MouseEventKind::ScrollDown),
+        (MouseEventKind::ScrollLeft, MouseEventKind::ScrollRight),
+    ] {
+        assert!(handle_mouse(&mut app, mouse_at(left, x, y)));
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let scrolled = app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y);
+        assert!(scrolled < original);
+        assert_eq!(app.commit_details.query, saved_query);
+        assert_eq!(app.commit_details.query_cursor, saved_query.len());
+        assert_eq!(app.commit_details.query_anchor, Some(0));
+        assert_eq!(app.commit_details.focus, Focus::Message);
+        assert_eq!((app.commit_details.message_scroll, app.commit_details.review.scroll), scrolls);
+        assert!(handle_mouse(&mut app, mouse_at(right, x, y)));
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert!(app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y) > scrolled);
+    }
+    for _ in 0..10 {
+        handle_mouse(&mut app, mouse_at(MouseEventKind::ScrollUp, x, y));
+    }
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    app.commit_details.focus = Focus::Filter;
+    handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    assert_eq!(app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y), original);
+    assert_eq!(app.commit_details.query, saved_query);
 }
 
 #[test]

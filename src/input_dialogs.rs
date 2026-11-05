@@ -259,6 +259,9 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                 }
                 match *cmd {
                     "tab_rename_terminal" => app.rename_context_terminal(),
+                    "tab_find_terminal" => {
+                        if let Some(index) = app.tabs.get(tab).and_then(|tab| tab.terminal_idx) { app.begin_terminal_find(index); }
+                    }
                     "tab_close" => {
                         app.close_tab(tab);
                     }

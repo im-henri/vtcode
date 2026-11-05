@@ -4262,6 +4262,8 @@ fn search_popup_matches_layer_find_colors_over_selected_and_unselected_rows() {
     }
     app.colors = theme.to_theme_colors();
     app.global_search_query = "needle".into();
+    // This fixture checks the active-selection roles, so results own focus.
+    app.global_search_results_focused = true;
     app.global_search_results = (0..2)
         .map(|line| crate::app::GlobalSearchResult {
             file_path: app.explorer.root.join("example.py"),

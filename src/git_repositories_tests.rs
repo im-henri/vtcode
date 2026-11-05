@@ -1062,6 +1062,7 @@ fn parent_and_child_diffs_keep_distinct_baselines_when_both_track_the_same_file(
         app.pending_git_compare_path.is_none() && !app.bg_git_compare_running
     });
     let parent_tab = app.active_tab;
+    app.pin_preview_tab();
     assert_eq!(
         app.compare_base_content.as_deref(),
         Some("parent baseline\n")

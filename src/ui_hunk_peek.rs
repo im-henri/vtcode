@@ -10,15 +10,23 @@ use ratatui::{
     widgets::{Clear, Paragraph, Wrap},
 };
 use similar::DiffableStr;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{app::App, app_git_display::GitFilePatch};
+
+#[path = "ui_hunk_peek_selection.rs"]
+mod selection;
+#[cfg(test)]
+#[path = "ui_hunk_peek_selection_tests.rs"]
+mod selection_tests;
 
 pub(crate) struct PeekRow {
     pub kind: char,
     pub old_line: Option<usize>,
     pub new_line: Option<usize>,
     pub text: String,
+    line_ending: &'static str,
     pub highlighted: crate::highlight::HighlightSpans,
     emphasis: Option<Vec<bool>>,
     partner: Option<usize>,
@@ -85,6 +93,7 @@ pub(crate) struct HunkPeek {
     layout: Option<PeekLayout>,
     drag: Option<ScrollDrag>,
     hovered: Option<HoverTarget>,
+    selection: selection::Selection,
 }
 
 fn range_start(start: usize, count: usize) -> usize {
@@ -96,13 +105,20 @@ fn range_start(start: usize, count: usize) -> usize {
 }
 
 fn text_width(text: &str, tab_size: usize) -> usize {
-    text.chars().fold(0, |col, ch| {
-        col + if ch == '\t' {
+    text.graphemes(true).fold(0, |col, glyph| {
+        col + if glyph == "\t" {
             tab_size - col % tab_size
         } else {
-            ch.width().unwrap_or(0)
+            glyph.width()
         }
     })
+}
+
+fn line_ending(text: &str) -> &'static str {
+    if text.ends_with("\r\n") { "\r\n" }
+    else if text.ends_with('\n') { "\n" }
+    else if text.ends_with('\r') { "\r" }
+    else { "" }
 }
 
 impl HunkPeek {
@@ -154,7 +170,23 @@ impl HunkPeek {
         }).collect::<Vec<_>>();
         if hunks.is_empty() { return Err("No changes found".into()); }
         let patch = GitFilePatch { header: String::new(), hunks };
-        Self::for_line(&patch, current, line, tab_size)
+        let mut peek = Self::for_line(&patch, current, line, tab_size)?;
+        // The display patch normalizes its row separators. Retain the actual
+        // source endings for clipboard operations, including lone CR and EOF.
+        let saved = saved.tokenize_lines();
+        let current = current.tokenize_lines();
+        for row in &mut peek.rows {
+            let source = if row.kind == '-' {
+                row.old_line.and_then(|line| saved.get(line - 1))
+            } else {
+                row.new_line.and_then(|line| current.get(line - 1))
+            };
+            row.line_ending = source.map_or("", |text| line_ending(text));
+            if let Some(text) = source {
+                row.text = text.strip_suffix(row.line_ending).unwrap_or(text).to_string();
+            }
+        }
+        Ok(peek)
     }
 
     #[cfg(test)]
@@ -177,13 +209,15 @@ impl HunkPeek {
         let mut max_width = 0;
         let mut push =
             |rows: &mut Vec<PeekRow>, kind, text: &str, old: &mut usize, new: &mut usize| {
-                let text = text.trim_end_matches(['\r', '\n']);
+                let line_ending = line_ending(text);
+                let text = text.strip_suffix(line_ending).unwrap_or(text);
                 max_width = max_width.max(text_width(text, tab_size));
                 rows.push(PeekRow {
                     kind,
                     old_line: (kind != '+').then_some(*old + 1),
                     new_line: (kind != '-').then_some(*new + 1),
                     text: text.to_string(),
+                    line_ending,
                     highlighted: Vec::new(),
                     emphasis: None,
                     partner: None,
@@ -205,7 +239,7 @@ impl HunkPeek {
             let start_row = rows.len();
             let mut removed = Vec::new();
             let mut added = Vec::new();
-            for line in hunk.text.lines().skip(1) {
+            for line in hunk.text.split_inclusive('\n').skip(1) {
                 if let Some(kind @ ('+' | '-' | ' ')) = line.chars().next() {
                     match kind {
                         '-' => removed.push(rows.len()),
@@ -213,6 +247,8 @@ impl HunkPeek {
                         _ => {}
                     }
                     push(&mut rows, kind, &line[1..], &mut old, &mut new);
+                } else if line.starts_with("\\ No newline at end of file") {
+                    if let Some(row) = rows.last_mut() { row.line_ending = ""; }
                 }
             }
             // Pair rows now, but defer character diffing until a row is visible.
@@ -247,6 +283,7 @@ impl HunkPeek {
             layout: None,
             drag: None,
             hovered: None,
+            selection: selection::Selection::default(),
         }
     }
 
@@ -296,6 +333,7 @@ impl HunkPeek {
         self.scroll = hunk.start_row.saturating_sub(context);
         self.horizontal_scroll = 0;
         self.drag = None;
+        self.selection = selection::Selection::default();
         self.layout = None;
     }
 }
@@ -518,6 +556,7 @@ fn buttons(app: &App) -> &'static [(&'static str, &'static str)] {
             ("−", "Revert Unsaved Hunk"),
             ("↓", "Next Change"),
             ("↑", "Previous Change"),
+            ("Copy old lines", "Copy Old Lines"),
             ("×", "Close Preview"),
         ]
     } else if app.hunk_popup_status == 'S' {
@@ -525,6 +564,7 @@ fn buttons(app: &App) -> &'static [(&'static str, &'static str)] {
             ("↶", "Revert Hunk"),
             ("↓", "Next Change"),
             ("↑", "Previous Change"),
+            ("Copy old lines", "Copy Old Lines"),
             ("×", "Close Preview"),
         ]
     } else {
@@ -533,19 +573,28 @@ fn buttons(app: &App) -> &'static [(&'static str, &'static str)] {
             ("↶", "Discard Hunk"),
             ("↓", "Next Change"),
             ("↑", "Previous Change"),
+            ("Copy old lines", "Copy Old Lines"),
             ("×", "Close Preview"),
         ]
     }
 }
 
-fn button_rect(area: Rect, index: usize, count: usize) -> Rect {
-    let width = 3.min(area.width / count as u16);
-    Rect::new(
-        area.right().saturating_sub((count - index) as u16 * width),
-        area.y.saturating_add(1),
-        width,
-        u16::from(area.height > 1),
-    )
+fn button_label(area: Rect, index: usize, actions: &[(&'static str, &str)]) -> &'static str {
+    let total: usize = actions.iter().map(|(label, _)| label.width() + 2).sum();
+    if actions[index].1 == "Copy Old Lines" && total + 8 > area.width as usize { "Copy" }
+    else { actions[index].0 }
+}
+
+fn button_rect(area: Rect, index: usize, actions: &[(&'static str, &str)]) -> Rect {
+    let trailing: usize = (index + 1..actions.len()).map(|i| button_label(area, i, actions).width() + 2).sum();
+    let right = area.right().saturating_sub(trailing as u16).max(area.x);
+    let x = right.saturating_sub((button_label(area, index, actions).width() + 2) as u16).max(area.x);
+    Rect::new(x, area.y.saturating_add(1), right - x, u16::from(area.height > 1))
+}
+
+fn button_enabled(app: &App, index: usize) -> bool {
+    buttons(app)[index].1 != "Copy Old Lines"
+        || app.hunk_peek.as_ref().is_some_and(HunkPeek::has_old_lines)
 }
 
 fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
@@ -554,7 +603,7 @@ fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
         let button = if app.hunk_preview_feedback.is_some() {
             feedback_button_rect(area, index, actions)
         } else {
-            button_rect(area, index, actions.len())
+            button_rect(area, index, actions)
         };
         button.contains((col, row).into())
     })
@@ -778,7 +827,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let actions = buttons(app);
-    let first = button_rect(area, 0, actions.len());
+    let first = button_rect(area, 0, actions);
     let title_area = Rect::new(area.x, area.y + 1, first.x.saturating_sub(area.x), 1);
     let filename = preview_filename(app.hunk_popup_file.as_deref());
     let source = if app.hunk_popup_status == 'S' {
@@ -791,7 +840,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let hovered = button_at(app, area, app.mouse_col, app.mouse_row);
     let quick_hovered = quick_action_at(app, layout, app.mouse_col, app.mouse_row);
     let focus = hovered.or(peek.focused_button);
-    let detail = if let Some(action) = quick_hovered {
+    let mut detail = if let Some(action) = quick_hovered {
         let label = if app.hunk_popup_status == 'S' {
             "Unstage Hunk"
         } else {
@@ -801,6 +850,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else {
         focus.map_or_else(
             || {
+                if peek.selection.has_text() {
+                    return " Selected text · Ctrl+C Copy".to_string();
+                }
                 if app.hunk_popup_status == 'N' {
                     return format!(
                         " Unsaved Changes (since last save) - {} of {} changes",
@@ -816,6 +868,16 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             |i| format!("  {}", actions[i].1),
         )
     };
+    if focus.is_none() && quick_hovered.is_none() && !peek.selection.has_text()
+        && filename.width() + detail.width() + 1 > title_area.width as usize
+    {
+        let label = match app.hunk_popup_status {
+            'N' => "Unsaved Changes",
+            'S' => "Git Index Changes",
+            _ => "Git Local Changes",
+        };
+        detail = format!(" {label} · {} of {} changes", peek.selected + 1, peek.hunks.len());
+    }
     let (title_bg, title_fg, title_dim) = colors.ui.peek_title_colors(bg);
     let title_style = normal.bg(title_bg).fg(title_fg);
     f.render_widget(
@@ -826,12 +888,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         .style(title_style),
         title_area,
     );
-    for (index, (icon, _)) in actions.iter().enumerate() {
-        let style = colors.ui.toolbar_style(title_fg, title_bg, hovered == Some(index),
+    for (index, _) in actions.iter().enumerate() {
+        let foreground = if button_enabled(app, index) { title_fg } else { title_dim };
+        let style = colors.ui.toolbar_style(foreground, title_bg, hovered == Some(index),
             peek.focused_button == Some(index), false).remove_modifier(Modifier::DIM);
         f.render_widget(
-            Paragraph::new(format!(" {icon} ")).style(style),
-            button_rect(area, index, actions.len()),
+            Paragraph::new(format!(" {} ", button_label(area, index, actions))).style(style),
+            button_rect(area, index, actions),
         );
     }
     let body = layout.body;
@@ -883,6 +946,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             code,
         );
     }
+    selection::draw(f, peek, layout, &colors);
     for action in quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S')) {
         let stage = !matches!(app.hunk_popup_status, 'N' | 'S') && action.button == 0;
         let fg = if peek.hunks[action.hunk].action_line.is_none() {
@@ -950,46 +1014,39 @@ fn row_spans(
     let mut col = 0;
     let mut index = 0;
     let fallback_fg = normal.fg.unwrap_or(Color::Reset);
-    let segments = std::iter::once((fallback_fg, row.text.as_str()))
-        .take(usize::from(row.highlighted.is_empty()))
-        .chain(row.highlighted.iter().map(|(s, text)| {
-            (
-                crate::ui_colors::syntax_color(s.foreground, normal.bg.unwrap_or(Color::Reset)),
-                text.as_str(),
-            )
-        }));
-    'segments: for (fg, text) in segments {
-        for ch in text.chars() {
-            if col >= scroll + width {
-                break 'segments;
+    let mut segments = row.highlighted.iter().scan(0, |end, (style, text)| {
+        *end += text.len();
+        Some((*end, style.foreground))
+    });
+    let mut segment = segments.next();
+    for (byte, glyph) in row.text.grapheme_indices(true) {
+        if col >= scroll + width { break; }
+        while segment.is_some_and(|(end, _)| byte >= end) { segment = segments.next(); }
+        let fg = segment.map_or(fallback_fg, |(_, color)| {
+            crate::ui_colors::syntax_color(color, normal.bg.unwrap_or(Color::Reset))
+        });
+        let w = if glyph == "\t" { tab_size - col % tab_size } else { glyph.width() };
+        let end = col + w;
+        let count = glyph.chars().count();
+        let emphasized = row.emphasis.as_ref().map_or(row.kind != ' ', |mask| {
+            mask.get(index..index + count).is_some_and(|slice| slice.iter().any(|v| *v))
+        });
+        let background = if emphasized { emphasis_bg } else { normal.bg.unwrap_or(Color::Reset) };
+        let style = normal.fg(contrast.foreground(fg, background)).bg(background);
+        if end > scroll || (w == 0 && col > scroll) {
+            if style != batch_style && !batch.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut batch), batch_style));
             }
-            let w = if ch == '\t' {
-                tab_size - col % tab_size
+            batch_style = style;
+            if glyph == "\t" || glyph.chars().any(char::is_control) || col < scroll || end > scroll + width {
+                let shown = end.min(scroll + width).saturating_sub(col.max(scroll));
+                batch.extend(std::iter::repeat_n(' ', shown));
             } else {
-                ch.width().unwrap_or(0)
-            };
-            let end = col + w;
-            let emphasized = row
-                .emphasis
-                .as_ref()
-                .map_or(row.kind != ' ', |m| m.get(index).copied().unwrap_or(false));
-            let background = if emphasized { emphasis_bg } else { normal.bg.unwrap_or(Color::Reset) };
-            let style = normal.fg(contrast.foreground(fg, background)).bg(background);
-            if end > scroll || (w == 0 && col > scroll) {
-                if style != batch_style && !batch.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut batch), batch_style));
-                }
-                batch_style = style;
-                if ch == '\t' || ch.is_control() || col < scroll || end > scroll + width {
-                    let shown = end.min(scroll + width).saturating_sub(col.max(scroll));
-                    batch.extend(std::iter::repeat_n(' ', shown));
-                } else {
-                    batch.push(ch);
-                }
+                batch.push_str(glyph);
             }
-            col = end;
-            index += 1;
         }
+        col = end;
+        index += count;
     }
     if !batch.is_empty() {
         spans.push(Span::styled(batch, batch_style));
@@ -1001,7 +1058,9 @@ fn activate(app: &mut App, button: usize) {
     let Some((_, label)) = buttons(app).get(button).copied() else {
         return;
     };
+    if !button_enabled(app, button) { return; }
     match label {
+        "Copy Old Lines" => selection::copy(app, true),
         "Next Change" | "Previous Change" => {
             let Some(peek) = app.hunk_peek.as_mut() else {
                 return;
@@ -1076,10 +1135,21 @@ fn scroll(app: &mut App, down: bool, amount: usize, horizontal: bool) {
 }
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
+        match key.code {
+            KeyCode::Char('c' | 'C') | KeyCode::Insert => { selection::copy(app, false); return; }
+            KeyCode::Char('a' | 'A') => {
+                if let Some(peek) = app.hunk_peek.as_mut() { peek.select_all(); }
+                return;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc => app.close_hunk_popup(),
         KeyCode::Tab | KeyCode::BackTab => {
             let count = buttons(app).len();
+            let enabled: Vec<_> = (0..count).map(|i| button_enabled(app, i)).collect();
             let backwards = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             let focus = if let Some(feedback) = &mut app.hunk_preview_feedback {
                 &mut feedback.focused_button
@@ -1088,12 +1158,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             } else {
                 return;
             };
-            *focus = Some(match *focus {
+            let mut next = match *focus {
                 Some(i) if backwards => (i + count - 1) % count,
                 Some(i) => (i + 1) % count,
                 None if backwards => count - 1,
                 None => 0,
-            });
+            };
+            while !enabled[next] { next = (next + if backwards { count - 1 } else { 1 }) % count; }
+            *focus = Some(next);
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
             let focused = app.hunk_preview_feedback.as_ref().and_then(|feedback| feedback.focused_button)
@@ -1123,12 +1195,17 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
 }
 
 pub(crate) fn click(app: &mut App, col: u16, row: u16, width: u16, height: u16) {
+    click_with_modifiers(app, col, row, width, height, KeyModifiers::NONE);
+}
+
+fn click_with_modifiers(app: &mut App, col: u16, row: u16, width: u16, height: u16, modifiers: KeyModifiers) {
     let layout = app
         .hunk_peek
         .as_ref()
         .and_then(|p| p.layout)
         .or_else(|| app.hunk_preview_feedback.as_ref()?.area.map(|panel| make_layout(app, panel)))
         .unwrap_or_else(|| make_layout(app, peek_rect(app, width, height)));
+    if let Some(peek) = app.hunk_peek.as_mut() { peek.selection.cancel_drag(); }
     if scrollbar_down(app, layout, col, row) {
         return;
     }
@@ -1144,6 +1221,8 @@ pub(crate) fn click(app: &mut App, col: u16, row: u16, width: u16, height: u16) 
     }
     if let Some(i) = button_at(app, layout.panel, col, row) {
         activate(app, i);
+    } else if layout.code.contains((col, row).into()) {
+        if let Some(peek) = app.hunk_peek.as_mut() { peek.begin_selection(layout, col, row, modifiers); }
     } else if !layout.panel.contains((col, row).into()) {
         app.close_hunk_popup();
     }
@@ -1167,21 +1246,28 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            click(
+            click_with_modifiers(
                 app,
                 mouse.column,
                 mouse.row,
                 layout.panel.right(),
                 layout.panel.bottom(),
+                mouse.modifiers,
             );
         }
         MouseEventKind::Up(MouseButton::Left) => {
             if let Some(peek) = app.hunk_peek.as_mut() {
                 peek.drag = None;
+                peek.extend_selection(layout, mouse.column, mouse.row);
+                peek.selection.cancel_drag();
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            drag_scrollbar(app, layout, mouse.column, mouse.row)
+            if app.hunk_peek.as_ref().is_some_and(|peek| peek.selection.dragging()) {
+                selection::drag(app, layout, mouse.column, mouse.row);
+            } else {
+                drag_scrollbar(app, layout, mouse.column, mouse.row);
+            }
         }
         MouseEventKind::ScrollUp
         | MouseEventKind::ScrollDown
@@ -1198,6 +1284,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                     MouseEventKind::ScrollDown | MouseEventKind::ScrollRight
                 );
                 scroll(app, down, app.scroll_speed.max(1), horizontal);
+                if let Some(peek) = app.hunk_peek.as_mut() { peek.extend_selection(layout, mouse.column, mouse.row); }
             }
         }
         _ => {}
@@ -1210,7 +1297,7 @@ mod tests {
     use crate::app_git_display::parse_git_file_patch;
     use ratatui::{Terminal, backend::TestBackend};
 
-    fn app_with_peek() -> App {
+    pub(super) fn app_with_peek() -> App {
         let mut app = App::new(std::path::PathBuf::from("."));
         let patch = parse_git_file_patch("@@ -2,2 +2,1 @@\n-let old = 1;\n-removed();\n+let new = 2;\n@@ -8 +7 @@\n-last_old();\n+last_new();\n").unwrap();
         app.hunk_peek = Some(HunkPeek::from_patch(
@@ -1262,7 +1349,7 @@ mod tests {
         assert_eq!(buffer[(area.x + 1, area.y + 1)].fg, title_fg);
     }
 
-    fn long_peek() -> (App, Terminal<TestBackend>) {
+    pub(super) fn long_peek() -> (App, Terminal<TestBackend>) {
         let mut app = app_with_peek();
         let old: String = (0..200).map(|i| format!("line {i:03}\n")).collect();
         let new = old
@@ -1303,7 +1390,7 @@ mod tests {
         }
     }
 
-    fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16, modifiers: KeyModifiers) {
+    pub(super) fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16, modifiers: KeyModifiers) {
         crate::mouse::handle_mouse(
             app,
             MouseEvent {
@@ -1463,6 +1550,7 @@ mod tests {
             old_line: None,
             new_line: Some(1),
             text: "a\t界e\u{301}xyz".into(),
+            line_ending: "",
             highlighted: Vec::new(),
             emphasis: None,
             partner: None,
@@ -1543,15 +1631,15 @@ mod tests {
             assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), "−");
         }
         assert_eq!(buttons(&app).iter().map(|(_, label)| *label).collect::<Vec<_>>(),
-            ["Revert Unsaved Hunk", "Next Change", "Previous Change", "Close Preview"]);
-        let next = button_rect(peek.layout.unwrap().panel, 1, 4);
+            ["Revert Unsaved Hunk", "Next Change", "Previous Change", "Copy Old Lines", "Close Preview"]);
+        let next = button_rect(peek.layout.unwrap().panel, 1, buttons(&app));
         click(&mut app, next.x + 1, next.y, 110, 32);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
         assert_eq!(app.hunk_popup_line, 6);
         activate(&mut app, 2);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 0);
         assert_eq!(app.hunk_popup_line, 1);
-        activate(&mut app, 3);
+        activate(&mut app, 4);
         assert!(!app.hunk_popup_active);
     }
 
@@ -1562,7 +1650,7 @@ mod tests {
         click(&mut app, area.x + 20, area.y + 3, 110, 32);
         assert!(app.hunk_popup_active);
         assert_eq!(app.hunk_popup_line, 1);
-        let next = button_rect(area, 2, 5);
+        let next = button_rect(area, 2, buttons(&app));
         click(&mut app, next.x + 1, next.y, 110, 32);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
         assert_eq!(app.hunk_popup_line, 6);

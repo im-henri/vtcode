@@ -2,7 +2,7 @@ use super::*;
 use crate::background::{BackgroundResult, CancellationToken};
 use rustc_hash::FxHashSet;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -11,6 +11,9 @@ struct Fixture {
     paths: [PathBuf; 2],
     root: PathBuf,
     traffic: Arc<AtomicUsize>,
+    received: Arc<AtomicUsize>,
+    hold: Arc<AtomicBool>,
+    blocked: Arc<AtomicBool>,
     _directory: tempfile::TempDir,
 }
 
@@ -37,10 +40,16 @@ impl Fixture {
             std::fs::write(root.join(name), "worktree\n").unwrap();
         }
         let traffic = Arc::new(AtomicUsize::new(0));
+        let received = Arc::new(AtomicUsize::new(0));
+        let hold = Arc::new(AtomicBool::new(false));
+        let blocked = Arc::new(AtomicBool::new(false));
         let mut app = App::test_new();
+        // These refresh scenarios retain multiple independent comparisons.
+        // Preview-specific scenarios below enable replacement explicitly.
+        app.set_preview_tabs_enabled(false);
         let paths = if remote {
             let workspace = crate::remote::workspace::Workspace::new(
-                crate::remote::tests::connection(&root, Arc::default(), traffic.clone()),
+                crate::remote::tests::connection_with_traffic(&root, hold.clone(), traffic.clone(), blocked.clone(), received.clone()),
             );
             let paths = [
                 workspace.target_key("a.txt").unwrap(),
@@ -59,6 +68,7 @@ impl Fixture {
             paths,
             root,
             traffic,
+            received, hold, blocked,
             _directory: directory,
         }
     }
@@ -111,6 +121,264 @@ impl Fixture {
         self.app.sync_diff_tab();
         self.settle();
     }
+}
+
+#[test]
+fn diff_browsing_respects_preview_settings_locally_and_remotely() {
+    for remote in [false, true] {
+        for enabled in [false, true] {
+            let mut f = Fixture::new(remote);
+            f.app.set_preview_tabs_enabled(enabled);
+            for (index, (file, staged)) in [(0, false), (0, true), (1, false), (1, true)].into_iter().enumerate() {
+                let (_, id) = f.open(file, staged);
+                assert_eq!(f.app.tabs.len(), if enabled { 1 } else { index + 1 });
+                assert_eq!(f.app.tabs[f.app.active_tab].preview, enabled);
+                assert_eq!(f.app.diff_tabs.source_control.len(), f.app.tabs.len());
+                assert_eq!(f.app.diff_tabs.staged_for_tab(&f.app.tabs[f.app.active_tab]), Some(staged));
+                assert_eq!(f.app.diff_tabs.owner, Some(id));
+                assert!(f.app.should_render_diff_for_active_editor());
+            }
+        }
+    }
+}
+
+#[test]
+fn diff_previews_preserve_kept_pinned_and_existing_tabs() {
+    for remote in [false, true] {
+        let mut f = Fixture::new(remote);
+        f.app.set_preview_tabs_enabled(true);
+        let (_, kept) = f.open(0, false);
+        f.app.pin_preview_tab();
+        f.open(0, true);
+        let (_, preview) = f.open(1, false);
+        assert_eq!(f.app.tabs.len(), 2);
+        let (_, existing) = f.open(0, false);
+        assert_eq!(existing, kept);
+        assert!(!f.app.tabs[f.app.active_tab].preview);
+        let (_, existing) = f.open(1, false);
+        assert_eq!(existing, preview);
+        assert!(f.app.tabs[f.app.active_tab].preview);
+        f.app.tabs[f.app.active_tab].pinned = true;
+        f.open(1, true);
+        assert_eq!(f.app.tabs.len(), 3);
+        assert!(f.app.tabs.iter().any(|tab| tab.kind == TabKind::Diff(preview) && tab.pinned && !tab.preview));
+        assert!(f.app.tabs.iter().any(|tab| tab.kind == TabKind::Diff(kept) && !tab.preview));
+        f.app.set_preview_tabs_enabled(false);
+        assert!(f.app.tabs.iter().all(|tab| !tab.preview));
+    }
+}
+
+#[test]
+fn files_and_diffs_share_a_preview_without_discarding_unsaved_edits() {
+    for remote in [false, true] {
+        let mut f = Fixture::new(remote);
+        f.app.set_preview_tabs_enabled(true);
+        f.app.open_file_preview(&f.paths[0]);
+        assert!(f.app.editor().unwrap().bg_loading);
+        let (_, diff) = f.open(1, true);
+        assert_eq!(f.app.tabs.len(), 1);
+        f.app.open_file_preview(&f.paths[0]);
+        assert_eq!(f.app.tabs.len(), 1);
+        assert!(!f.app.diff_tabs.source_control.contains_key(&diff));
+        assert!(!f.app.diff_tabs.views.contains_key(&diff));
+        assert!(!f.app.should_render_diff_for_active_editor());
+        f.app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+        f.app.editor_mut().unwrap().insert_char('!');
+        let edited = f.app.editor().unwrap().rope.clone();
+        f.open(0, false);
+        assert_eq!(f.app.tabs.len(), 2);
+        assert_eq!(f.app.tabs[0].kind, TabKind::File);
+        assert!(!f.app.tabs[0].preview);
+        assert!(f.app.tabs[0].has_unsaved_changes());
+        assert_eq!(f.app.tabs[0].editor.rope, edited);
+        assert!(f.app.tabs[f.app.active_tab].preview);
+        assert_eq!(std::fs::read_to_string(f.root.join("a.txt")).unwrap(), "worktree\n");
+    }
+}
+
+#[test]
+fn diff_previews_are_replaced_only_in_their_own_split_group() {
+    for remote in [false, true] {
+        let mut f = Fixture::new(remote);
+        f.app.set_preview_tabs_enabled(true);
+        f.app.open_file(&f.paths[0]);
+        f.app.open_file(&f.paths[1]);
+        f.app.create_split_group_dir(1, crate::app::SplitDirection::Horizontal);
+        let other_group = f.app.active_group;
+        let (_, other_diff) = f.open(0, false);
+        f.app.switch_group(0);
+        f.open(1, false);
+        f.open(0, true);
+        assert_eq!(f.app.active_group, 0);
+        assert_eq!(f.app.tabs.len(), 2);
+        assert_eq!(f.app.tabs.iter().filter(|tab| tab.preview).count(), 1);
+        assert!(f.app.groups[other_group].tabs.iter().any(|tab| tab.kind == TabKind::Diff(other_diff) && tab.preview));
+        let (_, existing) = f.open(0, false);
+        assert_eq!(existing, other_diff);
+        assert_eq!(f.app.active_group, other_group);
+        assert!(f.app.tabs[f.app.active_tab].preview);
+    }
+}
+
+#[test]
+fn rapid_diff_preview_replacement_ignores_old_file_and_git_replies() {
+    for remote in [false, true] {
+        for staged in [false, true] {
+            let mut f = Fixture::new(remote);
+            f.app.set_preview_tabs_enabled(true);
+            f.stage(0, "staged\n");
+            for staged in [!staged, staged] {
+                f.app.open_source_control_diff_in_repository(&f.paths[0], false, staged,
+                    Some(f.app.explorer.root.clone()));
+            }
+            f.app.wait_for_background(Duration::from_secs(15), |app| {
+                app.should_render_diff_for_active_editor() && !app.background.has_active_jobs()
+                    && !app.bg_git_compare_running && !app.diff_tabs.refresh_running
+            });
+            assert_eq!(f.app.tabs.len(), 1);
+            assert!(f.app.tabs[0].preview);
+            assert_eq!(f.app.diff_tabs.staged_for_tab(&f.app.tabs[0]), Some(staged));
+            assert_eq!(f.app.editor().unwrap().rope.to_string(), if staged { "staged\n" } else { "worktree\n" });
+            assert_eq!(f.app.compare_base_content.as_deref(), Some(if staged { "original\n" } else { "staged\n" }));
+        }
+    }
+}
+
+#[test]
+fn recent_diff_cache_restores_colored_views_before_stalled_remote_validation() {
+    struct Release(Arc<AtomicBool>);
+    impl Drop for Release { fn drop(&mut self) { self.0.store(false, Ordering::Release); } }
+    let mut f = Fixture::new(true);
+    let _release = Release(f.hold.clone());
+    f.app.set_preview_tabs_enabled(true);
+    let contents: String = (0..2048u32).map(|index| format!("{index:04x} {:08x}\n", index.wrapping_mul(2_654_435_761))).collect();
+    f.write(0, &contents);
+    let before = f.received.load(Ordering::Relaxed);
+    f.open(0, false);
+    let cold_bytes = f.received.load(Ordering::Relaxed) - before;
+    assert!(f.app.editor().unwrap().remote_checkpoint.is_some());
+    let cache = f.app.diff_render_cache.clone();
+    f.app.editor_mut().unwrap().set_cursor(12, 3);
+    f.open(1, false);
+    let before = f.received.load(Ordering::Relaxed);
+    f.hold.store(true, Ordering::Release);
+    f.app.open_source_control_diff_in_repository(&f.paths[0], false, false, Some(f.app.explorer.root.clone()));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !f.blocked.load(Ordering::Acquire) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(f.blocked.load(Ordering::Acquire));
+    assert!(!f.app.editor().unwrap().bg_loading);
+    assert!(f.app.should_render_diff_for_active_editor());
+    assert!(Arc::ptr_eq(&cache, &f.app.diff_render_cache));
+    assert_eq!(f.app.editor().unwrap().rope.to_string(), contents);
+    assert_eq!((f.app.editor().unwrap().cursor_line, f.app.editor().unwrap().cursor_col), (12, 3));
+    assert!(f.app.status_message.starts_with("Updating diff:"));
+    let cached_at = f.app.diff_tabs.source_control[&f.app.active_diff_tab_id().unwrap()].validating_cached;
+    for _ in 0..3 {
+        for file in [1, 0] {
+            f.app.open_source_control_diff_in_repository(&f.paths[file], false, false, Some(f.app.explorer.root.clone()));
+            assert!(!f.app.editor().unwrap().bg_loading);
+            assert!(f.app.should_render_diff_for_active_editor());
+        }
+    }
+    assert!(Arc::ptr_eq(&cache, &f.app.diff_render_cache));
+    assert_eq!(f.app.diff_tabs.source_control[&f.app.active_diff_tab_id().unwrap()].validating_cached,
+        cached_at, "bouncing between previews must not extend an unvalidated snapshot's lifetime");
+    f.hold.store(false, Ordering::Release);
+    f.settle();
+    assert!(Arc::ptr_eq(&cache, &f.app.diff_render_cache));
+    let warm_bytes = f.received.load(Ordering::Relaxed) - before;
+    assert!(warm_bytes < cold_bytes / 4, "cached diff transferred {warm_bytes} bytes versus {cold_bytes} cold");
+    assert!(!f.app.status_message.starts_with("Updating diff:"));
+    eprintln!("remote cached diff: cold={cold_bytes} bytes, warm={warm_bytes} bytes");
+}
+
+#[test]
+fn recent_diff_cache_revalidates_worktree_bytes_and_git_ids_even_without_events() {
+    for remote in [false, true] {
+        for staged in [false, true] {
+            let mut f = Fixture::new(remote);
+            f.app.set_preview_tabs_enabled(true);
+            f.open(0, staged);
+            f.open(1, staged);
+            let path = f.root.join("a.txt");
+            let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+            f.write(0, "newtree!\n");
+            std::fs::File::options().write(true).open(&path).unwrap().set_modified(modified).unwrap();
+            f.stage(0, "restaged\n");
+            f.app.open_source_control_diff_in_repository(&f.paths[0], false, staged, Some(f.app.explorer.root.clone()));
+            assert!(!f.app.editor().unwrap().bg_loading);
+            assert!(f.app.should_render_diff_for_active_editor());
+            f.settle();
+            assert_eq!(f.app.editor().unwrap().rope.to_string(), if staged { "restaged\n" } else { "newtree!\n" });
+            assert_eq!(f.app.compare_base_content.as_deref(), Some(if staged { "original\n" } else { "restaged\n" }));
+        }
+    }
+}
+
+#[test]
+fn recent_diff_cache_invalidates_only_relevant_paths_and_clears_on_metadata_or_reconnect() {
+    for remote in [false, true] {
+        let mut f = Fixture::new(remote);
+        f.app.set_preview_tabs_enabled(true);
+        f.open(0, false);
+        f.open(1, false);
+        assert_eq!(f.app.diff_tabs.recent.entries.len(), 1);
+        f.app.refresh_source_control_diffs_for_paths(Some(&[f.app.explorer.root.join("unrelated")].into_iter().collect()));
+        assert_eq!(f.app.diff_tabs.recent.entries.len(), 1);
+        f.invalidate(0);
+        assert!(f.app.diff_tabs.recent.entries.is_empty());
+        f.open(0, false);
+        assert!(!f.app.diff_tabs.recent.entries.is_empty());
+        f.app.refresh_source_control_diffs();
+        assert!(f.app.diff_tabs.recent.entries.is_empty());
+        f.settle();
+        f.open(1, false);
+        assert!(!f.app.diff_tabs.recent.entries.is_empty());
+        f.app.cancel_source_control_diff_refresh();
+        assert!(f.app.diff_tabs.recent.entries.is_empty());
+        f.settle();
+    }
+}
+
+#[test]
+fn recent_diff_cache_keys_include_repository_and_stage_and_expire_without_a_timer() {
+    let mut f = Fixture::new(false);
+    f.app.set_preview_tabs_enabled(true);
+    f.open(0, false);
+    f.open(1, false);
+    let now = Instant::now();
+    let recent = &mut f.app.diff_tabs.recent;
+    assert!(recent.take(&f.paths[0], Some(&f.root.join("other-repo")), false, false, u64::MAX, now).is_none());
+    assert!(recent.take(&f.paths[0], Some(&f.root), true, false, u64::MAX, now).is_none());
+    assert_eq!(recent.entries.len(), 1);
+    assert!(recent.take(&f.paths[0], Some(&f.root), false, false, u64::MAX,
+        now + recent::LIFETIME).is_none());
+    assert!(recent.entries.is_empty());
+}
+
+#[test]
+fn recent_diff_cache_is_bounded_by_entry_count_and_memory() {
+    let mut f = Fixture::new(false);
+    f.app.set_preview_tabs_enabled(true);
+    for index in 0..recent::MAX_ENTRIES + 3 {
+        let path = f.root.join(format!("recent-{index}.txt"));
+        std::fs::write(&path, format!("file {index}\n")).unwrap();
+        f.app.open_source_control_diff_in_repository(&path, false, false, Some(f.root.clone()));
+        f.app.wait_for_background(Duration::from_secs(5), |app| app.should_render_diff_for_active_editor()
+            && !app.bg_git_compare_running && !app.diff_tabs.refresh_running);
+        assert!(f.app.diff_tabs.recent.entries.len() <= recent::MAX_ENTRIES);
+        assert!(f.app.diff_tabs.recent.entries.iter().map(recent::Entry::memory_bytes).sum::<usize>() <= recent::MAX_BYTES);
+    }
+    let recent = &mut f.app.diff_tabs.recent;
+    assert_eq!(recent.entries.len(), recent::MAX_ENTRIES);
+    assert!(!recent.entries.iter().any(|entry| entry.path == f.root.join("recent-0.txt")));
+    let mut oversized = recent.entries.pop_back().unwrap();
+    oversized.target.rope = ropey::Rope::from_str(&"x".repeat(recent::MAX_BYTES / 8 + 1));
+    let count = recent.entries.len();
+    recent.insert(oversized);
+    assert_eq!(recent.entries.len(), count, "oversized views must not displace useful small views");
 }
 
 fn completed_refresh(app: &App) -> (PathBuf, u64, Vec<SourceControlDiffUpdate>) {

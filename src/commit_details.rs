@@ -90,6 +90,7 @@ pub(crate) struct CommitDetails {
     pub query_cursor: usize,
     pub query_anchor: Option<usize>,
     pub query_hit: Option<crate::text_input::TextInputHitMap>,
+    pub query_viewport: Option<crate::text_input::InputViewport>,
     pub focus: Focus,
     pub copy_feedback: Option<CopyFeedback>,
     pub loading: bool,
@@ -148,6 +149,7 @@ impl CommitDetails {
         self.query.clear();
         self.query_cursor = 0;
         self.query_anchor = None;
+        self.query_viewport = None;
         self.selected = selected.unwrap_or(0);
         self.review.reveal = true;
         self.focus = Focus::Filter;
@@ -184,6 +186,10 @@ impl CommitDetails {
         modifiers: crossterm::event::KeyModifiers,
         paste: Option<&str>,
     ) {
+        let copy = paste.is_none() && modifiers.intersects(crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SUPER)
+            && !modifiers.contains(crossterm::event::KeyModifiers::ALT)
+            && matches!(code, crossterm::event::KeyCode::Char('c' | 'C') | crossterm::event::KeyCode::Insert);
+        if !copy { self.query_viewport = None; }
         let mut input = crate::text_input::TextInput::new(
             &mut self.query,
             &mut self.query_cursor,

@@ -80,10 +80,11 @@ fn comment_whitespace_overrides_only_comments_and_inherit_tracks_general_mode() 
                 let chars: Vec<_> = text.chars().collect();
                 let trailing = text.trim_end().chars().count();
                 for (col, &ch) in chars.iter().enumerate() {
-                    // Explicit source ranges: code before/after block delimiters,
-                    // a complete continuation, and a string containing delimiters.
+                    // The bundled C grammar includes whitespace before an
+                    // opening delimiter in its comment scope (\s*+(/\*)).
+                    // Continuations remain comments; quoted delimiters do not.
                     let in_comment = match line_idx {
-                        0 => col >= 11,
+                        0 => col >= 10,
                         1 => true,
                         2 => col < 3,
                         _ => false,

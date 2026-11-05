@@ -19,6 +19,7 @@ fn a_blocked_open_cannot_delay_an_unrelated_save_or_publish_another_roots_checkp
     )
     .unwrap();
     std::fs::write(root.path().join("small.rs"), "original\n").unwrap();
+    std::fs::write(root.path().join("other.rs"), "independent\n").unwrap();
     let mut service = Service::new(root.path()).unwrap();
     let Reply::Opened { revision, .. } = service
         .execute(Command::Open {
@@ -66,6 +67,7 @@ fn a_blocked_open_cannot_delay_an_unrelated_save_or_publish_another_roots_checkp
             },
         ),
         (3, Command::PerformanceSnapshot),
+        (4, Command::Open { path: path("other.rs") }),
     ] {
         wire::write_message(
             &mut batch,
@@ -92,23 +94,23 @@ fn a_blocked_open_cannot_delay_an_unrelated_save_or_publish_another_roots_checkp
             }
             if let Some((_, data)) = decoder.line(&line)? {
                 responses.push(serde_json::from_slice(&data)?);
-                if responses.len() == 2 { return Ok(responses); }
+                if responses.len() == 3 { return Ok(responses); }
             }
         }
     })();
     drop(held); // unblock on regression too, before joining the owned service
     client.shutdown(std::net::Shutdown::Both).unwrap();
     let _ = worker.join().unwrap();
-    let responses = result.expect("save and diagnostics complete while the open is still blocked");
+    let responses = result.expect("an independent read, save and diagnostics complete while the first open is still blocked");
     assert!(responses.iter().any(|response| response.id == 2 && matches!(response.result, Ok(Reply::Saved { .. }))));
     assert!(responses.iter().any(|response| response.id == 3 && matches!(response.result, Ok(Reply::PerformanceSnapshot(_)))));
+    assert!(responses.iter().any(|response| response.id == 4 && matches!(&response.result, Ok(Reply::Opened { text, .. }) if text == "independent\n")));
     assert_eq!(
         std::fs::read_to_string(root.path().join("small.rs")).unwrap(),
         "saved\noriginal\n"
     );
 
-    // A delayed read may replace the small LRU's root, but its checkpoint must
-    // never be used for another workspace with the same relative filename.
+    // Delayed reads retain separate, bounded checkpoints for each workspace.
     let other = tempfile::tempdir().unwrap();
     let mut cache = Documents::default();
     let a = Document {
@@ -121,7 +123,7 @@ fn a_blocked_open_cannot_delay_an_unrelated_save_or_publish_another_roots_checkp
     cache.remove(other.path(), &path("same.rs"), true);
     assert!(cache.get(root.path(), &path("same.rs")).is_some());
     cache.insert(other.path(), path("same.rs"), a);
-    assert!(cache.get(root.path(), &path("same.rs")).is_none());
+    assert!(cache.get(root.path(), &path("same.rs")).is_some());
 }
 
 #[test]
@@ -431,6 +433,7 @@ fn resource_cleanup_is_bounded_coalesced_and_does_not_start_optional_workers() {
     let (sender, requests) = mpsc::sync_channel(8);
     let worker = Actor {
         sender,
+        read_load: None,
         queued: std::cell::Cell::new(0),
         closes: Arc::default(),
         worker: None,
@@ -456,7 +459,7 @@ fn watcher_controls_keep_latest_root_state_when_the_actor_inbox_is_full() {
     let root = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     let (sender, requests) = std::sync::mpsc::sync_channel(8);
-    let worker = Actor { sender, queued: std::cell::Cell::new(0), closes: Arc::default(), worker: None, join: false };
+    let worker = Actor { sender, read_load: None, queued: std::cell::Cell::new(0), closes: Arc::default(), worker: None, join: false };
     for id in 1..=8 {
         worker.enqueue(Request { id, workspace: None, command: Command::Watch }, None).unwrap();
     }

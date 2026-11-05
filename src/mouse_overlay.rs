@@ -345,7 +345,7 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
         // Close button click: " × " in top-right border
         let close_x = px + width - 4;
         if row == py && col >= close_x && col < px + width {
-            app.global_search_active = false;
+            app.close_global_search();
             return true;
         }
         let inner_x = px + 1;
@@ -361,13 +361,12 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
             );
             let clicked = scroll + (row - inner_y - 1) as usize;
             if clicked < app.global_search_results.len() {
-                app.global_search_selected = clicked;
-                app.preview_global_search_result();
+                app.click_global_search_result(clicked, col, row);
             }
             return true;
         }
         if !(col >= px && col < px + width && row >= py && row < py + height) {
-            app.global_search_active = false;
+            app.close_global_search();
             return true;
         }
         return true;

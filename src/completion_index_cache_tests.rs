@@ -23,6 +23,7 @@ fn synchronous(root: &Path, cache: &Path) -> (CompletionIndex, Worker) {
     let shared = Arc::new(Shared {
         root: root.to_owned(),
         cache_dir: cache.to_owned(),
+        cache_session: Some(cache_lifecycle::Session::register(cache)),
         buffer_only: false,
         control: Mutex::new(Control::default()),
         available: Condvar::new(),
@@ -61,6 +62,84 @@ fn wait_word(index: &CompletionIndex, prefix: &str) {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn checkpoint_from_an_older_workspace_spelling_restores_under_the_resolved_root() {
+    let (_temporary, root, cache) = fixture();
+    let alias = root.with_file_name(root.file_name().unwrap().to_string_lossy().to_ascii_uppercase());
+    if !alias.is_dir() {
+        return;
+    }
+    assert_ne!(root, alias);
+    let path = root.join("saved.rs");
+    std::fs::write(&path, "learnedBeforeCaseCorrection").unwrap();
+    let settings = IndexSettings::default();
+    let (_original, mut original) = synchronous(&alias, &cache);
+    let mut saved = record(alias.join("saved.rs"), "learnedBeforeCaseCorrection");
+    saved.stamp = Stamp::read(&path);
+    saved.dirty = false;
+    admit(&mut original, saved, &settings);
+    original.save();
+
+    let (restored, mut worker) = synchronous(&root, &cache);
+    worker.restore_cache(&settings);
+    assert!(worker.restore.is_some());
+    while worker.validate_next(&settings) {}
+    assert!(worker.files.contains_key(&path));
+    assert!(!restored.query("learnedBefore", "").is_empty());
+
+    let other = root.with_file_name("other");
+    std::fs::create_dir(&other).unwrap();
+    let (_different, mut different) = synchronous(&other, &cache);
+    different.restore_cache(&settings);
+    assert!(different.restore.is_none());
+}
+
+#[test]
+fn a_replacement_index_waits_for_the_retiring_workers_final_checkpoint() {
+    let (_temporary, root, cache) = fixture();
+    let (index, mut worker) = synchronous(&root, &cache);
+    let source = root.join("source.rs");
+    std::fs::write(&source, "handoffCachedIdentifier").unwrap();
+    let mut learned = record(source.clone(), "handoffCachedIdentifier");
+    learned.stamp = Stamp::read(&source);
+    learned.dirty = false;
+    admit(&mut worker, learned, &IndexSettings::default());
+    worker.remote_root_uri = Some("file:///srv/handoff/".into());
+    let mut settings = IndexSettings::default();
+    settings.paused = true;
+    settings.project_wide = false;
+    index.configure(settings.clone());
+    worker.save_preferences(&settings);
+    assert!(worker.cache_dirty);
+    // Model a retiring worker whose final disk write has not run yet, without
+    // sleeping inside production code or blocking the caller that drops it.
+    let dropped = Instant::now();
+    drop(index);
+    assert!(dropped.elapsed() < Duration::from_secs(1));
+    let (release, wait_for_release) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let _ = wait_for_release.recv();
+        worker.run();
+    });
+    let restored = CompletionIndex::new_with_identity(root, cache, IndexSettings::default(), true,
+        Some("file:///srv/handoff/".into()));
+    let until = Instant::now() + Duration::from_millis(100);
+    let mut premature = None;
+    while Instant::now() < until {
+        let status = restored.status();
+        if status.phase == IndexPhase::Paused { premature = Some(status); break; }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // Always release the controlled writer before asserting, including on the
+    // old implementation, so a regression cannot leave a blocked test thread.
+    release.send(()).unwrap();
+    writer.join().unwrap();
+    assert!(premature.is_none(), "replacement published ready before its predecessor saved: {premature:?}");
+    wait(&restored, |status| status.phase == IndexPhase::Paused && status.indexed_files == 1);
+    assert!(!restored.query("handoffCached", "").is_empty());
 }
 
 #[test]

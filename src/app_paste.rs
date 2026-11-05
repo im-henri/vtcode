@@ -230,7 +230,7 @@ impl App {
 
     pub(crate) fn paste_receiving(&self) -> bool { self.bulk_paste.receiving.is_some() }
 
-    pub(crate) fn paste_editor_clipboard(&mut self, smart: bool) {
+    pub(crate) fn paste_editor_clipboard(&mut self, allow_line_copy: bool) {
         if self.bulk_paste.job.is_some() {
             self.notify_warn("A paste is already being prepared; wait or cancel it first");
             return;
@@ -274,10 +274,10 @@ impl App {
                 }
             }
         };
-        self.paste_editor_text(text, smart);
+        self.paste_editor_text(text, allow_line_copy);
     }
 
-    pub(crate) fn paste_editor_text(&mut self, text: String, smart: bool) {
+    pub(crate) fn paste_editor_text(&mut self, text: String, allow_line_copy: bool) {
         if self.bulk_paste.job.is_some() {
             self.notify_warn("A paste is already being prepared; wait or cancel it first");
             return;
@@ -294,7 +294,7 @@ impl App {
             return;
         }
         if text.len() < BACKGROUND_BYTES || editor.markdown_preview_scroll.is_some() {
-            if smart {
+            if allow_line_copy {
                 editor.paste_with_text(&text);
             } else {
                 editor.paste_snapshot_text(&text, false, None);
@@ -322,7 +322,7 @@ impl App {
         let submitted = self.background.interactive_sender().send(Box::new(move || {
             let _activity = activity.running();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                snapshot.prepare(text, smart, &work_cancel)
+                snapshot.prepare(text, allow_line_copy, &work_cancel)
             }))
             .unwrap_or_else(|_| {
                 Err("Paste preparation failed; the document was not changed".into())

@@ -25,7 +25,7 @@ fn benchmark_first_frame_startup() {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
     terminal.draw(crate::ui_welcome::draw_bootstrap_screen).unwrap();
     let first_frame = started.elapsed();
-    let prepared = crate::startup::Prepared::load(Some(root.path().as_os_str().to_owned()));
+    let prepared = crate::startup::Prepared::load(Some(root.path().as_os_str().to_owned())).unwrap();
     let manifest = started.elapsed();
     let mut app = prepared.into_app(crate::background::UiWake::default());
     let constructed = started.elapsed();
@@ -171,6 +171,31 @@ fn startup_target_handles_directories_files_coordinates_and_missing_files() {
     assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (2, 1));
     assert_eq!(app.theme_key, "light");
     assert_eq!(app.editor().unwrap().tab_size, 2);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_startup_resolves_folder_casing_for_folder_and_file_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("RealWorkspace");
+    let alias = directory.path().join("REALWORKSPACE");
+    std::fs::create_dir(&root).unwrap();
+    if !alias.is_dir() {
+        // This volume treats the two spellings as different paths.
+        assert!(crate::startup::LocalFolder::resolve(&alias).is_err());
+        return;
+    }
+    std::fs::write(root.join("file.rs"), "oldWorkspaceSymbol").unwrap();
+    let real = crate::startup::Prepared::load(Some(root.as_os_str().to_owned())).unwrap();
+    for path in [alias.clone(), alias.join("FILE.RS")] {
+        let opened = crate::startup::Prepared::load(Some(path.into_os_string())).unwrap();
+        assert_eq!(opened.target.root, real.target.root);
+        assert_eq!(opened.target.root.file_name().unwrap(), "RealWorkspace");
+        if let Some(file) = opened.target.file {
+            assert_eq!(file.parent(), Some(real.target.root.as_path()));
+            assert_eq!(file.file_name().unwrap(), "file.rs");
+        }
+    }
 }
 
 // Releases a blocked worker even if an assertion fails.

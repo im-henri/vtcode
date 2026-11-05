@@ -100,7 +100,7 @@ pub(crate) fn handle_editor_area_left_click(
                     return;
                 };
                 let clicked_row = if let Some(rows) = &ed.diff_display_rows {
-                    rows.get(screen_row).copied().flatten().map(|line_idx| (line_idx, true))
+                    rows.get(screen_row).copied().flatten().map(|row| (row.line_idx, row.is_first))
                 } else if ed.ai_review.active {
                     ed.ai_review.source_rows.get(screen_row).copied().flatten().map(|row| (row.line_idx, row.is_first))
                 } else {

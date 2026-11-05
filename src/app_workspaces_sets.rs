@@ -309,11 +309,12 @@ impl App {
                     let startup = crate::startup::Prepared::load_remote(root.clone());
                     (root, None, Prepared { startup, remote: Some(remote), equivalent_roots: vec![] })
                 } else {
-                    let root = crate::folder_browser::normalized_path(&path);
-                    if !root.is_dir() { return Err("Choose an existing folder; current folders were kept open".into()); }
-                    let canonical = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
-                    let startup = crate::startup::Prepared::load(Some(root.clone().into_os_string()));
-                    if !same_workspace(&startup.target.root, &root) { return Err("The folder changed during loading".into()); }
+                    let folder = crate::startup::LocalFolder::resolve(&path).map_err(|error| error.to_string())?;
+                    // Keep the requested path for revalidation after the
+                    // confirmation prompt. The workbench uses the resolved root.
+                    let root = folder.requested.clone();
+                    let canonical = folder.canonical.clone();
+                    let startup = folder.prepare().map_err(|error| error.to_string())?;
                     (root, Some(canonical), Prepared { startup, remote: None, equivalent_roots: vec![] })
                 };
                 let existing = opened.iter().find(|(_, path)| same_workspace(path, &root)
@@ -447,7 +448,10 @@ impl App {
                         (Location::Remote { uri }, Some(remote)) => remote.target_key(uri).map_err(|error| error.to_string())?,
                         _ => return Err("Workspace uses a different connection".into()),
                     }};
-                    let canonical = if remote.is_none() { std::fs::canonicalize(&root).ok() } else { None };
+                    let local = remote.is_none().then(|| crate::startup::LocalFolder::resolve(&root));
+                    let canonical = local.as_ref()
+                        .and_then(|folder| folder.as_ref().ok())
+                        .map(|folder| folder.canonical.clone());
                     let mut existing = opened.iter().find(|(_, path)| same_workspace(path, &root)
                         || canonical.as_ref().is_some_and(|canonical| std::fs::canonicalize(path).is_ok_and(|path| path == *canonical))).map(|(id, _)| *id);
                     let (root, prepared) = if existing.is_some() { (root, None) }
@@ -457,9 +461,10 @@ impl App {
                         let prepared = existing.is_none().then(|| Prepared { startup: crate::startup::Prepared::load_remote(workspace.view_root.clone()), remote: Some(workspace.clone()), equivalent_roots: vec![] });
                         (workspace.view_root.clone(), prepared)
                     } else {
-                        if canonical.is_none() || !root.is_dir() { return Err(format!("{} is not an available directory; current folders were kept open", root.display())); }
-                        let startup = crate::startup::Prepared::load(Some(root.clone().into_os_string()));
-                        if !same_workspace(&startup.target.root, &root) { return Err("A folder changed during loading".into()); }
+                        let folder = local.expect("local folder resolution").map_err(|error| {
+                            format!("Cannot open {}: {error}", root.display())
+                        })?;
+                        let startup = folder.prepare().map_err(|error| error.to_string())?;
                         (root, Some(Prepared { startup, remote: None, equivalent_roots: vec![] }))
                     };
                     if let Some(duplicate) = roots.iter().position(|previous| same_workspace(&previous.root, &root)

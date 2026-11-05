@@ -628,13 +628,13 @@ impl DiffRenderCache {
         let max_right_line = target_content_lines.max(1);
         let max_left_text_width = rows
             .iter()
-            .map(|row| UnicodeWidthStr::width(row.left_text.as_str()))
+            .map(AlignedDiffRow::left_cell_len)
             .max()
             .unwrap_or(0);
 
         let last_target_line = max_right_line.saturating_sub(1);
         let max_inline_text_width = rows.iter()
-            .map(|row| UnicodeWidthStr::width(row.right_text.as_str()))
+            .map(AlignedDiffRow::right_cell_len)
             .max().unwrap_or(0).max(max_left_text_width);
         let mut hunks = Vec::new();
         let mut target_statuses = vec![' '; max_right_line];
@@ -1012,9 +1012,9 @@ impl DiffRenderCache {
         let inline_target_rows: Vec<usize> = map_targets(&inline_row_targets);
         let inline_target_text_rows = Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
         let max_left_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
-            .map(|row| UnicodeWidthStr::width(row.left_text.as_str())).max().unwrap_or(0);
+            .map(AlignedDiffRow::left_cell_len).max().unwrap_or(0);
         let max_inline_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
-            .map(|row| UnicodeWidthStr::width(row.right_text.as_str())).max().unwrap_or(0).max(max_left_text_width);
+            .map(AlignedDiffRow::right_cell_len).max().unwrap_or(0).max(max_left_text_width);
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
         Self {
@@ -2462,6 +2462,7 @@ pub(crate) struct TerminalTab {
     pub terminal_launch_error: Option<String>,
     pub terminal_pty: Option<crate::terminal::TerminalEmulator>,
     pub completion: crate::terminal_completion::Notice,
+    pub find: crate::app_terminal_find::Find,
 }
 
 impl TerminalTab {
@@ -2478,6 +2479,7 @@ impl TerminalTab {
             terminal_launch_error: None,
             terminal_pty: None,
             completion: Default::default(),
+            find: Default::default(),
         }
     }
 

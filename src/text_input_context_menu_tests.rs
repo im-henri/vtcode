@@ -3,7 +3,7 @@ use super::*;
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::{Terminal, backend::TestBackend};
 
-const EXTRA_FIELDS: &[TextInputId] = &[
+pub(super) const EXTRA_FIELDS: &[TextInputId] = &[
     TextInputId::Exclusion(0),
     TextInputId::DeskPopup,
     TextInputId::WorkspaceFilter,
@@ -28,7 +28,7 @@ fn mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
     );
 }
 
-fn field_app(id: TextInputId) -> App {
+pub(super) fn field_app(id: TextInputId) -> App {
     let mut app = App::test_new();
     app.tabs = vec![crate::app::Tab::new_file(
         crate::editor::Editor::test_with_text("underlying document"),

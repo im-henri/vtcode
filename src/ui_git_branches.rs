@@ -700,6 +700,7 @@ fn field(f: &mut Frame, app: &mut App, area: Rect, placeholder: &str, bg: ratatu
     let input = block.inner(area);
     f.render_widget(block, area);
     let hit = InputField::new(&app.git_branch_picker_query)
+        .viewport(app.text_input_viewport(TextInputId::GitBranch))
         .theme_colors(&colors)
         .placeholder_text(placeholder)
         .prefix(" ", colors.ui.description_color(input_bg))

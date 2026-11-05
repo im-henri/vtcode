@@ -296,7 +296,10 @@ fn workspace_history_keys_leave_other_fields_and_result_navigation_available() {
     app.global_search_results = results.into();
     app.global_search_pending_since = None;
     crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
-    assert_eq!(app.global_search_selected, 0, "the first arrow enters the results");
+    assert_eq!(app.global_search_selected, 0, "field arrows must not enter the results");
+    assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+    assert!(app.tabs.is_empty());
+    app.focus_global_search_results();
     crate::input::handle_explorer_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     assert_eq!(app.global_search_selected, 1);
     app.focus_text_input(TextInputId::GlobalSearch(1));
@@ -304,6 +307,9 @@ fn workspace_history_keys_leave_other_fields_and_result_navigation_available() {
     crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     assert_eq!(app.global_search_selected, 1, "plain arrows belong to field history");
     crate::input::handle_global_search_key(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
+    assert_eq!(app.global_search_selected, 1, "modified arrows must not navigate results from a field either");
+    app.focus_global_search_results();
+    crate::input::handle_explorer_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     assert_eq!(app.global_search_selected, 2);
     assert_eq!(app.global_search_replace_query, "replacement");
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
@@ -356,7 +362,7 @@ fn launching_a_file_loads_search_history_without_restoring_other_tabs() {
     previous.search_query = "file term".into();
     previous.global_search_query = "workspace term".into();
     previous.save_session();
-    let prepared = crate::startup::Prepared::load(Some(opened_path.as_os_str().to_owned()));
+    let prepared = crate::startup::Prepared::load(Some(opened_path.as_os_str().to_owned())).unwrap();
     let app = prepared.into_app(Default::default());
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(

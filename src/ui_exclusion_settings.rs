@@ -459,6 +459,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             let focused = app.exclusion_settings.focus == Action::Field(i);
             let input = Rect::new(inner.x, (y + 1) as u16, inner.width, 1);
             let hit = crate::ui_widgets::InputField::new(&field.text)
+                .viewport(app.text_input_viewport(TextInputId::Exclusion(i)))
                 .theme_control(&app.colors, app.colors.ui.settings_control("text"), bg)
                 .prefix("", Color::Reset)
                 .cursor_pos(field.cursor)

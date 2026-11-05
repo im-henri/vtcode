@@ -1,6 +1,9 @@
 use super::*;
 use crate::{app::Tab, editor::Editor};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 use std::time::Duration;
 
 fn fixture(selected_text: bool) -> (tempfile::TempDir, App) {
@@ -14,6 +17,7 @@ fn fixture(selected_text: bool) -> (tempfile::TempDir, App) {
     let mut app = App::new(directory.path().into());
     app.source_control_enabled = false;
     app.explorer = crate::explorer::FileExplorer::new(directory.path().into());
+    app.explorer.set_viewport_height(3);
     app.show_explorer = true;
     app.sidebar_view = SidebarView::Explorer;
     app.active_pane = ActivePane::Explorer;
@@ -57,6 +61,21 @@ fn editor_state(app: &App) -> (ropey::Rope, usize, usize, Option<(usize, usize)>
         editor.content_version,
         editor.modified,
     )
+}
+
+fn assert_paste_selected(app: &App, path: &Path) {
+    let index = app
+        .explorer
+        .find_path(path)
+        .expect("pasted item is in the tree");
+    assert_eq!(app.explorer.selected, index);
+    assert_eq!(app.explorer_selection_anchor, Some(index));
+    assert!(app.explorer_multi_selected.contains(path));
+    assert!(
+        app.explorer
+            .viewport_indices(app.explorer.visible_height)
+            .contains(&index)
+    );
 }
 
 #[test]
@@ -120,6 +139,64 @@ fn explorer_undo_redo_never_changes_the_document_or_its_history() {
 }
 
 #[test]
+fn clicking_empty_space_or_the_folder_header_pastes_into_the_workspace_root() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    for click_header in [false, true] {
+        let (directory, mut app) = fixture(true);
+        let source = directory.path().join("folder/nested.txt");
+        app.explorer.select_path(&source);
+        select(&mut app, "folder/nested.txt");
+        ctrl(&mut app, 'c');
+
+        let area = Rect::new(2, 3, 30, 16);
+        app.explorer_area = Some(area);
+        app.show_open_editors = false;
+        let (_, section) = crate::ui_chrome::explorer_sections(&app, area);
+        let content = crate::ui_chrome::explorer_tree_content_area(&app, area);
+        app.explorer.set_viewport_height(content.height as usize);
+        let row = if click_header {
+            section.y
+        } else {
+            content.bottom() - 1
+        };
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            crate::mouse::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind,
+                    column: content.x + 4,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
+        }
+        assert_eq!(app.active_pane, ActivePane::Explorer);
+        assert!(app.explorer_multi_selected.is_empty());
+        assert!(app.explorer_selection_anchor.is_none());
+        key(&mut app, KeyCode::Delete, KeyModifiers::NONE);
+        key(&mut app, KeyCode::F(2), KeyModifiers::NONE);
+        assert!(!app.confirm_delete_active);
+        assert!(!app.rename.active);
+
+        let before = editor_state(&app);
+        ctrl(&mut app, 'v');
+        wait(&mut app);
+        let pasted = directory.path().join("nested.txt");
+        assert_eq!(
+            std::fs::read_to_string(&pasted).unwrap(),
+            "Saved folder/nested.txt\n"
+        );
+        assert!(source.exists());
+        assert!(!directory.path().join("folder/nested (1).txt").exists());
+        assert_paste_selected(&app, &pasted);
+        assert_eq!(editor_state(&app), before);
+    }
+}
+
+#[test]
 fn file_paste_uses_the_selected_directory_and_matching_terminal_paste_payload() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
     let (directory, mut app) = fixture(true);
@@ -132,6 +209,7 @@ fn file_paste_uses_the_selected_directory_and_matching_terminal_paste_payload() 
         .terminal_text
         .clone();
     select(&mut app, "destination");
+    assert!(!app.explorer.entries[app.explorer.selected].expanded);
     crate::app_event_loop::handle_paste_input(&mut app, "unrelated text from another program");
     assert!(!app.bg_filesystem_action_running);
     assert!(!directory.path().join("destination/alpha.rs").exists());
@@ -143,6 +221,35 @@ fn file_paste_uses_the_selected_directory_and_matching_terminal_paste_payload() 
         "Saved alpha.rs\n"
     );
     assert_eq!(editor_state(&app), before);
+    assert_paste_selected(&app, &directory.path().join("destination/alpha.rs"));
+    app.show_open_editors = false;
+    app.colors.ui.list_active_background =
+        crate::theme_workbench::ColorLayer::rgba(20, 70, 120, 255);
+    app.colors.ui.list_inactive_background =
+        crate::theme_workbench::ColorLayer::rgba(60, 60, 60, 255);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(36, 12)).unwrap();
+    let area = Rect::new(0, 0, 36, 12);
+    terminal
+        .draw(|frame| crate::ui_chrome::draw_explorer(frame, &mut app, area))
+        .unwrap();
+    let content = crate::ui_chrome::explorer_tree_content_area(&app, area);
+    let rows = app.explorer.viewport_indices(content.height as usize);
+    let row_background = |path: &str| {
+        let index = app
+            .explorer
+            .find_path(&directory.path().join(path))
+            .unwrap();
+        let offset = rows.iter().position(|&row| row == index).unwrap();
+        terminal.backend().buffer()[(content.x + 1, content.y + offset as u16)].bg
+    };
+    assert_eq!(
+        row_background("destination/alpha.rs"),
+        ratatui::style::Color::Rgb(20, 70, 120)
+    );
+    assert_eq!(
+        row_background("alpha.rs"),
+        ratatui::style::Color::Rgb(60, 60, 60)
+    );
     assert!(
         app.explorer_clipboard.is_some(),
         "copy remains available for repeated pastes"
@@ -173,6 +280,13 @@ fn terminal_multi_file_paste_accepts_normalized_line_endings_without_parsing_ext
         wait(&mut app);
         assert!(directory.path().join("destination/alpha.rs").exists());
         assert!(directory.path().join("destination/second.txt").exists());
+        assert_eq!(
+            app.explorer_multi_selected.as_slice(),
+            [
+                directory.path().join("destination/alpha.rs"),
+                directory.path().join("destination/second.txt"),
+            ]
+        );
         assert_eq!(editor_state(&app), before);
     }
 }
@@ -187,10 +301,12 @@ fn copying_into_the_original_folder_chooses_new_names_and_preserves_the_source()
         select(&mut app, "alpha.rs");
         ctrl(&mut app, 'v');
         wait(&mut app);
+        let pasted = directory.path().join(format!("alpha ({suffix}).rs"));
         assert_eq!(
-            std::fs::read_to_string(directory.path().join(format!("alpha ({suffix}).rs"))).unwrap(),
+            std::fs::read_to_string(&pasted).unwrap(),
             "Saved alpha.rs\n"
         );
+        assert_paste_selected(&app, &pasted);
         assert_eq!(
             std::fs::read_to_string(directory.path().join("alpha.rs")).unwrap(),
             "Saved alpha.rs\n"
@@ -210,6 +326,7 @@ fn cutting_and_pasting_moves_the_file_but_preserves_unsaved_buffer_and_undo_hist
     wait(&mut app);
     assert!(!directory.path().join("alpha.rs").exists());
     assert!(directory.path().join("destination/alpha.rs").exists());
+    assert_paste_selected(&app, &directory.path().join("destination/alpha.rs"));
     assert_eq!(
         app.editor().unwrap().file_path.as_ref(),
         Some(&directory.path().join("destination/alpha.rs"))
@@ -218,6 +335,27 @@ fn cutting_and_pasting_moves_the_file_but_preserves_unsaved_buffer_and_undo_hist
     assert!(app.explorer_clipboard.is_none());
     app.editor_mut().unwrap().undo();
     assert_eq!(app.editor().unwrap().rope.to_string(), "alpha\nbeta\n");
+}
+
+#[test]
+fn paste_reveals_a_result_hidden_by_explorer_find_and_keeps_the_query() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let (directory, mut app) = fixture(false);
+    ctrl(&mut app, 'c');
+    app.explorer.find.open = true;
+    app.explorer.find.filter = true;
+    app.explorer.find.query = "destination".into();
+    app.update_explorer_find();
+    wait(&mut app);
+    select(&mut app, "destination");
+
+    ctrl(&mut app, 'v');
+    wait(&mut app);
+
+    assert!(app.explorer.find.open);
+    assert!(!app.explorer.find.filtering());
+    assert_eq!(app.explorer.find.query, "destination");
+    assert_paste_selected(&app, &directory.path().join("destination/alpha.rs"));
 }
 
 #[test]

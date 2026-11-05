@@ -600,6 +600,10 @@ fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
         app.paste_into_focused_text_input(text);
         return;
     }
+    if matches!(app.focused_text_input_id(), Some(crate::text_input::TextInputId::TerminalFind(_))) {
+        app.paste_into_focused_text_input(text);
+        return;
+    }
     if let Some(index) = app.focused_terminal_index() {
         app.paste_terminal_text(index, text);
         return;
@@ -2801,6 +2805,9 @@ fn next_event_wait(
     if let Some(wait) = app.global_search_debounce_wait(std::time::Instant::now()) {
         include(wait);
     }
+    if let Some(wait) = app.language_detection_wait(std::time::Instant::now()) {
+        include(wait);
+    }
     if let Some(wait) = app.git_watcher_refresh_wait(std::time::Instant::now()) {
         include(wait);
     }
@@ -2840,8 +2847,8 @@ fn next_event_wait(
                 FOREGROUND_IDLE_QUIET_PERIOD,
             ));
         }
-        if !app.idle_quiescent && app.cursor_blinking && app.has_text_input_focus() {
-            include(remaining(app.last_blink, CURSOR_BLINK_INTERVAL));
+        if !app.idle_quiescent && let Some(start) = app.cursor_blink_start() {
+            include(remaining(start, CURSOR_BLINK_INTERVAL));
         }
         if app.chord_pending {
             include(remaining(app.chord_start, CHORD_TIMEOUT));
@@ -3477,6 +3484,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             };
             app.background.activity.ui.record(phase, finished.saturating_duration_since(service_started), finished);
         }
+        needs_redraw |= app.poll_language_detection(std::time::Instant::now());
         if crate::ui_chat::advance_activity_frame(app) {
             needs_redraw = true;
         }
@@ -3848,15 +3856,13 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
         // Cursor blink should be time-based and independent of mouse movement/events.
         // Only blink when a text input context is focused (editor file tab, palette, search, etc.)
-        let should_blink = app.terminal_has_focus
-            && !app.idle_quiescent
-            && app.cursor_blinking
-            && app.has_text_input_focus();
-        if should_blink && app.last_blink.elapsed().as_millis() >= 500 {
+        let blink_start = (app.terminal_has_focus && !app.idle_quiescent)
+            .then(|| app.cursor_blink_start()).flatten();
+        if blink_start.is_some_and(|start| start.elapsed() >= CURSOR_BLINK_INTERVAL) {
             app.cursor_visible = !app.cursor_visible;
             app.last_blink = std::time::Instant::now();
             needs_redraw = true;
-        } else if !should_blink && !app.cursor_visible {
+        } else if blink_start.is_none() && !app.cursor_visible {
             app.cursor_visible = true;
             needs_redraw = true;
         }

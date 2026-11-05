@@ -258,6 +258,7 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect, bg: Color) {
                 };
                 let field = &app.scope_bubble_settings.field;
                 let hit = InputField::new(&field.text)
+                    .viewport(app.text_input_viewport(TextInputId::ScopeBubbleLanguage))
                     .theme_control(&app.colors, app.colors.ui.settings_control("text"), bg)
                     .bg(style.bg.unwrap_or(bg))
                     .prefix("", Color::Reset)

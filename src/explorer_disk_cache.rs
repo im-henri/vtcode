@@ -17,8 +17,32 @@ const MAX_ENTRIES: usize = 100_000;
 
 struct Listing {
     entries: Arc<Vec<DirectoryEntry>>,
+    metadata: bool,
+    order: Option<Projection>,
     read_at: Instant,
     last_used: u64,
+}
+
+struct Projection {
+    sort: ExplorerSortMode,
+    locale: String,
+    indices: Arc<Vec<usize>>,
+}
+
+/// Different worker projections can sort the same immutable directory data
+/// without copying paths or changing another in-flight request's ordering.
+pub(super) struct OrderedListing {
+    entries: Arc<Vec<DirectoryEntry>>,
+    indices: Arc<Vec<usize>>,
+}
+impl OrderedListing {
+    pub(super) fn iter(&self) -> impl Iterator<Item = &DirectoryEntry> {
+        self.indices.iter().map(|&index| &self.entries[index])
+    }
+}
+
+fn needs_metadata(sort: ExplorerSortMode) -> bool {
+    matches!(sort, ExplorerSortMode::Size | ExplorerSortMode::Modified)
 }
 
 #[derive(Default)]
@@ -27,7 +51,7 @@ struct State {
     clock: u64,
     watched: bool,
     canonical: Option<(PathBuf, PathBuf)>,
-    directories: FxHashMap<(PathBuf, ExplorerSortMode), Listing>,
+    directories: FxHashMap<PathBuf, Listing>,
     entries: usize,
     #[cfg(test)]
     reads: usize,
@@ -37,11 +61,6 @@ struct State {
 pub(super) struct DirectoryCache(Arc<Mutex<State>>);
 
 impl DirectoryCache {
-    pub(super) fn for_new_order(&self) -> Self {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        Self(Arc::new(Mutex::new(State { watched: state.watched,
-            canonical: state.canonical.clone(), ..Default::default() })))
-    }
     pub(super) fn set_watched(&self, watched: bool) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.watched != watched {
@@ -92,8 +111,17 @@ impl DirectoryCache {
         paths.extend(aliases.iter().map(PathBuf::as_path));
         let parents: FxHashSet<_> = paths.iter().filter_map(|path| path.parent()).collect();
         state.generation = state.generation.wrapping_add(1);
-        state.directories.retain(|(directory, sort), _| {
-            if !structural && matches!(sort, ExplorerSortMode::Name | ExplorerSortMode::Type) {
+        state.directories.retain(|directory, listing| {
+            let affected = parents.contains(directory.as_path())
+                || directory.ancestors().any(|ancestor| paths.contains(ancestor));
+            if !structural {
+                if affected {
+                    // Content writes invalidate size/date keys, not names.
+                    listing.metadata = false;
+                    if listing.order.as_ref().is_some_and(|order| needs_metadata(order.sort)) {
+                        listing.order = None;
+                    }
+                }
                 return true;
             }
             !parents.contains(directory.as_path())
@@ -115,14 +143,14 @@ impl DirectoryCache {
         }
     }
 
-    pub(super) fn contains_path(&self, path: &Path, sort: ExplorerSortMode) -> bool {
+    pub(super) fn contains_path(&self, path: &Path, _sort: ExplorerSortMode) -> bool {
         let Some(parent) = path.parent() else {
             return false;
         };
         let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         state
             .directories
-            .get(&(parent.to_path_buf(), sort))
+            .get(parent)
             .is_some_and(|listing| listing.entries.iter().any(|entry| entry.0 == path))
     }
 
@@ -157,7 +185,7 @@ impl DirectoryCache {
         if cancel.is_some_and(|token| token.is_cancelled()) {
             return None;
         }
-        let key = (directory.to_path_buf(), sort);
+        let key = directory.to_path_buf();
         let generation = {
             let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
             state.clock = state.clock.wrapping_add(1);
@@ -165,7 +193,7 @@ impl DirectoryCache {
             let watched = state.watched && watcher_covers_directory;
             if let Some(listing) = state.directories.get_mut(&key) {
                 let ttl = if watched { WATCHED_TTL } else { UNWATCHED_TTL };
-                if listing.read_at.elapsed() < ttl {
+                if listing.read_at.elapsed() < ttl && (!needs_metadata(sort) || listing.metadata) {
                     listing.last_used = used;
                     return Some(Arc::clone(&listing.entries));
                 }
@@ -211,6 +239,8 @@ impl DirectoryCache {
                 key,
                 Listing {
                     entries: Arc::clone(&entries),
+                    metadata: needs_metadata(sort),
+                    order: None,
                     read_at: Instant::now(),
                     last_used,
                 },
@@ -218,6 +248,50 @@ impl DirectoryCache {
             state.entries += entries.len();
         }
         Some(entries)
+    }
+
+    pub(super) fn get_ordered(
+        &self,
+        directory: &Path,
+        sort: ExplorerSortMode,
+        ordering: &crate::file_order::FileOrder,
+        watcher_covers_directory: bool,
+        cancel: Option<&crate::background::CancellationToken>,
+        read: impl FnOnce() -> Option<Vec<DirectoryEntry>>,
+    ) -> Option<OrderedListing> {
+        let entries = self.get_or_read(directory, sort, watcher_covers_directory, cancel, read)?;
+        {
+            let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(listing) = state.directories.get(directory)
+                && Arc::ptr_eq(&listing.entries, &entries)
+                && let Some(order) = &listing.order
+                && order.sort == sort && order.locale == ordering.locale() {
+                return Some(OrderedListing { entries, indices: order.indices.clone() });
+            }
+        }
+        let mut indices: Vec<_> = (0..entries.len()).collect();
+        indices.sort_by(|&a, &b| {
+            let (_, a_dir, a_size, a_time, a_name) = &entries[a];
+            let (_, b_dir, b_size, b_time, b_name) = &entries[b];
+            b_dir.cmp(a_dir).then_with(|| {
+                let name = || ordering.names(a_name, b_name);
+                match sort {
+                    ExplorerSortMode::Name => name(),
+                    ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
+                    ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
+                    ExplorerSortMode::Type => if *a_dir { name() } else { ordering.extensions(a_name, b_name) },
+                }
+            })
+        });
+        if cancel.is_some_and(|token| token.is_cancelled()) { return None; }
+        let indices = Arc::new(indices);
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(listing) = state.directories.get_mut(directory)
+            && Arc::ptr_eq(&listing.entries, &entries)
+            && (!needs_metadata(sort) || listing.metadata) {
+            listing.order = Some(Projection { sort, locale: ordering.locale().to_owned(), indices: indices.clone() });
+        }
+        Some(OrderedListing { entries, indices })
     }
 
     #[cfg(test)]
@@ -229,6 +303,76 @@ impl DirectoryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample(directory: &Path) -> Vec<DirectoryEntry> {
+        [("z.h", 1, 3), ("õ.h", 3, 1), ("a.rs", 2, 2)].into_iter()
+            .map(|(name, size, modified)| (directory.join(name), false, size,
+                SystemTime::UNIX_EPOCH + Duration::from_secs(modified), name.to_owned())).collect()
+    }
+    fn names(listing: &OrderedListing) -> Vec<&str> {
+        listing.iter().map(|entry| entry.4.as_str()).collect()
+    }
+
+    #[test]
+    fn sort_and_locale_projections_share_one_snapshot_and_keep_inflight_ordering() {
+        let cache = DirectoryCache::default();
+        let directory = Path::new("workspace");
+        let en = crate::file_order::FileOrder::new("en-US").unwrap();
+        let et = crate::file_order::FileOrder::new("et-EE").unwrap();
+        let read = |sort, locale: &crate::file_order::FileOrder| {
+            cache.get_ordered(directory, sort, locale, true, None, || Some(sample(directory))).unwrap()
+        };
+        let original = read(ExplorerSortMode::Name, &en);
+        let again = read(ExplorerSortMode::Name, &en);
+        assert!(Arc::ptr_eq(&original.indices, &again.indices), "unchanged projections do not sort again");
+        assert_eq!(names(&read(ExplorerSortMode::Type, &en)), ["õ.h", "z.h", "a.rs"]);
+        assert_eq!(names(&read(ExplorerSortMode::Name, &et)), ["a.rs", "z.h", "õ.h"]);
+        assert_eq!(names(&original), ["a.rs", "õ.h", "z.h"], "a new locale cannot mutate an old worker's result");
+        assert_eq!(cache.read_count(), 1, "name/type/locale changes need no directory reread");
+        assert_eq!(names(&read(ExplorerSortMode::Modified, &et)), ["z.h", "a.rs", "õ.h"]);
+        assert_eq!(names(&read(ExplorerSortMode::Size, &et)), ["õ.h", "a.rs", "z.h"]);
+        assert_eq!(names(&read(ExplorerSortMode::Name, &en)), ["a.rs", "õ.h", "z.h"]);
+        assert_eq!(cache.read_count(), 2, "size and date share one metadata snapshot");
+    }
+
+    #[test]
+    fn content_invalidation_preserves_names_but_reloads_metadata_before_sorting() {
+        let cache = DirectoryCache::default();
+        let directory = Path::new("workspace");
+        let order = crate::file_order::FileOrder::new("en-US").unwrap();
+        cache.get_ordered(directory, ExplorerSortMode::Size, &order, true, None, || Some(sample(directory))).unwrap();
+        cache.invalidate_paths([directory.join("a.rs").as_path()], false);
+        cache.get_ordered(directory, ExplorerSortMode::Name, &order, true, None,
+            || panic!("content-only writes do not change filenames")).unwrap();
+        let modified = cache.get_ordered(directory, ExplorerSortMode::Modified, &order, true, None, || {
+            let mut entries = sample(directory);
+            entries[2].3 += Duration::from_secs(20);
+            Some(entries)
+        }).unwrap();
+        assert_eq!(names(&modified)[0], "a.rs");
+        assert_eq!(cache.read_count(), 2);
+        cache.invalidate_paths([directory.join("a.rs").as_path()], true);
+        cache.get_ordered(directory, ExplorerSortMode::Type, &order, true, None, || Some(sample(directory))).unwrap();
+        assert_eq!(cache.read_count(), 3, "structure changes still require a fresh directory listing");
+    }
+
+    #[test]
+    fn cancelled_or_invalidated_projections_cannot_publish_a_stale_order() {
+        let cache = DirectoryCache::default();
+        let directory = Path::new("workspace");
+        let ordering = crate::file_order::FileOrder::new("en-US").unwrap();
+        cache.get_ordered(directory, ExplorerSortMode::Name, &ordering, true, None, || {
+            cache.invalidate_paths([directory], true);
+            Some(sample(directory))
+        }).unwrap();
+        assert!(cache.0.lock().unwrap().directories.is_empty());
+        let token = crate::background::CancellationToken::new();
+        assert!(cache.get_ordered(directory, ExplorerSortMode::Name, &ordering, true, Some(&token), || {
+            token.cancel();
+            Some(sample(directory))
+        }).is_none());
+        assert!(cache.0.lock().unwrap().directories.is_empty());
+    }
 
     #[test]
     fn ignored_directories_expire_even_with_a_running_watcher() {

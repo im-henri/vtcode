@@ -1,6 +1,12 @@
 //! Paint before touching workspace/configuration files. Only the small launch
 //! manifest is needed to construct the workbench; optional assets use its queues.
-use std::{ffi::OsString, io, path::PathBuf, sync::mpsc, time::Instant};
+use std::{
+    ffi::OsString,
+    io,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Instant,
+};
 
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{Terminal, backend::Backend};
@@ -65,6 +71,36 @@ pub(crate) struct Prepared {
     pub session: Option<crate::session::Session>,
 }
 
+/// Resolve folder identity on the loader, before looking up portable state.
+pub(crate) struct LocalFolder {
+    pub root: PathBuf,
+    pub canonical: PathBuf,
+    pub requested: PathBuf,
+}
+
+impl LocalFolder {
+    pub(crate) fn resolve(path: &Path) -> io::Result<Self> {
+        let requested = crate::folder_browser::normalized_path(path);
+        let canonical = requested.canonicalize()?;
+        if !canonical.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::NotADirectory, "Choose a folder"));
+        }
+        let root = if cfg!(windows) {
+            crate::portable::filesystem_spelling(&canonical)
+        } else {
+            requested.clone()
+        };
+        Ok(Self { root, canonical, requested })
+    }
+
+    pub(crate) fn prepare(self) -> io::Result<Prepared> {
+        Prepared::load_resolved(
+            Target { root: self.root, file: None, line: None, column: None },
+            &self.requested,
+        )
+    }
+}
+
 /// Used on the launch worker before a remote workspace is available. Resolve
 /// just the saved global palette, including installed themes and overrides.
 pub(crate) fn connection_colors(settings: &Settings, portable_base: &std::path::Path) -> crate::app_theme::ThemeColors {
@@ -84,8 +120,36 @@ impl Prepared {
         let session = crate::session::load_session(&root);
         Self { target: Target { root, file: None, line: None, column: None }, global, workspace, session }
     }
-    pub(crate) fn load(raw: Option<OsString>) -> Self {
-        let target = Target::resolve(raw);
+    pub(crate) fn load(raw: Option<OsString>) -> io::Result<Self> {
+        let mut target = Target::resolve(raw);
+        if !cfg!(windows) || target.root.as_os_str().is_empty() {
+            return Ok(Self::load_target(target));
+        }
+        let folder = match LocalFolder::resolve(&target.root) {
+            Ok(folder) => folder,
+            Err(error) if target.file.is_some() && error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self::load_target(target));
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(file) = &mut target.file
+            && file.symlink_metadata().is_ok_and(|metadata| metadata.is_file())
+            && let Ok(canonical_file) = file.canonicalize()
+            && canonical_file.parent() == Some(folder.canonical.as_path())
+            && let Some(name) = canonical_file.file_name()
+        {
+            *file = folder.root.join(name);
+        }
+        target.root = folder.root;
+        Self::load_resolved(target, &folder.requested)
+    }
+
+    fn load_resolved(target: Target, requested: &Path) -> io::Result<Self> {
+        crate::portable::recover_workspace_alias(requested, &target.root)?;
+        Ok(Self::load_target(target))
+    }
+
+    fn load_target(target: Target) -> Self {
         let mut global = crate::settings::load_from_file(&crate::settings::global_settings_path());
         let mut workspace = if target.root.as_os_str().is_empty() {
             Settings::default()

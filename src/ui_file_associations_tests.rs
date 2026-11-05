@@ -763,7 +763,9 @@ fn associations_update_icons_and_colors_across_file_views_and_restore_builtin_ic
         app.mouse_col = u16::MAX;
         app.mouse_row = u16::MAX;
         app.show_explorer = true;
-        app.show_open_editors = true;
+        app.patch_settings_scope(SettingsScope::Global, "showOpenEditors", |settings| {
+            settings.show_open_editors = Some(true);
+        }).unwrap();
         let path = app.tabs[0].editor.file_path.clone().unwrap();
         app.explorer.entries = vec![FileEntry {
             path: path.clone(), name: "associated.rs".into(), is_dir: false, depth: 0,

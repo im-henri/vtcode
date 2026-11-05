@@ -227,8 +227,8 @@ fn context_menu_deletes_selected_items_but_an_unselected_target_stays_independen
 #[test]
 fn delete_without_explicit_multi_selection_keeps_the_single_file_behavior() {
     let (root, mut app) = fixture();
-    app.explorer.selected = index(&app, "first.txt");
-    app.clear_explorer_selection();
+    select(&mut app, &["first.txt"]);
+    app.explorer_multi_selected.clear();
     key(&mut app, KeyCode::Delete, KeyModifiers::NONE);
     assert_eq!(app.confirm_delete_targets, [root.path().join("first.txt")]);
     assert!(render(&mut app).contains("Delete this item?"));

@@ -149,10 +149,7 @@ fn erase_checkpoint(
         let header = read_cache_line(&mut reader, 64 * 1024)?
             .ok_or_else(|| std::io::Error::other("Completion checkpoint has no header"))?;
         let parsed: CacheHeader = serde_json::from_slice(&header).map_err(std::io::Error::other)?;
-        if parsed.version != CACHE_VERSION
-            || parsed.root != root
-            || parsed.remote_root_uri.as_deref() != remote_root_uri
-        {
+        if !parsed.matches(root, remote_root_uri) {
             return Err(std::io::Error::other(
                 "Completion checkpoint does not match this index",
             ));
@@ -177,6 +174,8 @@ fn erase_checkpoint(
                         "Completion checkpoint path exceeds limit",
                     ));
                 }
+                let record = parsed.rebase_path(record, root)
+                    .ok_or_else(|| std::io::Error::other("Completion checkpoint path is outside its workspace"))?;
                 if targets
                     .iter()
                     .any(|target| same_index_file_path(target, &record))

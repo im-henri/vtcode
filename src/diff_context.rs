@@ -1,13 +1,10 @@
 //! Compact views of native diffs. Source text and source coordinates stay intact.
-use crate::app::App;
+use crate::{app::App, editor::WrappedRowInfo};
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{
-    Frame,
-    layout::Rect,
-    style::Style,
-    widgets::{Clear, Paragraph},
-};
+use ratatui::{Frame, widgets::Clear};
 use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 impl App {
     pub(crate) fn context_diff_active(&self) -> bool {
@@ -245,20 +242,18 @@ impl App {
 
 /// Attach actual source rows to the editor's existing mouse selection path.
 pub(crate) fn map_visible_rows(app: &mut App, aligned: bool) {
-    let start = app.diff_inline_scroll.row;
+    let scroll = &app.diff_inline_scroll;
+    let start = scroll.row;
     let height = app.code_area.map_or(0, |area| area.height as usize);
     let cache = &app.diff_render_cache;
     let rows = (start..start + height)
-        .map(|index| {
-            if aligned {
-                cache.rows.get(index).and_then(|row| row.right_line)
-            } else {
-                cache.inline_rows.get(index).and_then(|entry| {
-                    (entry.kind != '-')
-                        .then_some(cache.rows[entry.aligned_row].right_line)
-                        .flatten()
-                })
-            }
+        .map(|visual| {
+            let display = scroll.wrap.row_at(visual);
+            let row = display.target(cache, aligned)?;
+            let line_idx = row.right_line?;
+            let line_len = row.right_char_len();
+            let (start_col, end_col) = display.columns(false).unwrap_or((scroll.column, line_len));
+            Some(WrappedRowInfo { line_idx, line_len, start_col, end_col, is_first: display.continuation == 0 })
         })
         .collect();
     if let Some(editor) = app.editor_mut() {
@@ -290,12 +285,13 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
             diagnostic_lines: &app.cached_diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &scroll.change_rows,
-            cursor_line: scroll.cursor_row_for_line(&app.diff_render_cache, editor.cursor_line),
+            cursor_line: scroll.cursor_row(&app.diff_render_cache, editor.cursor_line, editor.cursor_col),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
         },
         mapping,
+        |row| scroll.wrap.logical_boundary(row),
     );
 }
 
@@ -303,7 +299,7 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
 /// Paint search results using the original file's coordinates. Selections and
 /// carets are projected separately from the exact diff text windows.
 pub(crate) fn draw_search_matches(f: &mut Frame, app: &App) {
-    if !app.search_active {
+    if !app.search_active || app.rendering_inactive_editor {
         return;
     }
     let (Some(editor), Some(area)) = (app.editor(), app.code_area) else {
@@ -312,65 +308,41 @@ pub(crate) fn draw_search_matches(f: &mut Frame, app: &App) {
     let Some(rows) = &editor.diff_display_rows else {
         return;
     };
+    let scroll = &app.diff_inline_scroll;
+    let cache = &app.diff_render_cache;
+    let inset = editor.diff_text_inset as u16;
+    let width = area.width.saturating_sub(inset) as usize;
     for (offset, source) in rows.iter().enumerate() {
-        let Some(line) = source else {
+        let Some(source) = source else {
             continue;
         };
+        let line = source.line_idx;
+        let first_hit = app.search_matches.partition_point(|hit| hit.0 < line);
+        let end_hit = app.search_matches.partition_point(|hit| hit.0 <= line);
+        if first_hit == end_hit {
+            continue;
+        }
+        let display = scroll.wrap.row_at(scroll.row + offset);
+        let Some(row) = display.target(cache, scroll.aligned) else { continue; };
+        let (text, mut column, mut x) = display.window(row, false, scroll.aligned, scroll.column, width);
         let y = area.y + offset as u16;
-        let mut column = editor.horizontal_scroll;
-        let first_hit = app.search_matches.partition_point(|hit| hit.0 < *line);
-        let end_hit = app.search_matches.partition_point(|hit| hit.0 <= *line);
         let hits = &app.search_matches[first_hit..end_hit];
-        for x in area.x.saturating_add(editor.diff_text_inset as u16)..area.right() {
-            let cell = &mut f.buffer_mut()[(x, y)];
+        for glyph in text.graphemes(true) {
+            let end = column + glyph.chars().count();
+            let cells = if glyph.contains(char::is_control) { 0 } else { glyph.width() };
             let index = hits.partition_point(|hit| hit.2 <= column);
-            if app.search_active
-                && !app.rendering_inactive_editor
-                && hits
-                    .get(index)
-                    .is_some_and(|hit| hit.1 <= column && column < hit.2)
-            {
-                cell.set_style(app.colors.ui.find_style(
-                    cell.style(),
-                    first_hit + index == app.search_current,
-                    app.colors.bg_search_match,
-                ));
+            if hits.get(index).is_some_and(|hit| hit.1 < end) {
+                for cell_x in x..(x + cells).min(width) {
+                    let cell = &mut f.buffer_mut()[(area.x + inset + cell_x as u16, y)];
+                    cell.set_style(app.colors.ui.find_style(
+                        cell.style(),
+                        first_hit + index == app.search_current,
+                        app.colors.bg_search_match,
+                    ));
+                }
             }
-            column += cell.symbol().chars().count().max(1);
+            column = end;
+            x += cells;
         }
     }
-}
-
-pub(crate) fn draw_compact_side_by_side(f: &mut Frame, app: &mut App, area: Rect) {
-    let layout = crate::ui_diff_display::side_by_side_diff_layout(area, app.diff_split_ratio);
-    let word_wrap = app.editor().is_some_and(|editor| editor.word_wrap);
-    let show_minimap = app.show_minimap;
-    let cursor_visible = app.cursor_visible;
-    if app.diff_selection_owns_cursor() {
-        app.cursor_visible = false;
-    }
-    app.show_minimap = false;
-    if let Some(editor) = app.editor_mut() {
-        editor.word_wrap = false;
-        editor.diff_display_rows = None;
-    }
-    crate::ui_editor::draw_editor(f, app, layout.right);
-    app.cursor_visible = cursor_visible;
-    app.show_minimap = show_minimap;
-    if let Some(editor) = app.editor_mut() {
-        editor.word_wrap = word_wrap;
-    }
-    crate::ui_diff_display::layout_aligned_diff_scroll(app, area);
-    crate::ui_diff_display::draw_diff_original(f, app, layout.left);
-    crate::ui_diff_display::draw_diff_target_overlay(f, app);
-    // A full-file minimap would suggest hidden rows were still scrollable.
-    if let Some(minimap) = app.minimap_area.take() {
-        f.render_widget(
-            Paragraph::new("").style(Style::default().bg(app.colors.bg_editor)),
-            minimap,
-        );
-    }
-    map_visible_rows(app, true);
-    draw_scrollbar(f, app);
-    draw_search_matches(f, app);
 }

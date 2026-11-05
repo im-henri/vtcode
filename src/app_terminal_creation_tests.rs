@@ -1,6 +1,6 @@
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
 
 fn label_at(buffer: &Buffer, label: &str, rows: std::ops::Range<u16>) -> (u16, u16) {
     for row in rows {
@@ -143,7 +143,13 @@ fn terminal_menu_actions_work_over_an_editor_terminal() {
                     app.menu_item_selected = index;
                     terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
                     let action = label_at(terminal.backend().buffer(), items[index].0.trim(), 1..12);
-                    assert!(app.terminal_surfaces.iter().any(|surface| surface.area.contains(action.into())),
+                    // The first menu row can cover the terminal's fixed Find
+                    // toolbar; later rows cover its output. Both own no input
+                    // while a workbench menu is on top.
+                    assert!(app.terminal_surfaces.iter().any(|surface| {
+                        Rect::new(surface.area.x, surface.area.y.saturating_sub(1), surface.area.width,
+                            surface.area.height.saturating_add(1)).contains(action.into())
+                    }),
                         "the menu must overlap the terminal: {context}");
                     if keyboard {
                         crate::input_keyboard::handle_keyboard_event(&mut app,

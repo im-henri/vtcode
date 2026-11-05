@@ -368,6 +368,7 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
     let focused = !app.rendering_inactive_editor && app.search_input_focused && !app.search_focus_replace;
     let input_bg = app.colors.ui.input_style(search_bg).bg.unwrap_or(search_bg);
     let field = InputField::new(&app.search_query)
+        .viewport(app.text_input_viewport(TextInputId::SearchFind))
         .theme_control(&app.colors, app.colors.ui.input_colors, search_bg)
         .placeholder_text("Find")
         .suffix(&match_info, app.colors.ui.description_color(input_bg))
@@ -400,6 +401,7 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
         let replace_area = Rect::new(inner.x + 2, inner.y + 1, inner.width.saturating_sub(12), 1);
         let focused = !app.rendering_inactive_editor && app.search_input_focused && app.search_focus_replace;
         let field = InputField::new(&app.replace_query)
+            .viewport(app.text_input_viewport(TextInputId::SearchReplace))
             .theme_control(&app.colors, app.colors.ui.input_colors, search_bg)
             .placeholder_text("Replace")
             .cursor_marker(if focused { "│" } else { "" })
@@ -654,16 +656,18 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
         } else {
             String::new()
         };
+    let focused = app.focused_text_input_id() == Some(TextInputId::GlobalSearch(0));
     let hit_map = InputField::new(&app.global_search_query)
+        .viewport(app.text_input_viewport(TextInputId::GlobalSearch(0)))
         .theme_control(&app.colors, app.colors.ui.input_colors, popup_bg)
         .prefix("🔍 ", app.colors.ui.icon_color(app.colors.ui.input_style(popup_bg).bg.unwrap_or(popup_bg)))
-        .cursor_marker("│")
+        .cursor_marker(if focused && app.cursor_visible { "│" } else { "" })
         .cursor_pos(app.global_search_field_cursors[0])
         .selection_range(
-            App::inline_selection_range(
+            if focused { App::inline_selection_range(
                 app.global_search_field_cursors[0],
                 app.global_search_field_selection_anchors[0],
-            ),
+            ) } else { None },
         )
         .suffix(&result_count, app.colors.ui.description_color(app.colors.ui.input_style(popup_bg).bg.unwrap_or(popup_bg)))
         .render(f, input_area);
@@ -689,7 +693,7 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
 
         let is_selected = idx == app.global_search_selected;
         let hovered = (inner.x..inner.right()).contains(&app.mouse_col) && app.mouse_row == y;
-        let row_style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground, popup_bg, is_selected, true, hovered);
+        let row_style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground, popup_bg, is_selected, app.global_search_results_focused, hovered);
         let bg = row_style.bg.unwrap_or(popup_bg);
         let fg = row_style.fg.unwrap_or(popup_fg);
 

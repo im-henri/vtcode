@@ -662,14 +662,15 @@ pub(crate) fn draw_mapped_scrollbar(
     f: &mut Frame,
     p: ScrollbarParams,
     source_to_display: &[usize],
+    logical_boundary: impl Fn(usize) -> usize,
 ) {
-    draw_scrollbar_with_mapping(f, p, Some(source_to_display), None);
+    draw_scrollbar_with_mapping(f, p, Some((source_to_display, &logical_boundary)), None);
 }
 
 fn draw_scrollbar_with_mapping(
     f: &mut Frame,
     p: ScrollbarParams,
-    source_to_display: Option<&[usize]>,
+    source_to_display: Option<(&[usize], &dyn Fn(usize) -> usize)>,
     editor: Option<&crate::editor::Editor>,
 ) {
     let ScrollbarParams {
@@ -725,16 +726,18 @@ fn draw_scrollbar_with_mapping(
         let (query_start, query_end) =
             source_to_display.map_or_else(|| editor.map_or((source_start, source_end), |editor| {
                 (editor.overview_source_boundary(source_start), editor.overview_source_boundary(source_end))
-            }), |mapping| {
+            }), |(mapping, logical_boundary)| {
+                let start = logical_boundary(source_start);
+                let end = logical_boundary(source_end);
                 (
-                    mapping.partition_point(|&row| row < source_start),
-                    mapping.partition_point(|&row| row < source_end),
+                    mapping.partition_point(|&row| row < start),
+                    mapping.partition_point(|&row| row < end),
                 )
             });
         let includes_fallback = source_start == 0 && source_end > 0;
         let fallback_start = source_to_display
             .filter(|_| includes_fallback)
-            .map(<[usize]>::len);
+            .map(|(mapping, _)| mapping.len());
         let has_match = has_search_match_in_range(search_matches, query_start, query_end)
             || fallback_start.is_some_and(|start| {
                 search_matches

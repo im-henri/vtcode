@@ -909,6 +909,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                 |selected| selected.get(&entry.path).copied().unwrap_or(false),
             )
                 || (app.explorer_selection_anchor.is_some() && i == app.explorer.selected);
+            let selection_focused = is_selected && explorer_focused;
 
             let is_drop_target = app.dragging_explorer_path.is_some()
                 && app.explorer_drop_target_idx == Some(i);
@@ -921,7 +922,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             };
             let resolve_style = || {
                 let mut style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                    row_bg, is_selected || is_active_file, explorer_focused, hovered);
+                    row_bg, is_selected || is_active_file, selection_focused, hovered);
                 if is_drop_target {
                     let background = app.colors.ui.list_drop_background.over(row_bg).unwrap_or(row_bg);
                     style = Style::default().bg(background).fg(app.colors.ui.sidebar_text_color(background));
@@ -942,7 +943,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                 style.fg.unwrap_or_else(|| git_status_color(GitStatus::Ignored, &app.colors, bg))
             } else if entry.is_dir {
                 app.colors.ui.list_icon_color(folder_icon_color(visible_git_status, &app.colors, bg), bg,
-                    is_selected || is_active_file, explorer_focused)
+                    is_selected || is_active_file, selection_focused)
             } else {
                 file_icon.unwrap().1
             };
@@ -1041,6 +1042,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     if let Some((input_area, surface)) = rename_input_area {
         let cursor = if app.cursor_visible { "│" } else { "" };
         let hit_map = InputField::new(&app.rename.query)
+            .viewport(app.text_input_viewport(TextInputId::ExplorerRename))
             .theme_control(&app.colors, app.colors.ui.input_colors, surface)
             .prefix("", Color::Reset)
             .cursor_marker(cursor)

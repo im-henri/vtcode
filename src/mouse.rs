@@ -38,6 +38,9 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    if matches!(mouse.kind, MouseEventKind::Down(_)) {
+        app.mouse_press_serial = app.mouse_press_serial.wrapping_add(1);
+    }
     if app.handle_text_input_context_menu_mouse(mouse) { return; }
     if crate::ui_workspaces::handle_mouse(app, mouse) { return; }
     if crate::app_shortcuts::handle_mouse(app, mouse) { return; }
@@ -264,6 +267,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if crate::mouse_dialogs::handle_mouse_dialogs(app, &mouse, col, row) {
         return;
     }
+    if crate::app_terminal_find::mouse(app, mouse) { return; }
     if crate::ui_panels::scroll_input(app, mouse) { return; }
     if mouse.kind == MouseEventKind::Moved
         && (crate::ui_search_dialog::search_bar_resize_hit(app, col, row)
@@ -1547,8 +1551,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         let inner_x = crate::ui_search_panel::search_form_left(exp_area);
                         macro_rules! focus_search_field {
                             ($field:expr, $label:expr) => {{
-                                app.global_search_active = true;
-                                app.search_focus_field = $field;
+                                app.focus_text_input(crate::text_input::TextInputId::GlobalSearch($field));
                                 let label_width = UnicodeWidthStr::width($label) as u16;
                                 let text_start = inner_x.saturating_add(label_width);
                                 app.global_search_set_field_cursor_char_index($field, col.saturating_sub(text_start) as usize);
@@ -1602,9 +1605,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                         app.toggle_global_search_file_collapsed(&path);
                                     }
                                     SearchRow::Result(idx) => {
-                                        app.global_search_selected_header = None;
-                                        app.global_search_selected = idx;
-                                        app.preview_global_search_result();
+                                        app.click_global_search_result(idx, col, row);
                                     }
                                 }
                             }
@@ -1854,7 +1855,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         }
                     }
 
-                    let (oe_area, _) = crate::ui_chrome::explorer_sections(app, exp_area);
+                    let (oe_area, tree_section) = crate::ui_chrome::explorer_sections(app, exp_area);
                     let oe_count = oe_area.height.saturating_sub(1) as usize;
 
                     // Click on Open Editors header -> toggle
@@ -1886,12 +1887,17 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     let tree_area = crate::ui_chrome::explorer_tree_content_area(app, exp_area);
                     let tree_start = tree_area.y;
                     if !tree_area.contains((col, row).into()) {
+                        if !tree_section.is_empty() && row == tree_section.y {
+                            app.clear_explorer_selection();
+                        }
                         return;
                     }
 
                     let inner_row = (row - tree_start) as usize;
                     let visible_height = tree_area.height as usize;
                     let Some(clicked_idx) = app.explorer.entry_at_row(inner_row, visible_height) else {
+                        app.clear_explorer_selection();
+                        app.dragging_explorer_path = None;
                         return;
                     };
 

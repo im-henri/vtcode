@@ -157,6 +157,7 @@ pub(crate) struct App {
     pub highlighter: Highlighter,
     // Multi-click detection (double/triple click)
     pub last_click_time: std::time::Instant,
+    pub(crate) mouse_press_serial: u64,
     pub last_click_pos: (u16, u16),
     pub click_count: u8,
     /// Anchor range for word/line-granularity drag selection (start_line, start_col, end_line, end_col)
@@ -187,6 +188,8 @@ pub(crate) struct App {
     pub(crate) settings_scrollbar_drag: Option<crate::settings_layout::Drag>,
     /// Text-field hit maps rebuilt from the actual rendered viewport each frame.
     pub text_input_regions: Vec<crate::text_input::TextInputRegion>,
+    pub(crate) text_input_viewports: std::collections::HashMap<(crate::text_input::TextInputId, Option<u64>), crate::text_input::InputViewport>,
+    pub(crate) text_input_viewport_generation: u64,
     /// Active pointer selection: (field identity, UTF-8 byte anchor).
     pub text_input_drag: Option<(crate::text_input::TextInputId, usize)>,
     pub(crate) text_input_context_menu: Option<crate::text_input::ContextMenu>,
@@ -316,6 +319,8 @@ pub(crate) struct App {
     pub explorer_context_target: Option<PathBuf>,
     pub explorer_context_extension_commands: Vec<crate::extensions::ExtensionContextCommand>,
     pub explorer_clipboard: Option<crate::app_explorer::FileClipboard>,
+    /// Successful paste destinations waiting for the next current tree snapshot.
+    pub(crate) explorer_paste_reveal: Vec<PathBuf>,
     pub explorer_multi_selected: crate::explorer::Selection,
     pub explorer_selection_anchor: Option<usize>,
     pub binary_open_prompt_active: bool,
@@ -338,6 +343,8 @@ pub(crate) struct App {
     pub save_as_selection_anchor: Option<usize>,
     // Global search (Ctrl+Shift+F)
     pub global_search_active: bool,
+    // The popup stays active while either its input or its results have focus.
+    pub(crate) global_search_results_focused: bool,
     pub global_search_case_sensitive: bool,
     pub global_search_regex: bool,
     pub global_search_whole_word: bool,
@@ -354,6 +361,7 @@ pub(crate) struct App {
     pub global_search_truncated: bool,
     pub(crate) global_search_stopped: bool,
     pub global_search_selected: usize,
+    pub(crate) global_search_result_click: Option<crate::app_ui_state::SearchResultClick>,
     pub(crate) global_search_selected_header: Option<PathBuf>,
     pub global_search_scroll: usize,
     pub max_global_search_results: usize,
@@ -501,11 +509,14 @@ pub(crate) struct App {
     pub(crate) terminal_rename: crate::app_terminal::RenameTerminal,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
+    pub(crate) terminal_find: crate::app_terminal_find::Controller,
     pub(crate) terminal_scrollbar: crate::terminal_scrollbar::State,
     pub(crate) terminal_clicks: crate::app_terminal_selection::TerminalClicks,
     pub(crate) terminal_selection_drag: Option<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_mouse_capture: Option<crate::app_terminal_selection::TerminalSurface>,
     pub markdown_preview: bool,
+    pub(crate) markdown_previews: crate::ui_markdown::PreviewService,
+    pub(crate) language_detector: crate::app_language_detection::Detector,
     pub hovered_tab: Option<usize>,
     pub hovered_tab_close_btn: bool,
     pub hovered_tab_scroll_left: bool,
@@ -1163,7 +1174,7 @@ impl App {
             sidebar_auto_hide: Default::default(),
             show_activity_bar: true,
             sidebar_view: SidebarView::Explorer,
-            show_open_editors: true,
+            show_open_editors: false,
             open_editors_scroll_offset: 0,
             open_editors_scroll_anchor: None,
             show_minimap: true,
@@ -1196,6 +1207,7 @@ impl App {
             notification_history: Vec::new(),
             highlighter,
             last_click_time: std::time::Instant::now() - std::time::Duration::from_secs(1),
+            mouse_press_serial: 0,
             last_click_pos: (0, 0),
             click_count: 0,
             multi_click_anchor: None,
@@ -1219,6 +1231,8 @@ impl App {
             minimap_drag_start: None,
             settings_scrollbar_drag: None,
             text_input_regions: Vec::new(),
+            text_input_viewports: std::collections::HashMap::new(),
+            text_input_viewport_generation: 0,
             text_input_histories: std::collections::HashMap::new(),
             text_input_context_menu: None,
             text_input_click_id: None,
@@ -1330,6 +1344,7 @@ impl App {
             explorer_context_target: None,
             explorer_context_extension_commands: Vec::new(),
             explorer_clipboard: None,
+            explorer_paste_reveal: Vec::new(),
             explorer_multi_selected: Default::default(),
             explorer_selection_anchor: Some(0),
             binary_open_prompt_active: false,
@@ -1350,6 +1365,7 @@ impl App {
             save_as_cursor: 0,
             save_as_selection_anchor: None,
             global_search_active: false,
+            global_search_results_focused: false,
             global_search_case_sensitive: false,
             global_search_regex: false,
             global_search_whole_word: false,
@@ -1366,6 +1382,7 @@ impl App {
             global_search_truncated: false,
             global_search_stopped: false,
             global_search_selected: 0,
+            global_search_result_click: None,
             global_search_selected_header: None,
             global_search_scroll: 0,
             max_global_search_results: 20_000,
@@ -1505,11 +1522,14 @@ impl App {
             terminal_rename: Default::default(),
             next_terminal_to_process: 0,
             terminal_surfaces: Vec::new(),
+            terminal_find: Default::default(),
             terminal_scrollbar: Default::default(),
             terminal_clicks: Default::default(),
             terminal_selection_drag: None,
             terminal_mouse_capture: None,
             markdown_preview: false,
+            markdown_previews: Default::default(),
+            language_detector: Default::default(),
             hovered_tab: None,
             hovered_tab_close_btn: false,
             hovered_tab_scroll_left: false,
@@ -2185,6 +2205,7 @@ impl App {
                             self.clear_explorer_selection();
                             self.set_explorer_single_selection(self.explorer.selected);
                         }
+                        self.finish_explorer_paste_reveal();
                         has_visual_changes = true;
                     }
                 }
@@ -2457,6 +2478,10 @@ impl App {
                             self.explorer_hover.invalidate(None);
                             self.explorer_hover_info_cache.clear();
                             self.explorer_line_count_cache.clear();
+                            if let Some(path) = outcome.pasted_paths.first() {
+                                self.explorer.expand_ancestors(path);
+                                self.explorer_paste_reveal = outcome.pasted_paths;
+                            }
                             self.refresh_explorer_async();
                             if let Some(path) = &outcome.open_file { self.open_file(path); }
                             self.status_message = outcome.message.clone();
@@ -2934,7 +2959,7 @@ impl App {
                             );
                             tab.editor.last_disk_modified = last_disk_modified;
                             tab.editor.set_remote_checkpoint(remote_checkpoint.clone());
-                            tab.editor.language_associations = language_associations.clone();
+                            tab.editor.set_language_associations(&language_associations);
                             tab.editor.scope_bubble_rules = scope_rules.clone();
                             tab.editor.read_only = default_read_only || encoding == "Binary"
                                 || matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails);
@@ -4543,6 +4568,17 @@ impl App {
             return None;
         }
         self.tabs.get_mut(self.active_tab).map(|t| &mut t.editor)
+    }
+
+    /// Pending remote input holds the caret steady; an acknowledgement starts
+    /// a fresh blink interval, even when the program does not echo its input.
+    pub(crate) fn cursor_blink_start(&self) -> Option<std::time::Instant> {
+        if !self.cursor_blinking || !self.has_text_input_focus() { return None; }
+        let progress = self.focused_text_input_id().is_none()
+            .then(|| self.focused_terminal_index()).flatten()
+            .and_then(|index| self.terminals.get(index)?.terminal_pty.as_ref())
+            .map(|pty| pty.remote_input_progress()).unwrap_or_default();
+        (!progress.pending).then(|| progress.acknowledged.map_or(self.last_blink, |ack| ack.max(self.last_blink)))
     }
 
     /// Returns true if a text input context currently has focus (editor file tab,

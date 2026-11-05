@@ -906,6 +906,12 @@ pub(crate) fn scroll(app: &mut App, kind: MouseEventKind, col: u16, row: u16) {
     }
     let view = current_layout(app);
     let point = (col, row).into();
+    if app.commit_details.query_hit.as_ref().is_some_and(|hit| hit.contains(col, row)) {
+        let viewport = app.commit_details.query_viewport
+            .or_else(|| app.commit_details.query_hit.as_ref().and_then(|hit| hit.viewport()));
+        app.commit_details.query_viewport = viewport.and_then(|view| view.scrolled(kind, app.scroll_speed));
+        return;
+    }
     let pane = if view.overview.contains(point) {
         Focus::Message
     } else if view.files.contains(point) {
@@ -1513,18 +1519,21 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
     let prefix = if view.filter.width >= 20 { " / " } else { " " };
     let budget = filter_area.width.saturating_sub(prefix.len() as u16 + 1) as usize;
     let before = &details.query[..details.query_cursor.min(details.query.len())];
-    let mut start = 0;
-    while UnicodeWidthStr::width(&before[start..]) >= budget.max(1) {
+    let selected = App::inline_selection_range(details.query_cursor, details.query_anchor);
+    let signature = crate::text_input::InputViewport::new(&details.query, Some(details.query_cursor), selected, 0, 0);
+    let manual = details.query_viewport.filter(|view| view.matches(signature));
+    let mut start = manual.map_or(0, |view| view.resolve(&details.query, budget.max(1)));
+    while manual.is_none() && UnicodeWidthStr::width(&before[start..]) >= budget.max(1) {
         let Some((offset, g)) = before[start..].grapheme_indices(true).next() else {
             break;
         };
         start += offset + g.len();
     }
     let filter_style = base.bg(filter_bg).fg(filter_fg);
-    let selected = App::inline_selection_range(details.query_cursor, details.query_anchor);
     let mut spans = vec![Span::styled(prefix, filter_style)];
     let mut hits = vec![start; prefix.len()];
     let mut used = prefix.len();
+    let mut visible_end = start;
     if details.query.is_empty() && !filter_focused {
         spans.push(Span::styled(
             "Filter files…  /",
@@ -1537,6 +1546,7 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
                 break;
             }
             let byte = start + offset;
+            visible_end = byte + g.len();
             let style = if filter_focused && byte == details.query_cursor {
                 app.colors.ui.input_caret_style(filter_bg)
             } else if selected.is_some_and(|(a, b)| byte >= a && byte < b) {
@@ -1548,7 +1558,7 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
             hits.extend(std::iter::repeat_n(byte, w));
             used += w;
         }
-        if filter_focused && details.query_cursor == details.query.len() {
+        if filter_focused && details.query_cursor == details.query.len() && visible_end == details.query.len() {
             spans.push(Span::styled(
                 " ",
                 app.colors.ui.input_caret_style(filter_bg),
@@ -1559,11 +1569,13 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(Line::from(spans)).style(filter_style),
         filter_area,
     );
+    let viewport = signature.window(&details.query, start, visible_end);
+    app.commit_details.query_viewport = manual.map(|_| viewport);
     app.commit_details.query_hit = Some(crate::text_input::TextInputHitMap::new(
         filter_area,
         hits,
         app.commit_details.query.len(),
-    ));
+    ).with_viewport(viewport));
     if show_clear {
         row(
             f,

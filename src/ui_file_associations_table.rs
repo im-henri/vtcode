@@ -75,6 +75,7 @@ fn field(f: &mut Frame, app: &mut App, area: Rect, index: usize, bg: Color) {
     let arrow_width = if index == 1 && area.width > 2 { 2 } else { 0 };
     let input = Rect::new(area.x, area.y, area.width - arrow_width, area.height);
     let hit = crate::ui_widgets::InputField::new(&field.text)
+        .viewport(app.text_input_viewport(TextInputId::FileAssociation(index)))
         .theme_control(&app.colors, app.colors.ui.settings_control("text"), bg)
         .bg(style.bg.unwrap_or(bg))
         .prefix("", Color::Reset)

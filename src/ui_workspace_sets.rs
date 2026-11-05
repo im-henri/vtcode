@@ -1083,9 +1083,11 @@ fn draw_dialog(f: &mut Frame, app: &mut App, mode: Mode, rows: &[Row]) {
             y += 1;
         }
         if inner.height > 1 || app.workspaces.popup.sets.field_focus {
+            let viewport = app.text_input_viewport(crate::text_input::TextInputId::WorkspaceName);
             let p = &mut app.workspaces.popup.sets;
             p.input = Some(
                 crate::ui_widgets::InputField::new(&p.text)
+                    .viewport(viewport)
                     .prefix("", app.colors.fg_input)
                     .cursor_pos(p.cursor)
                     .selection_range(App::inline_selection_range(p.cursor, p.anchor))

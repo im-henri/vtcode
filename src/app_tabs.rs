@@ -103,7 +103,7 @@ impl App {
     /// Create a new Editor pre-configured with App-level settings like language_associations.
     pub(crate) fn new_editor(&self) -> Editor {
         let mut editor = Editor::new();
-        editor.language_associations = self.language_associations.clone();
+        editor.set_language_associations(&self.language_associations);
         editor.scope_bubble_rules = self.animation_settings.scope_languages.clone();
         editor.read_only = self.default_read_only;
         editor.word_wrap = self.default_word_wrap;
@@ -158,6 +158,9 @@ impl App {
             // document. Diff snapshots must never copy text or undo history.
             tab.editor.refresh_document();
             tab.editor.language_override = language.map(str::to_owned);
+            tab.editor.inferred_language = None;
+            tab.editor.language_detection = None;
+            tab.editor.language_detection_epoch = tab.editor.language_detection_epoch.wrapping_add(1);
             tab.editor.publish_document();
         }
         self.invalidate_visible_highlights();
@@ -305,9 +308,7 @@ impl App {
             let mut tab = self.clone_desk_tab(source);
             tab.editor.pending_reopen_view = saved_view;
             tab.editor.restore_reopen_view();
-            tab.preview = preview && !tab.has_unsaved_changes();
-            self.tabs.push(tab);
-            self.active_tab = self.tabs.len()-1;
+            self.push_previewable_tab(tab, preview);
             self.active_pane = ActivePane::Editor;
             self.touch_tab_mru(self.active_tab);
             self.sync_diff_tab();
@@ -330,7 +331,7 @@ impl App {
         // are enough to freeze a terminal frame.
         let mut editor = Editor::new_loading(&open_path, 0);
         editor.pending_reopen_view = saved_view;
-        editor.language_associations = self.language_associations.clone();
+        editor.set_language_associations(&self.language_associations);
         editor.scope_bubble_rules = self.animation_settings.scope_languages.clone();
         editor.word_wrap_column = self.word_wrap_column;
         editor.whitespace_mode = self.default_whitespace_mode;
@@ -338,28 +339,8 @@ impl App {
         editor.use_tabs = self.default_use_tabs;
         editor.cursor_surrounding_lines = self.default_cursor_surrounding_lines;
         self.status_message = format!("Loading: {}...", self.display_path(&open_path));
-        let replace_preview = if preview {
-            self.tabs.iter().position(|tab| tab.kind == TabKind::File && tab.preview)
-        } else {
-            None
-        };
-        let mut tab = Tab::new_file(editor);
-        tab.preview = preview;
-        self.tabs.push(tab);
-        self.active_tab = self.tabs.len() - 1;
+        self.push_previewable_tab(Tab::new_file(editor), preview);
         self.active_pane = ActivePane::Editor;
-        self.touch_tab_mru(self.active_tab);
-        // Add the replacement before closing the old preview so a group with
-        // only one tab stays in place. Closing also releases its LSP state.
-        if let Some(index) = replace_preview {
-            // Focus changed above; closing the now-inactive old preview must
-            // not be relied on to clear the previous editor's transient state.
-            self.clear_transient_editor_state();
-            self.clear_file_search_results();
-            self.force_close_tab(index);
-            self.active_tab = self.tabs.len() - 1;
-            self.touch_tab_mru(self.active_tab);
-        }
         self.refresh_source_control_for_navigation();
 
         if let Some(loaded) = loaded.take() {
@@ -472,14 +453,15 @@ impl App {
         let diff_active = self.should_render_diff_for_active_editor();
         let inline_diff = diff_active && self.diff_mode == crate::app::DiffMode::Inline;
         let (start, end, source_generation) = if diff_active {
+            let display_start = self.diff_inline_scroll.wrap.row_at(self.diff_inline_scroll.row).logical;
             let start = if inline_diff {
                 // Deleted rows can span many viewports without moving the
                 // target file's scroll offset. Follow the rendered inline row.
                 if !self.diff_inline_scroll.aligned && std::sync::Arc::ptr_eq(
                     &self.diff_inline_scroll.cache,
                     &self.diff_render_cache,
-                ) && self.diff_render_cache.target_line_for_inline_row(self.diff_inline_scroll.row) == scroll {
-                    self.diff_inline_scroll.row
+                ) && self.diff_render_cache.target_line_for_inline_row(display_start) == scroll {
+                    display_start
                 } else {
                     self.diff_render_cache.inline_row_for_target_line(scroll)
                 }
@@ -674,6 +656,27 @@ impl App {
             }
         });
         self.visible_highlight_cancel_token = Some(token);
+    }
+
+    /// File and diff browsing share one replaceable preview in each group.
+    pub(crate) fn push_previewable_tab(&mut self, mut tab: Tab, preview: bool) {
+        self.promote_modified_preview_tabs();
+        tab.preview = preview && self.enable_preview_tabs && !tab.has_unsaved_changes();
+        let replace = if tab.preview {
+            self.tabs.iter().position(|tab| tab.preview && matches!(tab.kind, TabKind::File | TabKind::Diff(_)))
+        } else { None };
+        // Add first so replacing a group's only tab cannot close the group.
+        // Normal close handling releases document and diff cache ownership.
+        self.tabs.push(tab);
+        self.active_tab = self.tabs.len() - 1;
+        self.touch_tab_mru(self.active_tab);
+        if let Some(index) = replace {
+            self.clear_transient_editor_state();
+            self.clear_file_search_results();
+            self.force_close_tab(index);
+            self.active_tab = self.tabs.len() - 1;
+            self.touch_tab_mru(self.active_tab);
+        }
     }
 
     /// Keep the current preview open without pinning it in the tab bar.
@@ -1214,10 +1217,23 @@ impl App {
         // Preview creation and close paths maintain this flag. Avoid walking
         // every tab on each idle event-loop tick when preview is not in use.
         if !self.markdown_preview {
+            self.markdown_previews.retain_open(&[], &self.background);
             return false;
         }
         let preview_locs = self.markdown_preview_tab_locations();
-        let mut changed = false;
+        let live_previews: Vec<_> = preview_locs.iter().filter_map(|&location| {
+            self.tab_at_location(location).map(|tab| tab.editor.navigation_id)
+        }).collect();
+        self.markdown_previews.retain_open(&live_previews, &self.background);
+        let visible_previews: Vec<_> = preview_locs.iter().filter_map(|&location| {
+            let active = match location {
+                (None, index) => self.active_tab == index,
+                (Some(group), index) => self.groups[group].active_tab == index,
+            };
+            active.then(|| self.tab_at_location(location).map(|tab| tab.editor.navigation_id)).flatten()
+        }).collect();
+        self.markdown_previews.set_visible(&visible_previews, &self.background);
+        let mut changed = self.markdown_previews.poll();
         let has_preview = !preview_locs.is_empty();
         if self.markdown_preview != has_preview {
             self.markdown_preview = has_preview;

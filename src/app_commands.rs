@@ -540,6 +540,7 @@ impl App {
                 self.begin_terminal_rename(index);
             }
             "rename_context_terminal" => self.rename_context_terminal(),
+            "find_context_terminal" => self.find_context_terminal(),
             "toggle_terminal" => {
                 self.toggle_terminal_sidebar();
             }

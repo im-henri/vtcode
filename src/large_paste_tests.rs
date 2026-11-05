@@ -15,6 +15,60 @@ fn finish(app: &mut App) {
 }
 
 #[test]
+fn every_paste_route_preserves_literal_indentation_for_small_and_background_pastes() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let body = "    first 界\r\n\t second\r\n \t\r\n      third\r\n";
+    for repeats in [1, 128, BACKGROUND_BYTES / body.len() + 1] {
+        let payload = body.repeat(repeats);
+        let normalized = payload.replace("\r\n", "\n");
+        for route in ["paste", "ctrl_v", "shift_insert", "terminal", "history", "paste_plain"] {
+            for replace in [false, true] {
+                let original = "before\n \t  old\nkeep";
+                let mut app = app_with_text(original);
+                let editor = app.editor_mut().unwrap();
+                editor.cursor_line = 1;
+                editor.cursor_col = if replace { 7 } else { 4 };
+                editor.selection_anchor = replace.then_some((1, 4));
+                crate::clipboard::receive_terminal_paste(&payload);
+                crate::clipboard::remember_line_copy(&payload, false);
+                match route {
+                    "ctrl_v" => { crate::input_keyboard::handle_keyboard_event(&mut app,
+                        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)); }
+                    "shift_insert" => { crate::input_keyboard::handle_keyboard_event(&mut app,
+                        KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT)); }
+                    "terminal" => crate::app_event_loop::handle_paste_input(&mut app, &payload),
+                    "history" => {
+                        app.push_clipboard_history(&payload);
+                        crate::input_keyboard::handle_keyboard_event(&mut app,
+                            KeyEvent::new(KeyCode::Char('V'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+                    }
+                    command => { app.execute_palette_command(command); }
+                }
+                assert_eq!(app.paste_in_progress(), payload.len() >= BACKGROUND_BYTES,
+                    "{route}, repeats={repeats}, replace={replace}");
+                finish(&mut app);
+                let editor = app.editor_mut().unwrap();
+                let expected = format!("before\n \t  {normalized}{}\nkeep", if replace { "" } else { "old" });
+                assert!(editor.rope == expected.as_str(), "{route}, repeats={repeats}, replace={replace}: {:?}",
+                    editor.rope.slice(..editor.rope.len_chars().min(80)).to_string());
+                let end = "before\n \t  ".chars().count() + normalized.chars().count();
+                let line = editor.rope.char_to_line(end);
+                assert_eq!((editor.cursor_line, editor.cursor_col), (line, end - editor.rope.line_to_char(line)));
+                assert_eq!(editor.clipboard, payload);
+                assert_eq!(editor.undo_stack.len(), 1);
+                editor.undo();
+                assert_eq!(editor.rope, original);
+                assert_eq!((editor.cursor_line, editor.cursor_col), (1, if replace { 7 } else { 4 }));
+                assert_eq!(editor.selection_anchor, replace.then_some((1, 4)));
+                editor.redo();
+                assert!(editor.rope == expected.as_str());
+            }
+        }
+    }
+}
+
+#[test]
 fn million_line_copy_paste_is_atomic_undoable_and_never_exports_an_oversized_terminal_packet() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
     let payload = "row é🦀0123456789\n".repeat(1_000_000);
@@ -162,7 +216,7 @@ fn rejected_terminal_paste_stays_rejected_after_the_original_worker_finishes() {
 }
 
 #[test]
-fn large_smart_paste_at_column_zero_preserves_copied_indentation() {
+fn large_paste_at_column_zero_preserves_copied_indentation() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
     for indent in ["    ", "\t "] {
         let body = format!("{indent}// café comment\r\n{indent}    // nested comment\r\n");
@@ -198,7 +252,7 @@ fn prepared_paste_matches_inline_semantics_for_unicode_indentation_selection_and
         "a\nb",
     ] {
         crate::clipboard::remember_line_copy(text, false);
-        for smart in [false, true] {
+        for allow_line_copy in [false, true] {
             for mode in 0..4 {
                 let configure = |editor: &mut Editor| {
                     editor.cursor_line = 1;
@@ -219,7 +273,7 @@ fn prepared_paste_matches_inline_semantics_for_unicode_indentation_selection_and
                 let source = "header\n  target\nmore\ntail";
                 let mut expected = Editor::test_with_text(source);
                 configure(&mut expected);
-                if smart {
+                if allow_line_copy {
                     expected.paste_with_text(text);
                 } else {
                     expected.paste_plain_with_text(text);
@@ -228,12 +282,12 @@ fn prepared_paste_matches_inline_semantics_for_unicode_indentation_selection_and
                 configure(&mut editor);
                 let prepared = crate::editor_paste::Snapshot::capture(&editor, text)
                     .unwrap()
-                    .prepare(text.into(), smart, &CancellationToken::new())
+                    .prepare(text.into(), allow_line_copy, &CancellationToken::new())
                     .unwrap();
                 prepared.apply(&mut editor, u64::MAX).unwrap();
                 assert_eq!(
                     editor.rope, expected.rope,
-                    "{text:?}, smart={smart}, mode={mode}"
+                    "{text:?}, allow_line_copy={allow_line_copy}, mode={mode}"
                 );
                 assert_eq!(
                     (editor.cursor_line, editor.cursor_col),

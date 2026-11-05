@@ -253,6 +253,7 @@ fn draw_field(f: &mut Frame, app: &mut App, area: Rect, field: u8, placeholder: 
         ""
     };
     let hit_map = InputField::new(text)
+        .viewport(app.text_input_viewport(TextInputId::GlobalSearch(field)))
         .theme_colors(&app.colors)
         .prefix_decoration(prefix, edge)
         .placeholder_text(placeholder)

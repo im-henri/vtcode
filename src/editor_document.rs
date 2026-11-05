@@ -125,6 +125,7 @@ struct Document {
     rich_features_timed_out: bool,
     loading: bool,
     language: Option<String>,
+    inferred_language: Option<crate::language_detection::Binding>,
     tab_size: usize,
     use_tabs: bool,
     trim_trailing: Option<bool>,
@@ -156,6 +157,7 @@ impl Document {
             rich_features_timed_out: e.rich_features_timed_out,
             loading: e.bg_loading,
             language: e.language_override.clone(),
+            inferred_language: e.inferred_language.clone(),
             tab_size: e.tab_size,
             use_tabs: e.use_tabs,
             trim_trailing: e.ec_trim_trailing,
@@ -184,6 +186,7 @@ impl Document {
             && self.rich_features_timed_out == e.rich_features_timed_out
             && self.loading == e.bg_loading
             && self.language == e.language_override
+            && self.inferred_language == e.inferred_language
             && self.tab_size == e.tab_size
             && self.use_tabs == e.use_tabs
             && self.trim_trailing == e.ec_trim_trailing
@@ -309,6 +312,7 @@ impl Editor {
         if self.large_file_mode { self.pause_large_file_features(); }
         self.bg_loading = doc.loading;
         self.language_override.clone_from(&doc.language);
+        self.inferred_language.clone_from(&doc.inferred_language);
         let indentation_changed = self.tab_size != doc.tab_size;
         self.tab_size = doc.tab_size;
         self.use_tabs = doc.use_tabs;

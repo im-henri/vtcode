@@ -489,10 +489,7 @@ impl Client {
                             Reply::ProcessInputConsumed { process, bytes } => {
                                 let stream = input_shared.streams.lock().unwrap().get(&process).cloned();
                                 if let Some(stream) = stream {
-                                    let mut state = stream.state.lock().unwrap();
-                                    if bytes > process::WINDOW || state.input_credit.saturating_add(bytes) > process::WINDOW { return Err(io::Error::other("Invalid remote input credit")); }
-                                    state.input_credit += bytes;
-                                    drop(state); stream.ready.notify_all();
+                                    stream.input_consumed(bytes)?;
                                 }
                             }
                             Reply::DeletionProgress { request, progress } => {

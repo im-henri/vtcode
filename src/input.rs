@@ -86,16 +86,15 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
     }
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let alt = modifiers.contains(KeyModifiers::ALT);
-    let replace_hidden = app.show_explorer
-        && app.sidebar_view == crate::app::SidebarView::Search
-        && !app.global_search_replace_visible;
+    let sidebar_search = app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search;
+    let replace_hidden = sidebar_search && !app.global_search_replace_visible;
     match code {
         KeyCode::Esc => {
             app.push_global_search_history();
             if app.bg_global_search_running {
                 app.stop_global_search();
             } else {
-                app.global_search_active = false;
+                app.close_global_search();
             }
         }
         KeyCode::Enter => {
@@ -105,55 +104,35 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
             } else if app.global_search_pending_since.is_some() {
                 app.update_global_search();
             } else if app.open_global_search_result() {
-                app.global_search_active = false;
+                app.close_global_search();
             }
         }
         KeyCode::Tab => {
-            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search
-                && app.search_focus_field == 3 && !app.global_search_results.is_empty()
+            if (!sidebar_search || app.search_focus_field == 3) && !app.global_search_results.is_empty()
             {
-                app.global_search_active = false;
+                app.focus_global_search_results();
                 app.ensure_global_search_selection_visible();
                 app.reveal_global_search_selection();
-            } else {
+            } else if sidebar_search {
                 app.search_focus_field = (app.search_focus_field + 1) % 4;
                 if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 2; }
             }
         }
         KeyCode::BackTab => {
-            app.search_focus_field = if app.search_focus_field == 0 {
-                3
-            } else {
-                app.search_focus_field - 1
-            };
-            if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 0; }
-        }
-        KeyCode::Up | KeyCode::Down if modifiers.is_empty()
-            && app.search_focus_field == 0 && !app.global_search_results.is_empty() => {
-            app.global_search_selected_header = None;
-            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search {
-                // Enter the current match before moving through the result list.
+            if sidebar_search {
+                app.search_focus_field = if app.search_focus_field == 0 { 3 } else { app.search_focus_field - 1 };
+                if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 0; }
+            } else if !app.global_search_results.is_empty() {
+                app.focus_global_search_results();
                 app.ensure_global_search_selection_visible();
-            } else if code == KeyCode::Up {
-                app.global_search_select_prev_visible();
-            } else {
-                app.global_search_select_next_visible();
+                app.reveal_global_search_selection();
             }
-            app.preview_global_search_result();
         }
         KeyCode::Up if modifiers.is_empty() || modifiers == KeyModifiers::ALT => {
             app.global_search_history_prev();
         }
         KeyCode::Down if modifiers.is_empty() || modifiers == KeyModifiers::ALT => {
             app.global_search_history_next();
-        }
-        KeyCode::Up => {
-            app.global_search_select_prev_visible();
-            app.preview_global_search_result();
-        }
-        KeyCode::Down => {
-            app.global_search_select_next_visible();
-            app.preview_global_search_result();
         }
         KeyCode::Char('c' | 'C' | 'w' | 'W' | 'r' | 'R' | 'p' | 'P') if alt && !ctrl => {
             use crate::ui_search_controls::{SearchControl, SearchScope, activate};
@@ -292,6 +271,43 @@ pub(crate) fn handle_search_key(app: &mut App, code: KeyCode, modifiers: KeyModi
     }
 }
 
+pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    match code {
+        KeyCode::Up => {
+            app.global_search_select_prev_visible();
+            app.preview_global_search_result();
+        }
+        KeyCode::Down => {
+            app.global_search_select_next_visible();
+            app.preview_global_search_result();
+        }
+        KeyCode::Left | KeyCode::Right if modifiers.is_empty() => {
+            app.set_selected_global_search_file_collapsed(code == KeyCode::Left);
+        }
+        KeyCode::Delete if modifiers.is_empty() => {
+            if let Some(row) = app.global_search_selected_row() {
+                app.dismiss_global_search_result(row);
+                app.reveal_global_search_selection();
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(crate::search_results::SearchRow::Header(index)) = app.global_search_selected_row() {
+                let collapsed = app.is_global_search_file_collapsed(&app.global_search_results[index].file_path);
+                app.set_selected_global_search_file_collapsed(!collapsed);
+            } else if app.open_global_search_result() {
+                app.close_global_search();
+            }
+        }
+        KeyCode::Esc if app.global_search_active => handle_global_search_key(app, code, modifiers),
+        KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => {
+            let field = if code == KeyCode::BackTab && app.show_explorer
+                && app.sidebar_view == crate::app::SidebarView::Search { 3 } else { 0 };
+            app.focus_text_input(TextInputId::GlobalSearch(field));
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if !app.has_open_folder() && matches!(app.sidebar_view,
         crate::app::SidebarView::Search | crate::app::SidebarView::Explorer) {
@@ -299,35 +315,7 @@ pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyMo
         return;
     }
     if app.sidebar_view == crate::app::SidebarView::Search {
-        match code {
-            KeyCode::Up => {
-                app.global_search_select_prev_visible();
-                app.preview_global_search_result();
-            }
-            KeyCode::Down => {
-                app.global_search_select_next_visible();
-                app.preview_global_search_result();
-            }
-            KeyCode::Left | KeyCode::Right if modifiers.is_empty() => {
-                app.set_selected_global_search_file_collapsed(code == KeyCode::Left);
-            }
-            KeyCode::Delete if modifiers.is_empty() => {
-                if let Some(row) = app.global_search_selected_row() {
-                    app.dismiss_global_search_result(row);
-                    app.reveal_global_search_selection();
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(crate::search_results::SearchRow::Header(index)) = app.global_search_selected_row() {
-                    let collapsed = app.is_global_search_file_collapsed(&app.global_search_results[index].file_path);
-                    app.set_selected_global_search_file_collapsed(!collapsed);
-                } else { app.open_global_search_result(); }
-            }
-            KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => {
-                app.focus_text_input(TextInputId::GlobalSearch(if code == KeyCode::BackTab { 3 } else { 0 }));
-            }
-            _ => {}
-        }
+        handle_global_search_results_key(app, code, modifiers);
         return;
     }
     if code == KeyCode::Insert {
@@ -387,7 +375,8 @@ pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyMo
             app.set_explorer_single_selection(app.explorer.selected);
         }
         KeyCode::F(2) if modifiers.is_empty()
-            && app.sidebar_view == crate::app::SidebarView::Explorer => {
+            && app.sidebar_view == crate::app::SidebarView::Explorer
+            && (app.explorer_selection_anchor.is_some() || !app.explorer_multi_selected.is_empty()) => {
             if let Some(entry) = app.explorer.entries.get(app.explorer.selected) {
                 let initial = entry
                     .path
@@ -457,7 +446,11 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
     {
         return;
     }
-    if app.context_diff_navigation(code, modifiers) {
+    if app.wrapped_diff_vertical_navigation(code, modifiers) || app.context_diff_navigation(code, modifiers) {
+        return;
+    }
+    if code == KeyCode::Insert && modifiers == KeyModifiers::SHIFT {
+        app.execute_palette_command("paste");
         return;
     }
     if modifiers.is_empty() && app.inline_diff_navigation(code) {
@@ -641,6 +634,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
             KeyCode::Char('f' | 'F') => {
                 app.push_global_search_history();
                 app.global_search_active = true;
+                app.global_search_results_focused = false;
                 app.global_search_query.clear();
                 app.update_global_search();
                 app.global_search_replace_query.clear();
@@ -663,6 +657,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 // Ctrl+Shift+H: global search with replace focused
                 app.push_global_search_history();
                 app.global_search_active = true;
+                app.global_search_results_focused = false;
                 app.global_search_replace_visible = true;
                 app.show_explorer = true;
                 app.sidebar_view = crate::app::SidebarView::Search;

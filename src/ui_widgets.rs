@@ -859,6 +859,7 @@ pub(crate) struct InputField<'a> {
     cursor_layer: Option<crate::theme_workbench::ColorLayer>,
     cursor_byte_pos: Option<usize>,
     selection_byte_range: Option<(usize, usize)>,
+    viewport: Option<crate::text_input::InputViewport>,
     selection_color: Color,
     selection_bg: Color,
     selection_layers: Option<(crate::theme_workbench::ColorLayer, crate::theme_workbench::ColorLayer)>,
@@ -887,6 +888,7 @@ impl<'a> InputField<'a> {
             cursor_layer: None,
             cursor_byte_pos: None,
             selection_byte_range: None,
+            viewport: None,
             selection_color: Color::Reset,
             selection_bg: Color::Reset,
             selection_layers: None,
@@ -957,6 +959,11 @@ impl<'a> InputField<'a> {
         self
     }
 
+    pub(crate) fn viewport(mut self, viewport: Option<crate::text_input::InputViewport>) -> Self {
+        self.viewport = viewport;
+        self
+    }
+
     pub(crate) fn suffix(mut self, suffix: &'a str, color: Color) -> Self {
         self.suffix = suffix;
         self.suffix_color = color;
@@ -989,8 +996,21 @@ impl<'a> InputField<'a> {
             + UnicodeWidthStr::width(self.suffix)
             + usize::from(cursor_needs_cell);
         let max_text_width = (area.width as usize).saturating_sub(reserved).max(1);
+        let signature = crate::text_input::InputViewport::new(self.text, cursor_pos, self.selection_byte_range, 0, 0);
+        let manual = self.viewport.filter(|view| view.matches(signature));
         let (view_start, view_end) = if UnicodeWidthStr::width(self.text) <= max_text_width {
             (0, self.text.len())
+        } else if let Some(viewport) = manual {
+            let budget = max_text_width.saturating_sub(2).max(1);
+            let start = viewport.resolve(self.text, budget);
+            let mut end = start;
+            let mut used = 0;
+            for (byte, glyph) in self.text[start..].grapheme_indices(true) {
+                if used + glyph.width() > budget { break; }
+                end = start + byte + glyph.len();
+                used += glyph.width();
+            }
+            (start, end)
         } else {
             let cursor = cursor_pos.unwrap_or(0);
             let content_budget = max_text_width.saturating_sub(2).max(1);
@@ -1068,7 +1088,7 @@ impl<'a> InputField<'a> {
                     Style::default().fg(placeholder_color),
                 ));
             }
-        } else if let Some(pos) = cursor_pos {
+        } else if cursor_pos.is_some() || manual.is_some() {
             let selection = self.selection_byte_range.map(|(start, end)| {
                 let low = start.min(end);
                 let high = start.max(end);
@@ -1089,7 +1109,7 @@ impl<'a> InputField<'a> {
                 let byte_idx = view_start + relative_idx;
                 let selected =
                     selection.is_some_and(|(start, end)| byte_idx >= start && byte_idx < end);
-                let style = if cursor_visible && byte_idx == pos {
+                let style = if cursor_visible && Some(byte_idx) == cursor_pos {
                     cursor_style
                 } else if selected {
                     selection_style
@@ -1108,7 +1128,7 @@ impl<'a> InputField<'a> {
             if !batch.is_empty() {
                 spans.push(Span::styled(batch, batch_style.unwrap_or_default()));
             }
-            if pos == self.text.len() {
+            if cursor_pos == Some(self.text.len()) && view_end == self.text.len() {
                 spans.push(Span::styled(" ", if cursor_visible {
                     cursor_style
                 } else { Style::default().fg(text_color) }));
@@ -1144,7 +1164,7 @@ impl<'a> InputField<'a> {
                 UnicodeWidthStr::width(self.placeholder),
                 0,
             );
-        } else if let Some(pos) = cursor_pos {
+        } else if cursor_pos.is_some() || manual.is_some() {
             if view_start > 0 {
                 push_hit_width(&mut column_to_byte, 1, view_start);
             }
@@ -1152,8 +1172,8 @@ impl<'a> InputField<'a> {
                 let byte_idx = view_start + relative_idx;
                 push_hit_grapheme(&mut column_to_byte, ch, byte_idx);
             }
-            if pos == self.text.len() {
-                push_hit_width(&mut column_to_byte, 1, pos);
+            if cursor_pos == Some(self.text.len()) && view_end == self.text.len() {
+                push_hit_width(&mut column_to_byte, 1, self.text.len());
             }
             if view_end < self.text.len() {
                 push_hit_width(&mut column_to_byte, 1, view_end);
@@ -1172,6 +1192,7 @@ impl<'a> InputField<'a> {
         let paragraph = Paragraph::new(Line::from(spans)).style(Style::default().bg(self.bg));
         f.render_widget(paragraph, area);
         TextInputHitMap::new(area, column_to_byte, self.text.len())
+            .with_viewport(signature.window(self.text, view_start, view_end))
     }
 }
 

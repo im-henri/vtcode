@@ -25,7 +25,7 @@ pub(crate) struct Review {
     pub reveal: bool,
     pub mode: Option<DiffMode>,
     pub forced_mode: Option<DiffMode>,
-    pub caret: Option<(usize, usize)>,
+    pub caret: Option<(usize, usize, usize)>,
     pub clock: u64,
 }
 
@@ -91,6 +91,22 @@ pub(crate) fn rows(cache: &DiffRenderCache, mode: DiffMode) -> usize {
     } else {
         cache.inline_rows.len()
     }
+}
+
+pub(crate) fn file_height(
+    scroll: &mut crate::inline_diff::InlineDiffScroll,
+    cache: &Arc<DiffRenderCache>,
+    editor: &crate::editor::Editor,
+    mode: DiffMode,
+    width: u16,
+    split_ratio: f32,
+    animations: &crate::animation_config::AnimationSettings,
+) -> usize {
+    let widths = crate::ui_diff_display::measure_wrap(
+        cache, editor, mode, width, split_ratio, None, animations.scope_enabled_for(editor),
+    );
+    scroll.prepare_wrap(cache, mode == DiffMode::SideBySide, widths);
+    scroll.wrap.first_row(rows(cache, mode)).max(1).saturating_add(4)
 }
 
 pub(crate) fn mode(app: &App, width: u16) -> DiffMode {

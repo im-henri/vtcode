@@ -1,7 +1,8 @@
 use super::Editor;
 
 #[test]
-fn smart_paste_preserves_nested_blocks_and_relative_indentation() {
+fn paste_preserves_nested_blocks_without_adding_destination_indentation() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
     for indent in ["", "    ", "\t", " \t"] {
         for payload in [
             "if True:\n    print('界')\n    return",
@@ -11,7 +12,7 @@ fn smart_paste_preserves_nested_blocks_and_relative_indentation() {
             let mut editor = Editor::test_with_text(indent);
             editor.cursor_col = indent.chars().count();
             editor.paste_with_text(payload);
-            let expected = format!("{indent}{}", payload.replace('\n', &format!("\n{indent}")));
+            let expected = format!("{indent}{payload}");
             assert_eq!(editor.rope.to_string(), expected, "indent={indent:?}");
             editor.undo();
             assert_eq!(editor.rope.to_string(), indent);
@@ -23,7 +24,7 @@ fn smart_paste_preserves_nested_blocks_and_relative_indentation() {
 }
 
 #[test]
-fn smart_paste_at_column_zero_preserves_copied_indentation() {
+fn paste_at_column_zero_preserves_copied_indentation() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
     for body in [
         "    // café comment",
@@ -65,22 +66,26 @@ fn smart_paste_at_column_zero_preserves_copied_indentation() {
 }
 
 #[test]
-fn smart_paste_rebases_copied_blocks_at_existing_indentation() {
+fn paste_keeps_copied_indentation_at_an_already_indented_caret() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
     for source_indent in ["    ", "\t", " \t"] {
         for destination in ["  ", "\t", " \t"] {
-            let payload = format!("{source_indent}// first\n{source_indent}    // nested\n{source_indent}// last");
-            crate::clipboard::remember_line_copy(&payload, false);
-            let mut editor = Editor::test_with_text(destination);
-            editor.cursor_col = destination.chars().count();
-            editor.paste_with_text(&payload);
-            assert_eq!(editor.rope.to_string(), format!("{destination}// first\n{destination}    // nested\n{destination}// last"));
+            for repeats in [1, 256] {
+                let payload = format!("{source_indent}// first\n{source_indent}    // nested\n{source_indent}// last\n").repeat(repeats);
+                crate::clipboard::remember_line_copy(&payload, false);
+                let mut editor = Editor::test_with_text(destination);
+                editor.cursor_col = destination.chars().count();
+                editor.paste_with_text(&payload);
+                assert_eq!(editor.rope.to_string(), format!("{destination}{payload}"));
+                editor.undo();
+                assert_eq!(editor.rope, destination);
+            }
         }
     }
 }
 
 #[test]
-fn smart_paste_in_the_middle_of_text_does_not_reindent_the_payload() {
+fn paste_in_the_middle_of_text_keeps_the_payload_unchanged() {
     let mut editor = Editor::test_with_text("    prefix suffix");
     editor.cursor_col = 10;
     let payload = "first\n  second\n    third";

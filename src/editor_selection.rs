@@ -277,7 +277,7 @@ impl Editor {
     }
 
     #[cfg(test)]
-    fn paste_from_clipboard(&mut self, text: Result<String, arboard::Error>, smart: bool) {
+    fn paste_from_clipboard(&mut self, text: Result<String, arboard::Error>, allow_line_copy: bool) {
         crate::editor_document::edit!(self, {
         // Empty or non-text clipboard contents are authoritative unless the
         // last copy/cut failed and its only surviving copy is internal.
@@ -286,24 +286,24 @@ impl Editor {
             Err(arboard::Error::ContentNotAvailable) if !self.clipboard_failed => return,
             Err(_) => self.clipboard.clone(),
         };
-        self.paste_text(&text, smart);
+        self.paste_text(&text, allow_line_copy);
             })
     }
 
-    /// Paste the given text directly, skipping system clipboard read.
+    /// Paste text with its original whitespace, skipping the system clipboard read.
     pub(crate) fn paste_with_text(&mut self, text: &str) {
         crate::editor_document::edit!(self, {
         self.paste_text(text, true);
             })
     }
 
-    fn paste_text(&mut self, text: &str, smart: bool) {
-        self.paste_snapshot_text(text, smart, None);
+    fn paste_text(&mut self, text: &str, allow_line_copy: bool) {
+        self.paste_snapshot_text(text, allow_line_copy, None);
     }
 
     /// A worker uses the copy-kind decision captured on the UI thread, where
     /// clipboard ownership lives. It must not consult a worker's clipboard.
-    pub(crate) fn paste_snapshot_text(&mut self, text: &str, smart: bool, line_copy: Option<bool>) {
+    pub(crate) fn paste_snapshot_text(&mut self, text: &str, allow_line_copy: bool, line_copy: Option<bool>) {
         crate::editor_document::edit!(self, {
         if self.read_only || text.is_empty() {
             return;
@@ -312,7 +312,7 @@ impl Editor {
         self.clamp_cursor();
         // LF clipboard content is already suitable for insertion. Avoid two
         // complete copies of the common case before constructing the rope.
-        let line_paste = smart && !self.has_selection()
+        let line_paste = allow_line_copy && !self.has_selection()
             && line_copy.or_else(|| crate::clipboard::line_copy_status(text)).unwrap_or_else(||
                 self.clipboard_is_line && normalize_paste_line_endings(text) == normalize_paste_line_endings(&self.clipboard));
         if !self.extra_cursors.is_empty() {
@@ -329,21 +329,17 @@ impl Editor {
         }
 
         if text.len() >= 4096 {
-            let prefix = self.rope.line(self.cursor_line).slice(..self.cursor_col);
-            let indent = (smart && !line_paste && self.cursor_col > 0 && text.contains(['\r', '\n'])
-                && prefix.chunks().all(|chunk| chunk.bytes().all(|ch| matches!(ch, b' ' | b'\t'))))
-                .then(|| prefix.to_string());
             let index = self.rope.line_to_char(self.cursor_line)
                 + if line_paste { 0 } else { self.cursor_col };
-            let (chars, lines) = if let Some(paste) = prepared_paste::prepare(text, indent.as_deref(), line_paste) {
+            let (chars, lines) = if let Some(paste) = prepared_paste::prepare(text, line_paste) {
                 let counts = (paste.len_chars(), paste.len_lines() - 1);
                 let tail = self.rope.split_off(index);
                 self.rope.append(paste);
                 self.rope.append(tail);
                 counts
             } else {
-                // No rewrite also proves LF normalization and indentation
-                // analysis unnecessary. Insert the borrowed payload directly.
+                // LF text with no missing line-copy newline needs no rewrite.
+                // Insert the borrowed payload directly.
                 let lines = if line_paste {
                     memchr::memchr_iter(b'\n', text.as_bytes()).count()
                 } else {
@@ -383,54 +379,14 @@ impl Editor {
             return;
         }
 
-        // Reindent only after existing indentation. At column zero, preserve
-        // the copied whitespace. Include the first line in the common prefix: ignoring
-        // it stripped the body indentation from e.g. "if ready:\n    run()".
-        // Remove an exact space/tab prefix, never an arbitrary byte count.
-        let prefix = self.rope.line(self.cursor_line).slice(..self.cursor_col);
-        let paste_text = if smart && self.cursor_col > 0 && text.contains('\n')
-            && prefix.chars().all(|ch| matches!(ch, ' ' | '\t'))
-        {
-            let mut common: Option<&str> = None;
-            for line in text.split('\n').filter(|line| !line.trim().is_empty()) {
-                let indent = &line[..line.len() - line.trim_start_matches([' ', '\t']).len()];
-                common = Some(match common {
-                    None => indent,
-                    Some(previous) => {
-                        let equal = previous.bytes().zip(indent.bytes()).take_while(|(a, b)| a == b).count();
-                        &previous[..equal]
-                    }
-                });
-                if common == Some("") { break; }
-            }
-            if common.is_none() {
-                text
-            } else {
-                let strip = common.unwrap_or_default().len();
-                let current_indent = prefix.to_string();
-                let mut result = String::with_capacity(text.len());
-                for (index, line) in text.split('\n').enumerate() {
-                    if index > 0 { result.push('\n'); }
-                    if line.trim().is_empty() {
-                        result.push_str(line);
-                    } else {
-                        if index > 0 { result.push_str(&current_indent); }
-                        result.push_str(&line[strip..]);
-                    }
-                }
-                std::borrow::Cow::Owned(result)
-            }
-        } else {
-            text
-        };
         let idx = self.rope.line_to_char(self.cursor_line) + self.cursor_col;
         let before = self.rope.len_chars();
-        self.rope.insert(idx, &paste_text);
+        self.rope.insert(idx, &text);
         let new_idx = idx + (self.rope.len_chars() - before);
         self.cursor_line = self.rope.char_to_line(new_idx);
         self.cursor_col = new_idx - self.rope.line_to_char(self.cursor_line);
         self.modified = true;
-        if paste_text.contains('\n') { self.clear_stale_folds(); }
+        if text.contains('\n') { self.clear_stale_folds(); }
         self.ensure_visible();
             })
     }
@@ -528,8 +484,7 @@ mod tests {
         let source = "head\n    oldtail\nend\n";
         let payload = "        café(界);\r\n        next();\r\n".repeat(200);
         let normalized = payload.replace("\r\n", "\n");
-        let expected = format!("head\n    {}tail\nend\n", normalized
-            .replacen("        ", "", 1).replace("\n        ", "\n    "));
+        let expected = format!("head\n    {normalized}tail\nend\n");
         let mut editor = Editor::test_with_text(source);
         editor.cursor_line = 1;
         editor.cursor_col = 7;
@@ -618,19 +573,19 @@ mod tests {
 
     #[test]
     fn empty_system_clipboard_does_not_paste_an_older_copy_or_delete_selection() {
-        for smart in [false, true] {
+        for allow_line_copy in [false, true] {
             let mut editor = Editor::test_with_text("keep selected text");
             editor.clipboard = "old clipboard".into();
             editor.insert_char('x');
             editor.undo();
             editor.selection_anchor = Some((0, 5));
             editor.cursor_col = 13;
-            editor.paste_from_clipboard(Ok(String::new()), smart);
-            editor.paste_from_clipboard(Err(arboard::Error::ContentNotAvailable), smart);
+            editor.paste_from_clipboard(Ok(String::new()), allow_line_copy);
+            editor.paste_from_clipboard(Err(arboard::Error::ContentNotAvailable), allow_line_copy);
             assert_eq!(editor.rope.to_string(), "keep selected text");
             assert_eq!(editor.selection_anchor, Some((0, 5)));
             assert!(editor.can_redo());
-            editor.paste_from_clipboard(Err(arboard::Error::ClipboardOccupied), smart);
+            editor.paste_from_clipboard(Err(arboard::Error::ClipboardOccupied), allow_line_copy);
             assert_eq!(editor.rope.to_string(), "keep old clipboard text");
             editor.undo();
             assert_eq!(editor.rope.to_string(), "keep selected text");

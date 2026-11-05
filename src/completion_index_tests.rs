@@ -875,6 +875,7 @@ fn disk_cache_size_is_independent_of_the_estimated_ram_budget() {
         Arc::new(Shared {
             root: root.clone(),
             cache_dir: cache.clone(),
+            cache_session: None,
             buffer_only: false,
             control: Mutex::new(Control::default()),
             available: Condvar::new(),
@@ -943,6 +944,7 @@ fn interrupted_warm_restore_preserves_the_complete_checkpoint() {
         Arc::new(Shared {
             root: root.clone(),
             cache_dir: cache.clone(),
+            cache_session: None,
             buffer_only: false,
             control: Mutex::new(Control::default()),
             available: Condvar::new(),

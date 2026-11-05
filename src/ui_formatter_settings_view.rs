@@ -146,6 +146,7 @@ fn field(f: &mut Frame, app: &mut App, area: Rect, id: usize, placeholder: &str,
     let focused = state.focus == Action::Field(id);
     let style = crate::ui_settings::settings_control_style(&app.colors, "text", bg, focused);
     let hit = crate::ui_widgets::InputField::new(&input.text)
+        .viewport(app.text_input_viewport(TextInputId::FormatterSetting(id)))
         .theme_control(&app.colors, app.colors.ui.settings_control("text"), bg)
         .bg(style.bg.unwrap_or(bg))
         .prefix("", Color::Reset)

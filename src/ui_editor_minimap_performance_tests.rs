@@ -214,7 +214,9 @@ fn direct_scrollbar_cells_match_paragraph_markers_mapped_ranges_and_empty_tracks
                                 );
                             }
                             if direct {
-                                draw_scrollbar_with_mapping(frame, params, mapping, None);
+                                draw_scrollbar_with_mapping(
+                                    frame, params, mapping.map(|rows| (rows, &std::convert::identity as &dyn Fn(usize) -> usize)), None,
+                                );
                             } else {
                                 reference::draw_scrollbar_reference(frame, params, mapping);
                             }

@@ -349,7 +349,7 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let header_width = area.width.saturating_sub(6) as usize;
+    let header_width = area.width.saturating_sub(9) as usize;
     let title = crate::ui_pickers::truncate_to_width(" TERMINAL  Ctrl+`", header_width);
     f.buffer_mut().set_string(
         area.x,
@@ -361,6 +361,12 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let plus_x = toggle_x.saturating_sub(3);
+    if area.width >= 9 {
+        if let Some(index) = app.active_terminal_in_dock(TerminalDock::Right)
+            .or_else(|| (0..app.terminals.len()).find(|&index| app.terminal_is_in_dock(index, TerminalDock::Right))) {
+            crate::app_terminal_find::draw_button(f, app, Rect::new(plus_x - 3, area.y, 3, 1), index);
+        }
+    }
     if plus_x >= area.x {
         let plus_area = Rect::new(plus_x, area.y, 3.min(area.width), 1);
         app.terminal_sidebar_plus_area = Some(plus_area);
@@ -492,14 +498,16 @@ fn draw_docked_terminal(f: &mut Frame, app: &mut App, index: usize, area: Rect) 
             index, area: content, group: None,
         };
         app.terminal_surfaces.push(surface);
-        crate::ui_helpers::draw_terminal_emulator(
+        crate::ui_helpers::draw_terminal_emulator_with_cursor(
             f,
             pty,
             content,
             &app.colors.ui,
             app.cursor_visible && app.active_terminal == index && app.terminal_panel_focused,
+            app.focused_terminal_find() != Some(app.terminals[index].find.id),
         );
         crate::terminal_scrollbar::draw(f, app, surface, area);
+        crate::app_terminal_find::draw(f, app, index, content);
         return;
     }
 
@@ -512,6 +520,7 @@ fn draw_docked_terminal(f: &mut Frame, app: &mut App, index: usize, area: Rect) 
         app.colors.fg_error,
         app.colors.ui.bg_panel,
     );
+    crate::app_terminal_find::draw(f, app, index, content);
 }
 
 pub(crate) fn draw_panel_notifications(f: &mut Frame, app: &App, area: Rect) {

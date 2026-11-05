@@ -14,6 +14,11 @@ The tokenizer has three language-independent corrections to match
 The application resolves token themes with the VS Code trie in
 `src/textmate_theme.rs`; it does not use Irosashi's theme-rule ranking.
 
+Filename detection preserves exact extension mappings before falling back to a
+case-insensitive match. A registration for `.C` must not overwrite `.c`, nor
+`.M` overwrite `.m`. This applies to grammar file types, builder registrations,
+and immutable registry updates; exact filenames retain their priority.
+
 The embedded grammar catalog is owned by the application and lives in
 `grammars/bundled` at the repository root. The registry's `include_dir!` path and
 the corpus tests reference that directory instead of `assets/grammars`. The

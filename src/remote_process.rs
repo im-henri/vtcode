@@ -427,6 +427,15 @@ pub(super) struct StreamState {
     pub error: Option<String>,
     pub started: bool,
     pub input_credit: usize,
+    /// UI-queued bytes, including input not yet sent by the writer worker.
+    input_pending: usize,
+    input_acknowledged: Option<std::time::Instant>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InputProgress {
+    pub pending: bool,
+    pub acknowledged: Option<std::time::Instant>,
 }
 impl Stream {
     pub(super) fn new(wake: crate::background::UiWake) -> Self {
@@ -439,6 +448,8 @@ impl Stream {
                 error: None,
                 started: false,
                 input_credit: WINDOW,
+                input_pending: 0,
+                input_acknowledged: None,
             }),
             ready: Condvar::new(),
             wake,
@@ -459,10 +470,31 @@ impl Stream {
     pub(super) fn end(&self, error: Option<String>) {
         let mut state = self.state.lock().unwrap();
         state.end = true;
+        state.input_pending = 0;
         state.error = error;
         drop(state);
         self.ready.notify_all();
         self.wake.notify();
+    }
+
+    pub(super) fn input_consumed(&self, bytes: usize) -> io::Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if bytes > WINDOW || state.input_credit.saturating_add(bytes) > WINDOW {
+            return Err(io::Error::other("Invalid remote input credit"));
+        }
+        state.input_credit += bytes;
+        let was_pending = state.input_pending != 0;
+        state.input_pending = state.input_pending.saturating_sub(bytes);
+        if was_pending && bytes != 0 {
+            state.input_acknowledged = Some(std::time::Instant::now());
+        }
+        let completed = was_pending && state.input_pending == 0;
+        drop(state);
+        self.ready.notify_all();
+        // A password prompt or a quiet program need not echo anything. Its
+        // acknowledgement must still wake the cursor without terminal output.
+        if completed { self.wake.notify(); }
+        Ok(())
     }
 }
 impl Read for Reader {
@@ -471,6 +503,14 @@ impl Read for Reader {
     }
 }
 impl Reader {
+    pub(crate) fn input_progress(&self) -> InputProgress {
+        let state = self.stream.state.lock().unwrap();
+        InputProgress {
+            pending: !state.end && state.input_pending != 0,
+            acknowledged: state.input_acknowledged,
+        }
+    }
+
     pub(crate) fn ready(&self) -> bool {
         let state = self.stream.state.lock().unwrap();
         state.bytes != 0 || state.end
@@ -585,6 +625,7 @@ impl RemoteProcess {
 /// thread; a congested terminal never blocks editor input or rendering.
 pub(crate) struct QueuedWriter {
     queue: Arc<(Mutex<InputQueue>, Condvar)>,
+    stream: Arc<Stream>,
 }
 #[derive(Default)]
 struct InputQueue {
@@ -630,23 +671,32 @@ impl QueuedWriter {
         let queue = Arc::new((Mutex::new(InputQueue::default()), Condvar::new()));
         let worker = queue.clone();
         let stream = writer.stream.clone();
+        let failed = stream.clone();
         std::thread::Builder::new()
             .name("remote-terminal-input".into())
             .spawn(move || {
                 while let Some(bytes) = InputQueue::receive(&worker) {
                     if let Err(error) = writer.write_all(&bytes) {
-                        stream.end(Some(error.to_string()));
+                        failed.end(Some(error.to_string()));
                         return;
                     }
                 }
             })?;
-        Ok(Self { queue })
+        Ok(Self { queue, stream })
     }
 }
 impl Write for QueuedWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let mut queue = self.queue.0.lock().unwrap();
+        let mut state = self.stream.state.lock().unwrap();
+        if state.end {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Remote process stopped"));
+        }
         queue.push(bytes.to_vec(), 4 * 1024 * 1024)?;
+        // Publish before releasing the queue: a fast acknowledgement cannot
+        // overtake this accounting, and rejected writes never become pending.
+        state.input_pending += bytes.len();
+        drop(state);
         drop(queue);
         self.queue.1.notify_one();
         Ok(bytes.len())

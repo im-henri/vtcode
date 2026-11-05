@@ -137,6 +137,7 @@ fn input(f: &mut Frame, app: &mut App, area: Rect, id: TextInputId, placeholder:
         ),
     };
     let mut field = InputField::new(text)
+        .viewport(app.text_input_viewport(id))
         .theme_colors(&app.colors)
         .prefix(" ", fg)
         .bg(bg)

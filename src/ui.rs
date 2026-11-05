@@ -382,10 +382,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_quick_picker::begin_frame(app);
     // Input geometry must never outlive the frame that produced it.  Widgets
     // below register hit maps using their exact rendered viewport.
-    app.text_input_regions.clear();
+    app.begin_text_input_frame();
     app.settings_scroll_areas.clear();
     app.settings_category_area = None;
     app.terminal_surfaces.clear();
+    app.terminal_find.begin_frame();
     app.terminal_scrollbar.areas.clear();
     app.search_control_regions.clear();
     app.search_bar_area = None;
@@ -687,6 +688,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     ui_chrome::draw_navigation_tooltip(f, app);
     crate::ui_source_control::draw_action_tooltip(f, app);
     crate::ui_panels::draw_tooltip(f, app);
+    crate::app_terminal_find::draw_tooltip(f, app);
     crate::ui_editor_folds::draw_tooltip(f, app);
 
     crate::ui_inline_blame::draw(f, app);

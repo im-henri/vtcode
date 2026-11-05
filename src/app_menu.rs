@@ -707,6 +707,7 @@ impl App {
         vec![
             ("Close", "tab_close", "Ctrl+W"),
             ("Rename Terminal…", "tab_rename_terminal", ""),
+            ("Find in Terminal…", "tab_find_terminal", ""),
             ("Close Others", "tab_close_others", ""),
             ("Close All", "tab_close_all", ""),
             ("Close Saved", "tab_close_saved", ""),

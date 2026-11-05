@@ -97,6 +97,25 @@ impl App {
         }
         false
     }
+
+    pub(crate) fn finish_explorer_paste_reveal(&mut self) {
+        let mut paths = std::mem::take(&mut self.explorer_paste_reveal);
+        if self.explorer.find.filtering()
+            && paths.iter().any(|path| self.explorer.find_path(path).is_none())
+        {
+            // Keep the query available while showing items it filtered out.
+            self.explorer.find.filter = false;
+            self.explorer_paste_reveal = paths;
+            self.update_explorer_find();
+            return;
+        }
+        paths.retain(|path| self.explorer.find_path(path).is_some());
+        if let Some(first) = paths.first() {
+            self.explorer.reveal_file_centered_deferred(first);
+            self.explorer_selection_anchor = Some(self.explorer.selected);
+            self.explorer_multi_selected = paths.into();
+        }
+    }
     pub(crate) fn display_path(&self, path: &Path) -> String {
         let display = self.remote_workspace.as_ref().and_then(|remote| remote.display_path(path).ok())
             .unwrap_or_else(|| path.display().to_string());
@@ -285,12 +304,11 @@ impl App {
                             }
                             None => root,
                         };
-                        let mut processed = 0usize;
                         let mut failed = 0usize;
                         let mut last_error = None;
-                        let mut last_dest = None;
+                        let mut pasted_paths = Vec::new();
                         let mut renames = Vec::new();
-                        for src in sources {
+                        'sources: for src in sources {
                             let file_name = src.file_name().unwrap_or_default();
                             let mut dest = dest_dir.join(file_name);
                             if (!is_cut || dest != src) && std::fs::symlink_metadata(&dest).is_ok() {
@@ -312,7 +330,11 @@ impl App {
                                             dest = candidate;
                                             break;
                                         }
-                                        Err(error) => return Err(error.to_string()),
+                                        Err(error) => {
+                                            failed += 1;
+                                            last_error = Some(error.to_string());
+                                            continue 'sources;
+                                        }
                                         Ok(_) => {}
                                     }
                                 }
@@ -327,8 +349,7 @@ impl App {
                                     if is_cut && src != dest {
                                         renames.push((src, dest.clone()));
                                     }
-                                    processed += 1;
-                                    last_dest = Some(dest);
+                                    pasted_paths.push(dest);
                                 }
                                 Err(error) => {
                                     failed += 1;
@@ -336,6 +357,7 @@ impl App {
                                 }
                             }
                         }
+                        let processed = pasted_paths.len();
                         if processed == 0 {
                             return Err(
                                 last_error.unwrap_or_else(|| "nothing was copied".to_string())
@@ -343,13 +365,7 @@ impl App {
                         }
                         let verb = if is_cut { "Moved" } else { "Pasted" };
                         let message = if processed == 1 && failed == 0 {
-                            format!(
-                                "{verb}: {}",
-                                last_dest.as_deref().map_or_else(
-                                    || dest_dir.display().to_string(),
-                                    |path| { path.display().to_string() }
-                                )
-                            )
+                            format!("{verb}: {}", pasted_paths[0].display())
                         } else if failed == 0 {
                             format!("{verb} {processed} items")
                         } else {
@@ -363,6 +379,7 @@ impl App {
                         };
                         Ok(crate::background::FilesystemActionOutcome {
                             message,
+                            pasted_paths,
                             renames,
                             clear_explorer_clipboard: is_cut,
                             ..Default::default()

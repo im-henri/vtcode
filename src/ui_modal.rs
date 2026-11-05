@@ -1361,7 +1361,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             ),
         };
         let mut field = InputField::new(value)
-        .theme_colors(&app.colors)
+            .viewport(app.text_input_viewport(id))
+            .theme_colors(&app.colors)
             .prefix(" ", input_fg)
             .bg(input_bg)
             .placeholder_text(

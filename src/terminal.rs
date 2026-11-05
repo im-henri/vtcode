@@ -14,6 +14,9 @@ mod resize;
 #[path = "terminal_selection.rs"]
 mod selection;
 
+#[path = "terminal_find.rs"]
+pub(crate) mod find;
+
 #[path = "terminal_mouse.rs"]
 mod mouse;
 
@@ -888,6 +891,7 @@ pub struct TerminalEmulator {
     last_size: (usize, usize),
     wake: crate::background::UiWake,
     remote: Option<(crate::remote::process::Reader, crate::remote::process::Killer)>,
+    remote_input_pending: bool,
 }
 
 impl TerminalEmulator {
@@ -944,6 +948,7 @@ impl TerminalEmulator {
             last_size: (width, height),
             wake: crate::background::UiWake::default(),
             remote: None,
+            remote_input_pending: false,
         };
         terminal.process_while(|| true);
         terminal
@@ -958,7 +963,7 @@ impl TerminalEmulator {
             incoming: Arc::default(), incoming_ready: Arc::new(AtomicBool::new(false)), output_batch: Vec::new(), output_offset: 0,
             writer: Arc::new(Mutex::new(Some(Box::new(writer)))), _alive: Arc::new(AtomicBool::new(true)),
             _reader_thread: None, child_killer: None, exit_events, _wait_thread: None, master: None,
-            last_size: (width, height), wake, remote: Some((reader, killer)),
+            last_size: (width, height), wake, remote: Some((reader, killer)), remote_input_pending: false,
         })
     }
 
@@ -1154,6 +1159,7 @@ impl TerminalEmulator {
             _wait_thread: Some(wait_thread),
             master: Some(pair.master),
             remote: None,
+            remote_input_pending: false,
             last_size: (width, height),
             wake,
         })
@@ -1163,8 +1169,11 @@ impl TerminalEmulator {
     /// Bound parsing time as well as bytes: escape sequences can do much more
     /// work per byte than ordinary text, especially on a slower CPU.
     pub(crate) fn process(&mut self) -> bool {
-        if !self.has_pending_output() { return false; }
         self.process_until(Instant::now() + PTY_PROCESS_BUDGET)
+    }
+
+    pub(crate) fn remote_input_progress(&self) -> crate::remote::process::InputProgress {
+        self.remote.as_ref().map_or_else(Default::default, |(reader, _)| reader.input_progress())
     }
 
     pub(crate) fn has_pending_output(&self) -> bool {
@@ -1179,7 +1188,10 @@ impl TerminalEmulator {
     /// Yield between small parser batches, preserving incomplete UTF-8/escape
     /// sequences and leaving older output ahead of newly arriving bytes.
     pub(crate) fn process_while(&mut self, mut continue_processing: impl FnMut() -> bool) -> bool {
-        if !self.has_pending_output() { return false; }
+        let pending = self.remote_input_progress().pending;
+        let input_changed = pending != self.remote_input_pending;
+        self.remote_input_pending = pending;
+        if !self.has_pending_output() { return input_changed; }
         if self.output_offset == self.output_batch.len() {
             self.output_batch.clear();
             self.output_offset = 0;
@@ -1211,7 +1223,7 @@ impl TerminalEmulator {
                 self.incoming_ready.store(!queue.is_empty(), Ordering::Release);
             }
         }
-        if self.output_batch.is_empty() { return false; }
+        if self.output_batch.is_empty() { return input_changed; }
         loop {
             let end = (self.output_offset + PTY_PARSE_QUANTUM).min(self.output_batch.len());
             for &byte in &self.output_batch[self.output_offset..end] {

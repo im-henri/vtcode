@@ -389,6 +389,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if app.desks.popup.mode.is_none() {
         return false;
     }
+    if let Some(id) = focused_input(app) {
+        app.reveal_text_input_navigation(id, key.code);
+    }
     let rows = entries(app, usize::MAX);
     match key.code {
         KeyCode::Esc => app.desks.popup = Default::default(),
@@ -462,7 +465,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         app.mouse_row = mouse.row;
     }
     if app.desks.popup.mode.is_some() {
-        if mouse.kind == MouseEventKind::Down(MouseButton::Right)
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
+            | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
             && app.text_input_area(crate::text_input::TextInputId::DeskPopup)
                 .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
             && app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
@@ -811,6 +816,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         .unwrap_or(0);
     let width = screen.width.min((content_width + 4).clamp(28, 58) as u16);
     let height = screen.height.min((rows.len() + 3).clamp(4, 18) as u16);
+    let viewport = app.text_input_viewport(crate::text_input::TextInputId::DeskPopup);
     let p = &mut app.desks.popup;
     let area = Rect::new(
         p.origin.0.min(screen.right().saturating_sub(width)),
@@ -848,6 +854,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else {
         p.input_map = Some(
             crate::ui_widgets::InputField::new(&p.text)
+                .viewport(viewport)
                 .theme_colors(&app.colors)
                 .prefix(" ", fg)
                 .placeholder_text(placeholder)

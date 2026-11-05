@@ -184,8 +184,8 @@ impl FileExplorer {
         if self.ordering.locale() == locale { return true; }
         let Some(ordering) = crate::file_order::FileOrder::new(locale) else { return false };
         self.ordering = std::sync::Arc::new(ordering);
-        // In-flight projections retain their own ordering and cache.
-        self.directory_cache = self.directory_cache.for_new_order();
+        // Directory data is independent of collation. In-flight projections
+        // retain their own immutable ordering while sharing the disk snapshot.
         true
     }
     pub(crate) fn set_files_exclude(&mut self, patterns: &crate::settings::ExcludePatterns) {
@@ -783,8 +783,8 @@ impl FileExplorer {
         let ordering = self.ordering.clone();
         let cache = self.directory_cache.clone();
         let covered = crate::background::workspace_path_is_watched(&self.root, dir);
-        let Some(items) = cache.get_or_read(dir, sort_mode, covered, cancel, || {
-            let mut items: Vec<_> = match std::fs::read_dir(dir) {
+        let Some(items) = cache.get_ordered(dir, sort_mode, &ordering, covered, cancel, || {
+            let items: Vec<_> = match std::fs::read_dir(dir) {
                 Ok(entries) => entries
                     .take_while(|_| !cancel.is_some_and(|token| token.is_cancelled()))
                     .filter_map(Result::ok)
@@ -821,25 +821,6 @@ impl FileExplorer {
                     .collect(),
                 Err(_) => return None,
             };
-
-            items.sort_by(
-                |(_, a_dir, a_size, a_time, a_name), (_, b_dir, b_size, b_time, b_name)| {
-                    // Always sort directories first
-                    let dir_ord = b_dir.cmp(a_dir);
-                    if dir_ord != std::cmp::Ordering::Equal {
-                        return dir_ord;
-                    }
-                    let name_order = || ordering.names(a_name, b_name);
-                    match sort_mode {
-                        ExplorerSortMode::Name => name_order(),
-                        ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name_order),
-                        ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name_order),
-                        ExplorerSortMode::Type => {
-                            if *a_dir { name_order() } else { ordering.extensions(a_name, b_name) }
-                        }
-                    }
-                },
-            );
 
             Some(items)
         }) else { return; };
@@ -1042,14 +1023,7 @@ impl FileExplorer {
         // Record the complete chain before scanning, not just cached entries.
         self.expanded_dirs.extend(self.entries.iter()
             .filter(|entry| entry.is_dir && entry.expanded).map(|entry| entry.path.clone()));
-        let mut parent = target.parent();
-        while let Some(p) = parent {
-            if p == self.root || !p.starts_with(&self.root) {
-                break;
-            }
-            self.expanded_dirs.insert(p.to_path_buf());
-            parent = p.parent();
-        }
+        self.expand_ancestors(target);
         self.pending_reveal = None;
         self.center_reveal_pending = false;
         self.entries.clear();
@@ -1248,26 +1222,18 @@ impl FileExplorer {
             .collect();
         self.directory_cache.invalidate_paths(missing, true);
 
-        // Build list of ancestor directories that need to be expanded
-        let mut ancestors: Vec<PathBuf> = Vec::new();
-        let mut current = file_path.parent();
-        while let Some(parent) = current {
-            if parent == self.root || parent.starts_with(&self.root) {
-                if parent != self.root {
-                    ancestors.push(parent.to_path_buf());
-                }
-                current = parent.parent();
-            } else {
-                break;
-            }
-        }
-
-        // Ensure all ancestor directories are expanded
-        for ancestor in &ancestors {
-            self.expanded_dirs.insert(ancestor.clone());
-        }
+        self.expand_ancestors(file_path);
         self.pending_reveal = Some(file_path.to_path_buf());
         true
+    }
+
+    pub(crate) fn expand_ancestors(&mut self, path: &Path) {
+        self.expanded_dirs.extend(
+            path.ancestors()
+                .skip(1)
+                .take_while(|parent| *parent != self.root && parent.starts_with(&self.root))
+                .map(Path::to_path_buf),
+        );
     }
 
     pub(crate) fn reveal_file_centered_deferred(&mut self, file_path: &Path) -> bool {

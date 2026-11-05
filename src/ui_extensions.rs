@@ -232,6 +232,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     };
     if !field.is_empty() {
         let hit = InputField::new(&app.extensions_filter)
+            .viewport(app.text_input_viewport(TextInputId::ExtensionsFilter))
             .theme_colors(&app.colors)
             .prefix(" ⌕ ", app.colors.ui.icon_color(input_bg))
             .placeholder_text("Search installed extensions")

@@ -98,6 +98,36 @@ fn changed_unselected_theme(app: &App) -> crate::app_theme::ThemeFile {
 }
 
 #[test]
+fn opening_a_c_file_and_manually_selecting_c_produce_identical_highlight_caches() {
+    let (_root, mut app, path, _) = startup_file();
+    app.lsp_enabled = false;
+    let text = "#include <stdio.h>\n#define LIMIT 3\ntypedef struct Node { const char *label; int count; } Node;\nstatic int add(const Node *node, int value) {\n    // ordinary C, with pointers, macros and a function call\n    if (node == NULL) return -1;\n    printf(\"%s %d\\n\", node->label, value + LIMIT);\n    return node->count + value;\n}\n".repeat(4);
+    load(&mut app, &path, &text);
+    app.editor_mut().unwrap().set_cursor(0, 0);
+    app.refresh_visible_highlights_async();
+    settle(&mut app);
+    assert_eq!(app.editor().unwrap().language_name(), "C");
+    assert!(app.editor().unwrap().language_override.is_none());
+    let snapshot = |app: &mut App| {
+        let editor = app.editor().unwrap();
+        let language = editor.syntax_language_token().map(str::to_owned);
+        let version = editor.content_version;
+        (0..text.lines().count()).map(|line| {
+            let (spans, _) = app.highlighter.highlighted_line_by_index_if_cached(line,
+                Some(&path), language.as_deref(), &app.syntax_theme, version)
+                .expect("the loaded document must be highlighted without reselecting its language");
+            spans.as_ref().clone()
+        }).collect::<Vec<_>>()
+    };
+    let detected = snapshot(&mut app);
+    app.execute_editor_command(&crate::app_menu::language_command_id("C"));
+    app.refresh_visible_highlights_async();
+    settle(&mut app);
+    assert_eq!(app.editor().unwrap().language_override.as_deref(), Some("C"));
+    assert_eq!(detected, snapshot(&mut app));
+}
+
+#[test]
 fn startup_highlights_loaded_file_at_restored_cursor_while_idle() {
     let (_root, mut app, path, text) = startup_file();
     app.refresh_visible_highlights_async();

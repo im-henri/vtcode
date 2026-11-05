@@ -8,9 +8,16 @@ use crate::app::App;
 mod context_menu;
 pub(crate) use context_menu::ContextMenu;
 
+#[path = "text_input_scroll.rs"]
+mod scroll;
+pub(crate) use scroll::InputViewport;
+
 #[cfg(test)]
 #[path = "text_input_context_menu_tests.rs"]
 mod context_menu_tests;
+#[cfg(test)]
+#[path = "text_input_scroll_tests.rs"]
+mod scroll_tests;
 
 /// Stable identity for every field backed by the shared text-input
 /// controller.  Keeping identity separate from geometry lets the renderer
@@ -33,6 +40,7 @@ pub(crate) enum TextInputId {
     FolderName,
     RenameSymbol,
     TerminalRename,
+    TerminalFind(u64),
     SettingsSearch,
     SettingsValue,
     AgentSetting(usize),
@@ -205,6 +213,7 @@ impl TextInputHistory {
 pub(crate) struct TextInputHitMap {
     area: Rect,
     rows_to_byte: Vec<Vec<usize>>,
+    horizontal: Option<InputViewport>,
 }
 
 impl TextInputHitMap {
@@ -214,6 +223,7 @@ impl TextInputHitMap {
         Self {
             area,
             rows_to_byte: vec![column_to_byte],
+            horizontal: None,
         }
     }
 
@@ -229,7 +239,7 @@ impl TextInputHitMap {
         while rows_to_byte.len() < area.height as usize {
             rows_to_byte.push(vec![text_len; area.width as usize]);
         }
-        Self { area, rows_to_byte }
+        Self { area, rows_to_byte, horizontal: None }
     }
 
     fn normalize_row(row: &mut Vec<usize>, width: u16, text_len: usize) {
@@ -662,6 +672,7 @@ impl App {
     pub(crate) fn register_text_input(&mut self, id: TextInputId, hit_map: TextInputHitMap) {
         let file_search_owner = matches!(id, TextInputId::SearchFind | TextInputId::SearchReplace)
             .then(|| self.file_search_owner()).flatten();
+        self.register_input_viewport(id, file_search_owner, &hit_map);
         self.text_input_regions
             .push(TextInputRegion { id, hit_map, file_search_owner });
     }
@@ -697,6 +708,11 @@ impl App {
             TextInputId::WorkspaceName => self.workspaces.popup.sets.input_state(),
             TextInputId::CompletionNumber => crate::ui_vtcomplete_index::input_state(self),
             TextInputId::OutputFind => self.logs.find_input_state(),
+            TextInputId::TerminalFind(id) => {
+                let index = self.terminal_find_index(id).expect("live terminal Find field");
+                let find = &mut self.terminals[index].find;
+                (&mut find.query, &mut find.cursor, &mut find.anchor)
+            }
             TextInputId::GitOperationTarget => (&mut self.git_operation_ui.target, &mut self.git_operation_ui.cursor, &mut self.git_operation_ui.anchor),
             TextInputId::ScopeBubbleLanguage => {
                 let field = &mut self.scope_bubble_settings.field;
@@ -825,6 +841,7 @@ impl App {
     }
 
     pub(crate) fn focus_text_input(&mut self, id: TextInputId) {
+        self.terminal_find.focused = None;
         if matches!(
             id,
             TextInputId::SaveAs
@@ -843,6 +860,7 @@ impl App {
         match id {
             TextInputId::WorkspaceName => self.workspaces.popup.sets.focus_input(),
             TextInputId::OutputFind => crate::ui_logs::focus_find(self),
+            TextInputId::TerminalFind(id) => self.focus_terminal_find(id),
             TextInputId::FolderAddress => self.folder_browser.focus = crate::folder_browser::Focus::Address,
             TextInputId::AgentSetting(id) => {
                 self.agent_settings.focus = crate::ui_agent_settings::Action::Field(id);
@@ -890,6 +908,7 @@ impl App {
                 self.search_input_focused = false;
                 self.search_focus_field = field.min(3);
                 self.global_search_active = true;
+                self.global_search_results_focused = false;
                 self.active_pane = crate::app::ActivePane::Explorer;
             }
             TextInputId::ExplorerFind => {
@@ -929,6 +948,7 @@ impl App {
         let anchor = anchor.map(|value| Self::clamp_to_grapheme_boundary(text, value));
         *cursor = byte;
         *selection_anchor = anchor.filter(|value| *value != byte);
+        self.keep_text_input_viewport_cursor(id, byte, anchor);
     }
 
     pub(crate) fn focused_text_input_id(&self) -> Option<TextInputId> {
@@ -994,13 +1014,14 @@ impl App {
         if self.quick_open_active {
             return Some(TextInputId::QuickOpen);
         }
+        if let Some(id) = self.focused_terminal_find() { return Some(TextInputId::TerminalFind(id)); }
         let sidebar_search_active =
             self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search;
         if self.sidebar_is_visible() && self.sidebar_view == crate::app::SidebarView::Remote
             && self.active_pane == crate::app::ActivePane::Explorer && self.remote_targets.filter_focused {
             return Some(TextInputId::RemoteFilter);
         }
-        if self.global_search_active
+        if self.global_search_active && !self.global_search_results_focused
             && (!sidebar_search_active || self.active_pane == crate::app::ActivePane::Explorer)
         {
             return Some(TextInputId::GlobalSearch(self.search_focus_field));
@@ -1064,6 +1085,7 @@ impl App {
                 TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => self.workspaces.popup.open,
                 TextInputId::CompletionNumber => crate::ui_vtcomplete_index::focused_input(self).is_some(),
                 TextInputId::OutputFind => self.show_panel && self.panel_tab == 2,
+                TextInputId::TerminalFind(id) => self.terminal_find_index(*id).is_some_and(|index| self.terminals[index].find.open),
                 TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => self.change_dir_active,
                 TextInputId::SearchFind | TextInputId::SearchReplace => self.search_active,
                 TextInputId::QuickOpen => self.quick_open_active,
@@ -1151,6 +1173,7 @@ impl App {
 
     pub(crate) fn text_input_changed(&mut self, id: TextInputId) {
         match id {
+            TextInputId::TerminalFind(id) => self.terminal_find_edited(id),
             TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
             | TextInputId::CompletionNumber | TextInputId::OutputFind => {},
             TextInputId::GitOperationTarget => crate::ui_modal::field_changed(self),
@@ -1234,6 +1257,9 @@ impl App {
         modifiers: KeyModifiers,
         paste: Option<&str>,
     ) -> TextInputResult {
+        let copy = paste.is_none() && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+            && !modifiers.contains(KeyModifiers::ALT) && matches!(code, KeyCode::Char('c' | 'C') | KeyCode::Insert);
+        if !copy { self.clear_text_input_viewport(id); }
         match id {
             TextInputId::DeskPopup => return crate::ui_desks::edit_input(self, code, modifiers, paste),
             TextInputId::WorkspaceFilter => return crate::ui_workspaces::edit_filter(self, code, modifiers, paste),
@@ -1308,6 +1334,7 @@ impl App {
 
     fn text_input_is_overlay(&self, id: TextInputId) -> bool {
         match id {
+            TextInputId::TerminalFind(_) => true,
             TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
             | TextInputId::CompletionNumber => true,
             TextInputId::AgentSetting(_) | TextInputId::LspSetting(_) | TextInputId::FormatterSetting(_) | TextInputId::RemoteTarget(_) | TextInputId::FileAssociation(_) | TextInputId::Exclusion(_) | TextInputId::ScopeBubbleLanguage => true,
@@ -1339,6 +1366,9 @@ impl App {
     }
 
     fn text_input_region_is_current(&self, region: &TextInputRegion) -> bool {
+        if let TextInputId::TerminalFind(id) = region.id {
+            return self.terminal_find_index(id).is_some_and(|index| self.terminals[index].find.open);
+        }
         !matches!(region.id, TextInputId::SearchFind | TextInputId::SearchReplace)
             || region.file_search_owner == self.file_search_owner()
     }
@@ -1399,6 +1429,7 @@ impl App {
         modifiers: KeyModifiers,
         overlay: Option<bool>,
     ) -> bool {
+        if self.scroll_text_input(kind, column, row, overlay) { return true; }
         if overlay != Some(true) && self.handle_commit_input_scrollbar_mouse(kind, column, row) {
             return true;
         }
@@ -1672,7 +1703,7 @@ mod tests {
         app.active_pane = crate::app::ActivePane::Editor;
         match id {
             TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
-            | TextInputId::CompletionNumber | TextInputId::OutputFind => {
+            | TextInputId::CompletionNumber | TextInputId::OutputFind | TextInputId::TerminalFind(_) => {
                 unreachable!("these controls have dedicated popup fixtures")
             }
             TextInputId::AgentSetting(_) => {
@@ -1890,6 +1921,10 @@ mod tests {
                 TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => crate::ui_workspaces::draw(frame, app),
                 TextInputId::CompletionNumber => crate::ui_vtcomplete_index::draw(frame, app),
                 TextInputId::OutputFind => crate::ui_logs::draw_content(frame, app, area),
+                TextInputId::TerminalFind(id) => {
+                    let index = app.terminal_find_index(id).unwrap();
+                    crate::app_terminal_find::draw(frame, app, index, area);
+                }
                 TextInputId::Chat => crate::ui_chat::draw(frame, app, area),
                 TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => {
                     crate::ui_folder_browser::draw(frame, app)

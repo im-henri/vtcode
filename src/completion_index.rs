@@ -24,6 +24,8 @@ mod erase;
 mod recency;
 #[path = "completion_index_stream.rs"]
 mod stream;
+#[path = "completion_cache_lifecycle.rs"]
+mod cache_lifecycle;
 
 const CACHE_VERSION: u32 = 2;
 const MAX_WORD_BYTES: usize = 160;
@@ -292,6 +294,36 @@ struct CacheHeader {
     remote_root_uri: Option<String>,
 }
 
+impl CacheHeader {
+    fn matches(&self, root: &Path, remote_root_uri: Option<&str>) -> bool {
+        if self.version != CACHE_VERSION || self.remote_root_uri.as_deref() != remote_root_uri {
+            return false;
+        }
+        self.root == root
+            || (remote_root_uri.is_none()
+                && !self.root.as_os_str().is_empty()
+                && !root.as_os_str().is_empty()
+                && self.root.canonicalize().is_ok_and(|cached| {
+                    root.canonicalize().is_ok_and(|current| cached == current)
+                }))
+    }
+
+    fn rebase_path(&self, path: PathBuf, root: &Path) -> Option<PathBuf> {
+        if self.root == root {
+            return Some(path);
+        }
+        let relative = path.strip_prefix(&self.root).ok()?;
+        (!relative.as_os_str().is_empty()
+            && relative.components().all(|part| matches!(part, Component::Normal(_))))
+            .then(|| root.join(relative))
+    }
+}
+
+struct RestoringCache {
+    header: CacheHeader,
+    reader: std::io::BufReader<std::fs::File>,
+}
+
 fn key(word: &str) -> Arc<str> {
     let lower = word.to_lowercase();
     if lower == word {
@@ -368,6 +400,7 @@ fn pending_erase(control: &Control, path: &Path) -> bool {
 struct Shared {
     root: PathBuf,
     cache_dir: PathBuf,
+    cache_session: Option<Arc<cache_lifecycle::Session>>,
     buffer_only: bool,
     control: Mutex<Control>,
     available: Condvar,
@@ -383,6 +416,9 @@ struct Handle(Arc<Shared>);
 impl Drop for Handle {
     fn drop(&mut self) {
         let mut control = self.0.control.lock().unwrap_or_else(|e| e.into_inner());
+        // Publish the retiring writer before a replacement can start reading
+        // this cache. Waiting and disk I/O happen only on the worker threads.
+        if let Some(session) = &self.0.cache_session { session.stopping(); }
         control.stopped = true;
         self.0.available.notify_all();
     }
@@ -418,6 +454,7 @@ impl CompletionIndex {
     ) -> (Self, impl Sized) {
         let shared = Arc::new(Shared {
             cache_dir: root.join("cache"),
+            cache_session: None,
             buffer_only: false,
             root,
             control: Mutex::new(Control::default()),
@@ -531,9 +568,11 @@ impl CompletionIndex {
         if buffer_only {
             settings.project_wide = false;
         }
+        let cache_session = cache_lifecycle::Session::register(&cache_dir);
         let shared = Arc::new(Shared {
             root,
             cache_dir,
+            cache_session: Some(cache_session),
             buffer_only,
             control: Mutex::new(Control {
                 settings,
@@ -559,6 +598,7 @@ impl CompletionIndex {
                 worker.run();
             })
         {
+            if let Some(session) = &shared.cache_session { session.finish(); }
             let mut status = shared.status.lock().unwrap_or_else(|e| e.into_inner());
             status.phase = IndexPhase::Disabled;
             status.error = Some(error.to_string());
@@ -1394,7 +1434,7 @@ struct Worker {
     shared: Arc<Shared>,
     files: BTreeMap<PathBuf, Arc<StoredRecord>>,
     validation: BTreeSet<PathBuf>,
-    restore: Option<std::io::BufReader<std::fs::File>>,
+    restore: Option<RestoringCache>,
     walk: Option<ignore::Walk>,
     pending_walks: BTreeSet<PathBuf>,
     memory: usize,
@@ -1419,10 +1459,12 @@ struct Worker {
     example_bytes: usize,
     evicted: usize,
     oversized_after: Option<PathBuf>,
+    cache_completion: cache_lifecycle::Completion,
 }
 
 impl Worker {
     fn new(shared: Arc<Shared>) -> Self {
+        let cache_completion = cache_lifecycle::Completion::new(shared.cache_session.clone());
         Self {
             history_dirty: false,
             remote_root_uri: None,
@@ -1452,12 +1494,14 @@ impl Worker {
             example_bytes: 0,
             evicted: 0,
             oversized_after: None,
+            cache_completion,
         }
     }
 
     fn run(mut self) {
         crate::worker_priority::lower_current_thread();
         let _priority = crate::worker_priority::CompletionPriority::new();
+        self.cache_completion.wait_before_restore();
         self.restore();
         loop {
             {
@@ -1967,20 +2011,19 @@ impl Worker {
             let mut reader = std::io::BufReader::new(file);
             if let Ok(Some(line)) = read_cache_line(&mut reader, 64 * 1024)
                 && let Ok(header) = serde_json::from_slice::<CacheHeader>(&line)
-                && header.version == CACHE_VERSION
-                && header.root == self.shared.root
-                && header.remote_root_uri == self.remote_root_uri
+                && header.matches(&self.shared.root, self.remote_root_uri.as_deref())
             {
                 self.checkpoint_complete = false;
-                self.restore = Some(reader);
+                self.cache_dirty |= header.root != self.shared.root;
+                self.restore = Some(RestoringCache { header, reader });
             }
         }
     }
 
     fn restore_next(&mut self, settings: &IndexSettings) -> Option<FileRecord> {
-        let reader = self.restore.as_mut()?;
+        let restore = self.restore.as_mut()?;
         // A corrupt cache cannot allocate an unbounded line or contribution.
-        let line = match read_cache_line(reader, 2 * 1024 * 1024) {
+        let line = match read_cache_line(&mut restore.reader, 2 * 1024 * 1024) {
             Ok(Some(line)) => line,
             Ok(None) => {
                 self.restore = None;
@@ -1994,13 +2037,18 @@ impl Worker {
                 return None;
             }
         };
-        let record: FileRecord = match serde_json::from_slice(&line) {
+        let mut record: FileRecord = match serde_json::from_slice(&line) {
             Ok(record) => record,
             Err(_) => {
                 self.skipped += 1;
                 return None;
             }
         };
+        let Some(path) = restore.header.rebase_path(record.path, &self.shared.root) else {
+            self.skipped += 1;
+            return None;
+        };
+        record.path = path;
         let valid = CompletionIndex::eligible(&self.shared, &record.path)
             && (!self.shared.buffer_only || !record.dirty)
             && record.path.as_os_str().len() <= MAX_CACHE_PATH_BYTES

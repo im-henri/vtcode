@@ -453,23 +453,18 @@
   "cpp": {
     "name": "C++",
     "aliases": [
-      "c++"
-    ],
-    "extensions": [],
-    "filenames": []
-  },
-  "cpp-macro": {
-    "name": "cpp-macro",
-    "aliases": [
       "C++",
+      "c++",
       "Cpp",
       "cpp"
     ],
     "extensions": [
+      "C",
       "c++",
       "c++m",
       "cc",
       "ccm",
+      "cp",
       "cpp",
       "cppm",
       "cxx",
@@ -493,6 +488,12 @@
     ],
     "filenames": []
   },
+  "cpp-macro": {
+    "name": "cpp-macro",
+    "aliases": [],
+    "extensions": [],
+    "filenames": []
+  },
   "crystal": {
     "name": "Crystal",
     "aliases": [],
@@ -510,9 +511,7 @@
       "csharp"
     ],
     "extensions": [
-      "C",
       "cake",
-      "cp",
       "cs",
       "csx"
     ],

@@ -90,6 +90,9 @@ impl App {
         self.context_menu_items = vec![crate::app::ContextMenuItem {
             label: "Rename Terminal…".into(), shortcut: String::new(),
             id: "rename_context_terminal", separator_after: false,
+        }, crate::app::ContextMenuItem {
+            label: "Find in Terminal…".into(), shortcut: String::new(),
+            id: "find_context_terminal", separator_after: false,
         }];
         self.context_menu_pos = (col, row);
         self.context_menu_inner = None;
@@ -193,6 +196,7 @@ impl App {
     }
 
     pub(crate) fn close_terminal_tab_at(&mut self, index: usize) {
+        self.forget_terminal_find(index);
         if index >= self.terminals.len() {
             return;
         }

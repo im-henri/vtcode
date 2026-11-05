@@ -99,12 +99,22 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     if crate::ui_vtcomplete_index::handle_key(app, key) {
         return false;
     }
+    // The visible read-only preview owns clipboard and editing shortcuts
+    // before workbench bindings can reach the obscured editor or Explorer.
+    if app.hunk_popup_active
+        && (app.hunk_peek.is_some() || app.hunk_preview_feedback.is_some())
+        && crate::ui_modal::active(app).is_none()
+    {
+        crate::ui_hunk_peek::handle_key(app, key);
+        return false;
+    }
     if crate::ui_logs::key(app, key) { return false; }
     if crate::ui_desks::handle_key(app, key) { return false; }
     app.sync_text_input_sessions();
     if let Some(quit) = crate::ui_modal::handle_key(app, key) {
         return quit;
     }
+    if crate::app_terminal_find::key(app, key) { return false; }
     if app.sc_context_active {
         let count = app.source_control_context_menu_items().len();
         match key.code {
@@ -911,10 +921,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
 
     if app.hunk_popup_active {
-        if app.hunk_peek.is_some() || app.hunk_preview_feedback.is_some() {
-            crate::ui_hunk_peek::handle_key(app, key);
-            return false;
-        }
         match key.code {
             KeyCode::Esc => app.close_hunk_popup(),
             KeyCode::Up => {
@@ -1273,6 +1279,10 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     // Global search mode
     if matches!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(_))) {
         input::handle_global_search_key(app, key.code, key.modifiers);
+        return false;
+    }
+    if app.global_search_active && app.global_search_results_focused {
+        input::handle_global_search_results_key(app, key.code, key.modifiers);
         return false;
     }
 

@@ -1,6 +1,6 @@
 //! CommonMark/GFM preview, laid out in terminal cells before viewport scrolling.
 use crate::textmate_backend::HighlightLines;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{ops::Range, sync::{Arc, Mutex, MutexGuard}};
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 use ratatui::{
@@ -22,6 +22,25 @@ mod diagrams;
 mod markup;
 #[path = "ui_markdown_extensions.rs"]
 mod extensions;
+#[path = "ui_markdown_preview.rs"]
+mod preview;
+pub(crate) use preview::PreviewService;
+
+#[cfg(test)]
+pub(crate) fn settle_preview_for_test(app: &mut App, mut draw: impl FnMut(&mut App)) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        draw(app);
+        if !app.markdown_previews.busy() { return; }
+        assert!(std::time::Instant::now() < deadline, "Markdown preview did not settle");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[cfg(test)]
+fn with_preview_for_test<T>(app: &App, inspect: impl FnOnce(&CachedPreview) -> T) -> T {
+    inspect(app.markdown_previews.ready(app.editor().unwrap().navigation_id))
+}
 #[cfg(test)]
 #[path = "ui_markdown_feature_tests.rs"]
 mod feature_tests;
@@ -75,11 +94,14 @@ struct CachedPreview {
     theme: String,
     registry: u64,
     rows: Vec<Row>,
-    text_rows: Rc<[String]>,
-    source_rows: Rc<[usize]>,
-    links: Rc<[Vec<LinkSpan>]>,
-    document: PreparedDocument,
+    text_rows: Arc<[String]>,
+    source_rows: Arc<[usize]>,
+    links: Arc<[Vec<LinkSpan>]>,
+    document: Arc<PreparedDocument>,
     code_views: Vec<CodeView>,
+    retained_bytes: usize,
+    #[cfg(test)]
+    laid_out_on: std::thread::ThreadId,
 }
 
 #[derive(Clone)]
@@ -95,15 +117,15 @@ impl CachedPreview {
         // and previously highlighted fences retain their measured text/spans.
         let first = self.code_views.partition_point(|view| view.rows.end <= rows.start);
         for view in self.code_views[first..].iter().take_while(|view| view.rows.start < rows.end) {
-            if self.document.highlighted.borrow().contains(&view.block) { continue; }
+            if self.document.highlighted().contains(&view.block) { continue; }
             let Some(path) = self.document.code_paths.get(&view.block) else { continue; };
             let mut nodes = &self.document.nodes;
             let mut node = None;
             for &index in path { node = nodes.get(index); nodes = &node.unwrap().children; }
             let Some(node) = node else { continue; };
             let Event::Start(Tag::CodeBlock(kind)) = &node.event else { continue; };
-            let previous = self.document.code.borrow().get(&view.block).cloned();
-            let mut renderer = Renderer { rows: vec![], code_views: vec![], width: self.width.max(1), palette: self.palette, document: &self.document, syntax: Some(syntax) };
+            let previous = self.document.code().get(&view.block).cloned();
+            let mut renderer = Renderer { rows: vec![], code_views: vec![], width: self.width.max(1), palette: self.palette, document: &self.document, syntax: Some(syntax), cancel: None };
             renderer.code(node, kind, &view.prefix);
             let range = renderer.code_views[0].rows.clone();
             let stable = range.len() == view.rows.len() && self.rows[view.rows.clone()].iter().zip(&renderer.rows[range.clone()]).all(|(old, new)| {
@@ -113,7 +135,7 @@ impl CachedPreview {
                 // A grammar can split a Unicode grapheme across token styles.
                 // Keep literal text if that would move rows or invalidate an
                 // active selection. Do not retry the same grammar every frame.
-                if let Some(previous) = previous { self.document.code.borrow_mut().insert(view.block, previous); }
+                if let Some(previous) = previous { self.document.code().insert(view.block, previous); }
                 continue;
             }
             for (old, new) in self.rows[view.rows.clone()].iter_mut().zip(renderer.rows.drain(range)) { *old = new; }
@@ -129,11 +151,11 @@ pub(crate) struct PreviewScroll {
     pub(crate) pending_source: Option<usize>,
     row: usize,
     height: usize,
-    source_rows: Rc<[usize]>,
+    source_rows: Arc<[usize]>,
     drag_offset: usize,
-    text_rows: Rc<[String]>,
-    links: Rc<[Vec<LinkSpan>]>,
-    anchors: Rc<rustc_hash::FxHashMap<String, usize>>,
+    text_rows: Arc<[String]>,
+    links: Arc<[Vec<LinkSpan>]>,
+    anchors: Arc<rustc_hash::FxHashMap<String, usize>>,
     body: Rect,
     anchor: Option<(usize, usize)>,
     cursor: (usize, usize),
@@ -141,14 +163,14 @@ pub(crate) struct PreviewScroll {
 }
 
 impl PreviewScroll {
-    fn link_at(&self, col: u16, row: u16) -> Option<Rc<str>> {
+    fn link_at(&self, col: u16, row: u16) -> Option<Arc<str>> {
         if !self.body.contains((col, row).into()) { return None; }
         let row = self.row + (row - self.body.y) as usize;
         let cell = (col - self.body.x) as usize;
-        self.links.get(row)?.iter().find(|link| link.cells.contains(&cell)).map(|link| Rc::clone(&link.target))
+        self.links.get(row)?.iter().find(|link| link.cells.contains(&cell)).map(|link| Arc::clone(&link.target))
     }
-    fn update_text(&mut self, rows: Rc<[String]>, body: Rect) {
-        if !Rc::ptr_eq(&self.text_rows, &rows) && self.text_rows != rows {
+    fn update_text(&mut self, rows: Arc<[String]>, body: Rect) {
+        if !Arc::ptr_eq(&self.text_rows, &rows) && self.text_rows != rows {
             self.anchor = None;
             self.cursor = (0, 0);
             self.selecting = false;
@@ -253,8 +275,8 @@ impl PreviewScroll {
         }
     }
 
-    fn update(&mut self, source_rows: Rc<[usize]>, source: usize, height: usize) {
-        if !Rc::ptr_eq(&self.source_rows, &source_rows) || self.source_scroll != source {
+    fn update(&mut self, source_rows: Arc<[usize]>, source: usize, height: usize) {
+        if !Arc::ptr_eq(&self.source_rows, &source_rows) || self.source_scroll != source {
             self.row = mapped_viewport_start(&source_rows, source, height);
         }
         self.source_rows = source_rows;
@@ -294,13 +316,6 @@ impl PreviewScroll {
         self.set_row(position.saturating_mul(self.max_scroll()) / travel.max(1));
     }
 }
-thread_local! {
-    // Bound retention by document, not by width: resizing must not evict parsed
-    // Markdown and highlighted code. Rope identity also
-    // catches file reloads whose content_version has been reset to zero.
-    static PREVIEWS: RefCell<Vec<CachedPreview>> = const { RefCell::new(Vec::new()) };
-}
-
 pub(crate) fn draw_markdown_preview(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(editor) = app.editor() else { return };
     if area.width == 0 || area.height == 0 {
@@ -361,70 +376,43 @@ pub(crate) fn draw_markdown_preview(f: &mut Frame, app: &mut App, area: Rect) {
         area.height - 1,
     );
     let palette = Palette::from(&colors);
-    let viewport = PREVIEWS.with_borrow_mut(|cache| {
-        let hit = cache.iter().position(|entry| {
-            entry.rope.is_instance(&editor.rope)
-                && entry.palette == palette
-                && entry.theme == app.syntax_theme
-                && entry.registry == app.highlighter.registry_generation()
-        });
-        let index = if let Some(index) = hit {
-            index
-        } else {
-            let source = editor.rope.to_string();
-            let document = PreparedDocument::new(&source);
-            let (rows, code_views) = document.layout(width as usize, palette, None);
-            if cache.len() == 4 {
-                cache.remove(0);
-            }
-            cache.push(CachedPreview {
-                rope: editor.rope.clone(),
-                width: width as usize,
-                palette,
-                theme: app.syntax_theme.clone(),
-                registry: app.highlighter.registry_generation(),
-                source_rows: source_row_map(&rows),
-                text_rows: preview_text_rows(&rows),
-                links: rows.iter().map(|row| row.links.clone()).collect(),
-                rows,
-                document,
-                code_views,
-            });
-            cache.len() - 1
-        };
-        let entry = &mut cache[index];
-        if entry.width != width as usize {
-            (entry.rows, entry.code_views) = entry.document.layout(width as usize, palette, None);
-            entry.source_rows = source_row_map(&entry.rows);
-            entry.text_rows = preview_text_rows(&entry.rows);
-            entry.links = entry.rows.iter().map(|row| row.links.clone()).collect();
-            entry.width = width as usize;
-        }
-        let mut viewport = editor.markdown_preview_scroll.clone().unwrap_or_default();
-        viewport.update_text(Rc::clone(&entry.text_rows), body);
-        viewport.links = Rc::clone(&entry.links);
-        viewport.anchors = Rc::clone(&entry.document.anchors);
-        viewport.update(
-            Rc::clone(&entry.source_rows),
-            editor.scroll_offset,
-            body.height as usize,
-        );
+    let view = editor.navigation_id;
+    let source = editor.scroll_offset;
+    let mut viewport = editor.markdown_preview_scroll.clone().unwrap_or_default();
+    let key = preview::Key {
+        rope: editor.rope.clone(), width: width as usize, palette,
+        theme: app.syntax_theme.clone(), registry: app.highlighter.registry_generation(),
+    };
+    let syntax = app.highlighter.shared_sets();
+    let display = app.markdown_previews.get(view, key, f.count(), &viewport, source,
+        body.height as usize, syntax.clone(), &app.background);
+    let loading = display.loading;
+    if let Some(entry) = display.preview {
+        viewport.update_text(Arc::clone(&entry.text_rows), body);
+        viewport.links = Arc::clone(&entry.links);
+        viewport.anchors = Arc::clone(&entry.document.anchors);
+        viewport.update(Arc::clone(&entry.source_rows), source, body.height as usize);
         let start = viewport.row;
-        let (syntaxes, themes) = app.highlighter.shared_sets();
-        entry.highlight_visible(start..start + body.height as usize, (&syntaxes, themes.themes.get(&app.syntax_theme)));
-        let visible: Vec<Line<'static>> = entry.rows
-            .iter()
-            .skip(start)
-            .take(body.height as usize)
-            .map(|row| row.line.clone())
-            .collect();
-        f.render_widget(
-            Paragraph::new(visible).style(Style::default().fg(colors.fg_text)),
-            body,
-        );
+        if !loading {
+            entry.highlight_visible(start..start + body.height as usize,
+                (&syntax.0, syntax.1.themes.get(&app.syntax_theme)));
+        }
+        let visible: Vec<Line<'static>> = entry.rows.iter().skip(start)
+            .take(body.height as usize).map(|row| row.line.clone()).collect();
+        f.render_widget(Paragraph::new(visible).style(Style::default().fg(colors.fg_text)), body);
         viewport.paint_selection(f, colors.bg_selection);
-        viewport
-    });
+    } else {
+        viewport = PreviewScroll::default();
+        viewport.body = body;
+        let message = if display.failed { "Could not prepare Markdown preview." }
+            else { "Preparing Markdown preview…" };
+        f.render_widget(Paragraph::new(message).style(Style::default().fg(colors.fg_dim)), body);
+    }
+    if loading && area.width >= 45 {
+        let label = " Updating preview… ";
+        f.render_widget(Paragraph::new(label).style(Style::default().fg(colors.fg_dim).bg(colors.bg_tabbar)),
+            Rect::new(area.right().saturating_sub(label.width() as u16), area.y, label.width() as u16, 1));
+    }
     let scrollbar = Rect::new(area.right() - 1, body.y, 1, body.height);
     let (top, size) = viewport.thumb();
     let (track_color, thumb_color) = colors.ui.scrollbar_colors(
@@ -491,14 +479,14 @@ struct Row {
 }
 
 #[derive(Clone, Debug)]
-struct LinkSpan { cells: Range<usize>, target: Rc<str> }
+struct LinkSpan { cells: Range<usize>, target: Arc<str> }
 
-fn append_link(links: &mut Vec<LinkSpan>, target: &Option<Rc<str>>, start: usize, width: usize) {
+fn append_link(links: &mut Vec<LinkSpan>, target: &Option<Arc<str>>, start: usize, width: usize) {
     let Some(target) = target else { return; };
     if width == 0 { return; }
     if let Some(last) = links.last_mut().filter(|link| link.target == *target && link.cells.end == start) {
         last.cells.end += width;
-    } else { links.push(LinkSpan { cells: start..start + width, target: Rc::clone(target) }); }
+    } else { links.push(LinkSpan { cells: start..start + width, target: Arc::clone(target) }); }
 }
 
 /// Reuse the editor's CommonMark layout for streamed chat messages.
@@ -575,9 +563,9 @@ impl EmbeddedMarkdown {
             if self.cache.as_ref().is_some_and(|(_, previous, _)| *previous != palette) {
                 // Prepared spans include colors. Width-only reflow can reuse
                 // them; a theme or translucent surface change cannot.
-                self.document.code.borrow_mut().clear();
-                self.document.inline.borrow_mut().clear();
-                self.document.highlighted.borrow_mut().clear();
+                self.document.code().clear();
+                self.document.inline().clear();
+                self.document.highlighted().clear();
             }
             self.cache = Some((width, palette, self.document.render(width, palette, None).into_iter().map(|row| row.line).collect()));
         }
@@ -585,7 +573,7 @@ impl EmbeddedMarkdown {
     }
 }
 
-fn preview_text_rows(rows: &[Row]) -> Rc<[String]> {
+fn preview_text_rows(rows: &[Row]) -> Arc<[String]> {
     rows.iter().map(|row| row.line.spans.iter().map(|span| span.content.as_ref()).collect()).collect()
 }
 #[derive(Clone)]
@@ -593,21 +581,25 @@ struct Piece {
     span: Span<'static>,
     source: usize,
     literal: bool,
-    link: Option<Rc<str>>,
+    link: Option<Arc<str>>,
 }
 
 /// Width-independent content. Inline styles, code highlighting, and Unicode
 /// word measurements are prepared once and shared by every subsequent reflow.
 struct PreparedDocument {
+    #[cfg(test)]
+    prepared_on: std::thread::ThreadId,
+    #[cfg(test)]
+    cache_accesses: std::sync::atomic::AtomicUsize,
     nodes: Vec<Node<'static>>,
     line_starts: Vec<usize>,
     source_lines: Vec<usize>,
-    inline: RefCell<rustc_hash::FxHashMap<(usize, usize, Style), PreparedText>>,
-    code: RefCell<rustc_hash::FxHashMap<usize, Rc<[CodeLine]>>>,
+    inline: Mutex<rustc_hash::FxHashMap<(usize, usize, Style), PreparedText>>,
+    code: Mutex<rustc_hash::FxHashMap<usize, Arc<[CodeLine]>>>,
     diagrams: rustc_hash::FxHashMap<usize, diagrams::Diagram>,
-    anchors: Rc<rustc_hash::FxHashMap<String, usize>>,
+    anchors: Arc<rustc_hash::FxHashMap<String, usize>>,
     code_paths: rustc_hash::FxHashMap<usize, Vec<usize>>,
-    highlighted: RefCell<rustc_hash::FxHashSet<usize>>,
+    highlighted: Mutex<rustc_hash::FxHashSet<usize>>,
 }
 
 struct CodeLine {
@@ -616,7 +608,25 @@ struct CodeLine {
 }
 
 impl PreparedDocument {
+    fn inline(&self) -> MutexGuard<'_, rustc_hash::FxHashMap<(usize, usize, Style), PreparedText>> {
+        #[cfg(test)]
+        self.cache_accesses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.inline.lock().unwrap_or_else(|error| error.into_inner())
+    }
+    fn code(&self) -> MutexGuard<'_, rustc_hash::FxHashMap<usize, Arc<[CodeLine]>>> {
+        self.code.lock().unwrap_or_else(|error| error.into_inner())
+    }
+    fn highlighted(&self) -> MutexGuard<'_, rustc_hash::FxHashSet<usize>> {
+        self.highlighted.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
     fn new(source: &str) -> Self {
+        Self::prepare(source, None).expect("uncancelled Markdown preparation")
+    }
+
+    fn prepare(source: &str, cancel: Option<&crate::background::CancellationToken>) -> Option<Self> {
+        let cancelled = || cancel.is_some_and(|cancel| cancel.is_cancelled());
+        if cancelled() { return None; }
         let (source, source_lines) = extensions::prepare(source);
         let options = Options::ENABLE_TABLES
             | Options::ENABLE_STRIKETHROUGH
@@ -633,8 +643,10 @@ impl PreparedDocument {
         let nodes = parse_nodes(
             &mut Parser::new_ext(&source, options)
                 .into_offset_iter()
+                .take_while(|_| !cancelled())
                 .map(|(event, range)| (event.into_static(), range)),
         );
+        if cancelled() { return None; }
         let mut line_starts = vec![0];
         line_starts.extend(source.match_indices('\n').map(|(offset, _)| offset + 1));
         fn collect_code(nodes: &[Node<'_>], path: &mut Vec<usize>, diagrams: &mut rustc_hash::FxHashMap<usize, diagrams::Diagram>, paths: &mut rustc_hash::FxHashMap<usize, Vec<usize>>) {
@@ -653,6 +665,7 @@ impl PreparedDocument {
         let mut diagrams = rustc_hash::FxHashMap::default();
         let mut code_paths = rustc_hash::FxHashMap::default();
         collect_code(&nodes, &mut vec![], &mut diagrams, &mut code_paths);
+        if cancelled() { return None; }
         fn anchors(nodes: &[Node<'_>], starts: &[usize], result: &mut rustc_hash::FxHashMap<String, usize>, suffixes: &mut rustc_hash::FxHashMap<String, usize>) {
             fn label(nodes: &[Node<'_>], out: &mut String) {
                 for node in nodes {
@@ -686,17 +699,22 @@ impl PreparedDocument {
         let mut anchor_map = rustc_hash::FxHashMap::default();
         anchors(&nodes, &line_starts, &mut anchor_map, &mut rustc_hash::FxHashMap::default());
         for line in anchor_map.values_mut() { *line = source_lines.get(*line).copied().unwrap_or(*line); }
-        Self {
+        if cancelled() { return None; }
+        Some(Self {
+            #[cfg(test)]
+            prepared_on: std::thread::current().id(),
+            #[cfg(test)]
+            cache_accesses: std::sync::atomic::AtomicUsize::new(0),
             nodes,
             line_starts,
             source_lines,
-            inline: RefCell::default(),
-            code: RefCell::default(),
+            inline: Mutex::default(),
+            code: Mutex::default(),
             diagrams,
-            anchors: Rc::new(anchor_map),
+            anchors: Arc::new(anchor_map),
             code_paths,
-            highlighted: RefCell::default(),
-        }
+            highlighted: Mutex::default(),
+        })
     }
 
     fn render(
@@ -709,6 +727,10 @@ impl PreparedDocument {
     }
 
     fn layout(&self, width: usize, palette: Palette, syntax: Option<(&SyntaxRegistry, Option<&Theme>)>) -> (Vec<Row>, Vec<CodeView>) {
+        self.layout_with_cancel(width, palette, syntax, None).expect("uncancelled Markdown layout")
+    }
+
+    fn layout_with_cancel(&self, width: usize, palette: Palette, syntax: Option<(&SyntaxRegistry, Option<&Theme>)>, cancel: Option<&crate::background::CancellationToken>) -> Option<(Vec<Row>, Vec<CodeView>)> {
         let mut renderer = Renderer {
             rows: Vec::new(),
             code_views: Vec::new(),
@@ -716,10 +738,12 @@ impl PreparedDocument {
             palette,
             document: self,
             syntax,
+            cancel,
         };
         renderer.gap(0, "");
         renderer.blocks(&self.nodes, "", Style::default().fg(palette.text));
-        (renderer.rows, renderer.code_views)
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { None }
+        else { Some((renderer.rows, renderer.code_views)) }
     }
 }
 
@@ -730,6 +754,7 @@ struct Renderer<'a> {
     palette: Palette,
     document: &'a PreparedDocument,
     syntax: Option<(&'a SyntaxRegistry, Option<&'a Theme>)>,
+    cancel: Option<&'a crate::background::CancellationToken>,
 }
 
 #[cfg(test)]
@@ -742,7 +767,7 @@ fn render_document(
     PreparedDocument::new(source).render(width, palette, syntax)
 }
 
-fn source_row_map(rows: &[Row]) -> Rc<[usize]> {
+fn source_row_map(rows: &[Row]) -> Arc<[usize]> {
     rows.iter()
         .scan(0, |last, row| {
             *last = (*last).max(row.source);
@@ -845,11 +870,11 @@ impl Renderer<'_> {
             nodes.last().map_or(0, |node| node.range.end),
             style,
         );
-        if let Some(text) = self.document.inline.borrow().get(&key) {
+        if let Some(text) = self.document.inline().get(&key) {
             return text.clone();
         }
         let text = PreparedText::from(self.inline_pieces(nodes, style));
-        self.document.inline.borrow_mut().insert(key, text.clone());
+        self.document.inline().insert(key, text.clone());
         text
     }
     fn inline_pieces(&self, nodes: &[Node<'_>], style: Style) -> Vec<Piece> {
@@ -880,7 +905,7 @@ impl Renderer<'_> {
             if link.start() > previous { pieces.push(self.piece(&text[previous..link.start()], style, at)); }
             let label = &text[link.start()..end];
             let mut piece = self.piece(label, style.fg(self.palette.link).add_modifier(Modifier::UNDERLINED), at);
-            piece.link = Some(Rc::from(if label.as_bytes().get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"www.")) { format!("https://{label}") }
+            piece.link = Some(Arc::from(if label.as_bytes().get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"www.")) { format!("https://{label}") }
                 else if label.contains('@') && !label.contains("://") { format!("mailto:{label}") } else { label.into() }));
             pieces.push(piece);
             previous = end;
@@ -911,9 +936,9 @@ impl Renderer<'_> {
                     }
                     let mut children = self.inline_with_html(&node.children, styled, html);
                     if let Tag::Link { dest_url, .. } = tag {
-                        let target: Rc<str> = Rc::from(dest_url.as_ref());
+                        let target: Arc<str> = Arc::from(dest_url.as_ref());
                         if children.is_empty() { children.push(self.piece(dest_url.to_string(), styled, at)); }
-                        for piece in &mut children { piece.link = Some(Rc::clone(&target)); }
+                        for piece in &mut children { piece.link = Some(Arc::clone(&target)); }
                     }
                     if matches!(tag, Tag::Superscript | Tag::Subscript) {
                         for piece in &mut children {
@@ -948,7 +973,7 @@ impl Renderer<'_> {
                 Event::HardBreak => out.push(self.piece("\n", style, at)),
                 Event::FootnoteReference(label) => {
                     let mut piece = self.piece(format!("[{label}]"), style.fg(self.palette.link).add_modifier(Modifier::UNDERLINED), at);
-                    piece.link = Some(Rc::from(format!("#fn-{label}")));
+                    piece.link = Some(Arc::from(format!("#fn-{label}")));
                     out.push(piece);
                 }
                 Event::TaskListMarker(checked) => out.push(self.piece(
@@ -980,7 +1005,7 @@ impl Renderer<'_> {
     }
     fn blocks(&mut self, nodes: &[Node<'_>], prefix: &str, style: Style) {
         let mut index = 0;
-        while index < nodes.len() {
+        while index < nodes.len() && !self.cancel.is_some_and(|cancel| cancel.is_cancelled()) {
             let node = &nodes[index];
             let source = self.source_line(node.range.start);
             match &node.event {
@@ -1161,8 +1186,8 @@ impl Renderer<'_> {
         if !self.palette.compact_code {
             self.rule(prefix, &format!("╭─ {language} "), "─", style.fg(self.palette.dim), source);
         }
-        let cached = self.document.code.borrow().get(&node.range.start).cloned()
-            .filter(|_| self.syntax.is_none() || self.document.highlighted.borrow().contains(&node.range.start));
+        let cached = self.document.code().get(&node.range.start).cloned()
+            .filter(|_| self.syntax.is_none() || self.document.highlighted().contains(&node.range.start));
         let lines = if let Some(lines) = cached {
             lines
         } else {
@@ -1181,6 +1206,7 @@ impl Renderer<'_> {
                 if let Event::Text(text) = &child.event {
                     let mut offset = child.range.start;
                     for (line_number, line) in text.split_inclusive('\n').enumerate() {
+                        if self.cancel.is_some_and(|cancel| cancel.is_cancelled()) { return; }
                         let line_source = self.source_line(child.range.start) + line_number;
                         let expanded = expand_code_tabs(line);
                         let content = expanded.trim_end_matches(['\n', '\r']);
@@ -1221,14 +1247,13 @@ impl Renderer<'_> {
                     }
                 }
             }
-            let lines: Rc<[CodeLine]> = lines.into();
+            let lines: Arc<[CodeLine]> = lines.into();
             self.document
-                .code
-                .borrow_mut()
-                .insert(node.range.start, Rc::clone(&lines));
+                .code()
+                .insert(node.range.start, Arc::clone(&lines));
             lines
         };
-        if self.syntax.is_some() { self.document.highlighted.borrow_mut().insert(node.range.start); }
+        if self.syntax.is_some() { self.document.highlighted().insert(node.range.start); }
         let code_prefix = if self.palette.compact_code { prefix.to_owned() } else { format!("{prefix}│ ") };
         for line in lines.iter() {
             let first = self.rows.len();
@@ -1362,7 +1387,7 @@ impl Renderer<'_> {
                         _ => 0,
                     };
                     if let Some(row) = wrapped[column].get(y) {
-                        links.extend(row.links.iter().map(|link| LinkSpan { cells: link.cells.start + cell_start + left + 1..link.cells.end + cell_start + left + 1, target: Rc::clone(&link.target) }));
+                        links.extend(row.links.iter().map(|link| LinkSpan { cells: link.cells.start + cell_start + left + 1..link.cells.end + cell_start + left + 1, target: Arc::clone(&link.target) }));
                     }
                     cell_start += widths[column] + 3;
                     spans.push(Span::raw(" ".repeat(left + 1)));
@@ -1464,7 +1489,7 @@ fn truncate_cells(text: &str, width: usize) -> String {
 /// Fragments borrow by byte range from owned pieces, avoiding a String/Style
 /// allocation per character and repeated Unicode segmentation during resizing.
 #[derive(Clone, Default)]
-struct PreparedText(Rc<TextData>);
+struct PreparedText(Arc<TextData>);
 #[derive(Default)]
 struct TextData {
     pieces: Vec<Piece>,
@@ -1529,7 +1554,7 @@ impl From<Vec<Piece>> for PreparedText {
                 width += size;
             }
         }
-        Self(Rc::new(TextData {
+        Self(Arc::new(TextData {
             pieces,
             words,
             width,
@@ -2217,7 +2242,9 @@ mod scroll_tests {
 
     fn draw(app: &mut App, terminal: &mut Terminal<TestBackend>) {
         app.sync_markdown_preview_state();
-        terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        settle_preview_for_test(app, |app| {
+            terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        });
     }
 
     #[test]
@@ -2272,8 +2299,8 @@ mod scroll_tests {
     #[test]
     fn preview_selection_handles_unicode_reverse_drag_and_layout_changes() {
         let mut view = PreviewScroll::default();
-        let rows: Rc<[String]> = vec!["a界e\u{301}z".into(), "next".into()].into();
-        view.update_text(Rc::clone(&rows), Rect::new(10, 5, 20, 4));
+        let rows: Arc<[String]> = vec!["a界e\u{301}z".into(), "next".into()].into();
+        view.update_text(Arc::clone(&rows), Rect::new(10, 5, 20, 4));
         view.click(14, 5, false, 1);
         view.drag_selection(11, 5);
         assert_eq!(view.selected_text().as_deref(), Some("界e\u{301}"));
@@ -2510,11 +2537,11 @@ mod scroll_tests {
     #[test]
     fn scrolling_a_wrapped_paragraph_preserves_all_intermediate_rows() {
         let mut view = PreviewScroll::default();
-        let mapping: Rc<[usize]> = vec![0, 2, 2, 2, 2, 2, 2, 2, 4, 5].into();
-        view.update(Rc::clone(&mapping), 0, 3);
+        let mapping: Arc<[usize]> = vec![0, 2, 2, 2, 2, 2, 2, 2, 4, 5].into();
+        view.update(Arc::clone(&mapping), 0, 3);
         for row in 1..=7 {
             view.scroll(1);
-            view.update(Rc::clone(&mapping), view.source_scroll, 3);
+            view.update(Arc::clone(&mapping), view.source_scroll, 3);
             assert_eq!(view.row, row);
         }
         view.update(mapping, 0, 3);
@@ -2590,6 +2617,35 @@ mod resize_bench {
     use std::{hint::black_box, time::Instant};
 
     #[test]
+    #[ignore = "manual cold preview performance measurement"]
+    fn markdown_cold_preview_benchmark() {
+        let palette = Palette::from(&crate::app_theme::EditorTheme::Dark.colors());
+        for repeats in [1, 40, 400] {
+            let rope = ropey::Rope::from_str(
+                &include_str!("../examples/markdown-preview.md").repeat(repeats),
+            );
+            let start = Instant::now();
+            let source = rope.to_string();
+            let document = PreparedDocument::new(&source);
+            let prepared = start.elapsed();
+            let start = Instant::now();
+            let (rows, code_views) = document.layout(76, palette, None);
+            black_box(source_row_map(&rows));
+            black_box(preview_text_rows(&rows));
+            black_box(rows.iter().map(|row| row.links.clone()).collect::<Vec<_>>());
+            let laid_out = start.elapsed();
+            println!(
+                "cold Markdown: {} bytes, {} rows, parse {:.2} ms, layout/maps {:.2} ms, total {:.2} ms",
+                rope.len_bytes(), rows.len(),
+                prepared.as_secs_f64() * 1000.0,
+                laid_out.as_secs_f64() * 1000.0,
+                (prepared + laid_out).as_secs_f64() * 1000.0,
+            );
+            black_box((document, rows, code_views));
+        }
+    }
+
+    #[test]
     #[ignore = "manual resize performance measurement"]
     fn markdown_resize_benchmark() {
         let source = include_str!("../examples/markdown-preview.md").repeat(40);
@@ -2621,10 +2677,8 @@ mod resize_tests {
 
     #[test]
     fn cached_reflow_matches_fresh_rendering_at_every_width() {
-        let source = format!(
-            "{}\n\n> ## Nested heading\n>\n> ```rust\n> let 世界 = 42;\n> ```\n",
-            include_str!("../examples/markdown-preview.md")
-        );
+        let source = format!("{}\n\n> ## Nested heading\n>\n> ```rust\n> let 世界 = 42;\n> ```\n",
+            include_str!("../examples/markdown-preview.md"));
         let highlighter = crate::highlight::Highlighter::new();
         let (syntaxes, themes) = highlighter.shared_sets();
         for theme in [EditorTheme::Dark, EditorTheme::Light] {
@@ -2632,17 +2686,12 @@ mod resize_tests {
             let syntax = Some((&*syntaxes, themes.themes.get(theme.syntax_theme_key())));
             let document = PreparedDocument::new(&source);
             for width in [76, 40, 18, 8, 1, 100, 53] {
-                assert_eq!(
-                    format!("{:?}", document.render(width, palette, syntax)),
-                    format!("{:?}", render_document(&source, width, palette, syntax)),
-                    "width {width}"
-                );
+                assert_eq!(format!("{:?}", document.render(width, palette, syntax)),
+                    format!("{:?}", render_document(&source, width, palette, syntax)), "width {width}");
             }
         }
     }
-
     fn app_and_terminal() -> (App, Terminal<TestBackend>) {
-        PREVIEWS.with_borrow_mut(Vec::clear);
         let mut app = App::test_new();
         let mut editor = Editor::new();
         editor.rope = ropey::Rope::from_str(include_str!("../examples/markdown-preview.md"));
@@ -2650,89 +2699,95 @@ mod resize_tests {
         app.active_tab = 0;
         (app, Terminal::new(TestBackend::new(120, 30)).unwrap())
     }
-
     fn draw(app: &mut App, terminal: &mut Terminal<TestBackend>, width: u16, height: u16) {
-        terminal
-            .draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, width, height)))
-            .unwrap();
+        settle_preview_for_test(app, |app| {
+            terminal.draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, width, height))).unwrap();
+        });
     }
-
+    fn assert_current_preview_matches_fresh_rendering(app: &App) {
+        let (syntaxes, themes) = app.highlighter.shared_sets();
+        with_preview_for_test(app, |entry| {
+            let fresh = render_document(&app.editor().unwrap().rope.to_string(), entry.width,
+                Palette::from(&app.colors), Some((&syntaxes, themes.themes.get(&app.syntax_theme))));
+            assert_eq!(format!("{:?}", entry.rows), format!("{fresh:?}"));
+        });
+    }
     #[test]
     fn resize_reuses_parsed_document_highlights_and_word_measurements() {
         let (mut app, mut terminal) = app_and_terminal();
         draw(&mut app, &mut terminal, 80, 25);
-        let (nodes, code, inline, source_rows) = PREVIEWS.with_borrow(|cache| {
-            let entry = &cache[0];
-            (
-                entry.document.nodes.as_ptr(),
-                entry.document.code.borrow().clone(),
-                entry.document.inline.borrow().clone(),
-                Rc::clone(&entry.source_rows),
-            )
+        let (document, code, inline, source_rows) = with_preview_for_test(&app, |entry| {
+            (entry.document.clone(), entry.document.code().clone(), entry.document.inline().clone(), entry.source_rows.clone())
         });
         assert!(!code.is_empty());
         assert!(!inline.is_empty());
-        // Height-only changes need neither parsing nor reflow.
         draw(&mut app, &mut terminal, 80, 19);
-        PREVIEWS.with_borrow(|cache| assert!(Rc::ptr_eq(&source_rows, &cache[0].source_rows)));
+        with_preview_for_test(&app, |entry| assert!(Arc::ptr_eq(&source_rows, &entry.source_rows)));
         for width in [40, 45, 50, 55, 60, 65, 70, 75, 90] {
             draw(&mut app, &mut terminal, width, 25);
-            PREVIEWS.with_borrow(|cache| {
-                assert_eq!(
-                    cache.len(),
-                    1,
-                    "different widths must share one document entry"
-                );
-                assert_eq!(
-                    cache[0].document.nodes.as_ptr(),
-                    nodes,
-                    "resize reparsed Markdown"
-                );
+            with_preview_for_test(&app, |entry| {
+                assert!(Arc::ptr_eq(&entry.document, &document), "resize reparsed Markdown");
                 for (key, lines) in &code {
-                    assert!(
-                        Rc::ptr_eq(lines, &cache[0].document.code.borrow()[key]),
-                        "resize reran highlighting"
-                    );
+                    assert!(Arc::ptr_eq(lines, &entry.document.code()[key]), "resize reran highlighting");
                 }
                 for (key, text) in &inline {
-                    assert!(
-                        Rc::ptr_eq(&text.0, &cache[0].document.inline.borrow()[key].0),
-                        "resize remeasured text"
-                    );
+                    assert!(Arc::ptr_eq(&text.0, &entry.document.inline()[key].0), "resize remeasured text");
                 }
             });
         }
     }
-
     #[test]
-    fn document_edits_palette_and_syntax_registry_invalidate_preparation() {
+    fn document_edits_replace_parsing_but_visual_changes_reuse_it() {
         let (mut app, mut terminal) = app_and_terminal();
         draw(&mut app, &mut terminal, 80, 25);
-        // A reload can replace the rope while retaining content_version zero.
-        app.editor_mut().unwrap().rope =
-            ropey::Rope::from_str("# Reloaded\n\n```rust\nlet x = 1;\n```\n");
+        let original = with_preview_for_test(&app, |entry| entry.document.clone());
+        app.editor_mut().unwrap().rope = ropey::Rope::from_str("# Reloaded\n\n```rust\nlet x = 1;\n```\n");
         draw(&mut app, &mut terminal, 80, 25);
-        PREVIEWS.with_borrow(|cache| {
-            assert_eq!(cache.len(), 2);
-            assert!(!cache[0].rope.is_instance(&cache[1].rope));
+        let (document, anchors, source_rows, registry) = with_preview_for_test(&app, |entry| {
+            assert!(!Arc::ptr_eq(&original, &entry.document));
+            (entry.document.clone(), entry.document.anchors.clone(), entry.source_rows.clone(), entry.registry)
         });
         app.colors.fg_md_code = Color::Magenta;
         draw(&mut app, &mut terminal, 80, 25);
-        PREVIEWS.with_borrow(|cache| assert_eq!(cache.len(), 3));
-        app.highlighter
-            .register_theme(&app.syntax_theme, Theme::new("test","#000000","#ffffff",&[]).unwrap());
-        draw(&mut app, &mut terminal, 80, 25);
-        PREVIEWS.with_borrow(|cache| {
-            assert_eq!(cache.len(), 4);
-            assert_ne!(cache[2].registry, cache[3].registry);
+        let (inline, code) = with_preview_for_test(&app, |entry| {
+            assert!(Arc::ptr_eq(&entry.document, &document));
+            assert!(Arc::ptr_eq(&entry.document.anchors, &anchors));
+            assert!(Arc::ptr_eq(&entry.source_rows, &source_rows));
+            (entry.document.inline().clone(), entry.document.code().clone())
         });
-        assert!(
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .any(|cell| cell.symbol() == "R")
-        );
+        assert_current_preview_matches_fresh_rendering(&app);
+        app.highlighter.register_theme(&app.syntax_theme, Theme::new("test", "#000000", "#ffffff", &[]).unwrap());
+        draw(&mut app, &mut terminal, 80, 25);
+        with_preview_for_test(&app, |entry| {
+            assert_ne!(entry.registry, registry);
+            assert!(Arc::ptr_eq(&entry.document, &document));
+            assert!(Arc::ptr_eq(&entry.document.anchors, &anchors));
+            assert!(Arc::ptr_eq(&entry.source_rows, &source_rows));
+            for (key, text) in &inline { assert!(Arc::ptr_eq(&text.0, &entry.document.inline()[key].0)); }
+            for (key, lines) in &code { assert!(!Arc::ptr_eq(lines, &entry.document.code()[key])); }
+        });
+        assert_current_preview_matches_fresh_rendering(&app);
+    }
+    #[test]
+    fn restyling_keeps_scroll_within_a_paragraph_and_its_selection() {
+        let (mut app, mut terminal) = app_and_terminal();
+        app.editor_mut().unwrap().rope = ropey::Rope::from_str(
+            &format!("# Heading\n\n{}\n", "alpha beta gamma delta epsilon ".repeat(300)));
+        draw(&mut app, &mut terminal, 80, 25);
+        let editor = app.editor_mut().unwrap();
+        let view = editor.markdown_preview_scroll.as_mut().unwrap();
+        let row = (1..view.text_rows.len()).find(|&row| view.text_rows[row].len() > 12
+            && !view.text_rows[row - 1].is_empty() && view.source_rows[row] == view.source_rows[row - 1]).unwrap();
+        view.set_row(row);
+        editor.scroll_offset = view.source_scroll;
+        view.click(view.body.x + 1, view.body.y, false, 1);
+        view.drag_selection(view.body.x + 12, view.body.y);
+        let selected = view.selected_text();
+        assert!(selected.is_some());
+        app.colors.fg_md_heading = Color::Magenta;
+        draw(&mut app, &mut terminal, 80, 25);
+        let view = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap();
+        assert_eq!(view.row, row, "restyling jumped to the paragraph's first row");
+        assert_eq!(view.selected_text(), selected);
     }
 }

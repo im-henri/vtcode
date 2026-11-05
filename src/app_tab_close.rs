@@ -192,6 +192,7 @@ impl App {
             }
             self.clear_file_search_results();
         }
+        self.remember_closed_source_control_diffs(&plan);
         let mut closed = Vec::with_capacity(count);
         for (group, indices) in plan {
             if indices.is_empty() {

@@ -2,15 +2,9 @@
 //! of the text or a table per glyph. Appends and retention update only the tail
 //! and expired prefix; only a width change lays out the retained buffer again.
 use super::*;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Segment {
-    pub start: usize,
-    pub end: usize,
-    pub cell: usize,
-}
+pub(super) use crate::text_wrap::Segment;
 
 pub(super) fn glyph_width(glyph: &str, cell: usize) -> usize {
     if glyph == "\t" {
@@ -20,65 +14,8 @@ pub(super) fn glyph_width(glyph: &str, cell: usize) -> usize {
     }
 }
 
-pub(super) struct Segments<'a> {
-    text: &'a str,
-    width: usize,
-    byte: usize,
-    column: usize,
-    cell: usize,
-    done: bool,
-}
-
-pub(super) fn segments(text: &str, width: usize) -> Segments<'_> {
-    Segments {
-        text,
-        width: width.max(1),
-        byte: 0,
-        column: 0,
-        cell: 0,
-        done: false,
-    }
-}
-
-impl Iterator for Segments<'_> {
-    type Item = Segment;
-    fn next(&mut self) -> Option<Segment> {
-        if self.done {
-            return None;
-        }
-        let (start, start_cell) = (self.column, self.cell);
-        let (mut column, mut cell, mut used) = (start, start_cell, 0);
-        let mut boundary = None;
-        for (relative, glyph) in self.text[self.byte..].grapheme_indices(true) {
-            let width = glyph_width(glyph, cell);
-            if used > 0 && used + width > self.width {
-                let (byte, end, next_cell) =
-                    boundary.unwrap_or((self.byte + relative, column, cell));
-                self.byte = byte;
-                self.column = end;
-                self.cell = next_cell;
-                return Some(Segment {
-                    start,
-                    end,
-                    cell: start_cell,
-                });
-            }
-            used += width.min(self.width);
-            column += glyph.chars().count();
-            cell += width;
-            if glyph.chars().all(char::is_whitespace)
-                || matches!(glyph, "/" | "\\" | "-" | "," | ";")
-            {
-                boundary = Some((self.byte + relative + glyph.len(), column, cell));
-            }
-        }
-        self.done = true;
-        Some(Segment {
-            start,
-            end: column,
-            cell: start_cell,
-        })
-    }
+pub(super) fn segments(text: &str, width: usize) -> impl Iterator<Item = Segment> {
+    crate::text_wrap::segments(text, width, glyph_width)
 }
 
 #[derive(Default)]

@@ -332,6 +332,7 @@ pub struct GitActionOutcome {
 #[derive(Default)]
 pub struct FilesystemActionOutcome {
     pub open_file: Option<PathBuf>,
+    pub pasted_paths: Vec<PathBuf>,
     pub finish_rename: Option<PathBuf>,
     pub message: String,
     pub renames: Vec<(PathBuf, PathBuf)>,
@@ -1380,7 +1381,7 @@ impl BackgroundWorkers {
         let worker_coverage_lost = coverage_lost.clone();
         self.spawn_untracked("file-watcher", move || {
             use notify::{Config, Watcher};
-            use std::time::{Duration, Instant};
+            use std::time::Instant;
             use crate::workspace_watch::{Burst, NoiseFilter, GitWatches};
             struct Finished(Arc<AtomicBool>);
             impl Drop for Finished {
@@ -1445,20 +1446,21 @@ impl BackgroundWorkers {
             // Initial setup and explicit discovery changes resolve external Git
             // stores off the UI thread, never on an unchanged workspace visit.
             let mut initial = true;
-            // Only the first relevant event wakes this worker. Further events
-            // merge into bounded state while the fixed 300ms window elapses.
-            while (std::mem::take(&mut initial) || watcher_rx.recv().is_ok()) && !stopped.load(Ordering::Acquire) {
+            // Only the first relevant event wakes this worker. Later events
+            // extend a quiet deadline without waking it or inspecting paths.
+            loop {
+                let initializing = std::mem::take(&mut initial);
+                if (!initializing && watcher_rx.recv().is_err()) || stopped.load(Ordering::Acquire) { break; }
                 if !delivery.visible() { continue; }
                 let resumed = delivery.take_resume();
-                let deadline = Instant::now() + Duration::from_millis(300);
-                if !resumed {
+                if !resumed && !initializing {
                     loop {
-                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        let remaining = pending.lock().unwrap().next_wait(Instant::now());
                         if remaining.is_zero() { break; }
                         match watcher_rx.recv_timeout(remaining) {
                             Ok(()) if stopped.load(Ordering::Acquire) || !delivery.visible() || delivery.take_resume() => break,
                             Ok(()) => {},
-                            Err(mpsc::RecvTimeoutError::Timeout) => break,
+                            Err(mpsc::RecvTimeoutError::Timeout) => {},
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         }
                     }

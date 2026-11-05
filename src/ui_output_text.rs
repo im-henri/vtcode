@@ -103,6 +103,7 @@ struct Find {
     anchor: Option<usize>,
     history: TextInputHistory,
     hit: Option<TextInputHitMap>,
+    viewport: Option<crate::text_input::InputViewport>,
     matches: Vec<usize>,
     version: u64,
     searched: String,
@@ -747,6 +748,7 @@ impl Reader {
         let controls = area.width.min(20);
         let field = Rect::new(area.x, area.y, area.width - controls, 1);
         let input = crate::ui_widgets::InputField::new(&self.find.query)
+            .viewport(self.find.viewport)
             .theme_colors(colors)
             .placeholder_text("Find in output")
             .selection_range(
@@ -831,6 +833,9 @@ impl Reader {
     }
     pub(super) fn find_hit_map(&self) -> Option<TextInputHitMap> {
         self.find.open.then(|| self.find.hit.clone()).flatten()
+    }
+    pub(super) fn set_find_viewport(&mut self, viewport: Option<crate::text_input::InputViewport>) {
+        self.find.viewport = viewport;
     }
     pub(super) fn find_input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
         (&mut self.find.query, &mut self.find.cursor, &mut self.find.anchor)

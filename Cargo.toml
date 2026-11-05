@@ -25,6 +25,12 @@ wasmtime = "30"
 arboard = { version = "3", features = ["wayland-data-control"] }
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 regex = "1"
+# Magika's current native Rust runtime embeds its model and uses fixed-shape,
+# single-thread CPU inference. Pin the source until its next crates.io release.
+magika = { git = "https://github.com/google/magika", rev = "651d859e3c5ebb9933e94b40c7e54f7df11b30a8" }
+# This revision uses Tract's 0.23.4 runtime API; later patch versions change it.
+tract-core = "=0.23.4"
+anyhow = "1.0.104"
 regress = { version = "0.12", features = ["utf16"] }
 grep-matcher = "0.1"
 grep-regex = "0.1"
@@ -174,6 +180,25 @@ opt-level = 3
 opt-level = 3
 
 [profile.test.package.ropey]
+opt-level = 3
+
+# Content detection stays on a worker; optimize the small inference engine in
+# development/test builds too, so it does not monopolize the analysis pool.
+[profile.dev.package.magika-tract-runtime]
+opt-level = 3
+[profile.test.package.magika-tract-runtime]
+opt-level = 3
+[profile.dev.package.tract-core]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.test.package.tract-core]
+opt-level = 3
+[profile.test.package.tract-data]
+opt-level = 3
+[profile.test.package.tract-linalg]
 opt-level = 3
 
 # Framing and structured tool/LSP data are on every remote transfer. Keep their

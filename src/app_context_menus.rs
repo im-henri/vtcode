@@ -13,7 +13,7 @@ impl App {
 
     pub(crate) fn tab_context_command_disabled(&self, command: &str) -> bool {
         match command {
-            "tab_rename_terminal" => self.tabs.get(self.tab_context_tab)
+            "tab_rename_terminal" | "tab_find_terminal" => self.tabs.get(self.tab_context_tab)
                 .filter(|tab| tab.kind == crate::app::TabKind::Terminal)
                 .and_then(|tab| tab.terminal_idx)
                 .is_none_or(|index| !self.terminal_is_open(index)),
@@ -165,7 +165,9 @@ impl App {
             self.confirm_close_active = false;
             self.exit_confirm_active = false;
             self.request_explorer_delete_targets(self.explorer_multi_selected.to_vec());
-        } else if let Some(entry) = self.explorer.entries.get(self.explorer.selected) {
+        } else if self.explorer_selection_anchor.is_some()
+            && let Some(entry) = self.explorer.entries.get(self.explorer.selected)
+        {
             let target = entry.path.clone();
             self.confirm_close_active = false;
             self.exit_confirm_active = false;

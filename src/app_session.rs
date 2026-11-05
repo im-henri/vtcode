@@ -719,11 +719,11 @@ impl App {
             self.language_associations = fx.clone();
             // Propagate to all open editors
             for tab in &mut self.tabs {
-                tab.editor.language_associations = fx.clone();
+                tab.editor.set_language_associations(&fx);
             }
             for group in &mut self.groups {
                 for tab in &mut group.tabs {
-                    tab.editor.language_associations = fx.clone();
+                    tab.editor.set_language_associations(&fx);
                 }
             }
         }
@@ -1557,7 +1557,7 @@ impl App {
                 editor.bg_loading = true;
                 editor
             };
-            editor.language_associations = lang_assoc.clone();
+            editor.set_language_associations(&lang_assoc);
             editor.scope_bubble_rules = scope_rules.clone();
             editor.read_only = true;
             editor.word_wrap = default_word_wrap;
@@ -2007,7 +2007,7 @@ mod tests {
         assert_eq!(session.show_line_numbers, Some(true));
         assert!(!session.relative_line_numbers);
         assert_eq!(session.show_indent_guides, Some(true));
-        assert_eq!(session.show_open_editors, Some(true));
+        assert_eq!(session.show_open_editors, Some(false));
         assert_eq!(session.minimap_width, Some(10));
         assert_eq!(session.sidebar_right, Some(false));
         assert!(session.theme.is_some());
@@ -2056,7 +2056,7 @@ mod tests {
         session.relative_line_numbers = true;
         session.show_line_numbers = Some(false);
         session.show_indent_guides = Some(false);
-        session.show_open_editors = Some(false);
+        session.show_open_editors = Some(true);
         session.sidebar_right = Some(true);
         session.minimap_width = Some(20);
 
@@ -2073,7 +2073,7 @@ mod tests {
         assert!(app2.relative_line_numbers);
         assert!(!app2.show_line_numbers);
         assert!(!app2.show_indent_guides);
-        assert!(!app2.show_open_editors);
+        assert!(app2.show_open_editors);
         assert!(app2.sidebar_right);
         assert_eq!(app2.minimap_width, 20);
     }

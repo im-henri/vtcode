@@ -222,6 +222,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(input_border, rows[3]);
     if !input_inner.is_empty() {
         let field = InputField::new(&app.palette.query)
+            .viewport(app.text_input_viewport(TextInputId::CommandPalette))
             .theme_colors(&app.colors)
             .prefix(" Filter ", fg)
             .bg(input_bg)

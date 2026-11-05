@@ -96,6 +96,7 @@ fn input(f: &mut Frame, app: &mut App, area: Rect, id: TextInputId, placeholder:
     };
     let control = crate::ui_settings::settings_control_style(&app.colors, "text", surface, focused);
     let mut widget = InputField::new(&field.text)
+        .viewport(app.text_input_viewport(id))
         .theme_control(&app.colors, app.colors.ui.settings_control("text"), surface)
         .bg(control.bg.unwrap_or(surface))
         .prefix(" ", app.colors.fg_dim)

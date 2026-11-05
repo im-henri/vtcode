@@ -536,6 +536,7 @@ impl Workspace {
         self.file_uri_key(uri.as_str())
             .ok_or_else(|| io::Error::other("Invalid remote folder"))
     }
+    #[cfg(test)]
     pub(crate) fn load(&self, key: &Path) -> io::Result<crate::editor::LoadedTextFile> {
         self.load_progress(key, |_, _| {})
     }

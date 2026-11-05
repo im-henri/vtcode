@@ -558,8 +558,9 @@ fn rendered_editor_splits_register_the_owner_for_mouse_focus() {
         .unwrap();
     let surface = *app.terminal_surfaces.last().unwrap();
     assert_eq!(surface.group, Some(1));
-    assert_eq!(surface.area, Rect::new(0, 1, 19, 3));
-    app.handle_terminal_selection_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 1));
+    assert_eq!(surface.area, Rect::new(0, 2, 19, 2));
+    assert!(!surface.area.contains((0, 1).into()), "the Find toolbar is not PTY input");
+    app.handle_terminal_selection_mouse(mouse(MouseEventKind::Down(MouseButton::Left), surface.area.x, surface.area.y));
     assert_eq!(app.active_group, 1);
     assert_eq!(app.focused_terminal_index(), Some(0));
     assert!(!app.terminal_panel_focused);

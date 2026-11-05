@@ -526,12 +526,12 @@ fn pending_layout_changes_survive_opening_editing_and_resetting_settings() {
     app.explorer_width = 47;
     app.open_settings_tab();
     assert_eq!(saved(&app, SettingsScope::Global).explorer_width, Some(47));
-    app.show_open_editors = false;
+    app.show_open_editors = true;
     app.toggle_setting("minimap");
-    assert!(!app.show_open_editors);
+    assert!(app.show_open_editors);
     assert_eq!(
         saved(&app, SettingsScope::Global).show_open_editors,
-        Some(false)
+        Some(true)
     );
     app.panel_height = 21;
     assert!(app.reset_setting_in_selected_scope("minimap"));

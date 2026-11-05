@@ -90,6 +90,64 @@ fn target_origin(app: &App, source_line: usize) -> (u16, u16) {
 }
 
 #[test]
+fn wrapped_diffs_keep_the_revisions_aligned_and_copy_source_text() {
+    let base = format!("{}OLD_TAIL\nshared context\n", "old ".repeat(27));
+    let target = format!("{}NEW_TAIL\nshared context\n", "界e\u{301} ".repeat(5));
+    for mode in [DiffMode::SideBySide, DiffMode::Inline] {
+        let mut app = comparison(&base, &target, mode, false);
+        let editor = app.editor_mut().unwrap();
+        editor.word_wrap = true;
+        editor.word_wrap_column = 16;
+        let buffer = render(&mut app, 104, 22);
+        let code = app.code_area.unwrap();
+        let original = app.diff_left_code_area.unwrap_or(code);
+        let text = |area: ratatui::layout::Rect, y| -> String {
+            (area.x..area.right()).map(|x| buffer[(x, y)].symbol()).collect()
+        };
+        assert!((original.y..original.bottom()).any(|y| text(original, y).contains("OLD_TAIL")));
+        assert!((code.y..code.bottom()).any(|y| text(code, y).contains("NEW_TAIL")));
+        let context = (code.y..code.bottom()).find(|&y| text(code, y).contains("shared context")).unwrap();
+        assert!(context > code.y + 1);
+        if mode == DiffMode::SideBySide {
+            assert!(text(original, context).contains("shared context"));
+        }
+        assert!(app.h_scrollbar_area.is_none());
+        assert!(app.diff_left_h_scrollbar_area.is_none());
+
+        assert!(app.diff_selection_mouse_down(original.x, original.y, KeyModifiers::NONE));
+        assert!(app.diff_selection_mouse_drag(original.x + 3, original.y + 1));
+        assert!(app.diff_selection_mouse_up(original.x + 3, original.y + 1));
+        assert_eq!(app.diff_selected_text().as_deref(), Some(&base[..19]));
+    }
+}
+
+#[test]
+fn wrapped_diff_navigation_and_find_reach_a_continuation_of_the_same_line() {
+    let target = format!("{}needle\n", "abcd ".repeat(60));
+    for mode in [DiffMode::SideBySide, DiffMode::Inline] {
+        let mut app = comparison("old\n", &target, mode, false);
+        let editor = app.editor_mut().unwrap();
+        editor.word_wrap = true;
+        editor.word_wrap_column = 15;
+        render(&mut app, 100, 9);
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+        );
+        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 15));
+        app.search_query = "needle".into();
+        app.execute_palette_command("find");
+        let buffer = render(&mut app, 100, 9);
+        let code = app.code_area.unwrap();
+        let tail = (code.y..code.bottom()).find(|&y| {
+            (code.x..code.right()).map(|x| buffer[(x, y)].symbol()).collect::<String>().contains("needle")
+        });
+        assert!(tail.is_some(), "find should reveal the match on a continuation");
+        assert!(app.diff_inline_scroll.row > 0);
+    }
+}
+
+#[test]
 fn find_centers_matches_in_rendered_diff_rows() {
     let base: String = (0..100).map(|line| format!("line_{line}\n")).collect();
     let target: String = (0..100)

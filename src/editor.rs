@@ -467,7 +467,7 @@ pub(crate) struct Editor {
     pub viewport_width: usize,
     pub(crate) ai_review: crate::editor_ai_review::ReviewView,
     /// Visible source rows in a compact diff; the complete rope stays intact.
-    pub(crate) diff_display_rows: Option<Vec<Option<usize>>>,
+    pub(crate) diff_display_rows: Option<Vec<Option<WrappedRowInfo>>>,
     pub(crate) diff_text_inset: usize,
     pub word_wrap: bool,
     /// Word wrap column (0 = viewport width, >0 = fixed column)
@@ -517,6 +517,9 @@ pub(crate) struct Editor {
     pub typewriter_mode: bool,
     pub cursor_surrounding_lines: usize,
     pub language_override: Option<String>,
+    pub(crate) inferred_language: Option<crate::language_detection::Binding>,
+    pub(crate) language_detection: Option<crate::language_detection::Observation>,
+    pub(crate) language_detection_epoch: u64,
     /// Custom file extension → language associations from settings
     pub language_associations: rustc_hash::FxHashMap<String, String>,
     pub(crate) scope_bubble_rules: std::sync::Arc<crate::scope_bubble_config::Rules>,
@@ -688,6 +691,9 @@ impl Editor {
             typewriter_mode: false,
             cursor_surrounding_lines: 5,
             language_override: None,
+            inferred_language: None,
+            language_detection: None,
+            language_detection_epoch: 0,
             language_associations: rustc_hash::FxHashMap::default(),
             scope_bubble_rules: crate::scope_bubble_config::Rules::empty(),
             content_version: 0,
@@ -870,6 +876,9 @@ impl Editor {
 
         self.fold_hint_cache.get_mut().clear();
         self.rope = rope;
+        self.inferred_language = None;
+        self.language_detection = None;
+        self.language_detection_epoch = self.language_detection_epoch.wrapping_add(1);
         self.minimap_cache.get_mut().clear();
         self.encoding = encoding;
         self.file_size = file_size;
@@ -1821,9 +1830,10 @@ impl Editor {
                     if prefix.next() != Some('#') || prefix.next() != Some('!') {
                         return "Plain Text";
                     }
-                    let first_line: std::borrow::Cow<str> = match first_slice.as_str() {
+                    let bounded = first_slice.slice(..first_slice.len_chars().min(256));
+                    let first_line: std::borrow::Cow<str> = match bounded.as_str() {
                         Some(s) => std::borrow::Cow::Borrowed(s),
-                        None => std::borrow::Cow::Owned(first_slice.to_string()),
+                        None => std::borrow::Cow::Owned(bounded.to_string()),
                     };
                     if first_line.starts_with("#!") {
                         if first_line.contains("python") {
@@ -1887,6 +1897,12 @@ impl Editor {
     }
 
     pub(crate) fn syntax_language_token(&self) -> Option<&str> {
+        self.explicit_language_token().or_else(|| self.inferred_language.as_ref()
+            .filter(|binding| binding.path.as_deref() == self.syntax_file_path())
+            .map(|binding| binding.syntax.as_str()))
+    }
+
+    pub(crate) fn explicit_language_token(&self) -> Option<&str> {
         if let Some(language) = self.language_override.as_deref() {
             return Some(language);
         }
@@ -1895,6 +1911,17 @@ impl Editor {
         }
         crate::file_associations::resolve(&self.language_associations, self.syntax_file_path()?)
             .map(|(_, language)| language)
+    }
+
+    pub(crate) fn set_language_associations(&mut self, associations: &rustc_hash::FxHashMap<String, String>) {
+        if &self.language_associations != associations {
+            crate::editor_document::edit!(self, {
+                self.language_associations.clone_from(associations);
+                self.inferred_language = None;
+                self.language_detection = None;
+                self.language_detection_epoch = self.language_detection_epoch.wrapping_add(1);
+            });
+        }
     }
 
     /// Accept one complete conflict as a single shared-document undo step.
