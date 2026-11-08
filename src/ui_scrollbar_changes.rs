@@ -1,7 +1,7 @@
-//! Fixed-resolution change coverage, separate from the text minimap. Four
-//! vertical samples per terminal cell preserve small edits and gaps without
-//! scanning a document or allocating per marker during scrolling.
-pub(crate) const SUBROWS: usize = 4;
+//! Scrollbar change coverage uses solid half-cell blocks so even a single
+//! changed line stays visible in a long file. Projection is bounded by the
+//! scrollbar height.
+const SUBROWS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ChangeRow([u8; SUBROWS]);
@@ -31,28 +31,12 @@ impl ChangeRow {
     }
 
     pub(crate) fn symbol(self) -> char {
-        let mask = self
-            .0
-            .into_iter()
-            .enumerate()
-            .fold(0u8, |mask, (index, status)| {
-                mask | (u8::from(status != 0) << index)
-            });
-        match mask {
-            0 => ' ',
-            0b0011 => '▀',
-            0b1100 => '▄',
-            0b1111 => '█',
-            // Braille offers four independently addressable vertical rows in
-            // one standard-width terminal cell, including gaps within a cell.
-            _ => {
-                let dots = [0x09, 0x12, 0x24, 0xc0]
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(index, _)| mask & (1 << index) != 0)
-                    .fold(0, |dots, (_, row)| dots | row);
-                char::from_u32(0x2800 + dots).unwrap()
-            }
+        let [upper, lower] = self.0;
+        match (upper != 0, lower != 0) {
+            (false, false) => ' ',
+            (true, false) => '▀',
+            (false, true) => '▄',
+            (true, true) => '█',
         }
     }
 }
@@ -62,9 +46,9 @@ impl ChangeRows {
         self.0.get(index).copied().unwrap_or_default()
     }
 
-    /// Query source-line intervals intersecting each quarter cell. Treating a
+    /// Query source-line intervals intersecting each half cell. Treating a
     /// changed line as an interval, rather than a point, also fills proportional
-    /// spans correctly when the scrollbar is taller than one quarter of a file.
+    /// spans correctly when the track has more samples than source lines.
     pub(crate) fn project(
         height: usize,
         total: usize,
@@ -121,20 +105,14 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
     #[test]
-    fn isolated_lines_and_nearby_hunks_keep_gaps_inside_a_terminal_cell() {
-        let one = ChangeRows::from_lines(10, 400, [(160, 'U')]);
-        assert_eq!(one.row(4).symbol(), '⠉');
-        assert_eq!(one.row(4).status(), Some('U'));
-        let two = ChangeRows::from_lines(10, 400, [(160, 'U'), (190, 'U')]);
-        assert_eq!(two.row(4).0, [3, 0, 0, 3]);
-        assert_eq!(two.row(4).symbol(), '⣉');
-        assert_ne!(two.row(4).symbol(), '█');
-        assert!(
-            two.0
-                .iter()
-                .enumerate()
-                .all(|(row, coverage)| row == 4 || coverage.status().is_none())
+    fn isolated_lines_render_as_solid_half_cells_at_their_projected_positions() {
+        let rows = ChangeRows::from_lines(10, 400, [(0, 'S'), (160, 'U'), (220, 'D'), (399, 'N')]);
+        assert_eq!(
+            rows.0.iter().map(|row| row.symbol()).collect::<String>(),
+            "▀   ▀▄   ▄"
         );
+        assert_eq!(rows.row(4).status(), Some('U'));
+        assert_eq!(rows.row(5).status(), Some('D'));
     }
 
     #[test]
@@ -149,29 +127,12 @@ mod tests {
     }
 
     #[test]
-    fn all_coverage_patterns_are_single_cell_glyphs_and_preserve_empty_quarters() {
-        for mask in 0u8..16 {
-            let row = ChangeRow(std::array::from_fn(|index| {
-                if mask & (1 << index) != 0 { 3 } else { 0 }
-            }));
-            let symbol = row.symbol();
+    fn all_coverage_patterns_use_single_cell_glyphs() {
+        for (coverage, symbol) in [([0, 0], ' '), ([3, 0], '▀'), ([0, 2], '▄'), ([3, 2], '█')]
+        {
+            let row = ChangeRow(coverage);
+            assert_eq!(row.symbol(), symbol);
             assert_eq!(unicode_width::UnicodeWidthChar::width(symbol), Some(1));
-            match mask {
-                0 => assert_eq!(symbol, ' '),
-                3 => assert_eq!(symbol, '▀'),
-                12 => assert_eq!(symbol, '▄'),
-                15 => assert_eq!(symbol, '█'),
-                _ => {
-                    let bits = symbol as u32 - 0x2800;
-                    for (index, dots) in [0x09, 0x12, 0x24, 0xc0].into_iter().enumerate() {
-                        assert_eq!(
-                            bits & dots == dots,
-                            mask & (1 << index) != 0,
-                            "mask={mask}, quarter={index}"
-                        );
-                    }
-                }
-            }
         }
     }
 
@@ -211,13 +172,13 @@ mod tests {
     }
 
     #[test]
-    fn marker_gaps_keep_track_and_thumb_colors_across_themes_and_pointer_states() {
+    fn solid_markers_keep_track_and_thumb_colors_across_themes_and_pointer_states() {
         for theme in [
             crate::app_theme::EditorTheme::Dark,
             crate::app_theme::EditorTheme::Light,
         ] {
             let colors = theme.colors();
-            let changes = ChangeRows::from_lines(10, 400, [(160, 'U'), (190, 'D')]);
+            let changes = ChangeRows::from_lines(10, 400, [(160, 'U'), (170, 'D'), (220, 'D')]);
             for scroll in [0, 160] {
                 for (hovered, active) in [(false, false), (true, false), (false, true)] {
                     let (track, thumb) =
@@ -248,10 +209,15 @@ mod tests {
                             })
                             .unwrap();
                         for x in 0..width {
-                            let cell = &terminal.backend().buffer()[(x, 4)];
-                            assert_eq!(cell.symbol(), "⣉");
-                            assert_eq!(cell.fg, colors.ui.fg_overview_modified);
-                            assert_eq!(cell.bg, if scroll == 0 { track } else { thumb });
+                            for (y, symbol, color) in [
+                                (4, "▀", colors.ui.fg_overview_modified),
+                                (5, "▄", colors.ui.fg_overview_deleted),
+                            ] {
+                                let cell = &terminal.backend().buffer()[(x, y)];
+                                assert_eq!(cell.symbol(), symbol);
+                                assert_eq!(cell.fg, color);
+                                assert_eq!(cell.bg, if scroll == 0 { track } else { thumb });
+                            }
                         }
                     }
                 }
@@ -267,6 +233,6 @@ mod tests {
             Some('U')
         });
         assert_eq!(queries, 40 * SUBROWS);
-        assert_eq!(std::mem::size_of_val(rows.0.as_slice()), 160);
+        assert_eq!(std::mem::size_of_val(rows.0.as_slice()), 80);
     }
 }

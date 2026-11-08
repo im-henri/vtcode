@@ -291,7 +291,7 @@ impl FileExplorer {
         }
         self.entries.clear();
         let root = self.root.clone();
-        self.scan_dir(&root, 0, false, None);
+        self.scan_dir(&root, 0, None, None);
         self.ignore_cache.mark_ignored(&self.root, &self.canonical_root, &mut self.entries, None);
         self.rebuild_parent_indices();
     }
@@ -320,10 +320,21 @@ impl FileExplorer {
     }
 
     pub(crate) fn build_refresh_entries(
-        request: ExplorerRefreshRequest,
+        mut request: ExplorerRefreshRequest,
     ) -> (PathBuf, Vec<FileEntry>, crate::explorer_find::Matches) {
         let root = request.root.clone();
         let canonical_root = request.directory_cache.canonical_root(&root);
+        // Typed paths may use a case alias or an alternate native prefix.
+        // Resolve these on the worker using the filesystem's actual spelling;
+        // matching must still distinguish names on case-sensitive directories.
+        if !request.cancel.as_ref().is_some_and(|token| token.is_cancelled())
+            && let Some(query) = request.find.as_mut()
+            && let Some(directory) = &query.directory
+            && let Ok(canonical) = std::fs::canonicalize(directory)
+            && let Ok(relative) = canonical.strip_prefix(&canonical_root)
+        {
+            query.directory = Some(root.join(relative));
+        }
         let mut explorer = Self {
             find: Default::default(),
             root: request.root,
@@ -357,7 +368,7 @@ impl FileExplorer {
                 // Invalid input does not need a recursive scan. Keep the normal
                 // tree in highlight mode; filter mode shows the error without hits.
                 if request.find.as_ref().is_some_and(|query| !query.filter) {
-                    explorer.scan_dir(&root, 0, false, request.cancel.as_ref());
+                    explorer.scan_dir(&root, 0, None, request.cancel.as_ref());
                     explorer.ignore_cache.mark_ignored(&root, &canonical_root, &mut explorer.entries, request.cancel.as_ref());
                 }
                 return (canonical_root, explorer.entries, crate::explorer_find::Matches {
@@ -365,7 +376,7 @@ impl FileExplorer {
                 });
             }
         };
-        explorer.scan_dir(&root, 0, request.find.is_some(), request.cancel.as_ref());
+        explorer.scan_dir(&root, 0, request.find.as_ref(), request.cancel.as_ref());
         let decorate = |entries: &mut [FileEntry]| explorer.ignore_cache.mark_ignored(
             &root, &canonical_root, entries, request.cancel.as_ref());
         let (entries, matches) = if let Some((query, matcher)) = request.find.zip(matcher) {
@@ -427,10 +438,20 @@ impl FileExplorer {
     /// Watch all project paths, but rebuild only listings the tree can display.
     /// Recursive filename searches own a wider scope than collapsed folders.
     pub(crate) fn changed_path_affects_tree(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        if self.find.open && !self.find.query.is_empty()
-            || self.parent_indices.len() != self.entries.len() { return true; }
+        if self.parent_indices.len() != self.entries.len() { return true; }
         let normalized = self.event_path(path);
         let path = normalized.as_ref();
+        if self.find.open && !self.find.query.is_empty() {
+            if self.find.directory.as_ref().is_none_or(|directory| {
+                crate::native_paths::strip_prefix(path, directory).is_some()
+                    || crate::native_paths::strip_prefix(directory, path).is_some()
+                    // Conditional exclusions can hide an ancestor when a
+                    // sibling is created or deleted outside the search scope.
+                    || (self.exclude_rules.requires_siblings()
+                        && path.parent().is_some_and(|parent| crate::native_paths::strip_prefix(directory, parent).is_some()))
+            }) { return true; }
+            if self.find.filter { return false; }
+        }
         if self.root.starts_with(path) { return true; }
         // Missing paths are normal here. Interactive lookup's linear fallback
         // would turn a burst of new files into paths × tree rows work.
@@ -772,7 +793,7 @@ impl FileExplorer {
         })
     }
 
-    fn scan_dir(&mut self, dir: &Path, depth: usize, find_all: bool,
+    fn scan_dir(&mut self, dir: &Path, depth: usize, find: Option<&crate::explorer_find::Query>,
         cancel: Option<&crate::background::CancellationToken>) {
         // Prevent stack overflow from symlink loops or extremely deep directories
         const MAX_DEPTH: usize = 64;
@@ -857,7 +878,12 @@ impl FileExplorer {
                 &path,
             );
             let git_status = git_status_summary.primary();
-            let recurse = (already_expanded || (find_all && is_dir)).then(|| path.clone());
+            // Search only the selected subtree and the ancestors needed to
+            // reach it. Highlight mode also retains the normally expanded tree.
+            let search_directory = find.is_some_and(|query| query.searches_directory(&path));
+            let recurse = (is_dir && (search_directory
+                || (already_expanded && find.is_none_or(|query| !query.filter))))
+                .then(|| path.clone());
 
             self.entries.push(FileEntry {
                 path,
@@ -869,9 +895,9 @@ impl FileExplorer {
                 git_status_summary,
             });
 
-            // If this dir was previously expanded, recurse
+            // Visit expanded folders or the recursive search scope.
             if let Some(path) = recurse {
-                self.scan_dir(&path, depth + 1, find_all, cancel);
+                self.scan_dir(&path, depth + 1, find, cancel);
             }
         }
     }
@@ -1030,7 +1056,7 @@ impl FileExplorer {
         self.center_reveal_pending = false;
         self.entries.clear();
         let root = self.root.clone();
-        self.scan_dir(&root, 0, false, None);
+        self.scan_dir(&root, 0, None, None);
         self.ignore_cache.mark_ignored(&self.root, &self.canonical_root, &mut self.entries, None);
         self.rebuild_parent_indices();
         if let Some(pos) = self.find_path(target) {
@@ -2014,7 +2040,7 @@ mod tests {
             std::fs::canonicalize(&file).expect("canonical file"),
             GitStatus::Modified.into(),
         );
-        explorer.scan_dir(&noncanonical_root, 0, false, None);
+        explorer.scan_dir(&noncanonical_root, 0, None, None);
         let tracked = explorer
             .entries
             .iter()

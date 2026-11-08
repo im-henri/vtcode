@@ -43,6 +43,7 @@ struct Key {
     version: u64,
     wrap_revision: u64,
     wrap: (bool, usize),
+    minimap: (bool, u16),
     cursor: (usize, usize),
     selection: Option<(usize, usize, usize, usize)>,
     scroll: (usize, usize, usize),
@@ -67,6 +68,7 @@ impl Key {
             version: editor.content_version,
             wrap_revision: editor.wrap_revision,
             wrap: (editor.word_wrap, editor.word_wrap_column),
+            minimap: (app.show_minimap, app.minimap_render_width()),
             cursor: (editor.cursor_line, editor.cursor_col),
             selection: editor.selection_range(),
             scroll: (

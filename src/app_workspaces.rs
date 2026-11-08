@@ -562,8 +562,7 @@ impl App {
     pub(crate) fn start_workspace_services(&mut self) {
         self.workspace_observation.started = true;
         self.refresh_explorer_async();
-        self.refresh_source_control_async();
-        self.refresh_git_branch_async();
+        self.ensure_initial_source_control_status();
         if self.has_open_folder() { self.initialize_extensions(); }
         self.start_visible_workspace_services();
     }
@@ -655,6 +654,7 @@ impl App {
         self.shortcut_chord_prefix = None;
         self.workspace_visible = false;
         self.terminal_has_focus = false;
+        self.wheel_scroll = None;
         self.chat.background = true;
         self.idle_quiescent = true;
         self.suspend_workspace_observation();

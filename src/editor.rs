@@ -590,6 +590,7 @@ pub(crate) struct Editor {
     pub(crate) pending_cursor_position: Option<(usize, usize)>,
     pub(crate) pending_cursor_utf16: bool,
     pub(crate) pending_navigation_selection: Option<crate::app_navigation::NavigationSelection>,
+    pub(crate) pending_cursor_center: Option<crate::editor_cursor::CursorCenter>,
     /// Session cursor/undo/unsaved state applied after the asynchronous disk
     /// snapshot arrives. Keeping this on the placeholder supports duplicate
     /// tabs with different cursor positions.
@@ -733,6 +734,7 @@ impl Editor {
             pending_cursor_position: None,
             pending_cursor_utf16: false,
             pending_navigation_selection: None,
+            pending_cursor_center: None,
             pending_session_restore: None,
             pending_reopen_view: None,
             blame: Default::default(),
@@ -1579,6 +1581,28 @@ impl Editor {
         }
         // Clamp scroll offset so we don't scroll past end of file
         self.set_visible_scroll_offset(scroll_row);
+        self.reveal_cursor_column();
+        self.wrap_scroll_offset = self.visible_scroll_offset();
+    }
+
+    pub(crate) fn reveal_find_cursor_column(&mut self) {
+        // Find selects through the caret, so its text can end at the left edge.
+        // A glyph before the caret occupying the last cell puts the caret offscreen.
+        if self.cursor_col <= self.horizontal_scroll
+            || self
+                .source_column_at_cell(
+                    self.cursor_line,
+                    self.horizontal_scroll,
+                    self.cursor_col,
+                    self.viewport_width.saturating_sub(1),
+                )
+                .1
+        {
+            self.reveal_cursor_column();
+        }
+    }
+
+    fn reveal_cursor_column(&mut self) {
         // Horizontal scrolling with small margin
         let h_margin: usize = 4;
         if self.cursor_col < self.horizontal_scroll + h_margin {
@@ -1590,7 +1614,6 @@ impl Editor {
             self.horizontal_scroll = (self.cursor_col + h_margin).saturating_sub(h_visible) + 1;
         }
         self.reveal_cursor_cells();
-        self.wrap_scroll_offset = self.visible_scroll_offset();
     }
 
     pub(crate) fn set_cursor(&mut self, line: usize, col: usize) {
@@ -1602,23 +1625,30 @@ impl Editor {
 
     pub(crate) fn apply_pending_file_navigation(&mut self) {
         if let Some((line, col)) = self.pending_cursor_position.take() {
+            let center = self
+                .pending_cursor_center
+                .is_some_and(|pending| pending.position == (line, col));
             let col = if std::mem::take(&mut self.pending_cursor_utf16) {
                 crate::lsp_positions::from_utf16(&self.rope, line, col as u32)
             } else {
                 col
             };
-            self.set_cursor(line, col);
+            if center {
+                self.set_centered_cursor(line, col);
+            } else {
+                self.set_cursor(line, col);
+            }
         }
         if let Some(selection) = self.pending_navigation_selection.take() {
             selection.restore(self);
         }
     }
 
-    /// Mouse hit testing already chose a visible position. Keyboard scroll
-    /// margins must not move that text out from under a click or drag.
+    /// Move the caret while preserving the viewport's scroll offsets.
     pub(crate) fn set_cursor_without_scrolling(&mut self, line: usize, col: usize) {
         self.pending_reopen_view = None;
         self.pending_cursor_utf16 = false;
+        self.pending_cursor_center = None;
         if self.bg_loading {
             self.pending_cursor_position = Some((line, col));
             self.pending_navigation_selection = None;

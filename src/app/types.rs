@@ -1182,7 +1182,7 @@ pub enum DiffMode {
     Inline,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GitFileChange<P = String> {
     pub path: P,
     pub original_path: Option<P>,

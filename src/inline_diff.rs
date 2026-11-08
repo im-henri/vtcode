@@ -216,6 +216,39 @@ impl InlineDiffScroll {
         self.sync_editor(editor);
     }
 
+    pub(crate) fn set_find_cursor(
+        &mut self,
+        cache: &Arc<DiffRenderCache>,
+        editor: &mut Editor,
+        line: usize,
+        col: usize,
+    ) {
+        let visible = Arc::ptr_eq(&self.cache, cache)
+            && self.source_scroll_matches(editor.scroll_offset)
+            && self.contains_target_position(line, col);
+        if visible {
+            editor.set_cursor_without_scrolling(line, col);
+            if !self.wrap.enabled() {
+                editor.reveal_find_cursor_column();
+            }
+        } else {
+            editor.set_cursor(line, col);
+        }
+        self.layout(Arc::clone(cache), editor);
+        if !visible {
+            self.center_cursor(editor);
+        }
+    }
+
+    fn contains_target_position(&self, line: usize, col: usize) -> bool {
+        let row = self.cursor_row(&self.cache, line, col);
+        let end = self.row.saturating_add(self.text_area.height as usize);
+        (self.row..end).contains(&row)
+            && (self.terminal_empty_line == Some(line)
+                || self.wrap.row_at(row).target(&self.cache, self.aligned)
+                    .is_some_and(|target| target.right_line == Some(line)))
+    }
+
     pub fn scroll(&mut self, editor: &mut Editor, horizontal: bool, delta: isize) {
         if horizontal {
             self.column = self
@@ -636,6 +669,7 @@ mod tests {
         assert!(first_row > 0);
         app.switch_group(0);
         render(&mut app, &mut terminal);
+        app.wheel_scroll = Some(Default::default());
         mouse(
             &mut app,
             MouseEventKind::ScrollDown,
@@ -644,10 +678,11 @@ mod tests {
             KeyModifiers::NONE,
         );
         assert_eq!(app.active_group, 0);
+        assert!(app.advance_wheel_scroll(std::time::Instant::now() + std::time::Duration::from_millis(120)));
         render(&mut app, &mut terminal);
         app.switch_group(diff_group);
         render(&mut app, &mut terminal);
-        assert!(app.diff_inline_scroll.row > first_row);
+        assert_eq!(app.diff_inline_scroll.row, first_row + app.scroll_speed);
     }
 
     #[test]

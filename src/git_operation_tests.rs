@@ -181,6 +181,22 @@ fn refresh(app: &mut App) {
         SourceControlRepositoryState::Available
     );
 }
+
+#[test]
+fn operation_banners_reuse_the_status_snapshot_and_match_fresh_action_checks() {
+    for kind in [Kind::Rebase, Kind::CherryPick] {
+        let fixture = Fixture::new(false);
+        fixture.external_start(kind);
+        for resolved in [false, true] {
+            if resolved { fixture.resolve("one.txt", "resolved\n"); }
+            let snapshot = crate::app_git::collect_source_control_status_cancellable(
+                fixture.root().to_owned(), || {}, &crate::background::CancellationToken::new());
+            assert!(snapshot.error.is_none(), "{:?}", snapshot.error);
+            let repo = Repository::open(fixture.root()).unwrap();
+            assert_eq!(snapshot.operation, read(&repo).unwrap());
+        }
+    }
+}
 fn render(app: &mut App, width: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, 28)).unwrap();
     terminal

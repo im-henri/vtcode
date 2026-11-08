@@ -85,3 +85,53 @@ fn vscode_ordering_streamed_app_results_preserve_selected_match_and_scroll_ancho
     assert!(app.global_search_results.is_collapsed(Path::new("z.h")));
     assert_eq!(app.global_search_results.file_count(), 3);
 }
+
+#[test]
+fn precomputed_keys_order_exactly_like_the_comparers() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/vscode-ordering.json")).unwrap();
+    let mut names: Vec<String> = fixture["inputs"]["names"].as_array().unwrap().iter()
+        .map(|value| value.as_str().unwrap().to_owned()).collect();
+    names.extend(["file1", "file01", "file001", "File1", "FILE1", "a10b", "a9b", "a 1", "a_1", "a-1", "a.1",
+        "ß", "ss", "SS", "ǆ", "dž", "Å", "å", "a\u{30a}", "é", "e\u{301}", "😀", "日本", "ﾆﾎﾝ", "", ".", "..",
+        "x.tar.gz", "x.gz", "x.GZ", ".gitignore", "README", "readme.md", "Readme.MD"].map(str::to_owned));
+    for locale in ["en-US", "de-DE", "sv-SE", "ja-JP", "tr-TR", "fr-FR", "fr-CA", "zh-CN", "ko-KR", "ar-EG"] {
+        let order = FileOrder::new(locale).unwrap();
+        if locale == "fr-CA" {
+            // Backwards secondary: ICU4X's key writer is not used there.
+            assert!(!order.has_sort_keys());
+            continue;
+        }
+        assert!(order.has_sort_keys(), "{locale}");
+        for a in &names {
+            for b in &names {
+                assert_eq!(order.name_key(a).cmp(&order.name_key(b)), order.names(a, b), "{locale}: names {a:?} {b:?}");
+                assert_eq!(order.extension_key(a).cmp(&order.extension_key(b)), order.extensions(a, b), "{locale}: extensions {a:?} {b:?}");
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "manual collation sort benchmark"]
+fn benchmark_keyed_explorer_name_sort() {
+    let order = FileOrder::new("en-US").unwrap();
+    let names: Vec<String> = (0..20_000).map(|index| match index % 4 {
+        0 => format!("item_{index:05}.txt"),
+        1 => format!("Component{}View.tsx", index * 7919 % 20_000),
+        2 => format!("test_{}_case.rs", index * 104_729 % 20_000),
+        _ => format!("Résumé {} (copy).pdf", index % 997),
+    }).collect();
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let mut direct: Vec<&String> = names.iter().collect();
+        direct.sort_by(|a, b| order.names(a, b));
+        let direct_time = started.elapsed();
+        let started = std::time::Instant::now();
+        let keys: Vec<_> = names.iter().map(|name| order.name_key(name)).collect();
+        let mut keyed: Vec<usize> = (0..names.len()).collect();
+        keyed.sort_by(|&a, &b| keys[a].cmp(&keys[b]));
+        let keyed_time = started.elapsed();
+        assert!(direct.iter().zip(&keyed).all(|(name, &index)| *name == &names[index]));
+        eprintln!("20,000 names: comparer sort {direct_time:?}, keyed sort {keyed_time:?}");
+    }
+}

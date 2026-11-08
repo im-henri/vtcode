@@ -174,6 +174,8 @@ impl Service {
                 .expect("canonical absolute workspace")
                 .into(),
             session,
+            git_file_stats: true,
+            git_sources_limit: true,
         }
     }
     fn opened_reply(
@@ -492,7 +494,9 @@ impl Service {
                 file,
                 repository,
                 staged,
-            } => git::sources(&self.root, file, repository, staged),
+                known,
+                max_bytes,
+            } => git::sources(&self.root, file, repository, staged, known, max_bytes),
             Command::GitDiffSources { file, repository, staged, known } => {
                 let file = file.resolve(&self.root)?;
                 let repository = repository.as_ref().map(|path| path.resolve(&self.root)).transpose()?;
@@ -502,6 +506,13 @@ impl Service {
                     .ok_or_else(|| io::Error::other("File is outside the repository"))?;
                 crate::git_diff_sources::read(&repo, &relative, staged, known)
                     .map(Reply::GitDiffSources).map_err(io::Error::other)
+            }
+            Command::GitFileStats { repo, change } => {
+                let root = repo.resolve(&self.root)?;
+                let change = change.try_map_paths(RemotePath::into_native_relative)?;
+                crate::app_source_control_hover::read_stats(&root, &change)
+                    .map(Reply::GitFileStats)
+                    .map_err(io::Error::other)
             }
             Command::GitBranches { repo } => {
                 crate::app_git_branch::branches(&repo.resolve(&self.root)?)
@@ -1357,6 +1368,7 @@ fn serve_service(
                 | Command::Reload { .. }
                 | Command::GitStatus { .. }
                 | Command::GitDiffSources { .. }
+                | Command::GitFileStats { .. }
         ) {
             let cancel = crate::background::CancellationToken::new();
             if matches!(request.command, Command::Search(_)) {
@@ -1454,6 +1466,7 @@ fn serve_service(
             | Command::GitAction { .. }
             | Command::GitSources { .. }
             | Command::GitDiffSources { .. }
+            | Command::GitFileStats { .. }
             | Command::GitBranches { .. }
             | Command::CommitDetails { .. }
             | Command::CommitDiff { .. }

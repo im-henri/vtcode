@@ -90,6 +90,102 @@ fn clicking_matches_keeps_search_focus_for_arrows_and_honors_preview_tabs() {
 }
 
 #[test]
+fn clicks_arrows_and_enter_center_each_workspace_match() {
+    for preview in [false, true] {
+        let (root, mut app) = fixture(preview);
+        let text = "needle\n".repeat(160);
+        for name in ["a.txt", "b.txt"] {
+            std::fs::write(root.path().join(name), &text).unwrap();
+        }
+        app.global_search_results = [("a.txt", 61), ("a.txt", 64), ("b.txt", 101)]
+            .into_iter()
+            .map(|(file, line_num)| GlobalSearchResult {
+                file_path: root.path().join(file),
+                line_num,
+                line_text: "needle".into(),
+                col_start: 0,
+                col_end: 6,
+                context_before: None,
+                context_after: None,
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let mut terminal = Terminal::new(TestBackend::new(120, 43)).unwrap();
+        let assert_centered = |app: &App, index: usize| {
+            let editor = app.editor().unwrap();
+            let result = &app.global_search_results[index];
+            let center = usize::from(app.code_area.unwrap().height / 2);
+            assert_eq!(editor.file_path.as_ref(), Some(&result.file_path));
+            assert_eq!(editor.cursor_line, result.line_num - 1);
+            assert_eq!(
+                editor.visible_line_at(editor.scroll_offset, center),
+                Some(editor.cursor_line)
+            );
+        };
+
+        click_result_row(&mut app, &mut terminal, SearchRow::Result(0));
+        wait_for_files(&mut app);
+        draw(&mut app, &mut terminal);
+        assert_centered(&app, 0);
+        for (code, index) in [(KeyCode::Down, 1), (KeyCode::Down, 2), (KeyCode::Up, 1)] {
+            key(&mut app, code);
+            wait_for_files(&mut app);
+            draw(&mut app, &mut terminal);
+            assert_centered(&app, index);
+        }
+
+        app.editor_mut().unwrap().scroll_up(4);
+        key(&mut app, KeyCode::Enter);
+        draw(&mut app, &mut terminal);
+        assert_eq!(app.active_pane, ActivePane::Editor);
+        assert_centered(&app, 1);
+    }
+}
+
+#[test]
+fn workspace_match_stays_centered_when_the_wrapped_rows_arrive() {
+    let (root, mut app) = fixture(true);
+    let path = root.path().join("a.txt");
+    let prefix = "word ".repeat(24);
+    let text = format!("{prefix}needle\n").repeat(2_500);
+    std::fs::write(&path, text).unwrap();
+    app.default_word_wrap = true;
+    app.word_wrap_column = 24;
+    app.global_search_results = vec![GlobalSearchResult {
+        file_path: path,
+        line_num: 101,
+        line_text: format!("{prefix}needle").into(),
+        col_start: prefix.len(),
+        col_end: prefix.len() + 6,
+        context_before: None,
+        context_after: None,
+    }]
+    .into();
+
+    app.preview_global_search_result();
+    wait_for_files(&mut app);
+    let mut terminal = Terminal::new(TestBackend::new(100, 35)).unwrap();
+    draw(&mut app, &mut terminal);
+    let editor = app.editor().unwrap();
+    let width = editor.effective_wrap_width();
+    let center = usize::from(app.code_area.unwrap().height / 2);
+    assert!(!editor.wrap_layout_ready(width));
+    assert_eq!(editor.visible_line_at(editor.scroll_offset, center), Some(100));
+
+    app.refresh_wrap_layout_async();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.editor().unwrap().wrap_layout_ready(width)
+    });
+    draw(&mut app, &mut terminal);
+    let editor = app.editor_mut().unwrap();
+    let row = editor
+        .wrapped_row_at(editor.wrap_scroll_offset + center, width)
+        .unwrap();
+    assert_eq!(row.line_idx, 100);
+    assert!((row.start_col..row.end_col).contains(&prefix.len()));
+}
+
+#[test]
 fn double_clicking_a_match_keeps_the_tab_open_and_preserves_search_navigation() {
     for preview in [false, true] {
         for sidebar_right in [false, true] {

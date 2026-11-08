@@ -27,6 +27,8 @@ fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
         let hello = Hello {
             version: VERSION,
             app_version: env!("CARGO_PKG_VERSION").into(),
+            git_file_stats: false,
+            git_sources_limit: false,
             root: native.into(),
             root_uri: uri.into(),
             session: 42,
@@ -94,6 +96,8 @@ fn remote_posix_file_urls_match_native_escaping_and_preserve_drive_like_names() 
     let hello = Hello {
         version: VERSION,
         app_version: env!("CARGO_PKG_VERSION").into(),
+        git_file_stats: false,
+        git_sources_limit: false,
         root: "/workspace".into(),
         root_uri: "file:///workspace/".into(),
         session: 42,
@@ -125,6 +129,8 @@ fn displayed_remote_paths_roundtrip_all_roots_and_filename_bytes() {
         let hello = Hello {
             version: VERSION,
             app_version: env!("CARGO_PKG_VERSION").into(),
+            git_file_stats: false,
+            git_sources_limit: false,
             root: native.into(),
             root_uri: uri.into(),
             session: 42,
@@ -1255,6 +1261,7 @@ fn remote_explorer_batches_expanded_folders_and_preserves_native_sort_filter_and
     );
     let find = crate::explorer_find::Query {
         text: "界".into(),
+        directory: None,
         filter: true,
         fuzzy: false,
         regex: false,

@@ -14,6 +14,20 @@ pub(crate) struct FileOrder {
     names: CollatorBorrowed<'static>,
     base: CollatorBorrowed<'static>,
     accent: CollatorBorrowed<'static>,
+    /// Whether precomputed sort keys reproduce `compare` for this collation.
+    keys: OnceLock<bool>,
+}
+
+/// Names exercising case, accents, numerals, punctuation and scripts. The
+/// sort-key path is used only if it orders all of them exactly like `compare`.
+const KEY_PROBE: &[&str] = &["a", "A", "á", "Á", "ä", "b", "file1", "file01", "File1", "file10", "file9",
+    "a 1", "a_1", "a-1", "a.1", "x.tar.gz", "x.gz", ".gitignore", "README", "readme.md", "ß", "ss", "SS",
+    "cote", "côte", "coté", "côté", "e\u{301}", "é", "ǆ", "dž", "Å", "å", "日本", "ﾆﾎﾝ", "😀", "z", "Z"];
+
+/// French (Canada) collation compares accents from the end of the string.
+/// ICU4X 2.1's sort-key writer can panic in that mode, so never use it there.
+fn backwards_secondary(collator: &CollatorBorrowed<'static>) -> bool {
+    collator.compare("côte", "coté") == Ordering::Less
 }
 
 impl FileOrder {
@@ -27,7 +41,7 @@ impl FileOrder {
             Collator::try_new(preferences, options).ok()
         };
         Some(Self { locale: locale.to_string(), names: make(Strength::Tertiary)?,
-            base: make(Strength::Primary)?, accent: make(Strength::Secondary)? })
+            base: make(Strength::Primary)?, accent: make(Strength::Secondary)?, keys: OnceLock::new() })
     }
 
     pub(crate) fn system() -> Arc<Self> {
@@ -46,6 +60,40 @@ impl FileOrder {
     /// Search: numeric and base-sensitive, then JavaScript ordinal order.
     pub(crate) fn search_names(&self, a: &str, b: &str) -> Ordering {
         self.base.compare(a, b).then_with(|| ordinal(a, b))
+    }
+
+    /// Whether `name_key`/`extension_key` may be used for this collation.
+    /// Checked once against `compare` on a probe set; otherwise callers keep
+    /// comparing names directly.
+    pub(crate) fn has_sort_keys(&self) -> bool {
+        *self.keys.get_or_init(|| {
+            if backwards_secondary(&self.names) || backwards_secondary(&self.accent) { return false; }
+            let names: Vec<_> = KEY_PROBE.iter().map(|name| (*name, self.name_key(name), self.extension_key(name))).collect();
+            names.iter().all(|(a, a_name, a_extension)| names.iter().all(|(b, b_name, b_extension)|
+                a_name.cmp(b_name) == self.names(a, b) && a_extension.cmp(b_extension) == self.extensions(a, b)))
+        })
+    }
+
+    /// A precomputed `names` ordering. Comparing keys orders exactly like
+    /// `names`, but a large listing derives collation elements once per name
+    /// instead of once per comparison (about log2(n) times per name). Use
+    /// only when `has_sort_keys` is true.
+    pub(crate) fn name_key(&self, name: &str) -> SortKey {
+        SortKey { parts: [Self::collation_key(&self.names, name), Vec::new()],
+            lengths: [utf16_len(name), 0] }
+    }
+
+    /// A precomputed `extensions` ordering (extension, then the full name).
+    pub(crate) fn extension_key(&self, name: &str) -> SortKey {
+        let extension = extension(name);
+        SortKey { parts: [Self::collation_key(&self.accent, extension), Self::collation_key(&self.names, name)],
+            lengths: [utf16_len(extension), utf16_len(name)] }
+    }
+
+    fn collation_key(collator: &CollatorBorrowed<'static>, value: &str) -> Vec<u8> {
+        let mut key = Vec::with_capacity(value.len() * 4);
+        let Ok(()) = collator.write_sort_key_to(value, &mut key);
+        key
     }
 
     pub(crate) fn extensions(&self, a: &str, b: &str) -> Ordering {
@@ -72,6 +120,28 @@ impl FileOrder {
         }
         unreachable!()
     }
+}
+
+/// See [`FileOrder::name_key`]. Keys from different `FileOrder`s or kinds
+/// (name vs extension) must not be compared with each other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SortKey {
+    parts: [Vec<u8>; 2],
+    lengths: [usize; 2],
+}
+
+impl Ord for SortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Same tie-breaks as the comparers: collation, then UTF-16 length.
+        self.parts[0].cmp(&other.parts[0])
+            .then_with(|| self.lengths[0].cmp(&other.lengths[0]))
+            .then_with(|| self.parts[1].cmp(&other.parts[1]))
+            .then_with(|| self.lengths[1].cmp(&other.lengths[1]))
+    }
+}
+
+impl PartialOrd for SortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
 
 fn utf16_len(value: &str) -> usize { value.encode_utf16().count() }

@@ -20,6 +20,10 @@ use crate::ui;
 pub(crate) mod content_analysis;
 
 #[cfg(test)]
+#[path = "frame_profile_tests.rs"]
+mod frame_profile_tests;
+
+#[cfg(test)]
 #[path = "app_blame_tests.rs"]
 mod blame_tests;
 
@@ -538,6 +542,7 @@ fn editor_batch_target(app: &App) -> Option<(usize, usize, u64)> {
         || app.chord_pending
         || app.tab_context_active
         || app.context_menu_active
+        || app.explorer_context_active
         || app.status_details.open
         || app.completion_index_ui.open
         || crate::ui_performance_details::captures_keyboard(app)
@@ -624,6 +629,7 @@ pub(crate) fn handle_keyboard_input(
     pump: &mut TerminalEventPump,
     mut key: crossterm::event::KeyEvent,
 ) -> bool {
+    app.cancel_wheel_scroll();
     let _foreground = app.vtcomplete_worker.activity().enter();
     let _input_priority = crate::worker_priority::InputPriority::new(
         app.terminal_has_focus && key.kind != crossterm::event::KeyEventKind::Release,
@@ -707,7 +713,8 @@ pub(crate) fn handle_mouse_input(
         app.terminal_has_focus && mouse.kind != MouseEventKind::Moved,
     );
     let resizing_layout = app.resizing_split || app.resizing_explorer || app.resizing_panel
-        || app.resizing_diff_split || app.resizing_sc_graph || app.chat.resizing || app.terminal_sidebar.dragging();
+        || app.resizing_diff_split || app.resizing_sc_graph || app.chat.resizing
+        || app.terminal_sidebar.dragging() || app.minimap_resize.dragging();
     let mut mouse = if resizing_layout { pump.latest_split_drag(mouse) } else { mouse };
     let is_move = mouse.kind == MouseEventKind::Moved;
     let sidebar_visible_before = app.sidebar_is_visible();
@@ -718,6 +725,13 @@ pub(crate) fn handle_mouse_input(
             | MouseEventKind::ScrollLeft
             | MouseEventKind::ScrollRight
     );
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(_) | MouseEventKind::Drag(_)
+            | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
+    ) {
+        app.cancel_wheel_scroll();
+    }
     // The full mouse route still runs for every sample. Only share painting
     // across position jitter within one ordinary editor; never cross chrome,
     // popup, terminal, extension, direction or modifier boundaries.
@@ -734,6 +748,7 @@ pub(crate) fn handle_mouse_input(
         && !app.resizing_diff_split
         && !app.resizing_explorer
         && !app.resizing_panel
+        && !app.minimap_resize.dragging()
         && !app.terminal_sidebar.dragging()
         && !app.resizing_sc_graph
         && app.dragging_tab.is_none()
@@ -741,6 +756,7 @@ pub(crate) fn handle_mouse_input(
         && app.dragging_explorer_path.is_none()
         && !app.dragging_text
         && !app.context_menu_active
+        && !app.explorer_context_active
         && crate::ui_modal::active(app).is_none()
         && app.tabs.get(app.active_tab).is_some_and(|tab| {
             tab.kind == crate::app::TabKind::File && tab.extension_view.is_none()
@@ -832,6 +848,7 @@ struct LayoutDragState {
     explorer: u16,
     panel: (u16, bool),
     terminal: Option<u16>,
+    minimap: u16,
     diff: u32,
     graph: (u16, bool),
     chat: u16,
@@ -844,6 +861,7 @@ fn layout_drag_state(app: &App) -> LayoutDragState {
         explorer: app.explorer_width,
         panel: (app.panel_height, app.panel_chrome.maximized),
         terminal: app.terminal_sidebar.width,
+        minimap: app.minimap_render_width(),
         diff: app.diff_split_ratio.to_bits(),
         graph: (app.sc_graph_height, app.sc_graph_collapsed),
         chat: app.chat.width,
@@ -881,6 +899,7 @@ fn editor_selection_drag_state(
         || app.completion_index_ui.open
         || app.terminal_mouse_capture.is_some() || app.terminal_selection_drag.is_some()
         || app.extension_pointer_capture.is_some() || app.explorer_scrollbar_drag.is_some()
+        || app.explorer_context_active
         || app.settings_scrollbar_drag.is_some() || app.dragging_settings_categories
     {
         return None;
@@ -1318,6 +1337,145 @@ mod tests {
     }
 
     #[test]
+    fn wheel_animation_presents_each_row_of_a_single_notch_and_goes_idle() {
+        use std::time::Instant;
+        let mut app = animation_fixture();
+        app.tabs[0].editor.rope = ropey::Rope::from_str(&"line\n".repeat(100));
+        app.wheel_scroll = Some(Default::default());
+        draw_animation_fixture(&mut app);
+        assert_eq!(next_event_wait(&app, false, false), None);
+
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut pump = super::TerminalEventPump::from_receiver(receiver);
+        let mut now = Instant::now();
+        super::handle_mouse_input(&mut app, &mut pump, scroll_event());
+        assert_eq!(app.editor().unwrap().scroll_offset, 1);
+        assert!(next_event_wait(&app, false, false).is_some());
+        for row in [2, 3] {
+            now += app.wheel_scroll.as_ref().unwrap().next_wait(now).unwrap();
+            assert!(app.advance_wheel_scroll(now));
+            assert_eq!(app.editor().unwrap().scroll_offset, row);
+        }
+        assert_eq!(next_event_wait(&app, false, false), None);
+
+        app.scroll_speed = 1;
+        super::handle_mouse_input(&mut app, &mut pump, scroll_event());
+        assert_eq!(app.editor().unwrap().scroll_offset, 4);
+        assert_eq!(next_event_wait(&app, false, false), None);
+    }
+
+    #[test]
+    fn wheel_animation_catches_up_to_a_burst_without_losing_distance() {
+        use crossterm::event::{Event, MouseEvent, MouseEventKind};
+        use std::time::Instant;
+        let mut app = scrolling_app();
+        app.wheel_scroll = Some(Default::default());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut pump = super::TerminalEventPump::from_receiver(receiver);
+        let mouse = scroll_event();
+        for _ in 0..32 {
+            sender.send(Ok(Event::Mouse(mouse))).unwrap();
+        }
+        let start = Instant::now();
+        while let Some(Event::Mouse(next)) = pump.try_recv().unwrap() {
+            super::handle_mouse_input(&mut app, &mut pump, next);
+        }
+        assert_eq!(app.editor().unwrap().scroll_offset, 1);
+        let next = start + app.wheel_scroll.as_ref().unwrap().next_wait(start).unwrap();
+        assert!(app.advance_wheel_scroll(next));
+        let row = app.editor().unwrap().scroll_offset;
+        assert!((2..96).contains(&row), "the larger gap should move several rows in a frame");
+        let settled = Instant::now() + Duration::from_millis(120);
+        assert!(app.advance_wheel_scroll(settled));
+        assert_eq!(app.editor().unwrap().scroll_offset, 96);
+        assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(settled), None);
+
+        // An opposite notch cancels an equal outstanding target without
+        // drifting in the original direction for another frame.
+        super::handle_mouse_input(&mut app, &mut pump, mouse);
+        super::handle_mouse_input(&mut app, &mut pump, MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            ..mouse
+        });
+        assert_eq!(app.editor().unwrap().scroll_offset, 96);
+        assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(settled), None);
+    }
+
+    #[test]
+    fn wheel_animation_clamps_to_the_document_and_stops_when_the_tab_is_hidden() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        use std::time::Instant;
+        let mut app = scrolling_app();
+        app.wheel_scroll = Some(Default::default());
+        let max = app.editor().unwrap().max_visible_scroll_offset();
+        app.editor_mut().unwrap().set_visible_scroll_offset(max - 1);
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut pump = super::TerminalEventPump::from_receiver(receiver);
+        let mouse = scroll_event();
+        super::handle_mouse_input(&mut app, &mut pump, mouse);
+        assert_eq!(app.editor().unwrap().scroll_offset, max);
+        assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(Instant::now()), None);
+        super::handle_mouse_input(&mut app, &mut pump, MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            ..mouse
+        });
+        assert_eq!(app.editor().unwrap().scroll_offset, max - 1);
+        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.active_tab = 1;
+        let later = Instant::now() + Duration::from_millis(120);
+        assert!(!app.advance_wheel_scroll(later));
+        assert_eq!(app.tabs[0].editor.scroll_offset, max - 1);
+        assert_eq!(app.editor().unwrap().scroll_offset, 0);
+        assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(later), None);
+    }
+
+    #[test]
+    fn wheel_animation_completes_in_the_event_loop_without_more_input() {
+        use crossterm::event::Event;
+        use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
+        let mut app = animation_fixture();
+        app.tabs[0].editor.rope = ropey::Rope::from_str(&"line\n".repeat(100));
+        app.source_control_enabled = false;
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(Vec::<u8>::new()),
+            TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 100, 24)) },
+        ).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (done, finished) = std::sync::mpsc::channel();
+        let wake = app.background.wake_handle();
+        let watchdog = {
+            let sender = sender.clone();
+            let wake = wake.clone();
+            std::thread::spawn(move || {
+                if finished.recv_timeout(Duration::from_secs(5)).is_err() {
+                    let _ = sender.send(Err(std::io::Error::other("wheel animation timed out")));
+                    wake.notify();
+                }
+            })
+        };
+        let mut sent = false;
+        super::pointer_event_loop_latency_tests::observe(move |app| {
+            if !sent {
+                sender.send(Ok(Event::Mouse(scroll_event()))).unwrap();
+                wake.notify();
+                sent = true;
+            }
+            app.editor().unwrap().scroll_offset == 3
+        });
+        let pump = super::TerminalEventPump::from_receiver(receiver);
+        let result = super::run_app(&mut terminal, &mut app, pump, None);
+        super::pointer_event_loop_latency_tests::clear_observer();
+        let _ = done.send(());
+        watchdog.join().unwrap();
+        result.unwrap();
+        assert_eq!(app.editor().unwrap().scroll_offset, 3);
+        assert_eq!(
+            app.wheel_scroll.as_ref().unwrap().next_wait(std::time::Instant::now()),
+            None,
+        );
+    }
+
+    #[test]
     fn scroll_batch_stops_at_position_direction_modifier_and_input_boundaries() {
         use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
         let mouse = scroll_event();
@@ -1615,6 +1773,40 @@ mod tests {
         refresh_caches(&mut app);
         assert!(!app.editor_analysis_deferred);
         assert!(app.bg_editor_analysis_running);
+    }
+
+    #[test]
+    fn switching_back_to_an_unchanged_tab_restores_its_analysis_without_a_worker_pass() {
+        let mut app = crate::app::App::test_new();
+        let long = format!("{}\n", "x".repeat(300));
+        let first = crate::editor::Editor::test_with_text(&format!("// FIXME one\n// TODO two\n{long}"));
+        let second = crate::editor::Editor::test_with_text("fn short() {}\n");
+        app.tabs = vec![crate::app::Tab::new_file(first), crate::app::Tab::new_file(second)];
+        app.active_tab = 0;
+        let analyze = |app: &mut crate::app::App| {
+            refresh_caches(app);
+            app.wait_for_background(Duration::from_secs(5), |app| !app.bg_editor_analysis_running);
+        };
+        analyze(&mut app);
+        let measured = (app.cached_error_count, app.cached_warning_count, app.cached_max_line_width, app.cached_editor_word_count);
+        assert!(measured.2 >= 300);
+        app.active_tab = 1;
+        analyze(&mut app);
+        assert!(app.cached_max_line_width < 300);
+        app.active_tab = 0;
+        refresh_caches(&mut app);
+        // Restored at once; the unchanged text needs no new scan.
+        assert!(!app.bg_editor_analysis_running);
+        assert_eq!((app.cached_error_count, app.cached_warning_count, app.cached_max_line_width, app.cached_editor_word_count), measured);
+        // An edit while away shows the last values and rescans.
+        app.active_tab = 1;
+        analyze(&mut app);
+        app.tabs[0].editor.insert_char('y');
+        app.tabs[0].editor.modified = false;
+        app.active_tab = 0;
+        refresh_caches(&mut app);
+        assert!(app.bg_editor_analysis_running);
+        assert_eq!(app.cached_max_line_width, measured.2);
     }
 
     #[test]
@@ -2573,6 +2765,39 @@ mod tests {
 /// Keep sticky-scroll data across edits in the same editor while its updated
 /// scope tree is prepared on the worker. Clearing these rows on every content
 /// version made the pinned headers disappear for one frame while typing.
+#[derive(Clone)]
+pub(crate) struct AnalysisSummary {
+    pub(crate) errors: usize,
+    pub(crate) warnings: usize,
+    pub(crate) max_line_width: usize,
+    pub(crate) word_count: usize,
+    pub(crate) sticky_scopes: std::sync::Arc<[crate::background::StickyScopeLine]>,
+}
+
+/// Bounded most-recent-first memo, keyed by editor identity; each entry
+/// records the content it describes so only an identical text is exact.
+#[derive(Default)]
+pub(crate) struct AnalysisMemo(std::collections::VecDeque<(u64, u64, usize, AnalysisSummary)>);
+
+impl AnalysisMemo {
+    const LIMIT: usize = 32;
+
+    /// `content` is the editor's (navigation id, content version, byte length).
+    pub(crate) fn remember(&mut self, content: (u64, u64, usize), summary: AnalysisSummary) {
+        let (navigation_id, version, len) = content;
+        self.0.retain(|(id, ..)| *id != navigation_id);
+        self.0.push_front((navigation_id, version, len, summary));
+        self.0.truncate(Self::LIMIT);
+    }
+
+    /// The last summary for this editor, and whether it is for this exact text.
+    fn recall(&self, editor: &crate::editor::Editor) -> Option<(&AnalysisSummary, bool)> {
+        self.0.iter().find(|(id, ..)| *id == editor.navigation_id).map(|(_, version, len, summary)| {
+            (summary, *version == editor.content_version && *len == editor.rope.len_bytes())
+        })
+    }
+}
+
 fn reconcile_sticky_cache_document(
     app: &mut App,
     target: &crate::background::EditorAnalysisTarget,
@@ -2730,11 +2955,20 @@ fn next_event_wait(
     let mut include = |candidate: Duration| {
         wait = Some(wait.map_or(candidate, |current| current.min(candidate)));
     };
+    if let Some(scroll) = &app.wheel_scroll {
+        let now = std::time::Instant::now();
+        if let Some(wait) = scroll.next_wait(now) {
+            include(wait.max(app.animations.background_frame_wait(now)));
+        }
+    }
     if let Some(wait) = app.background_workspace_wait() { include(wait); }
     if let Some(wait) = app.completion_index_next_wait() {
         include(wait);
     }
     if let Some(wait) = crate::app_explorer_hover::next_wait(app, std::time::Instant::now()) {
+        include(wait);
+    }
+    if let Some(wait) = crate::app_source_control_hover::next_wait(app, std::time::Instant::now()) {
         include(wait);
     }
     if let Some(wait) = app.copy_animation_next_wait(std::time::Instant::now()) { include(wait); }
@@ -3004,8 +3238,24 @@ fn refresh_caches(app: &mut App) {
         if app.cached_editor_analysis_target.as_ref() != Some(&target) {
             let same_document = reconcile_sticky_cache_document(app, &target);
             let current_line_width = app.editor().map_or(0, |editor| editor.current_line_len());
+            let mut reused = false;
+            let recalled = (!same_document).then(|| app.editor()
+                .and_then(|editor| app.editor_analysis_memo.recall(editor).map(|(summary, exact)| (summary.clone(), exact))))
+                .flatten();
             if same_document {
                 app.cached_max_line_width = app.cached_max_line_width.max(current_line_width);
+            } else if let Some((summary, exact)) = recalled {
+                // Show what this document last measured while (or instead of)
+                // recomputing; an unchanged text needs no worker pass at all.
+                app.cached_max_line_width = summary.max_line_width.max(current_line_width);
+                app.cached_error_count = summary.errors;
+                app.cached_warning_count = summary.warnings;
+                app.cached_editor_word_count = summary.word_count;
+                let (chars, lines) = app.editor().map_or((0, 0), |editor| (editor.rope.len_chars(), editor.line_count()));
+                app.cached_word_count = Some(format!("{}W {chars}C {lines}L", summary.word_count));
+                app.cached_sticky_scopes = summary.sticky_scopes;
+                app.cached_sticky_key = u64::MAX;
+                reused = exact;
             } else {
                 app.cached_max_line_width = current_line_width;
                 app.cached_error_count = 0;
@@ -3016,7 +3266,10 @@ fn refresh_caches(app: &mut App) {
 
             let edit_has_settled = !target.modified
                 || app.last_edit_time.elapsed() >= EDITOR_ANALYSIS_EDIT_QUIET_PERIOD;
-            if !app.bg_editor_analysis_running && edit_has_settled {
+            if reused {
+                app.editor_analysis_deferred = false;
+                app.cached_editor_analysis_target = Some(target.clone());
+            } else if !app.bg_editor_analysis_running && edit_has_settled {
                 app.editor_analysis_deferred = false;
                 let (rope, saved_rope) = app.editor().map_or_else(
                     || (ropey::Rope::new(), None),
@@ -3403,8 +3656,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     // Explorer decorations are populated by the Git worker; constructing or
     // refreshing the tree never runs a repository status scan on the UI.
     app.refresh_explorer_async();
-    app.refresh_source_control_async();
-    app.refresh_git_branch_async();
+    app.ensure_initial_source_control_status();
     loop {
         // Include workspace-loader completions in the same wake ticket as
         // all other producers; observing after polling can lose their wake.
@@ -3418,6 +3670,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             last_title_key = None;
             periodic_disk_paths_cache = PeriodicDiskPaths::default();
             selection_drag = None;
+        }
+        if app.terminal_has_focus {
+            app.wheel_scroll.get_or_insert_with(Default::default);
         }
         if let Some(started) = input_started.take() {
             app.background.activity.ui.input_handled(started, std::time::Instant::now(), needs_redraw && app.terminal_has_focus);
@@ -3563,9 +3818,16 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 || crate::ui_performance_details::timings_need_redraw(app);
         }
 
-        let background_frame_wait = app.animations.background_frame_wait(std::time::Instant::now());
-        let draw_changed = needs_redraw && (input_redraw
-            || (!event_pump.has_pending_event() && background_frame_wait.is_zero()));
+        let now = std::time::Instant::now();
+        let background_frame_wait = app.animations.background_frame_wait(now);
+        let can_draw = input_redraw
+            || (!event_pump.has_pending_event() && background_frame_wait.is_zero());
+        // Advance the actual viewport only when it can be painted. Clicks
+        // and selection hit tests must still see the last presented rows.
+        if can_draw && app.terminal_has_focus {
+            needs_redraw |= app.advance_wheel_scroll(now);
+        }
+        let draw_changed = needs_redraw && can_draw;
         if draw_changed || (!needs_redraw && animation_redraw) {
             let _foreground = app.vtcomplete_worker.activity().present();
             let render_priority = crate::worker_priority::InputPriority::new(input_redraw && app.terminal_has_focus);
@@ -3885,6 +4147,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
         // Process macro replay queue or poll for new events
         needs_redraw |= app.update_file_deletion_timer();
+        crate::app_source_control_hover::poll(app, std::time::Instant::now());
         app.background.refresh_activity(std::time::Instant::now());
         if !needs_redraw {
             input_priority.take();
@@ -3929,6 +4192,10 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
             let next_event = next_event.expect("terminal event checked above");
             selection_drag = None;
+            if matches!(next_event, Event::Resize(..)) {
+                app.cancel_wheel_scroll();
+                app.minimap_resize.cancel();
+            }
             crate::terminal_output::apply_resize(terminal, &next_event)?;
             if matches!(&next_event, Event::Key(key) if key.kind != KeyEventKind::Release && !matches!(key.code, KeyCode::Modifier(_)))
                 || matches!(&next_event, Event::Mouse(_) | Event::Paste(_))
@@ -4001,6 +4268,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     app.update_link_hover_modifiers(KeyModifiers::NONE);
                     app.animations.clear();
                     app.copy_animation.clear();
+                    app.wheel_scroll = None;
+                    app.minimap_resize.cancel();
                     app.forward_terminal_focus(false);
                     app.idle_quiescent = true;
                     app.cursor_visible = true;
@@ -4014,6 +4283,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     continue;
                 }
                 Event::Paste(text) => {
+                    app.cancel_wheel_scroll();
                     handle_paste_input_value(app, std::borrow::Cow::Owned(text));
                     needs_redraw = true;
                     continue;

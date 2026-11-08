@@ -55,7 +55,8 @@ fn publish(app: &mut App, discovery: Discovery) {
     app.bg_git_status_running = true;
     app.source_control_sender().send(BackgroundResult::GitRepositories {
         root: app.explorer.root.clone(), workspace_generation: app.workspace_generation,
-        repository_generation: app.repositories.membership_generation, discovery, scans: Vec::new(),
+        repository_generation: app.repositories.membership_generation, complete: true, include_untracked: true,
+        discovery, scans: Vec::new(),
     }).unwrap();
     app.poll_background_results();
 }
@@ -206,6 +207,7 @@ fn git_ownership_stale_failure_cannot_change_another_workspaces_loading_state() 
     app.source_control_sender().send(BackgroundResult::GitRepositories {
         root: old_root.clone(), workspace_generation: generation,
         repository_generation: app.repositories.membership_generation,
+        complete: true, include_untracked: true,
         discovery: Discovery::failed(&old_root, Failure::reading(&old_root, "Old read failed")), scans: Vec::new(),
     }).unwrap();
     app.poll_background_results();

@@ -123,6 +123,87 @@ fn source_control_loading_covers_disk_reads_and_comparison_until_colored_diff_is
 }
 
 #[test]
+fn opening_and_reopening_source_control_diffs_reveals_the_tab_in_a_crowded_strip() {
+    for staged in [false, true] {
+        let (_directory, _, mut app) = repository();
+        app.show_activity_bar = false;
+        app.tabs = (0..80)
+            .map(|index| {
+                let mut editor = app.new_editor();
+                editor.file_path = Some(app.explorer.root.join(format!("file-{index:02}.rs")));
+                Tab::new_file(editor)
+            })
+            .collect();
+        app.active_tab = app.tabs.len() - 1;
+        app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
+        app.update_source_control_files(vec![crate::app::GitFileChange {
+            path: "example.txt".into(),
+            original_path: None,
+            status: 'M',
+            staged,
+            directory: false,
+        }]);
+        let mut terminal = Terminal::new(TestBackend::new(64, 26)).unwrap();
+        render(&mut app, &mut terminal, false);
+        app.ensure_active_tab_visible();
+        render(&mut app, &mut terminal, false);
+
+        let label = if staged {
+            "example.txt (Staged Diff)"
+        } else {
+            "example.txt (Unstaged Diff)"
+        };
+        app.open_source_control_diff(0);
+        app.ensure_active_tab_visible();
+        let frame = render(&mut app, &mut terminal, false);
+        let bar = app.tab_bar_area.unwrap();
+        assert!(
+            row_text(&frame, bar).contains(label),
+            "the new tab must be visible while loading"
+        );
+        let active = app.active_tab;
+        let id = app.tabs[active].editor.navigation_id;
+        assert!(
+            crate::ui_chrome_tabs::TabBarHits::new(&app, bar)
+                .tabs
+                .iter()
+                .any(|(index, _, _)| *index == active)
+        );
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.should_render_diff_for_active_editor()
+        });
+
+        terminal.backend_mut().resize(42, 26);
+        app.ensure_active_tab_visible();
+        let frame = render(&mut app, &mut terminal, false);
+        let bar = app.tab_bar_area.unwrap();
+        assert!(
+            row_text(&frame, bar).contains(label),
+            "the tab must be visible on the first frame after the strip narrows"
+        );
+
+        let group = app.active_group;
+        crate::ui_chrome_tabs::scroll_strip_by(&mut app, bar, group, isize::MIN);
+        app.ensure_active_tab_visible();
+        let frame = render(&mut app, &mut terminal, false);
+        assert!(
+            !row_text(&frame, bar).contains(label),
+            "manual scrolling can inspect other tabs"
+        );
+
+        app.open_source_control_diff(0);
+        app.ensure_active_tab_visible();
+        let frame = render(&mut app, &mut terminal, false);
+        assert_eq!(app.tabs.len(), 81);
+        assert_eq!(app.editor().unwrap().navigation_id, id);
+        assert!(
+            row_text(&frame, bar).contains(label),
+            "reopening the existing diff must reveal its tab"
+        );
+    }
+}
+
+#[test]
 fn pending_diff_in_an_inactive_split_does_not_mask_the_active_file_or_lose_its_state() {
     let (_directory, path, mut app) = repository();
     app.new_file();

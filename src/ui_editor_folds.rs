@@ -110,7 +110,7 @@ pub(crate) fn hover_text(app: &mut App) -> Option<Vec<String>> {
             "Click to expand this branch.".into()]);
     }
     let end = editor.find_fold_end(line)?;
-    Some(vec![format!("Fold this branch only ({} lines).", end.saturating_sub(line + 1)),
+    Some(vec![format!("Fold this branch only ({}).", crate::helpers::counted(end.saturating_sub(line + 1), "line", "lines")),
         format!("{} on line {} stays visible.", directive_name(editor, end), end + 1),
         "For the whole tree, right-click and choose Fold entire conditional.".into()])
 }
@@ -194,7 +194,7 @@ pub(crate) fn draw(
             else { (width / 2).max(11).min(width - 1) };
         let mut label = full;
         if conditional {
-            if label.width() > budget { label = format!(" + {name} · {count} lines "); }
+            if label.width() > budget { label = format!(" + {name} · {} ", crate::helpers::counted(count, "line", "lines")); }
             let compact = if all_branches { "All" } else { "Branch" };
             if label.width() > budget { label = format!(" {compact} +{count} "); }
             if label.width() > budget { label = compact.into(); }

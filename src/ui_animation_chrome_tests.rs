@@ -127,7 +127,7 @@ fn search_and_rename_inputs_keep_their_live_mouse_maps_on_cosmetic_frames() {
     let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
     render(&mut app, &mut terminal, false);
     app.open_explorer_find();
-    for id in [TextInputId::ExplorerFind, TextInputId::ExplorerRename] {
+    for id in [TextInputId::ExplorerFind, TextInputId::ExplorerFindPath, TextInputId::ExplorerRename] {
         if id == TextInputId::ExplorerRename {
             app.explorer.find.open = false;
             app.rename.active = true;

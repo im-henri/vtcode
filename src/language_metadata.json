@@ -86,6 +86,14 @@
     "extensions": [],
     "filenames": []
   },
+  "antlr": {
+    "name": "ANTLR4",
+    "aliases": [],
+    "extensions": [
+      "g4"
+    ],
+    "filenames": []
+  },
   "apache": {
     "name": "Apache Conf",
     "aliases": [],

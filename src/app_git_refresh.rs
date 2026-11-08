@@ -9,6 +9,31 @@ use crate::{
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 
+/// A previously missing workspace can gain its own repository before the
+/// watcher sees the new Git metadata.
+pub(super) fn recheck_workspace_repository(
+    mut discovery: Discovery,
+    workspace: &Path,
+    parent_open: bool,
+) -> Discovery {
+    match git2::Repository::open(workspace) {
+        Ok(repo) => {
+            if let Some(root) = repo.workdir() {
+                let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+                if !discovery.roots.contains(&root) { discovery.roots.insert(0, root); }
+                if !parent_open { discovery.parent = None; }
+            }
+        }
+        Err(error) if error.code() != git2::ErrorCode::NotFound => {
+            if let Some(error) = crate::git_trust::Failure::opening(workspace, &error) {
+                return Discovery::failed(workspace, error);
+            }
+        }
+        Err(_) => {}
+    }
+    discovery
+}
+
 #[cfg(test)]
 #[path = "app_git_refresh_tests.rs"]
 mod tests;

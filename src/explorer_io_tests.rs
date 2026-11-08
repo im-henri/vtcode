@@ -148,6 +148,101 @@ fn repeated_filename_queries_reuse_the_workspace_scan() {
 }
 
 #[test]
+fn scoped_filename_queries_only_read_the_selected_subtree_and_reuse_its_scan() {
+    let (temp, mut explorer) = workspace();
+    for name in ["alpha/deep", "alphabet", "beta/deep", "gamma/deep"] {
+        let path = temp.path().join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("main.rs"), "source").unwrap();
+    }
+    // Filtered search must not visit unrelated folders even when the normal
+    // Explorer has them expanded.
+    for name in ["beta", "beta/deep", "gamma", "gamma/deep", "alphabet"] {
+        explorer.expanded_dirs.insert(temp.path().join(name));
+    }
+    explorer.find.open = true;
+    explorer.find.filter = true;
+    explorer.find.directory = Some(temp.path().join("alpha"));
+    for query in ["m", "ma", "main", "main.rs", "nothing", "main"] {
+        explorer.find.query = query.into();
+        refresh(&mut explorer);
+    }
+    assert_eq!(explorer.find.results.count, 2);
+    assert_eq!(explorer.directory_cache.read_count(), 3, "only root, alpha and alpha/deep are read");
+    assert!(explorer.entries.iter().all(|entry| entry.path.starts_with(temp.path().join("alpha"))));
+
+    assert!(explorer.changed_path_affects_tree(&temp.path().join("alpha/deep/new.rs"), Some(true)));
+    assert!(explorer.changed_path_affects_tree(&temp.path().join("alpha"), Some(false)));
+    assert!(!explorer.changed_path_affects_tree(&temp.path().join("beta/deep/new.rs"), Some(true)));
+    assert!(!explorer.changed_path_affects_tree(&temp.path().join("alphabet/main.rs"), Some(true)));
+
+    explorer.find.directory = None;
+    refresh(&mut explorer);
+    assert_eq!(explorer.find.results.count, 7);
+    assert_eq!(explorer.directory_cache.read_count(), 8);
+}
+
+#[test]
+fn scoped_highlight_reads_only_the_subtree_and_the_normally_visible_tree() {
+    let (temp, mut explorer) = workspace();
+    explorer.find.open = true;
+    explorer.find.directory = Some(temp.path().join("alpha"));
+    explorer.find.query = "main".into();
+    refresh(&mut explorer);
+    assert_eq!(explorer.find.results.count, 1);
+    assert_eq!(explorer.directory_cache.read_count(), 2);
+    assert!(explorer.entries.iter().all(|entry| entry.depth == 0));
+    assert!(!explorer.changed_path_affects_tree(&temp.path().join("beta/new.rs"), Some(true)));
+
+    explorer.expanded_dirs.insert(temp.path().join("beta"));
+    refresh(&mut explorer);
+    assert_eq!(explorer.find.results.count, 1);
+    assert_eq!(explorer.directory_cache.read_count(), 3);
+    let outside = temp.path().join("beta/main.rs");
+    assert!(explorer.find_path(&outside).is_some());
+    assert!(!explorer.find.results.rows.contains_key(&outside));
+    assert!(explorer.changed_path_affects_tree(&temp.path().join("beta/new.rs"), Some(true)));
+}
+
+#[test]
+fn scoped_search_refreshes_when_sibling_rules_change_its_boundary() {
+    let (temp, mut explorer) = workspace();
+    let patterns = serde_json::from_value(serde_json::json!({
+        "**/alpha": { "when": "$(basename).hidden" }
+    })).unwrap();
+    explorer.set_files_exclude(&patterns);
+    explorer.find.open = true;
+    explorer.find.filter = true;
+    explorer.find.directory = Some(temp.path().join("alpha"));
+    explorer.find.query = "main".into();
+    refresh(&mut explorer);
+    assert_eq!(explorer.find.results.count, 1);
+    let sibling = temp.path().join("alpha.hidden");
+    std::fs::write(&sibling, "").unwrap();
+    assert!(explorer.changed_path_affects_tree(&sibling, Some(false)));
+    assert!(!explorer.changed_path_affects_tree(&temp.path().join("beta/unrelated.rs"), Some(true)));
+    explorer.invalidate_directory_paths([sibling.as_path()], true);
+    refresh(&mut explorer);
+    assert_eq!(explorer.find.results.count, 0);
+    assert!(explorer.entries.is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn typed_scope_case_aliases_search_and_refresh_the_native_directory() {
+    let (temp, mut explorer) = workspace();
+    explorer.find.open = true;
+    explorer.find.filter = true;
+    explorer.find.directory = Some(temp.path().join("ALPHA"));
+    explorer.find.query = "main".into();
+    refresh(&mut explorer);
+    assert_eq!(explorer.find.results.count, 1);
+    assert_eq!(explorer.directory_cache.read_count(), 2);
+    assert!(explorer.changed_path_affects_tree(&temp.path().join("alpha/new.rs"), Some(true)));
+    assert!(!explorer.changed_path_affects_tree(&temp.path().join("beta/new.rs"), Some(true)));
+}
+
+#[test]
 fn create_delete_and_rename_invalidate_only_affected_listings() {
     let (temp, mut explorer) = workspace();
     for name in ["alpha", "beta", "gamma"] {

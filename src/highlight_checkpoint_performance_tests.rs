@@ -333,3 +333,50 @@ fn benchmark_shared_syntax_checkpoint_snapshots() {
         );
     }
 }
+
+#[test]
+fn checkpoint_prefetch_makes_far_jumps_resume_nearby_with_exact_colors() {
+    let mut highlighter = Highlighter::new();
+    let path = Path::new("prefetch.rs");
+    // Multiline comments and strings make the parser state matter.
+    let source = "fn f() { let s = \"x\"; }\n/* open\n still comment */\nlet r = r#\"raw\n\"#;\n".repeat(1_000);
+    let rope = Rope::from_str(&source);
+    let (syntaxes, themes) = highlighter.shared_sets();
+    let job = highlighter.prepare_job(&rope, path, 1, None, 0..60, None, "dark-plus").unwrap();
+    assert!(highlighter.apply_batch(job.run(&rope, &syntaxes, &themes, || false)));
+    let mut slices = 0;
+    while let Some(job) = highlighter.prepare_prefetch_job(&rope, path, 1, None, "dark-plus") {
+        assert!(job.prefetch);
+        assert!(highlighter.apply_batch(job.run_with_budget(&rope, &syntaxes, &themes, &mut || false, Duration::MAX)));
+        slices += 1;
+        assert!(slices < 10, "prefetch must finish");
+    }
+    assert!(slices > 0);
+    // The viewport stays warm and a jump to the end resumes from a nearby checkpoint.
+    assert!(highlighter.prepare_job(&rope, path, 1, None, 0..60, None, "dark-plus").is_none());
+    let end = rope.len_lines();
+    let far = highlighter.prepare_job(&rope, path, 1, None, end - 60..end, None, "dark-plus").unwrap();
+    assert!(far.visible.start - far.parse_start <= CHECKPOINT_INTERVAL, "{} -> {}", far.parse_start, far.visible.start);
+    let resumed = far.run(&rope, &syntaxes, &themes, || false);
+    let mut fresh = Highlighter::new();
+    let reference = fresh.prepare_job(&rope, path, 1, None, end - 60..end, None, "dark-plus").unwrap();
+    assert_eq!(reference.parse_start, 0);
+    let reference = reference.run_with_budget(&rope, &syntaxes, &themes, &mut || false, Duration::MAX);
+    let spans = |batch: &HighlightBatch| batch.entries.iter().map(|entry| (entry.line, entry.spans.clone())).collect::<Vec<_>>();
+    assert_eq!(spans(&resumed), spans(&reference));
+    // After an edit, the pass repairs stale checkpoints and converges again.
+    let mut edited = rope.clone();
+    edited.insert(edited.line_to_char(10), "let added = 1;\n");
+    let job = highlighter.prepare_job(&edited, path, 2, Some((10, 11)), 0..60, None, "dark-plus").unwrap();
+    assert!(highlighter.apply_batch(job.run(&edited, &syntaxes, &themes, || false)));
+    let mut repairs = 0;
+    while let Some(job) = highlighter.prepare_prefetch_job(&edited, path, 2, None, "dark-plus") {
+        assert!(highlighter.apply_batch(job.run_with_budget(&edited, &syntaxes, &themes, &mut || false, Duration::MAX)));
+        repairs += 1;
+        assert!(repairs < 10);
+    }
+    assert!(highlighter.document_state_converged(path, 2));
+    let end = edited.len_lines();
+    let far = highlighter.prepare_job(&edited, path, 2, None, end - 60..end, None, "dark-plus").unwrap();
+    assert!(far.visible.start - far.parse_start <= CHECKPOINT_INTERVAL);
+}

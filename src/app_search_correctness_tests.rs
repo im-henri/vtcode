@@ -28,30 +28,40 @@ fn assert_valid_positions(editor: &Editor) {
 }
 
 #[test]
-fn find_centers_live_matches_and_next_previous_even_when_already_visible() {
+fn find_keeps_visible_matches_still_and_centers_offscreen_matches() {
     let text: String = (0..100)
-        .map(|line| if [20, 24, 80].contains(&line) { "needle\n" } else { "text\n" })
+        .map(|line| if [20, 37, 80, 84].contains(&line) { "needle\n" } else { "text\n" })
         .collect();
-    for height in [1, 2, 20, 31] {
+    for typewriter in [false, true] {
         let mut app = app(&text);
         let editor = app.editor_mut().unwrap();
-        editor.viewport_height = height;
-        editor.scroll_offset = 18;
+        editor.viewport_height = 20;
+        editor.typewriter_mode = typewriter;
+        editor.set_visible_scroll_offset(18);
         app.execute_palette_command("find");
         app.search_query = "needle".into();
         app.update_search();
-        for expected in [20, 24, 80, 20] {
+        let assert_match = |app: &App, expected, scroll| {
             let editor = app.editor().unwrap();
             assert_eq!(editor.selected_text().as_deref(), Some("needle"));
             assert_eq!(editor.cursor_line, expected);
-            assert_eq!(editor.scroll_offset, expected - height / 2);
-            assert_eq!(editor.wrap_scroll_offset, editor.scroll_offset);
-            app.search_next();
+            assert_eq!(editor.scroll_offset, scroll);
+            assert_eq!(editor.wrap_scroll_offset, scroll);
+        };
+        assert_match(&app, 20, 18);
+        for (step, line, scroll) in [
+            (App::search_next as fn(&mut App), 37, 18),
+            (App::search_next, 80, 70),
+            (App::search_next, 84, 70),
+            (App::search_prev, 80, 70),
+            (App::search_prev, 37, 27),
+            (App::search_prev, 20, 10),
+            (App::search_prev, 84, 74),
+            (App::search_next, 20, 10),
+        ] {
+            step(&mut app);
+            assert_match(&app, line, scroll);
         }
-        app.search_prev();
-        app.search_prev();
-        assert_eq!(app.editor().unwrap().cursor_line, 80);
-        assert_eq!(app.editor().unwrap().scroll_offset, 80 - height / 2);
         let before = app.editor().unwrap().scroll_offset;
         app.search_query = "no such text".into();
         app.update_search();
@@ -79,22 +89,65 @@ fn find_centers_using_visible_rows_and_unfolds_the_match() {
 }
 
 #[test]
-fn find_centers_wrapped_matches_and_keeps_source_scroll_in_sync() {
-    let mut app = app(&format!("{}needle{}", "\t界abcd ".repeat(30), " text".repeat(30)));
+fn find_keeps_visible_columns_and_pans_to_a_hidden_column_on_the_same_row() {
+    let line = format!("........needle{}needle\n", " ".repeat(50));
+    let mut app = app(&format!("{}{line}{}", "text\n".repeat(30), "text\n".repeat(30)));
+    let editor = app.editor_mut().unwrap();
+    editor.viewport_height = 10;
+    editor.viewport_width = 7;
+    editor.set_visible_scroll_offset(30);
+    editor.horizontal_scroll = 8;
+    app.search_query = "needle".into();
+    app.execute_palette_command("find");
+    let editor = app.editor().unwrap();
+    assert_eq!((editor.cursor_line, editor.cursor_col), (30, 14));
+    assert_eq!((editor.scroll_offset, editor.horizontal_scroll), (30, 8));
+
+    app.search_next();
+    let editor = app.editor().unwrap();
+    assert_eq!((editor.cursor_line, editor.cursor_col), (30, 70));
+    assert_eq!(editor.scroll_offset, 30);
+    assert!(editor.horizontal_scroll > 8);
+    assert!(editor.cursor_col - editor.horizontal_scroll < editor.viewport_width);
+}
+
+#[test]
+fn find_uses_wrapped_viewport_rows_to_keep_or_center_matches() {
+    let mut app = app(&format!(
+        "{}needle{}needle{}needle{}",
+        "\t界abcd ".repeat(30),
+        " text".repeat(4),
+        " text".repeat(30),
+        " text".repeat(30)
+    ));
     let editor = app.editor_mut().unwrap();
     editor.word_wrap = true;
     editor.viewport_width = 16;
     editor.viewport_height = 9;
     app.search_query = "needle".into();
     app.execute_palette_command("find");
-    let editor = app.editor_mut().unwrap();
-    let width = editor.effective_wrap_width();
-    let row = editor.wrapped_row_for_position(editor.cursor_line, editor.cursor_col, width);
-    assert!(row > editor.viewport_height);
-    assert_eq!(row - editor.wrap_scroll_offset, editor.viewport_height / 2);
-    let top = editor.wrapped_row_at(editor.wrap_scroll_offset, width).unwrap();
-    assert_eq!(editor.scroll_offset, top.line_idx);
-    assert_eq!(editor.selected_text().as_deref(), Some("needle"));
+    let check_match = |app: &mut App| {
+        let editor = app.editor_mut().unwrap();
+        let width = editor.effective_wrap_width();
+        let row = editor.wrapped_row_for_position(editor.cursor_line, editor.cursor_col, width);
+        let scroll = editor.wrap_scroll_offset;
+        assert!((scroll..scroll + editor.viewport_height).contains(&row));
+        let top = editor.wrapped_row_at(scroll, width).unwrap();
+        assert_eq!(editor.scroll_offset, top.line_idx);
+        assert_eq!(editor.selected_text().as_deref(), Some("needle"));
+        (row, scroll)
+    };
+    let (first, scroll) = check_match(&mut app);
+    assert!(first > 9);
+    assert_eq!(first - scroll, 4);
+    app.search_next();
+    let (second, retained) = check_match(&mut app);
+    assert!(second > first);
+    assert_eq!(retained, scroll);
+    app.search_next();
+    let (third, centered) = check_match(&mut app);
+    assert!(third >= scroll + 9);
+    assert_eq!(third - centered, 4);
 }
 
 #[test]

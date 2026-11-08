@@ -42,8 +42,7 @@ impl NavigationSelection {
 
     pub(crate) fn restore(self, editor: &mut Editor) {
         if editor.bg_loading {
-            editor.pending_cursor_utf16 = false;
-            editor.pending_cursor_position = Some(self.cursor);
+            editor.set_cursor_without_scrolling(self.cursor.0, self.cursor.1);
             editor.pending_navigation_selection = Some(self);
             return;
         }

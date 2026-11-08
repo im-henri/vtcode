@@ -87,6 +87,11 @@ pub(crate) fn handle_mouse_dialogs(
         return true;
     }
 
+    if app.explorer_context_active {
+        crate::mouse::handle_explorer_context_mouse(app, *mouse);
+        return true;
+    }
+
     // Handle mouse clicks on popup panels
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && crate::mouse_overlay::handle_popup_click(app, col, row)
@@ -127,19 +132,6 @@ pub(crate) fn handle_mouse_dialogs(
             app.reset_hover_states();
         }
         let (term_w, term_h) = (app.viewport_area.width, app.viewport_area.height);
-
-        // Explorer context menu hover
-        if app.explorer_context_active {
-            let items = app.explorer_context_menu_items();
-            if let Some(inner) = app.explorer_context_inner {
-                if inner.contains((col, row).into()) {
-                    let idx = (row - inner.y) as usize;
-                    if items.get(idx).is_some_and(|&i| i != "─") {
-                        app.explorer_context_selected = idx;
-                    }
-                }
-            }
-        }
 
         // Source control context menu hover
         if app.sc_context_active {

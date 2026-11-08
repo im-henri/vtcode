@@ -492,7 +492,7 @@ impl App {
             "cursor_style" => "Set the cursor shape: Line, Block, or Underline.",
             "cursor_blinking" => "Enable cursor blinking animation.",
             "cursor_surrounding_lines" => "Keep at least this many visible lines above and below the cursor while scrolling.",
-            "scroll_speed" => "Number of lines to scroll per mouse wheel step (1-10).",
+            "scroll_speed" => "Rows per mouse wheel step (1–10). Document scrolling animates steps above one row.",
             "auto_save_mode" => "Controls when files are automatically saved.",
             "auto_save_delay" => "Delay in milliseconds before auto-saving after the last edit (minimum 100).",
             _ => "",

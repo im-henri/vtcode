@@ -149,7 +149,7 @@ impl CachedPreview {
 pub(crate) struct PreviewScroll {
     pub(crate) source_scroll: usize,
     pub(crate) pending_source: Option<usize>,
-    row: usize,
+    pub(crate) row: usize,
     height: usize,
     source_rows: Arc<[usize]>,
     drag_offset: usize,
@@ -285,7 +285,7 @@ impl PreviewScroll {
         self.row = self.row.min(self.max_scroll());
     }
 
-    fn max_scroll(&self) -> usize {
+    pub(crate) fn max_scroll(&self) -> usize {
         self.source_rows.len().saturating_sub(self.height)
     }
 
@@ -296,7 +296,7 @@ impl PreviewScroll {
         self.pending_source = Some(source);
     }
 
-    fn scroll(&mut self, delta: isize) {
+    pub(crate) fn scroll(&mut self, delta: isize) {
         self.set_row(self.row.saturating_add_signed(delta));
     }
 
@@ -1813,18 +1813,17 @@ impl App {
     /// Wheel input is routed by pane geometry, without stealing keyboard focus.
     pub(crate) fn scroll_markdown_preview_at(&mut self, col: u16, row: u16, delta: isize) -> bool {
         let point = ratatui::layout::Position::new(col, row);
-        let mut editor = if self.code_area.is_some_and(|area| area.contains(point))
+        let mut tab = if self.code_area.is_some_and(|area| area.contains(point))
             || self.scrollbar_area.is_some_and(|area| area.contains(point))
         {
             self.tabs
                 .get_mut(self.active_tab)
                 .filter(|tab| tab.kind == crate::app::TabKind::MarkdownPreview)
-                .map(|tab| &mut tab.editor)
         } else {
             None
         };
-        if editor.is_none() {
-            editor = self
+        if tab.is_none() {
+            tab = self
                 .groups
                 .iter_mut()
                 .enumerate()
@@ -1839,17 +1838,13 @@ impl App {
                             .tabs
                             .get_mut(group.active_tab)
                             .filter(|tab| tab.kind == crate::app::TabKind::MarkdownPreview)
-                            .map(|tab| &mut tab.editor)
                     } else {
                         None
                     }
                 });
         }
-        let Some(editor) = editor else { return false };
-        if let Some(view) = &mut editor.markdown_preview_scroll {
-            view.scroll(delta);
-            editor.scroll_offset = view.source_scroll;
-        }
+        let Some(tab) = tab else { return false };
+        crate::smooth_scroll::scroll_rows(self.wheel_scroll.as_mut(), tab, None, delta);
         self.sync_markdown_preview_state();
         true
     }
@@ -2376,18 +2371,28 @@ mod scroll_tests {
 
     #[test]
     fn wheel_on_inactive_preview_syncs_source_without_losing_visual_position() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
         let (mut app, mut terminal) = split_preview();
         app.switch_group(0);
         draw(&mut app, &mut terminal);
         let area = app.groups[1].code_area.unwrap();
+        app.wheel_scroll = Some(Default::default());
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut pump = crate::app_event_loop::TerminalEventPump::from_receiver(receiver);
         for _ in 0..4 {
-            crate::mouse_scroll::handle_scroll_down(
+            crate::app_event_loop::handle_mouse_input(
                 &mut app,
-                area.x + 1,
-                area.y + 1,
-                KeyModifiers::NONE,
+                &mut pump,
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: area.x + 1,
+                    row: area.y + 1,
+                    modifiers: KeyModifiers::SHIFT,
+                },
             );
         }
+        assert_eq!(app.groups[1].tabs[0].editor.markdown_preview_scroll.as_ref().unwrap().row, 1);
+        assert!(app.advance_wheel_scroll(std::time::Instant::now() + std::time::Duration::from_millis(120)));
         let view = app.groups[1].tabs[0]
             .editor
             .markdown_preview_scroll

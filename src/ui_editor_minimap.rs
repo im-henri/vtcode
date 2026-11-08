@@ -7,6 +7,7 @@ pub(crate) use scrollbar_changes::ChangeRows;
 #[path = "ui_minimap_cache.rs"]
 mod cache;
 pub(crate) use cache::MinimapCache;
+#[cfg(test)]
 use cache::Glyph;
 
 #[cfg(test)]
@@ -211,6 +212,10 @@ pub(crate) fn scrollbar_change_rows(
 #[path = "ui_editor_minimap_performance_tests.rs"]
 mod performance_tests;
 
+#[cfg(test)]
+#[path = "ui_minimap_ux_tests.rs"]
+mod ux_tests;
+
 pub(crate) fn scrollbar_change_rows_indexed(
     editor: &crate::editor::Editor,
     height: usize,
@@ -261,21 +266,41 @@ impl MinimapWindow {
     }
 }
 
-fn minimap_window(total_lines: usize, scroll: usize, visible_lines: usize) -> MinimapWindow {
+fn minimap_window(
+    total_lines: usize,
+    scroll: usize,
+    visible_lines: usize,
+    height: usize,
+) -> MinimapWindow {
+    if height == 0 || total_lines == 0 {
+        return MinimapWindow { start: 0, end: 0 };
+    }
     let visible = visible_lines.max(1).min(total_lines);
-    let len = total_lines.min(visible.saturating_mul(3));
+    let scale = visible.div_ceil(height.saturating_sub(1).max(1)).max(4);
+    let len = height.max(2).saturating_mul(scale);
+    if total_lines <= len {
+        return MinimapWindow { start: 0, end: total_lines };
+    }
     let max_scroll = total_lines.saturating_sub(visible);
-    // Move the content and slider proportionally through their respective
-    // ranges. Centering the slice on `scroll` would pin the slider in place.
+    // Source groups are anchored to the document, not the animated viewport.
+    // Scrolling moves intact mini rows instead of resampling every line. Pad
+    // the final group so reaching EOF does not change the sampling phase.
+    let max_start = total_lines
+        .saturating_sub(len)
+        .div_ceil(scale)
+        .saturating_mul(scale);
     let start = if max_scroll == 0 {
         0
     } else {
-        ((scroll.min(max_scroll) as u128 * (total_lines - len) as u128) / max_scroll as u128)
-            as usize
+        let offset =
+            ((scroll.min(max_scroll) as u128 * max_start as u128) / max_scroll as u128) as usize;
+        let aligned = offset / scale * scale;
+        let minimum = scroll.min(max_scroll).saturating_add(visible).saturating_sub(len);
+        aligned.max(minimum.div_ceil(scale).saturating_mul(scale))
     };
     MinimapWindow {
         start,
-        end: start + len,
+        end: start.saturating_add(len),
     }
 }
 
@@ -309,8 +334,9 @@ impl MinimapLayout {
         let visible = visible_lines.max(1).min(scrollable_lines);
         let max_scroll = scrollable_lines.saturating_sub(visible);
         let scroll = scroll.min(max_scroll);
-        let window = minimap_window(scrollable_lines, scroll, visible);
-        let slider_height = minimap_line_to_row(window.start + visible, window, height, true);
+        let window = minimap_window(scrollable_lines, scroll, visible, height);
+        let slider_height =
+            minimap_line_to_row(window.start.saturating_add(visible), window, height, true);
         let travel = height.min(window.len()).saturating_sub(slider_height);
         let view_start = if max_scroll == 0 {
             0
@@ -394,6 +420,16 @@ fn minimap_source_range(window: MinimapWindow, row: usize, height: usize) -> (us
         .max(start.saturating_add(1))
         .min(window.end);
     (start, end)
+}
+
+/// Pack source lines into the four pixel rows of a 2×4 braille cell.
+fn minimap_samples(start: usize, end: usize) -> impl Iterator<Item = (usize, u8)> {
+    let len = end.saturating_sub(start);
+    let count = len.min(4);
+    (0..count).map(move |sample| {
+        let pixel = if count == 1 { 1 } else { sample * 3 / (count - 1) };
+        (start + sample * len / count, [0x09, 0x12, 0x24, 0xc0][pixel])
+    })
 }
 
 fn minimap_line_to_row(line: usize, window: MinimapWindow, height: usize, round_up: bool) -> usize {
@@ -480,7 +516,7 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
     let width = area.width as usize;
     let total_lines = editor.line_count();
     let visible_total = editor.visible_line_count();
-    if height == 0 || total_lines == 0 {
+    if height == 0 || width == 0 || total_lines == 0 {
         return;
     }
 
@@ -496,7 +532,7 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
     let view_end_row = layout.view_end;
     let selection_lines = editor.selection_range().map(|(sl, _, el, _)| (sl, el));
     let mut cache = editor.minimap_cache.borrow_mut();
-    cache.synchronize(&editor.rope, width);
+    cache.synchronize(&editor.rope, width, editor.tab_size);
 
     let buffer = f.buffer_mut();
     let track_bg = colors.ui.bg_minimap;
@@ -596,11 +632,15 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
                 blank.fg(highlight.unwrap_or_else(|| dim_color(colors.fg_text, 160, row_bg))),
                 blank.fg(highlight.unwrap_or_else(|| dim_color(colors.fg_text, 140, row_bg))),
             ];
-            for (column, &glyph) in cache.row(&editor.rope, source_line)[..content_width]
-                .iter().enumerate()
+            let samples = minimap_samples(source_row, end_row)
+                .filter(|&(row, _)| row < visible_total)
+                .map(|(row, dots)| (editor.line_for_visible_row(row), dots));
+            for (column, cell) in cache.band(&editor.rope, samples)[..content_width]
+                .iter()
+                .enumerate()
             {
-                let ch = if glyph == Glyph::Blank { ' ' } else { '▪' };
-                let style = styles[glyph as usize];
+                let ch = cell.symbol();
+                let style = styles[cell.glyph as usize];
                 if let Some(cell) = buffer.cell_mut((area.x + column as u16, area.y + row as u16)) {
                     cell.set_char(ch).set_style(style);
                 }
@@ -980,9 +1020,9 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         for x in 0..12 {
-            assert_eq!(buffer[(x, 1)].bg, Color::Rgb(154, 165, 175));
+            assert_eq!(buffer[(x, 2)].bg, Color::Rgb(154, 165, 175));
         }
-        assert_eq!(buffer[(11, 1)].fg, Color::Rgb(20, 40, 60));
+        assert_eq!(buffer[(11, 2)].fg, Color::Rgb(20, 40, 60));
     }
 
     // -- minimap_diff_colors --
@@ -1068,9 +1108,9 @@ mod tests {
             .expect("draw minimap");
 
         let buffer = terminal.backend().buffer();
-        // At this scroll position the window is 35..65: line 40 belongs
-        // to minimap row 1, rather than whole-document overview row 4.
-        assert!((9..12).all(|x| buffer.cell((x, 1)).unwrap().fg == colors.ui.fg_gutter_modified));
+        // The aligned local window is 32..72: line 40 belongs to row 2,
+        // rather than whole-document overview row 4.
+        assert!((9..12).all(|x| buffer.cell((x, 2)).unwrap().fg == colors.ui.fg_gutter_modified));
         assert!((0..10).all(|y| {
             (9..12).all(|x| buffer.cell((x, y)).unwrap().fg != colors.ui.fg_gutter_deleted)
         }));
@@ -1214,14 +1254,14 @@ mod tests {
     }
 
     #[test]
-    fn minimap_short_files_fit_and_long_files_show_three_viewports() {
+    fn minimap_short_files_fit_and_long_files_show_four_viewports() {
         assert_eq!(
-            minimap_window(100, 0, 40),
+            minimap_window(100, 0, 40, 40),
             MinimapWindow { start: 0, end: 100 }
         );
         for scroll in [0, 2500, 5000, 7500, 9960] {
-            let window = minimap_window(10_000, scroll, 40);
-            assert_eq!(window.len(), 120);
+            let window = minimap_window(10_000, scroll, 40, 40);
+            assert_eq!(window.len(), 160);
             assert!(window.start <= scroll);
             assert!(window.end >= scroll + 40);
         }
@@ -1237,7 +1277,7 @@ mod tests {
             let mut previous_window = 0;
             for scroll in 0..=max_scroll {
                 let layout = MinimapLayout::new(total, scroll, visible, height, false);
-                assert_eq!(layout.view_end - layout.view_start, height.div_ceil(3));
+                assert_eq!(layout.view_end - layout.view_start, height.div_ceil(4));
                 assert!(layout.view_start >= previous_row);
                 assert!(layout.window.start >= previous_window);
                 assert!(layout.view_end <= height);
@@ -1281,7 +1321,8 @@ mod tests {
                     scroll,
                 );
                 if scroll == total - 1 {
-                    assert_eq!(layout.window.end, total + visible - 1);
+                    assert!(layout.window.end >= total + visible - 1);
+                    assert!(layout.window.end - (total + visible - 1) < 4);
                     assert_eq!(layout.view_end, 40);
                 }
                 previous_window = layout.window.start;
@@ -1292,7 +1333,7 @@ mod tests {
 
     #[test]
     fn minimap_source_rows_cover_only_the_moving_window() {
-        let window = minimap_window(50_000, 25_000, 50);
+        let window = minimap_window(50_000, 25_000, 50, 50);
         assert!(window.start > 0);
         let mut end = window.start;
         for row in 0..50 {
@@ -1422,7 +1463,7 @@ mod tests {
         editor.scroll_past_end = false;
         editor.rope = ropey::Rope::from_str(&"line\n".repeat(9989));
         let mut terminal = Terminal::new(TestBackend::new(12, 30)).expect("terminal");
-        for (scroll, top, bottom) in [(0, 0, 9), (4980, 10, 19), (9960, 20, 29)] {
+        for (scroll, top, bottom) in [(0, 0, 7), (4980, 11, 18), (9960, 22, 29)] {
             terminal
                 .draw(|frame| {
                     draw_minimap(

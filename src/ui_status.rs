@@ -630,7 +630,7 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     {
         let text = match row.id {
             "word_wrap" => format!("Wrap: {}", row.value),
-            "line_count" => format!("{} lines", row.value),
+            "line_count" => format!("{} {}", row.value, if row.value == "1" { "line" } else { "lines" }),
             "language_server" => match row.value.as_str() {
                 "Connected" => "LSP ✓",
                 "Starting…" => "LSP …",

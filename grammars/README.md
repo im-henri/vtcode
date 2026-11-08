@@ -8,6 +8,8 @@ All shipped grammar sources live in this directory.
 - `Rust/`, `Python/`, and `Git/`: the VS Code grammar packages that override
   entries in the base catalog. These are also embedded for startup and can be
   reloaded from the shipped files with **Developer: Reload Syntaxes**.
+- `ANTLR4/` contains the embedded TextMate grammar for `.g4` files from the
+  ANTLR4 VS Code extension.
 - `SOURCES.json`, `BUNDLED-GRAMMARS.json`, and the license/notice files: pinned
   provenance, hashes, and redistribution terms.
 

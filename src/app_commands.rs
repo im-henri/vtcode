@@ -612,11 +612,11 @@ impl App {
                         .editor()
                         .map(|e| (e.cursor_line, e.cursor_col, e.scroll_offset));
                 }
-                // Pre-fill search query with single-line selection
-                if let Some(ed) = self.editor() {
-                    if let Some(sel) = ed.selected_search_text() {
-                        self.search_query = sel;
-                    }
+                if let Some(sel) = self
+                    .diff_selected_search_text()
+                    .or_else(|| self.editor().and_then(Editor::selected_search_text))
+                {
+                    self.search_query = sel;
                 }
                 self.search_cursor = self.search_query.len();
                 self.search_selection_anchor = (!self.search_query.is_empty()).then_some(0);

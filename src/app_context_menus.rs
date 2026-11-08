@@ -68,9 +68,11 @@ impl App {
     }
 
     fn activate_explorer_context_menu(&mut self, x: u16, y: u16) {
+        self.clear_drag_states();
         self.explorer_context_pos = (x, y);
         self.explorer_context_inner = None;
         self.explorer_context_selected = 0;
+        self.explorer_context_scroll = 0;
         self.explorer_context_active = true;
     }
 

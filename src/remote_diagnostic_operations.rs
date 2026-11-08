@@ -539,6 +539,7 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             repo,
         ),
         Command::GitSources { file, .. } | Command::GitDiffSources { file, .. } => path("Git diff sources", file),
+        Command::GitFileStats { change, .. } => path("Read Git file statistics", &change.path),
         Command::HunkSources { file, .. } => path("Read hunk sources", file),
         Command::HunkAction(action) => path(
             match action.kind {

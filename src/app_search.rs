@@ -1194,25 +1194,23 @@ impl App {
         }
         if let Some(&(line, col, end)) = self.search_matches.get(self.search_current) {
             self.push_nav_history();
-            let diff = self.row_diff_active();
+            let mut diff = self.row_diff_active().then(|| {
+                (self.diff_render_cache.clone(), std::mem::take(&mut self.diff_inline_scroll))
+            });
             if let Some(editor) = self.editor_mut() {
                 editor.push_cursor_position();
                 editor.clear_selection();
                 let offset = (editor.rope.line_to_char(line) + end).min(editor.rope.len_chars());
                 let end_line = editor.rope.char_to_line(offset);
-                editor.set_cursor(end_line, offset - editor.rope.line_to_char(end_line));
+                let end_col = offset - editor.rope.line_to_char(end_line);
+                if let Some((cache, scroll)) = &mut diff {
+                    scroll.set_find_cursor(cache, editor, end_line, end_col);
+                } else {
+                    editor.set_find_cursor(end_line, end_col);
+                }
                 editor.selection_anchor = Some((line, col));
-                if !diff {
-                    editor.center_cursor();
-                }
             }
-            if diff {
-                let cache = self.diff_render_cache.clone();
-                let mut scroll = std::mem::take(&mut self.diff_inline_scroll);
-                if let Some(editor) = self.editor_mut() {
-                    scroll.layout(cache, editor);
-                    scroll.center_cursor(editor);
-                }
+            if let Some((_, scroll)) = diff {
                 self.diff_inline_scroll = scroll;
             }
             self.finish_navigation();
@@ -1327,7 +1325,7 @@ impl App {
         }
         self.adjust_search_selection_after_replace(&before, prepared.rope());
         self.last_edit_time = std::time::Instant::now();
-        self.notify(format!("Replaced {replacements} occurrences"));
+        self.notify(format!("Replaced {}", crate::helpers::counted(replacements, "occurrence", "occurrences")));
         self.update_search();
     }
 
@@ -1597,15 +1595,16 @@ impl App {
             self.notify_warn(format!("Workspace replacement did not finish: {error}"));
         } else if outcome.cancelled {
             self.notify(format!(
-                "Stopped replacement after {count} occurrences in {files} files"
+                "Stopped replacement after {} in {}",
+                crate::helpers::counted(count, "occurrence", "occurrences"), crate::helpers::counted(files, "file", "files")
             ));
         } else {
-            self.notify(format!("Replaced {count} occurrences in {files} files"));
+            self.notify(format!("Replaced {} in {}", crate::helpers::counted(count, "occurrence", "occurrences"), crate::helpers::counted(files, "file", "files")));
         }
         if outcome.failures > 0 {
             self.notify_warn(format!(
-                "Skipped {} files that failed or changed during replacement",
-                outcome.failures
+                "Skipped {} that failed or changed during replacement",
+                crate::helpers::counted(outcome.failures, "file", "files")
             ));
         }
         // A formerly closed file may have been opened/edited while disk work
@@ -1698,6 +1697,11 @@ impl App {
             let Some(entries) =
                 index.files_with_remote(&root, index_generation, watched, &cancel, remote.as_ref(), &excludes)
             else {
+                // A failed remote listing still finishes this search, so the
+                // picker leaves its loading state instead of waiting forever.
+                if !cancel.is_cancelled() {
+                    let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles { files: Vec::new(), generation }); // Error OK: receiver dropped means no listener
+                }
                 return;
             };
             let Some(files) = index.rank_files(&entries, &query, &cancel) else {

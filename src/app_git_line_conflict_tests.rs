@@ -245,6 +245,8 @@ fn unmerged_line_baselines_handle_deleted_sides_and_keep_real_head_and_index_sep
                 file: RemotePath::new(b"file.txt".to_vec()).unwrap(),
                 repository: None,
                 staged: false,
+                known: None,
+                max_bytes: None,
             })
             .unwrap()
         else {

@@ -96,6 +96,7 @@ impl Snapshot {
         // Index is large and not Send. Read it lazily, at most once per batch,
         // only when an uncached ignored path needs a tracked-file exception.
         let mut indices = FxHashMap::default();
+        let mut watched_parent: Option<PathBuf> = None;
         for entry in entries {
             if source_control_cancel.is_cancelled() || cancel.is_some_and(|cancel| cancel.is_cancelled()) {
                 break;
@@ -108,10 +109,13 @@ impl Snapshot {
                 metrics.hit();
                 cached.ignored
             } else {
-                if !self.unwatched {
-                    self.unwatched = entry.path.parent().is_some_and(|parent| {
-                        !crate::background::workspace_path_is_watched(&self.root, parent)
-                    });
+                if !self.unwatched
+                    && let Some(parent) = entry.path.parent()
+                    && watched_parent.as_deref() != Some(parent)
+                {
+                    // Siblings share the answer; check each parent once.
+                    self.unwatched = !crate::background::workspace_path_is_watched(&self.root, parent);
+                    watched_parent = Some(parent.to_owned());
                 }
                 let ignored = self.matcher.ignored(
                     &self.root,

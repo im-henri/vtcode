@@ -217,19 +217,22 @@ fn hiding_prunes_repository_caches_and_selections_without_io_or_losing_drafts() 
 
 fn completed_status(app: &App) -> crate::background::BackgroundResult {
     let deadline = Instant::now() + Duration::from_secs(15);
+    let mut progress = Vec::new();
     loop {
         let result = app
             .background
             .receiver
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .unwrap();
-        if let crate::background::BackgroundResult::SourceControlRead { result: inner, .. } =
-            &result
-            && let crate::background::BackgroundResult::GitRepositories { .. } = &**inner
+        if let crate::background::BackgroundResult::SourceControlRead { result: inner, .. } = &result
+            && let crate::background::BackgroundResult::GitRepositories { complete, .. } = &**inner
         {
-            return result;
+            if *complete {
+                for update in progress { app.background.sender.send(update).unwrap(); }
+                return result;
+            }
+            progress.push(result);
         }
-        // Consume the optional discovery announcement, not the final scan.
         assert!(Instant::now() < deadline);
     }
 }
@@ -255,6 +258,24 @@ fn enabling_while_a_tracked_only_scan_is_running_rejects_the_incomplete_reply() 
     settle(&mut app);
     assert_matches_full(&app, &root);
     assert_eq!(app.source_control_change_count(), 1);
+}
+
+#[test]
+fn enabling_untracked_during_startup_reloads_the_early_primary_snapshot() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    std::fs::write(root.join("new.txt"), "new\n").unwrap();
+    let mut app = app_at(&root);
+    visibility(&mut app, false);
+    app.refresh_source_control_async();
+    let old = completed_status(&app);
+    visibility(&mut app, true);
+    assert!(!app.bg_git_status_pending, "initial discovery has not been applied yet");
+    app.background.sender.send(old).unwrap();
+    settle(&mut app);
+    assert_matches_full(&app, &root);
+    assert!(app.source_control_files.iter().any(|file| file.path == "new.txt"));
 }
 
 #[test]

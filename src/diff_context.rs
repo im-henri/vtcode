@@ -75,20 +75,23 @@ impl App {
         let matched =
             self.search_active && self.search_matches.iter().any(|hit| Some(hit.0) == cursor);
         let reveal = if matched {
-            cursor.filter(|line| {
-                self.commit_details.context_revealed_line.is_some()
-                    || self
-                        .diff_render_cache
-                        .visible_target_lines
-                        .binary_search(line)
-                        .is_err()
-            })
+            cursor.filter(|line| self.diff_render_cache.visible_target_lines.binary_search(line).is_err())
+                .or(self.commit_details.context_revealed_line)
         } else {
             None
         };
         if reveal != self.commit_details.context_revealed_line {
+            let mut scroll = std::mem::take(&mut self.diff_inline_scroll);
             self.commit_details.context_revealed_line = reveal;
             self.rebuild_commit_diff_context();
+            if reveal.is_some() && scroll.text_area.height > 0 {
+                let cache = Arc::clone(&self.diff_render_cache);
+                if let Some(editor) = self.editor_mut() {
+                    scroll.layout(cache, editor);
+                    scroll.center_cursor(editor);
+                }
+                self.diff_inline_scroll = scroll;
+            }
         }
     }
 

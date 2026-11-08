@@ -292,6 +292,34 @@ impl Process {
         if status.is_some() { control.kill(); }
         Ok(status)
     }
+
+    /// Poll a tool that can launch a persistent service, such as Git's file
+    /// system monitor. Once the leader exits, release its descendants. Until
+    /// then, cancellation and Drop retain the usual process-tree ownership.
+    pub fn try_wait_preserving_children(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        let mut control = self.control.lock().unwrap_or_else(|e| e.into_inner());
+        let status = self.child.try_wait()?;
+        if status.is_some() && !control.terminated {
+            #[cfg(windows)]
+            {
+                use windows_sys::Win32::System::JobObjects::*;
+                // SAFETY: the locked Control owns this job. Clearing the
+                // kill-on-close limit lets an intentionally detached daemon
+                // outlive our handle; other callers keep the default policy.
+                unsafe {
+                    let limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                    if SetInformationJobObject(control.job as _, JobObjectExtendedLimitInformation,
+                        (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                        std::mem::size_of_val(&limits) as u32) == 0
+                    { return Err(io::Error::last_os_error()); }
+                }
+            }
+            // No group may be signalled after reaping its leader: the OS can
+            // reuse that PID. All kill paths and this release share the lock.
+            control.terminated = true;
+        }
+        Ok(status)
+    }
 }
 
 #[cfg(target_os = "linux")]

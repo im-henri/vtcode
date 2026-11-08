@@ -22,6 +22,8 @@ pub(crate) struct Query {
 #[derive(Debug, Serialize, Deserialize)]
 struct Find {
     text: String,
+    #[serde(default)]
+    directory: Option<RemotePath>,
     filter: bool,
     fuzzy: bool,
     regex: bool,
@@ -96,6 +98,7 @@ pub(crate) fn read(
         .map(|find| -> io::Result<_> {
             Ok(crate::explorer_find::Query {
                 text: find.text,
+                directory: find.directory.map(|path| path.resolve(root)).transpose()?,
                 filter: find.filter,
                 fuzzy: find.fuzzy,
                 regex: find.regex,
@@ -156,6 +159,7 @@ impl workspace::Workspace {
                 .map(|find| -> io::Result<_> {
                     Ok(Find {
                         text: find.text,
+                        directory: find.directory.as_deref().map(|path| self.remote_path(path)).transpose()?,
                         filter: find.filter,
                         fuzzy: find.fuzzy,
                         regex: find.regex,

@@ -595,23 +595,6 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
         return true;
     }
 
-    // Explorer context menu click
-    if app.explorer_context_active {
-        let items = app.explorer_context_menu_items();
-        if let Some(inner) = app.explorer_context_inner {
-            if inner.contains((col, row).into()) {
-                let idx = (row - inner.y) as usize;
-                if items.get(idx).is_some_and(|&i| i != "─") {
-                    app.explorer_context_selected = idx;
-                    app.execute_explorer_context(idx);
-                }
-                return true;
-            }
-        }
-        app.explorer_context_active = false;
-        return true;
-    }
-
     // Settings panel click
     if app.settings_active
         && handle_settings_mouse(app, col, row, term_w, term_h) {

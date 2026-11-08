@@ -290,6 +290,8 @@ fn copying_a_remote_path_preserves_native_spelling_instead_of_ui_escaping() {
     let hello = remote::Hello {
         version: remote::VERSION,
         app_version: env!("CARGO_PKG_VERSION").into(),
+        git_file_stats: false,
+        git_sources_limit: false,
         root: "/node/project".into(),
         root_uri: "file:///node/project/".into(),
         session: 42,

@@ -225,6 +225,16 @@ fn finish_refresh(request: DiffRefreshRequest, base: Arc<str>, target: crate::ed
 }
 
 impl DiffTabs {
+    pub(crate) fn row_scroll_mut(&mut self, kind: TabKind) -> Option<&mut crate::inline_diff::InlineDiffScroll> {
+        let id = match kind {
+            TabKind::Diff(id) => id,
+            TabKind::CommitDetails => COMMIT_DIFF_ID,
+            _ => return None,
+        };
+        self.views.get_mut(&id).filter(|view| view.mode != DiffMode::Off)
+            .map(|view| &mut view.inline_scroll)
+    }
+
     pub(crate) fn blame_files_for_tab(&self, tab: &Tab) -> Option<&(Option<Arc<crate::git_blame::Revision>>, Arc<crate::git_blame::Revision>)> {
         let TabKind::Diff(id) = tab.kind else { return None; };
         self.blame_revisions.get(&id)
@@ -403,11 +413,16 @@ impl App {
             return true;
         }
         if self.row_diff_active() && self.diff_inline_scroll.area.contains(point) {
-            let mut scroll = std::mem::take(&mut self.diff_inline_scroll);
-            if let Some(editor) = self.editor_mut() {
-                scroll.scroll(editor, horizontal, delta);
+            if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                if horizontal {
+                    tab.editor.refresh_document();
+                    self.diff_inline_scroll.scroll(&mut tab.editor, true, delta);
+                } else {
+                    crate::smooth_scroll::scroll_rows(
+                        self.wheel_scroll.as_mut(), tab, Some(&mut self.diff_inline_scroll), delta,
+                    );
+                }
             }
-            self.diff_inline_scroll = scroll;
             return true;
         }
         for (index, group) in self.groups.iter_mut().enumerate() {
@@ -435,7 +450,13 @@ impl App {
                 return true;
             }
             if view.mode != DiffMode::Off && view.inline_scroll.area.contains(point) {
-                view.inline_scroll.scroll(&mut tab.editor, horizontal, delta);
+                if horizontal {
+                    view.inline_scroll.scroll(&mut tab.editor, true, delta);
+                } else {
+                    crate::smooth_scroll::scroll_rows(
+                        self.wheel_scroll.as_mut(), tab, Some(&mut view.inline_scroll), delta,
+                    );
+                }
                 return true;
             }
         }
@@ -992,6 +1013,12 @@ impl App {
         self.terminal_panel_focused = false;
         self.settings_editor_active = false;
         self.touch_tab_mru(self.active_tab);
+        self.reveal_opened_diff_tab();
+    }
+
+    fn reveal_opened_diff_tab(&mut self) {
+        self.tab_scroll_manual_anchor = None;
+        self.tab_strip_scroll = None;
         self.ensure_active_tab_visible();
     }
 
@@ -1076,12 +1103,40 @@ impl App {
                 self.diff_tabs.dirty.insert(id);
                 self.status_message = format!("Updating diff: {}", self.editor().unwrap().file_display_name());
             } else if !deleted && !staged {
-                self.queue_background_file_load(path, true);
+                if let Some(loaded) = self.remote_open_editor_snapshot(&path) {
+                    // Same delivery path as a completed read, without the read.
+                    let _ = self.background.sender.send(crate::app_tabs::loaded_file_result(
+                        self.workspace_generation, path, loaded, true));
+                } else {
+                    self.queue_background_file_load(path, true);
+                }
             }
         }
         self.active_pane = ActivePane::Editor;
         self.touch_tab_mru(self.active_tab);
         self.sync_diff_tab();
+        self.reveal_opened_diff_tab();
+    }
+
+    /// Over SSH, an unmodified editor for the same path already holds the
+    /// worktree text and its saved checkpoint, kept current by the remote
+    /// watcher like the editor itself. Opening its diff reuses that snapshot
+    /// instead of downloading the whole file again.
+    fn remote_open_editor_snapshot(&self, path: &Path) -> Option<crate::editor::LoadedTextFile> {
+        self.remote_workspace.as_ref()?;
+        self.tabs.iter().chain(self.groups.iter().flat_map(|group| group.tabs.iter()))
+            .filter(|tab| matches!(tab.kind, TabKind::File))
+            .map(|tab| &tab.editor)
+            .find(|editor| !editor.bg_loading && !editor.modified && !editor.load_failed
+                && !editor.disk_unavailable && editor.remote_checkpoint.is_some()
+                && editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, path)))
+            .map(|editor| crate::editor::LoadedTextFile {
+                rope: editor.rope.clone(),
+                encoding: editor.encoding,
+                file_size: editor.file_size,
+                last_disk_modified: editor.last_disk_modified,
+                remote_checkpoint: editor.remote_checkpoint.clone(),
+            })
     }
 
     /// Compare a blamed commit with its parent without changing the working file.
@@ -1095,6 +1150,7 @@ impl App {
             self.active_tab = index;
             self.sync_diff_tab();
             if let Some(editor) = self.editor_mut() { editor.set_cursor(history.line, 0); }
+            self.reveal_opened_diff_tab();
             return;
         }
         self.suspend_diff_tab();
@@ -1127,6 +1183,7 @@ impl App {
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;
         self.touch_tab_mru(self.active_tab);
+        self.reveal_opened_diff_tab();
     }
 
     /// An immutable agent-provided snapshot uses the native diff renderer but
@@ -1158,6 +1215,7 @@ impl App {
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;
         self.touch_tab_mru(self.active_tab);
+        self.reveal_opened_diff_tab();
     }
 
     // Split rendering temporarily swaps the visible tab list. Project its

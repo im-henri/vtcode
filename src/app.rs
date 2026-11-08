@@ -121,6 +121,7 @@ pub(crate) struct App {
     pub(crate) open_editors_scroll_anchor: Option<(usize, u64)>,
     pub show_minimap: bool,
     pub minimap_width: u16,
+    pub(crate) minimap_resize: crate::ui_minimap_resize::State,
     pub show_panel: bool,
     pub show_line_numbers: bool,
     pub relative_line_numbers: bool,
@@ -149,6 +150,8 @@ pub(crate) struct App {
         std::cell::RefCell<Option<crate::ui_chrome_tabs::TabAnimationCache>>,
     pub(crate) tab_name_cache: std::cell::RefCell<crate::ui_chrome_tabs::NameCache>,
     pub scroll_speed: usize,
+    /// A live event loop drives the remaining rows after the input frame.
+    pub(crate) wheel_scroll: Option<crate::smooth_scroll::WheelScroll>,
     pub language_associations: rustc_hash::FxHashMap<String, String>,
     pub cursor_style: CursorStyle, // line, block, or underline
     pub last_blink: std::time::Instant,
@@ -304,6 +307,10 @@ pub(crate) struct App {
     /// and worker-backed for all files rather than preloading whole documents.
     pub(crate) visible_highlight_key: Option<VisibleHighlightKey>,
     pub(crate) visible_highlight_cancel_token: Option<crate::background::CancellationToken>,
+    /// Idle, cancellable pass that extends exact parser checkpoints through
+    /// the rest of the active document (no spans are cached), so far jumps
+    /// resume nearby instead of tokenizing from the top.
+    pub(crate) highlight_prefetch: Option<crate::app_tabs::HighlightPrefetch>,
     /// Last viewport for which a fast provisional TextMate pass was submitted.
     /// Keeping this separate prevents each authoritative 40 ms slice from
     /// enqueuing duplicate provisional work while it advances toward the view.
@@ -317,6 +324,8 @@ pub(crate) struct App {
     pub explorer_context_pos: (u16, u16),
     pub explorer_context_inner: Option<ratatui::layout::Rect>,
     pub explorer_context_selected: usize,
+    pub(crate) explorer_context_scroll: usize,
+    pub(crate) explorer_context_scrollbar_drag: Option<(u16, usize)>,
     pub explorer_context_target: Option<PathBuf>,
     pub explorer_context_extension_commands: Vec<crate::extensions::ExtensionContextCommand>,
     pub explorer_clipboard: Option<crate::app_explorer::FileClipboard>,
@@ -706,6 +715,7 @@ pub(crate) struct App {
     pub(crate) source_control_actions_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_refresh_area: Option<ratatui::layout::Rect>,
     pub(crate) source_control_file_actions: Vec<crate::ui_source_control::FileActionRow>,
+    pub(crate) source_control_file_hover: crate::app_source_control_hover::State,
     /// Git status ordered merge, staged, unstaged, untracked, then path within each group.
     pub source_control_files: Vec<GitFileChange>,
     pub(crate) source_control_selection: crate::app_source_control::SourceControlSelection,
@@ -808,6 +818,10 @@ pub(crate) struct App {
     pub cached_sticky_lines: Vec<(usize, String)>,
     pub cached_sticky_key: u64,
     pub(crate) cached_sticky_scopes: std::sync::Arc<[crate::background::StickyScopeLine]>,
+    /// Last whole-file analysis per open document, so switching tabs shows
+    /// its counts, scrollbar width and sticky scopes at once (and skips the
+    /// worker for unchanged content) instead of painting zeros first.
+    pub(crate) editor_analysis_memo: crate::app_event_loop::AnalysisMemo,
     // Cached bracket guides (invalidated on scroll/content change)
     pub(crate) cached_bracket_guides: crate::ui_editor_highlight::BracketGuides,
     pub(crate) cached_bracket_analysis_target: Option<crate::background::BracketAnalysisTarget>,
@@ -1181,6 +1195,7 @@ impl App {
             open_editors_scroll_anchor: None,
             show_minimap: true,
             minimap_width: 10,
+            minimap_resize: Default::default(),
             show_panel: false,
             show_line_numbers: true,
             relative_line_numbers: false,
@@ -1202,6 +1217,7 @@ impl App {
             tab_animation_cache: Default::default(),
             tab_name_cache: Default::default(),
             scroll_speed: 3,
+            wheel_scroll: None,
             language_associations: rustc_hash::FxHashMap::default(),
             cursor_style: CursorStyle::Line,
             last_blink: std::time::Instant::now(),
@@ -1336,6 +1352,7 @@ impl App {
             vtcomplete_input_batch: crate::app_vtcomplete::InputBatch::default(),
             visible_highlight_key: None,
             visible_highlight_cancel_token: None,
+            highlight_prefetch: None,
             provisional_highlight_key: None,
             provisional_highlight_cancel_token: None,
             quick_suggestions: true,
@@ -1343,6 +1360,8 @@ impl App {
             explorer_context_pos: (0, 0),
             explorer_context_inner: None,
             explorer_context_selected: 0,
+            explorer_context_scroll: 0,
+            explorer_context_scrollbar_drag: None,
             explorer_context_target: None,
             explorer_context_extension_commands: Vec::new(),
             explorer_clipboard: None,
@@ -1691,6 +1710,7 @@ impl App {
             source_control_actions_area: None,
             source_control_refresh_area: None,
             source_control_file_actions: Vec::new(),
+            source_control_file_hover: Default::default(),
             source_control_files: Vec::new(),
             source_control_selection: Default::default(),
             source_control_selected: 0,
@@ -1760,6 +1780,7 @@ impl App {
             tab_context_selected: 0,
             cached_git_branch: String::new(),
             cached_error_count: 0,
+            editor_analysis_memo: Default::default(),
             cached_warning_count: 0,
             cached_max_line_width: 0,
             cached_editor_word_count: 0,
@@ -2044,6 +2065,7 @@ impl App {
                     | crate::background::BackgroundResult::GitLineDiff { .. }
                     | crate::background::BackgroundResult::GitCompare { .. }
                     | crate::background::BackgroundResult::SourceControlDiffs { .. }
+                    | crate::background::BackgroundResult::SourceControlFileStats(_)
                     | crate::background::BackgroundResult::DiffRefresh { .. }
                     | crate::background::BackgroundResult::EditorAnalysis { .. }
                     | crate::background::BackgroundResult::EditorWorkCancelled { .. }
@@ -2141,15 +2163,18 @@ impl App {
                 crate::background::BackgroundResult::RemoteFileResult { .. } => unreachable!("nested remote file result"),
                 crate::background::BackgroundResult::WorkspaceResult { .. } => unreachable!("nested workspace result"),
                 crate::background::BackgroundResult::FileWatcherEvent { .. } => unreachable!("nested watcher result"),
-                crate::background::BackgroundResult::GitRepositories { root, workspace_generation, repository_generation, discovery, scans } => {
+                crate::background::BackgroundResult::GitRepositories {
+                    root, workspace_generation, repository_generation, complete, include_untracked, discovery, scans,
+                } => {
                     if root != self.explorer.root || workspace_generation != self.workspace_generation { continue; }
                     let obsolete = repository_generation != self.repositories.membership_generation
-                        || (self.sc_visibility.untracked && scans.iter().any(|scan| !scan.include_untracked));
+                        || (self.sc_visibility.untracked && !include_untracked);
                     if obsolete {
                         self.background.spawn("stale-git-status-drop", move || drop((discovery, scans)));
                     } else {
-                        has_visual_changes |= self.apply_repository_scan(root, workspace_generation, discovery, scans);
+                        has_visual_changes |= self.apply_repository_scan(root, workspace_generation, discovery, scans, complete);
                     }
+                    if !complete { continue; }
                     self.bg_git_status_running = false;
                     self.bg_git_status_passive = false;
                     if obsolete {
@@ -2174,13 +2199,14 @@ impl App {
                         self.refresh_git_branch_async();
                     }
                 }
-                crate::background::BackgroundResult::GitRepositoryFound { root, workspace_generation, repository_generation } => {
+                crate::background::BackgroundResult::GitRepositoryFound { root, workspace_generation, repository_generation, repository } => {
                     if self.explorer.root == root
                         && self.workspace_generation == workspace_generation
                         && self.repositories.membership_generation == repository_generation
                         && matches!(self.source_control_repository_state,
-                            SourceControlRepositoryState::Checking | SourceControlRepositoryState::Missing)
+                            SourceControlRepositoryState::Checking | SourceControlRepositoryState::Missing | SourceControlRepositoryState::Loading)
                     {
+                        self.repositories.loading_root = Some(repository);
                         self.source_control_repository_state = SourceControlRepositoryState::Loading;
                         has_visual_changes = true;
                     }
@@ -2237,6 +2263,9 @@ impl App {
                         }
                         self.explorer_hover_info_cache.insert(info.path.clone(), info);
                     }
+                }
+                crate::background::BackgroundResult::SourceControlFileStats(stats) => {
+                    has_visual_changes |= crate::app_source_control_hover::finish(self, stats);
                 }
                 crate::background::BackgroundResult::FolderBrowserEntries { path, generation, entries, modified, locations, error } => {
                     if self.folder_browser_path == path && self.folder_browser.generation == generation {
@@ -2369,7 +2398,7 @@ impl App {
                             if outcome.reload_all_clean_files {
                                 self.queue_all_clean_file_reloads();
                             }
-                            self.refresh_git_branch_async();
+                            if outcome.refresh_log { self.refresh_git_branch_async(); }
                             self.notify(outcome.message);
                         }
                         Err(error) => {
@@ -3153,6 +3182,7 @@ impl App {
                                 tab.editor.bg_loading = false;
                                 tab.editor.pending_cursor_position = None;
                                 tab.editor.pending_navigation_selection = None;
+                                tab.editor.pending_cursor_center = None;
                                 tab.editor.disk_unavailable = true;
                             }
                             applied = true;
@@ -3614,6 +3644,12 @@ impl App {
                         self.cached_editor_analysis_target = Some(target.clone());
                         self.cached_sticky_scopes = sticky_scopes;
                         self.cached_sticky_key = u64::MAX;
+                        if let Some(content) = self.editor().map(|editor| (editor.navigation_id, editor.content_version, editor.rope.len_bytes())) {
+                            self.editor_analysis_memo.remember(content, crate::app_event_loop::AnalysisSummary {
+                                errors, warnings, max_line_width, word_count,
+                                sticky_scopes: self.cached_sticky_scopes.clone(),
+                            });
+                        }
                         if let Some(editor) = self.editor_mut() {
                             editor.apply_unsaved_diff_cache(
                                 target.content_version,
@@ -4730,7 +4766,7 @@ impl App {
                 line_start += line.len_chars();
             }
             match crate::app_lsp_edits::apply_prepared(editor, edits) {
-                Ok(count) => self.notify(format!("Renamed '{old}' → '{new}' ({count} occurrences)")),
+                Ok(count) => self.notify(format!("Renamed '{old}' → '{new}' ({})", crate::helpers::counted(count, "occurrence", "occurrences"))),
                 Err(error) => self.notify_error(error),
             }
         }

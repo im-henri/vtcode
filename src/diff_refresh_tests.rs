@@ -784,3 +784,31 @@ fn benchmark_conditional_git_diff_sources() {
         timings[1][4]
     );
 }
+
+#[test]
+fn remote_diffs_of_open_files_reuse_the_editor_snapshot_and_cached_index_blob() {
+    let mut f = Fixture::new(true);
+    f.app.open_file(&f.paths[0]);
+    f.app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    // Gutter markers fetch (and cache) the index blob, as an opened file does.
+    f.app.refresh_git_line_status_async();
+    f.app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_diff_running);
+    // A large, incompressible worktree file would otherwise be read again.
+    let large: String = (0..20_000u64).map(|i| format!("line {i} {:x}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15))).collect();
+    f.write(1, &large);
+    let before = f.received.load(Ordering::Relaxed);
+    f.open(0, false);
+    let downloaded = f.received.load(Ordering::Relaxed) - before;
+    assert_eq!(f.app.editor().unwrap().rope.to_string(), "worktree\n");
+    assert_eq!(f.app.compare_base_content.as_deref(), Some("original\n"));
+    assert!(f.app.compare_diff_lines.iter().any(|(kind, text)| *kind == '-' && text == "original"));
+    assert!(f.app.compare_diff_lines.iter().any(|(kind, text)| *kind == '+' && text == "worktree"));
+    assert!(downloaded < 4_096, "diff of an open file downloaded {downloaded} bytes");
+
+    // Unsaved edits are never the diff target: the worktree is read instead.
+    f.app.open_file(&f.paths[1]);
+    f.app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    f.app.editor_mut().unwrap().insert_char('!');
+    f.open(1, false);
+    assert_eq!(f.app.editor().unwrap().rope.to_string(), large);
+}

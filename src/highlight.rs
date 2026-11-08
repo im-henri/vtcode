@@ -374,6 +374,8 @@ pub(crate) struct HighlightJob {
     stale_checkpoints: Vec<(usize, CachedCheckpoint)>,
     first_line: Arc<str>,
     provisional: bool,
+    /// Idle background pass that only extends parser checkpoints.
+    prefetch: bool,
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -400,6 +402,7 @@ pub(crate) struct HighlightBatch {
     pub entries: Vec<HighlightEntry>,
     converged_at: Option<usize>,
     provisional: bool,
+    prefetch: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -486,8 +489,16 @@ impl HighlightJob {
             // it in one worker pass avoids repeatedly repainting only its first
             // few lines when an expensive grammar exhausts the normal slice.
             let inside_visible = self.visible.contains(&line);
-            if cancelled() || (!self.provisional && !inside_visible && started.elapsed() >= budget)
+            let cancel = cancelled();
+            if cancel || (!self.provisional && !inside_visible && started.elapsed() >= budget)
             {
+                // A slice that ran out of time resumes exactly here instead
+                // of re-parsing up to a checkpoint interval next time.
+                if !cancel && !self.provisional && line > self.parse_start
+                    && checkpoints.last().is_none_or(|&(last, _, _)| last != line)
+                {
+                    checkpoints.push((line, self.start_line_offset, Arc::new(state.clone())));
+                }
                 break;
             }
 
@@ -607,6 +618,7 @@ impl HighlightJob {
             entries,
             converged_at,
             provisional: self.provisional,
+            prefetch: self.prefetch,
         }
     }
 
@@ -648,6 +660,7 @@ impl HighlightJob {
             entries,
             converged_at: None,
             provisional: self.provisional,
+            prefetch: self.prefetch,
         }
     }
 }
@@ -1347,7 +1360,42 @@ impl Highlighter {
             stale_checkpoints,
             first_line,
             provisional: false,
+            prefetch: false,
         })
+    }
+
+    /// Extend exact parser checkpoints toward the end of an otherwise warm
+    /// document. Jumps far into a large file (Ctrl+End, search results,
+    /// definitions, scrollbar drags) then resume from a nearby checkpoint
+    /// instead of tokenizing from the top while provisional colors show.
+    /// Each batch is bounded by the regular per-slice line limit; applying
+    /// it schedules the next slice. Returns `None` once the end is current.
+    pub(crate) fn prepare_prefetch_job(
+        &mut self,
+        rope: &Rope,
+        file_path: &Path,
+        content_version: u64,
+        language: Option<&str>,
+        theme_key: &str,
+    ) -> Option<HighlightJob> {
+        let line_count = rope.len_lines();
+        // Only continue a document whose visible pass already prepared this
+        // exact version; never let a background pass reset or advance it.
+        // Pending edits are fine: the pass repairs stale checkpoints until
+        // the parser state converges with them again.
+        let cache = self.documents.get(file_path)?;
+        if line_count == 0
+            || cache.version != content_version
+            || cache.line_count != line_count
+            || cache.syntax_generation != self.registry_generation
+            || !cache.render_context_matches(theme_key, language)
+        {
+            return None;
+        }
+        let mut job = self.prepare_job(rope, file_path, content_version, None,
+            line_count - 1..line_count, language, theme_key)?;
+        job.prefetch = true;
+        Some(job)
     }
 
     /// Build a bounded best-effort viewport pass when the exact parser state
@@ -1395,6 +1443,7 @@ impl Highlighter {
             stale_checkpoints: Vec::new(),
             first_line: authoritative.first_line.clone(),
             provisional: true,
+            prefetch: false,
         })
     }
 
@@ -1526,7 +1575,9 @@ impl Highlighter {
             cache.dirty_through = None;
         }
 
-        cache.trim_lines(&batch.visible);
+        // A checkpoint pass targets the last line, not the viewport; trimming
+        // around it would evict the colors the user is looking at.
+        if !batch.prefetch { cache.trim_lines(&batch.visible); }
         self.evict_old_documents(&batch.file_path);
         HighlightApplyOutcome {
             accepted: true,

@@ -98,6 +98,38 @@ fn scroll_repositories_at(app: &mut App, col: u16, row: u16, down: bool) -> bool
     true
 }
 
+fn scroll_split_editor_at(app: &mut App, col: u16, row: u16, delta: isize) -> bool {
+    if !app.split_active() {
+        return false;
+    }
+    for (index, group) in app.groups.iter_mut().enumerate() {
+        if index == app.active_group || group.desk != app.desks.active {
+            continue;
+        }
+        let Some(code) = group.code_area else { continue; };
+        let area = group.editor_area.unwrap_or(code);
+        if col >= area.x && col < area.right() && row >= code.y && row < code.bottom() {
+            if let Some(tab) = group.tabs.get_mut(group.active_tab) {
+                crate::smooth_scroll::scroll_rows(app.wheel_scroll.as_mut(), tab, None, delta);
+            }
+            return true;
+        }
+    }
+    false
+}
+
+fn scroll_active_editor(app: &mut App, delta: isize) {
+    let row_diff = app.row_diff_active();
+    if row_diff {
+        // A fallback outside the rendered diff scrolls the source position.
+        app.cancel_wheel_scroll();
+    }
+    if let Some(tab) = app.tabs.get_mut(app.active_tab) {
+        let driver = if row_diff { None } else { app.wheel_scroll.as_mut() };
+        crate::smooth_scroll::scroll_rows(driver, tab, None, delta);
+    }
+}
+
 /// Handle scroll-up events in the main editor view.
 pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: KeyModifiers) {
     let shift_scroll = modifiers.contains(KeyModifiers::SHIFT);
@@ -124,6 +156,7 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
     if app.scroll_markdown_preview_at(col, row, -(spd as isize)) {
         return;
     }
+    if shift_scroll { app.cancel_wheel_scroll(); }
     if app.scroll_diff_at(col, row, shift_scroll, if shift_scroll { -6 } else { -(spd as isize) }) {
         return;
     }
@@ -183,26 +216,8 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
             return;
         }
     }
-    // Check if scrolling on a non-active split group
-    if app.split_active() {
-        for (gi, group) in app.groups.iter_mut().enumerate() {
-            if gi == app.active_group { continue; }
-            if let Some(ca) = group.code_area {
-                let (scroll_x, scroll_w) = group
-                    .editor_area
-                    .map_or((ca.x, ca.width), |ea| (ea.x, ea.width));
-                if col >= scroll_x
-                    && col < scroll_x + scroll_w
-                    && row >= ca.y
-                    && row < ca.y + ca.height
-                {
-                    if let Some(tab) = group.tabs.get_mut(group.active_tab) {
-                        tab.editor.scroll_up(spd);
-                    }
-                    return;
-                }
-            }
-        }
+    if scroll_split_editor_at(app, col, row, -(spd as isize)) {
+        return;
     }
     // Terminal dock scrollback (scroll up)
     if let Some(index) = docked_terminal_at(app, col, row) {
@@ -211,9 +226,7 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
         }
         return;
     }
-    if let Some(ed) = app.editor_mut() {
-        ed.scroll_up(spd);
-    }
+    scroll_active_editor(app, -(spd as isize));
 }
 
 /// Handle scroll-down events in the main editor view.
@@ -242,6 +255,7 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
     if app.scroll_markdown_preview_at(col, row, spd as isize) {
         return;
     }
+    if shift_scroll { app.cancel_wheel_scroll(); }
     if app.scroll_diff_at(col, row, shift_scroll, if shift_scroll { 6 } else { spd as isize }) {
         return;
     }
@@ -307,26 +321,8 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
             return;
         }
     }
-    // Check if scrolling on a non-active split group
-    if app.split_active() {
-        for (gi, group) in app.groups.iter_mut().enumerate() {
-            if gi == app.active_group { continue; }
-            if let Some(ca) = group.code_area {
-                let (scroll_x, scroll_w) = group
-                    .editor_area
-                    .map_or((ca.x, ca.width), |ea| (ea.x, ea.width));
-                if col >= scroll_x
-                    && col < scroll_x + scroll_w
-                    && row >= ca.y
-                    && row < ca.y + ca.height
-                {
-                    if let Some(tab) = group.tabs.get_mut(group.active_tab) {
-                        tab.editor.scroll_down(spd);
-                    }
-                    return;
-                }
-            }
-        }
+    if scroll_split_editor_at(app, col, row, spd as isize) {
+        return;
     }
     // Terminal dock scrollback (scroll down)
     if let Some(index) = docked_terminal_at(app, col, row) {
@@ -335,9 +331,7 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
         }
         return;
     }
-    if let Some(ed) = app.editor_mut() {
-        ed.scroll_down(spd);
-    }
+    scroll_active_editor(app, spd as isize);
 }
 
 /// Handle scroll-left events.

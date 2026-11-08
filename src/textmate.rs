@@ -193,6 +193,10 @@ const BUNDLED_OVERRIDES: &[(&str, &[u8])] = &[
         "ignore",
         include_bytes!("../grammars/Git/ignore.tmLanguage.json"),
     ),
+    (
+        "antlr",
+        include_bytes!("../grammars/ANTLR4/antlr.tmLanguage.json"),
+    ),
 ];
 
 #[derive(Deserialize)]

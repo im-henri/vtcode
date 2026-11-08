@@ -18,6 +18,7 @@ pub(crate) fn is_git_command(command: &Command) -> bool {
             | Command::GitNetwork { .. }
             | Command::GitSources { .. }
             | Command::GitDiffSources { .. }
+            | Command::GitFileStats { .. }
             | Command::HunkSources { .. }
             | Command::HunkAction(_)
             | Command::CommitDetails { .. }

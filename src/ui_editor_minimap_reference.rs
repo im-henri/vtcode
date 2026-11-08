@@ -1,4 +1,4 @@
-//! Previous Paragraph renderer retained only as a pixel/style oracle in tests.
+//! Uncached Paragraph renderer used as a pixel/style oracle in tests.
 use super::*;
 
 pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
@@ -19,13 +19,14 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
     let height = area.height as usize;
     let width = area.width as usize;
     let total_lines = editor.rope.len_lines();
-    if height == 0 || total_lines == 0 {
+    let visible_total = editor.visible_line_count();
+    if height == 0 || width == 0 || total_lines == 0 {
         return;
     }
 
     let layout = MinimapLayout::new(
-        total_lines,
-        scroll,
+        visible_total,
+        editor.visible_row_for_line(scroll),
         visible_lines,
         height,
         editor.scroll_past_end,
@@ -39,7 +40,8 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
     let spaces_pool: &str = &crate::helpers::spaces(width.max(1));
 
     let mut lines: Vec<Line> = Vec::with_capacity(height);
-    let mut chars_buf: Vec<char> = Vec::with_capacity(width * 2);
+    let mut glyphs = Vec::new();
+    let mut raster = Vec::new();
     let mut spans: Vec<Span> = Vec::with_capacity(width + 1);
     let mut batch_buf = String::with_capacity(width);
     let marker_max_width = if width == 0 { 0 } else { width.clamp(1, 3) };
@@ -53,9 +55,9 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
         colors.ui.bg_minimap_slider
     };
     for row in 0..height {
-        let (source_line, row_end_line) = minimap_source_range(window, row, height);
-        let source_line = source_line.min(total_lines);
-        let row_end_line = row_end_line.min(total_lines);
+        let (source_row, end_row) = minimap_source_range(window, row, height);
+        let source_line = editor.line_for_visible_row(source_row.min(visible_total));
+        let row_end_line = editor.line_for_visible_row(end_row.min(visible_total));
         let in_viewport = row >= view_start_row && row < view_end_row;
         let has_search_match = has_search_match_in_range(search_matches, source_line, row_end_line);
         let has_bookmark = editor
@@ -101,17 +103,14 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
         };
 
         if source_line < total_lines {
-            let line = editor.rope.line(source_line);
             spans.clear();
-            chars_buf.clear();
-            let max_chars = width * 2;
-            'line_scan: for chunk in line.chunks() {
-                for c in chunk.chars() {
-                    if c == '\n' || c == '\r' || chars_buf.len() >= max_chars {
-                        break 'line_scan;
-                    }
-                    chars_buf.push(c);
-                }
+            raster.clear();
+            raster.resize(width, cache::MiniCell { glyph: Glyph::Blank, dots: 0 });
+            for (source, dots) in minimap_samples(source_row, end_row) {
+                if source >= visible_total { continue; }
+                cache::MinimapCache::decode(&mut glyphs, &editor.rope,
+                    editor.line_for_visible_row(source), width, editor.tab_size);
+                for (cell, &glyph) in raster.iter_mut().zip(&glyphs) { cell.add(glyph, dots); }
             }
             let diff_colors = minimap_diff_colors(diff_status, bg, &colors);
             let override_bg = if has_search_match {
@@ -136,46 +135,26 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
             let content_width = width.saturating_sub(marker_width);
             let mut batch_style = Style::default().bg(row_bg);
             batch_buf.clear();
-            let mut ci = 0usize;
             let mut rendered_cols = 0usize;
-            while ci < content_width * 2 && ci < chars_buf.len() {
-                if ci.is_multiple_of(2) {
-                    let c = chars_buf[ci];
-                    let c2 = chars_buf.get(ci + 1).copied().unwrap_or(' ');
-                    let (ch, style) = if c.is_whitespace() && c2.is_whitespace() {
-                        (' ', Style::default().bg(row_bg))
-                    } else {
-                        let fg = if has_search_match {
-                            colors.ui.fg_minimap_find
-                        } else if has_bookmark {
-                            colors.fg_bookmark
-                        } else {
-                            let is_alpha = c.is_alphabetic() || c == '_';
-                            let is_string = c == '"' || c == '\'' || c == '`';
-                            let is_num = c.is_ascii_digit();
-                            let is_punct = !c.is_whitespace() && !is_alpha && !is_num && !is_string;
-                            if is_string {
-                                dim_color(colors.fg_text, 150, row_bg)
-                            } else if is_num {
-                                dim_color(colors.fg_text, 160, row_bg)
-                            } else if is_punct {
-                                dim_color(colors.fg_text, 140, row_bg)
-                            } else if in_viewport {
-                                colors.fg_text
-                            } else {
-                                colors.fg_dim
-                            }
-                        };
-                        ('▪', Style::default().fg(fg).bg(row_bg))
-                    };
-                    if style != batch_style && !batch_buf.is_empty() {
-                        spans.push(Span::styled(std::mem::take(&mut batch_buf), batch_style));
-                    }
-                    batch_style = style;
-                    batch_buf.push(ch);
-                    rendered_cols += 1;
+            for cell in raster.iter().take(content_width) {
+                let style = if cell.glyph == Glyph::Blank { Style::default().bg(row_bg) } else {
+                    let fg = if has_search_match { colors.ui.fg_minimap_find }
+                    else if has_bookmark { colors.fg_bookmark }
+                    else { match cell.glyph {
+                        Glyph::String => dim_color(colors.fg_text, 150, row_bg),
+                        Glyph::Number => dim_color(colors.fg_text, 160, row_bg),
+                        Glyph::Punctuation => dim_color(colors.fg_text, 140, row_bg),
+                        _ if in_viewport => colors.fg_text,
+                        _ => colors.fg_dim,
+                    }};
+                    Style::default().fg(fg).bg(row_bg)
+                };
+                if style != batch_style && !batch_buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut batch_buf), batch_style));
                 }
-                ci += 1;
+                batch_style = style;
+                batch_buf.push(cell.symbol());
+                rendered_cols += 1;
             }
             if !batch_buf.is_empty() {
                 spans.push(Span::styled(std::mem::take(&mut batch_buf), batch_style));

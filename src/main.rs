@@ -57,6 +57,7 @@ mod hunk_preview;
 mod app_git_branch;
 mod app_git_display;
 mod app_source_control;
+mod app_source_control_hover;
 mod app_global_search;
 mod app_layout;
 mod app_desks;
@@ -214,6 +215,7 @@ mod mouse_dialogs;
 mod mouse_drag;
 mod mouse_overlay;
 mod mouse_scroll;
+mod smooth_scroll;
 mod mouse_selection;
 mod session;
 mod startup;
@@ -254,6 +256,8 @@ mod git_diff_sources;
 mod inline_diff;
 mod git_history;
 mod git_repositories;
+mod git_ignore;
+mod git_status;
 mod git_trust;
 mod git_blame;
 mod editor_blame;
@@ -286,6 +290,7 @@ mod animation_ui_tests;
 mod ui_diff_animation_tests;
 mod ui_editor_highlight;
 mod ui_editor_minimap;
+mod ui_minimap_resize;
 mod ui_extension_info;
 mod ui_extensions;
 #[cfg(test)]
@@ -355,7 +360,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::backend::CrosstermBackend;
 
 fn startup_file_directory(path: &Path) -> PathBuf {
     path.parent()
@@ -375,6 +379,13 @@ mod startup_highlight_tests;
 mod startup_performance_tests;
 
 fn main() {
+    // libgit2's strict object creation re-reads the header of every object a
+    // new tree or commit references. Committing beside 3,000 changed files
+    // opened every loose blob first: write_tree took 14.5 s instead of 8 ms.
+    // vtcode writes trees only from index entries and objects it has just
+    // written, so the check repeats work (Git's own write-tree only checks
+    // that objects exist). This covers the workbench and headless service.
+    git2::opts::strict_object_creation(false);
     if let Err(error) = run_main() {
         eprintln!("error: {error}");
         std::process::exit(1);
@@ -458,7 +469,7 @@ fn run_main() -> io::Result<()> {
         console_input.use_alternate_screen_coordinates();
         console_input.enable_virtual_terminal_input()?;
     }
-    let backend = CrosstermBackend::new(terminal_output::buffered_output(stdout));
+    let backend = terminal_output::AnsiBackend::new(terminal_output::buffered_output(stdout));
     let mut terminal = terminal_output::event_driven_terminal(backend)?;
     startup_timings.mark("terminal_ready");
     {

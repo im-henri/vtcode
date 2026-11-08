@@ -524,9 +524,10 @@ mod tests {
         assert_eq!(WalkDir::new(&folder).into_iter().filter_map(Result::ok)
             .filter(|e|e.file_type().is_file() && e.path().extension().is_some_and(|s|s=="sublime-syntax")).count(),0);
         let syntax_set=load_installed_syntax_set(Some(&folder)).unwrap();
-        assert_eq!(syntax_set.sources.len(), 6, "the runtime cache contains the overrides, not a second copy of the bundled catalog");
+        assert_eq!(syntax_set.sources.len(), 7, "the runtime cache contains the overrides, not a second copy of the bundled catalog");
         assert!(syntax_set.syntaxes().len()>=258);
         assert!(syntax_set.find_syntax_by_name("Rust").is_some());
+        assert!(syntax_set.find_syntax_by_name("ANTLR4").is_some());
         assert!(syntax_set.find_syntax_by_name("PowerShell").is_some());
         assert!(syntax_set.find_syntax_by_name("TypeScript").is_some());
         assert!(syntax_set.find_syntax_by_name("TSX").is_some());

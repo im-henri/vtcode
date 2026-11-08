@@ -13,7 +13,7 @@ use crate::explorer::FileExplorer;
 #[path = "app_native_open.rs"]
 pub(crate) mod native_open;
 
-fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loaded: crate::editor::LoadedTextFile, skip_open_prompt: bool) -> crate::background::BackgroundResult {
+pub(crate) fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loaded: crate::editor::LoadedTextFile, skip_open_prompt: bool) -> crate::background::BackgroundResult {
     let result = crate::background::BackgroundResult::FileLoaded {
         workspace_generation, path, rope: loaded.rope, encoding: loaded.encoding,
         file_size: loaded.file_size, last_disk_modified: loaded.last_disk_modified,
@@ -42,7 +42,80 @@ fn file_load_result(
     }
 }
 
+/// Documents shorter than this are covered by the viewport pass and its margin.
+const HIGHLIGHT_PREFETCH_MIN_LINES: usize = 1_024;
+const HIGHLIGHT_PREFETCH_SLICE: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// One outstanding background checkpoint slice for one document version.
+pub(crate) struct HighlightPrefetch {
+    path: std::path::PathBuf,
+    version: u64,
+    token: crate::background::CancellationToken,
+    finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl HighlightPrefetch {
+    fn cancel(self) { self.token.cancel(); }
+}
+
+/// The pool keeps one processor for input; a checkpoint slice may occupy one
+/// optional worker, so require at least one more for interactive syntax work.
+fn highlight_prefetch_supported() -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SUPPORTED.get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() >= 3))
+}
+
 impl App {
+    pub(crate) fn cancel_highlight_prefetch(&mut self) {
+        if let Some(prefetch) = self.highlight_prefetch.take() { prefetch.cancel(); }
+    }
+
+    /// Called once the visible rows of the active document are exact.
+    fn schedule_highlight_prefetch(
+        &mut self,
+        rope: &ropey::Rope,
+        file_path: &std::path::Path,
+        content_version: u64,
+        language: Option<&str>,
+        theme_key: &str,
+    ) {
+        if self.highlight_prefetch.as_ref().is_some_and(|pending| pending.path == file_path
+            && pending.version == content_version
+            && !pending.finished.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return;
+        }
+        self.cancel_highlight_prefetch();
+        if !highlight_prefetch_supported() || rope.len_lines() < HIGHLIGHT_PREFETCH_MIN_LINES
+            || self.editor().is_some_and(|editor| editor.large_file_mode)
+        {
+            return;
+        }
+        let Some(job) = self.highlighter.prepare_prefetch_job(rope, file_path, content_version, language, theme_key)
+        else { return; };
+        let (syntax_set, theme_set) = self.highlighter.shared_sets();
+        let sender = self.background.sender.clone();
+        let rope = rope.clone();
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = std::sync::Arc::clone(&finished);
+        let token = self.background.submit_idle(move |cancel| {
+            // Short slices: cancellation (any scroll, edit or tab change)
+            // loses at most one slice, and the next pass resumes from the
+            // checkpoints already published.
+            let batch = job.run_with_budget(&rope, &syntax_set, &theme_set,
+                &mut || cancel.is_cancelled(), HIGHLIGHT_PREFETCH_SLICE);
+            // Mark completion before publishing, so applying this batch can
+            // always schedule the next slice.
+            done.store(true, std::sync::atomic::Ordering::Release);
+            if !cancel.is_cancelled() {
+                let _ = sender.send(crate::background::BackgroundResult::HighlightBatch(batch));
+            }
+        });
+        self.highlight_prefetch = Some(HighlightPrefetch {
+            path: file_path.to_path_buf(), version: content_version, token, finished,
+        });
+    }
+
     pub(crate) fn queue_background_file_load(
         &mut self,
         path: std::path::PathBuf,
@@ -52,7 +125,19 @@ impl App {
         let sender = self.background.sender.clone();
         let activity_path = path.clone();
         let remote = self.remote_workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&path));
+        // Gutter markers need the Git baseline right after the file loads.
+        // Over SSH, request it together with the file instead of a round trip
+        // later; the agent skips blobs over the large-file threshold, and the
+        // gutter request that follows joins this one.
+        let sources_prefetch = remote.as_ref().filter(|_| self.source_control_enabled).map(|remote| (
+            remote.clone(), path.clone(), self.repository_hint_for_path(&path),
+            self.large_file_threshold_mb.saturating_mul(1024 * 1024),
+        ));
         self.background.read_for_file("file-load", &activity_path, true, move || {
+            if let Some((remote, key, hint, limit)) = sources_prefetch {
+                let _ = std::thread::Builder::new().name("remote-git-sources".into())
+                    .spawn(move || remote.prefetch_git_sources(&key, hint.as_deref(), limit));
+            }
             let result = remote.map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
                 crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false)));
             let _ = sender.send(file_load_result(workspace_generation, path, result, skip_open_prompt));
@@ -558,6 +643,8 @@ impl App {
         if let Some(token) = self.visible_highlight_cancel_token.take() {
             token.cancel();
         }
+        // Visible work always wins; the idle pass resumes once it settles.
+        self.cancel_highlight_prefetch();
         if self.provisional_highlight_key.as_ref() != Some(&key) {
             if let Some(token) = self.provisional_highlight_cancel_token.take() {
                 token.cancel();
@@ -653,6 +740,7 @@ impl App {
         }
         let Some(job) = job else {
             self.visible_highlight_key = Some(key);
+            self.schedule_highlight_prefetch(&rope, &file_path, content_version, language.as_deref(), &theme_key);
             return;
         };
         let provisional_job = (self.provisional_highlight_key.as_ref() != Some(&key))
@@ -1660,8 +1748,6 @@ impl App {
             "Commit details".width()
         } else if tab.kind == TabKind::MarkdownPreview {
             "Preview: ".width() + tab.editor.file_display_name().width()
-        } else if matches!(tab.kind, TabKind::Diff(_)) {
-            tab.editor.file_display_name().width() + " (Diff)".width()
         } else if tab.kind == TabKind::File {
             tab.editor.display_name().width()
         } else {
@@ -1671,7 +1757,7 @@ impl App {
         let pin_len: usize = if tab.pinned { 4 } else { 0 };
         let icon_len = match tab.kind {
             TabKind::File | TabKind::GitRevision if crate::ui_chrome_tabs::tab_icon(tab).is_empty() => 0,
-            TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails => 2,
+            TabKind::File | TabKind::GitRevision | TabKind::CommitDetails => 2,
             _ => 0,
         };
         let deleted_prefix_len: usize = if tab.kind == TabKind::File && tab.editor.disk_unavailable
@@ -1685,7 +1771,9 @@ impl App {
     }
 
     fn placed_tab_width(&self, tab: &Tab) -> usize {
-        if let TabKind::Chat(key) = tab.kind {
+        if matches!(tab.kind, TabKind::Diff(_)) {
+            crate::ui_chrome_tabs::diff_tab_width(self, tab)
+        } else if let TabKind::Chat(key) = tab.kind {
             let title = self.chat.editor_tab_title(key);
             title.width() + 6 + if tab.pinned { 4 } else { 0 }
         } else if let TabKind::RemoteConnection(id) = tab.kind {

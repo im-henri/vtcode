@@ -291,6 +291,12 @@ pub(crate) struct Hello {
     /// replacement characters for a Unix directory with non-UTF-8 bytes.
     pub root_uri: String,
     pub session: u64,
+    #[serde(default)]
+    pub git_file_stats: bool,
+    /// The agent honors `GitSources::max_bytes`, so a client may request Git
+    /// baselines before it knows the file size.
+    #[serde(default)]
+    pub git_sources_limit: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -434,12 +440,22 @@ pub(crate) enum Command {
         file: RemotePath,
         repository: Option<RemotePath>,
         staged: bool,
+        /// Blob identities of texts the client already holds (conditional).
+        #[serde(default)]
+        known: Option<git::SourceRevisions>,
+        /// Omit texts (reporting `oversized`) when a blob exceeds this size.
+        #[serde(default)]
+        max_bytes: Option<u64>,
     },
     GitDiffSources {
         file: RemotePath,
         repository: Option<RemotePath>,
         staged: bool,
         known: Option<crate::git_diff_sources::Revisions>,
+    },
+    GitFileStats {
+        repo: RemotePath,
+        change: crate::app::GitFileChange<RemotePath>,
     },
     GitBranches {
         repo: RemotePath,
@@ -710,6 +726,7 @@ pub(crate) enum Reply {
     GitAction(crate::background::GitActionOutcome),
     GitSources(git::Sources),
     GitDiffSources(crate::git_diff_sources::Sources),
+    GitFileStats(crate::app_source_control_hover::ChangeStats),
     GitBranches(Vec<crate::app::GitBranchPickerItem>),
     GitNetwork(git::NetworkResult),
     CommitDetails(crate::commit_details::CommitData),

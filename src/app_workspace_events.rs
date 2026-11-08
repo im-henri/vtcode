@@ -65,7 +65,7 @@ impl App {
         // metadata-only invalidation would keep stale bytes in open diff tabs.
         if rescan { self.refresh_source_control_diffs_for_paths(None); }
         self.refresh_source_control_from_watcher(
-            changes.iter().map(|change| change.path.clone()).collect(), git_metadata_changed,
+            if rescan { Default::default() } else { changes.iter().map(|change| change.path.clone()).collect() }, git_metadata_changed,
         );
         if blame_inputs_changed {
             self.blame_requested_path = None;

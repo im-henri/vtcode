@@ -213,6 +213,8 @@ impl App {
 
     pub(crate) fn execute_explorer_context(&mut self, idx: usize) -> bool {
         self.explorer_context_active = false;
+        self.explorer_context_scrollbar_drag = None;
+        self.explorer_context_inner = None;
         let items = self.explorer_context_menu_items();
         let dynamic_count = self.explorer_context_extension_commands.len();
         let static_count = items.len().saturating_sub(dynamic_count);
@@ -251,7 +253,10 @@ impl App {
             }
         }
         match action {
-            "Find by Name…" => self.open_explorer_find(),
+            "Find by Name…" => {
+                let directory = self.explorer_target_directory(self.explorer_context_target.as_deref());
+                self.open_explorer_find_in(directory);
+            }
             "Find in Folder…" => {
                 if let Some(folder) = self.explorer_context_target.as_deref() {
                     self.search_include_pattern =

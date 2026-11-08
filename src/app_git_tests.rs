@@ -1797,6 +1797,8 @@ fn git_stage_hunk_stages_only_selected_hunk() {
 
     app.git_stage_hunk(&file_path, 1);
 
+    app.wait_for_git_action();
+
     let staged = git_stdout(
         &repo_dir,
         &["diff", "--cached", "--unified=0", "--", "file.txt"],
@@ -1911,6 +1913,7 @@ fn hunk_peek_previews_and_stages_the_selected_change() {
     assert!(peek.rows[peek.hunks[1].start_row..peek.hunks[1].end_row].iter().any(|r| r.kind == '-' && r.text == "h"));
     assert!(peek.rows[peek.hunks[1].start_row..peek.hunks[1].end_row].iter().any(|r| r.kind == '+' && r.text == "H"));
     app.execute_hunk_popup_action(0);
+    app.wait_for_git_action();
     let staged = git_stdout(&repo_dir, &["show", ":file.txt"]);
     assert_eq!(staged, "a\nb\nc\nd\ne\nf\ng\nH\ni\n");
     assert_eq!(std::fs::read_to_string(file_path).unwrap(), "a\nB\nc\nd\ne\nf\ng\nH\ni\n");
@@ -1962,6 +1965,7 @@ fn hunk_peek_gutter_buttons_act_on_the_clicked_hunk_and_preserve_other_changes()
         crate::mouse::handle_mouse(&mut app, MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left), column, row, modifiers: KeyModifiers::NONE,
         });
+        app.wait_for_git_action();
         assert!(!app.hunk_popup_active, "{action}: clicked action was handled");
         assert_eq!(git_stdout(&repo_dir, &["show", ":file.txt"]), expected_index, "{action}");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), expected_worktree, "{action}");
@@ -2028,6 +2032,7 @@ fn hunk_peek_unsaved_gutter_click_uses_saved_snapshot_without_writing_the_file()
         assert!(text.contains("Unsaved Changes (since last save)"));
         crate::ui_control_visibility_tests::snapshot(buffer, "Unsaved hunk preview");
         app.execute_hunk_popup_action(1);
+        app.wait_for_git_action();
         let editor = app.editor().unwrap();
         assert!(editor.modified);
         assert_eq!(editor.rope.to_string(), current);
@@ -2097,6 +2102,7 @@ fn hunk_peek_git_preview_uses_live_buffer_and_keeps_unsaved_actions_protected() 
         assert_eq!(peek.selected, 1);
         assert!(peek.rows.iter().any(|row| row.kind == '+' && row.text == "界"));
         app.execute_hunk_popup_action(action);
+        app.wait_for_git_action();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
         assert_eq!(git_stdout(&repo_dir, &["show", ":file.txt"]), original);
         assert_eq!(app.editor().unwrap().rope.to_string(), current);
@@ -2212,6 +2218,7 @@ fn hunk_peek_opens_and_stages_from_deleted_line_gutter_markers() {
         assert!(peek.rows.iter().any(|row| row.kind == '-' && row.text == "removed"));
         assert_eq!(app.hunk_popup_items(), ["Stage Hunk", "Discard Hunk", "Close Preview"]);
         app.execute_hunk_popup_action(0);
+        app.wait_for_git_action();
         assert_eq!(git_stdout(&repo_dir, &["show", ":file.txt"]), updated, "{label}");
         drop(app);
         let _ = std::fs::remove_dir_all(repo_dir);
@@ -2232,6 +2239,7 @@ fn hunk_peek_staged_preview_uses_index_after_worktree_line_shift() {
     assert!(peek.rows.iter().any(|r| r.kind == '+' && r.text == "C" && r.new_line == Some(3)));
     assert!(!peek.rows.iter().any(|r| r.text == "inserted"));
     app.execute_hunk_popup_action(0);
+    app.wait_for_git_action();
     assert!(git_stdout(&repo_dir, &["diff", "--cached"]).is_empty());
     assert!(std::fs::read_to_string(file_path).unwrap().contains("inserted\na\nb\nC"));
     drop(app);
@@ -2246,8 +2254,11 @@ fn git_unstage_hunk_reverts_only_selected_staged_hunk() {
         "one\ntwo changed\nthree\nfour changed\n",
     );
     app.git_stage_hunk(&file_path, 1);
+    app.wait_for_git_action();
 
     app.git_unstage_hunk(&file_path, 1);
+
+    app.wait_for_git_action();
 
     let staged = git_stdout(
         &repo_dir,

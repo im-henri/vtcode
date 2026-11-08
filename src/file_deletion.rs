@@ -287,13 +287,13 @@ pub(crate) fn perform(
     }
     outcome.message = match progress.phase {
         Phase::Cancelled => format!(
-            "Deletion cancelled: {} items deleted; remaining items kept",
-            progress.deleted
+            "Deletion cancelled: {} deleted; remaining items kept",
+            crate::helpers::counted(progress.deleted, "item", "items")
         ),
         Phase::Failed => format!(
-            "Deletion failed: {} items deleted; {} errors{}",
-            progress.deleted,
-            progress.failed,
+            "Deletion failed: {} deleted; {}{}",
+            crate::helpers::counted(progress.deleted, "item", "items"),
+            crate::helpers::counted(progress.failed, "error", "errors"),
             last_error
                 .as_deref()
                 .map(|error| format!(": {error}"))

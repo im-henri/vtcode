@@ -211,7 +211,7 @@ impl App {
         let state = &self.remote_connection;
         let (title, message, level) = match state.phase {
             Phase::Connected => ("SSH connected", "Editing and undo run locally.".into(), NotifyLevel::Info),
-            Phase::Restored if state.conflicts > 0 => ("SSH reconnected", format!("{} files need attention. Local edits are safe.", state.conflicts), NotifyLevel::Warning),
+            Phase::Restored if state.conflicts > 0 => ("SSH reconnected", format!("{} attention. Local edits are safe.", if state.conflicts == 1 { "1 file needs".into() } else { format!("{} files need", state.conflicts) }), NotifyLevel::Warning),
             Phase::Restored => ("SSH reconnected", "Connection restored. Local edits are safe.".into(), NotifyLevel::Info),
             Phase::Restoring => ("SSH reconnected", "Checking open files…".into(), NotifyLevel::Info),
             Phase::Resolving => ("SSH reconnected", "Restoring the workspace…".into(), NotifyLevel::Info),

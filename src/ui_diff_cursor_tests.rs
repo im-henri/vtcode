@@ -123,7 +123,12 @@ fn wrapped_diffs_keep_the_revisions_aligned_and_copy_source_text() {
 
 #[test]
 fn wrapped_diff_navigation_and_find_reach_a_continuation_of_the_same_line() {
-    let target = format!("{}needle\n", "abcd ".repeat(60));
+    let target = format!(
+        "{}needle {}needle {}\n",
+        "abcd ".repeat(60),
+        "abcd ".repeat(4),
+        "abcd ".repeat(14)
+    );
     for mode in [DiffMode::SideBySide, DiffMode::Inline] {
         let mut app = comparison("old\n", &target, mode, false);
         let editor = app.editor_mut().unwrap();
@@ -144,28 +149,53 @@ fn wrapped_diff_navigation_and_find_reach_a_continuation_of_the_same_line() {
         });
         assert!(tail.is_some(), "find should reveal the match on a continuation");
         assert!(app.diff_inline_scroll.row > 0);
+        let scroll = app.diff_inline_scroll.row;
+        let column = app.editor().unwrap().cursor_col;
+        app.search_next();
+        render(&mut app, 100, 9);
+        assert!(app.editor().unwrap().cursor_col > column);
+        assert_eq!(app.diff_inline_scroll.row, scroll);
     }
 }
 
 #[test]
-fn find_centers_matches_in_rendered_diff_rows() {
+fn find_keeps_visible_matches_still_and_centers_offscreen_diff_rows() {
     let base: String = (0..100).map(|line| format!("line_{line}\n")).collect();
     let target: String = (0..100)
-        .filter(|line| !(35..55).contains(line))
-        .map(|line| if line == 55 || line == 70 { "needle\n".into() } else { format!("line_{line}\n") })
+        .filter(|line| !(20..40).contains(line))
+        .map(|line| if [55, 59, 70, 74].contains(&line) { "needle\n".into() } else { format!("line_{line}\n") })
         .collect();
     for mode in [DiffMode::SideBySide, DiffMode::Inline] {
         let mut app = comparison(&base, &target, mode, false);
         render(&mut app, 120, 20);
         app.search_query = "needle".into();
         app.execute_palette_command("find");
-        for line in [35, 50, 35] {
+        let assert_centered = |app: &App, line| {
+            let code = app.code_area.unwrap();
+            assert_eq!(target_origin(app, line).1, code.y + code.height / 2);
+        };
+        render(&mut app, 120, 20);
+        assert_centered(&app, 35);
+        for (step, line, center) in [
+            (App::search_next as fn(&mut App), 39, false),
+            (App::search_next, 50, true),
+            (App::search_next, 54, false),
+            (App::search_prev, 50, false),
+            (App::search_prev, 39, true),
+            (App::search_prev, 35, false),
+        ] {
+            let scroll = app.diff_inline_scroll.row;
+            if !center {
+                target_origin(&app, line);
+            }
+            step(&mut app);
             render(&mut app, 120, 20);
             assert_eq!(app.editor().unwrap().cursor_line, line);
-            let code = app.code_area.unwrap();
-            assert_eq!(target_origin(&app, line).1, code.y + code.height / 2,
-                "inline={}, source line={line}", mode == DiffMode::Inline);
-            app.search_next();
+            if center {
+                assert_centered(&app, line);
+            } else {
+                assert_eq!(app.diff_inline_scroll.row, scroll, "source line {line}");
+            }
         }
     }
 }

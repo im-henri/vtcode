@@ -359,3 +359,62 @@ fn cached_filtered_folders_can_still_expand_locally_while_disconnected() {
     assert!(!f.app.bg_explorer_refresh_running);
     assert!(f.app.explorer_expanding.is_empty());
 }
+
+#[test]
+fn scoped_remote_filename_search_uses_the_selected_directory() {
+    let mut f = Fixture::new();
+    let scope = f.workspace.target_key("a/nested").unwrap();
+    f.app.open_explorer_find_in(scope.clone());
+    f.app.explorer.find.filter = true;
+    f.app.explorer.find.query = "txt".into();
+    f.app.update_explorer_find();
+    f.wait();
+    assert_eq!(f.app.explorer.find.directory, Some(scope));
+    assert_eq!(f.app.explorer.find.results.count, 1);
+    assert_eq!(f.names(), ["a", "nested", "deep.txt"]);
+    f.app.open_explorer_find_in(f.workspace.target_key("b").unwrap());
+    f.wait();
+    assert_eq!(f.app.explorer.find.results.count, 1);
+    assert_eq!(f.names(), ["b", "second.txt"]);
+    f.app.open_explorer_find_in(f.app.explorer.root.clone());
+    f.wait();
+    assert_eq!(f.app.explorer.find.results.count, 5);
+    assert!(f.names().iter().any(|name| name == "last.txt"));
+}
+
+#[test]
+fn editable_remote_filename_scope_uses_node_paths_and_preserves_the_query() {
+    let mut f = Fixture::new();
+    f.app.open_explorer_find_in(f.workspace.target_key("a/nested").unwrap());
+    f.app.explorer.find.filter = true;
+    f.app.explorer.find.query = "txt".into();
+    f.app.update_explorer_find();
+    f.wait();
+    let generation = f.app.explorer_refresh_generation;
+    f.app.apply_explorer_find_path();
+    assert_eq!(f.app.explorer_refresh_generation, generation, "the displayed remote path must round-trip");
+    f.app.explorer.find.path = "b".into();
+    f.app.text_input_changed(crate::text_input::TextInputId::ExplorerFindPath);
+    assert_eq!(f.app.explorer_refresh_generation, generation);
+    f.app.apply_explorer_find_path();
+    f.wait();
+    assert_eq!(f.app.explorer.find.results.count, 1);
+    assert_eq!(f.names(), ["b", "second.txt"]);
+    assert_eq!(f.app.explorer.find.query, "txt");
+    let generation = f.app.explorer_refresh_generation;
+    f.app.explorer.find.path = f.root.path().parent().unwrap().display().to_string();
+    f.app.apply_explorer_find_path();
+    assert!(f.app.explorer.find.path_error.is_some());
+    assert_eq!(f.app.explorer_refresh_generation, generation);
+    assert_eq!(f.names(), ["b", "second.txt"]);
+    f.app.explorer.find.path = f.root.path().join("a/nested").display().to_string();
+    f.app.apply_explorer_find_path();
+    f.wait();
+    assert!(f.app.explorer.find.path_error.is_none());
+    assert_eq!(f.names(), ["a", "nested", "deep.txt"]);
+    f.app.explorer.find.path.clear();
+    f.app.apply_explorer_find_path();
+    f.wait();
+    assert!(f.app.explorer.find.directory.is_none());
+    assert_eq!(f.app.explorer.find.results.count, 5);
+}

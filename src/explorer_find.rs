@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -9,16 +9,24 @@ pub(crate) enum Focus {
     #[default]
     Tree,
     Input,
+    Path,
     Filter,
     Fuzzy,
     Regex,
     Collapse,
+    Workspace,
     Close,
 }
 
 pub(crate) struct State {
     pub open: bool,
     pub query: String,
+    pub directory: Option<PathBuf>,
+    pub path: String,
+    pub path_cursor: usize,
+    pub path_anchor: Option<usize>,
+    pub path_dirty: bool,
+    pub path_error: Option<String>,
     pub cursor: usize,
     pub anchor: Option<usize>,
     pub focus: Focus,
@@ -38,6 +46,12 @@ impl Default for State {
         Self {
             open: false,
             query: String::new(),
+            directory: None,
+            path: String::new(),
+            path_cursor: 0,
+            path_anchor: None,
+            path_dirty: false,
+            path_error: None,
             cursor: 0,
             anchor: None,
             focus: Focus::Tree,
@@ -71,6 +85,7 @@ pub(crate) struct View {
 #[derive(Clone)]
 pub(crate) struct Query {
     pub text: String,
+    pub directory: Option<PathBuf>,
     pub filter: bool,
     pub fuzzy: bool,
     pub regex: bool,
@@ -81,6 +96,7 @@ impl State {
     pub fn request(&self) -> Option<Query> {
         (self.open && !self.query.is_empty()).then(|| Query {
             text: self.query.clone(),
+            directory: self.directory.clone(),
             filter: self.filter,
             fuzzy: self.fuzzy,
             regex: self.regex,
@@ -90,6 +106,21 @@ impl State {
 
     pub fn filtering(&self) -> bool {
         self.open && self.filter && !self.query.is_empty()
+    }
+}
+
+impl Query {
+    fn contains(&self, path: &Path) -> bool {
+        // The boundary itself remains an ancestor row, never a name match.
+        self.directory.as_ref().is_none_or(|directory| {
+            path != directory && path.starts_with(directory)
+        })
+    }
+
+    pub(crate) fn searches_directory(&self, path: &Path) -> bool {
+        self.directory.as_ref().is_none_or(|directory| {
+            path.starts_with(directory) || directory.starts_with(path)
+        })
     }
 }
 
@@ -243,7 +274,7 @@ pub(crate) fn project(
         if entry.is_dir {
             stack.push(i);
         }
-        let indices = matcher.indices(&entry.name);
+        let indices = if query.contains(&entry.path) { matcher.indices(&entry.name) } else { None };
         count += usize::from(indices.is_some());
         matches.push(Match {
             matched: indices.is_some(),
@@ -311,6 +342,7 @@ mod tests {
     fn matcher(text: &str, fuzzy: bool) -> NameMatcher {
         NameMatcher::new(&Query {
             text: text.into(),
+            directory: None,
             fuzzy,
             regex: false,
             filter: false,
@@ -339,6 +371,7 @@ mod tests {
     fn regex(text: &str) -> Result<NameMatcher, String> {
         NameMatcher::new(&Query {
             text: text.into(),
+            directory: None,
             filter: false,
             fuzzy: false,
             regex: true,
@@ -534,6 +567,39 @@ mod tests {
         explorer.select_find_match(true, false);
         assert_eq!(explorer.entries[explorer.selected].name, "app_config.rs");
         assert!(!explorer.reveal_file_deferred(&workspace.path().join("zeta.txt")));
+    }
+
+    #[test]
+    fn scoped_substring_fuzzy_and_regex_matching_preserves_ancestors() {
+        for (text, fuzzy, regex) in [("app", false, false), ("aip", true, false), (r"^app.*\.rs$", false, true)] {
+            for filter in [false, true] {
+                let (workspace, mut explorer) = fixture();
+                let scope = workspace.path().join("src/deep");
+                explorer.find.open = true;
+                explorer.find.filter = filter;
+                explorer.find.directory = Some(scope.clone());
+                explorer.find.query = text.into();
+                explorer.find.fuzzy = fuzzy;
+                explorer.find.regex = regex;
+                explorer.prepare_find();
+                refresh(&mut explorer);
+                assert_eq!(explorer.find.results.count, 1, "{text}, filter={filter}");
+                let src = &explorer.find.results.rows[&workspace.path().join("src")];
+                assert!(!src.matched);
+                assert_eq!(src.descendants, 1);
+                if filter {
+                    assert_eq!(explorer.entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+                        ["src", "deep", "app_input.rs"]);
+                    assert_eq!(explorer.entries[explorer.selected].path, scope.join("app_input.rs"));
+                }
+                // The selected directory is a search boundary, not a result.
+                explorer.find.query = "deep".into();
+                explorer.prepare_find();
+                refresh(&mut explorer);
+                assert_eq!(explorer.find.results.count, 0);
+                if filter { assert!(explorer.entries.is_empty()); }
+            }
+        }
     }
 
     #[test]

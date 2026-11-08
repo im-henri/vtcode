@@ -5,6 +5,11 @@ pub(crate) fn len_as_u16(len: usize) -> u16 {
     len.min(u16::MAX as usize) as u16
 }
 
+/// `"1 line"` / `"3 lines"`: a count followed by its correctly pluralized noun.
+pub(crate) fn counted(count: usize, singular: &str, plural: &str) -> String {
+    format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
 /// All possible terminal row widths share one read-only buffer. UTF-8
 /// validation happens at compile time, not on every rendering call.
 static SPACE_BUF: &str = match std::str::from_utf8(&[b' '; u16::MAX as usize]) {
@@ -46,6 +51,13 @@ pub(crate) fn blocks(n: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counted_uses_the_singular_only_for_one() {
+        assert_eq!(counted(0, "line", "lines"), "0 lines");
+        assert_eq!(counted(1, "line", "lines"), "1 line");
+        assert_eq!(counted(2, "match", "matches"), "2 matches");
+    }
 
     #[test]
     fn u16_zero() {

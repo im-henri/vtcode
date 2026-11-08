@@ -235,6 +235,11 @@ fn tab_label_width_with_icon(tab: &crate::app::Tab, display_name: &str, icon: &s
         + display_name.width() + 3
 }
 
+pub(crate) fn diff_tab_width(app: &App, tab: &crate::app::Tab) -> usize {
+    let name = diff_tab_title(app, tab, &tab.editor.file_display_name());
+    tab_label_width(app, tab, &name)
+}
+
 #[cfg(test)]
 pub(crate) fn tab_render_width(app: &App, index: usize, tab: &crate::app::Tab) -> u16 {
     crate::helpers::len_as_u16(tab_label_width(app, tab, &tab_display_name(app, index, tab)))
@@ -269,20 +274,7 @@ fn tab_display_name_with_duplicates<'a>(
         return std::borrow::Cow::Owned(app.chat.editor_tab_title(key));
     }
     if matches!(tab.kind, crate::app::TabKind::Diff(_)) {
-        let label = match app.diff_tabs.staged_for_tab(tab) {
-            Some(true) => "Staged Diff",
-            Some(false) => "Unstaged Diff",
-            None => "Diff",
-        };
-        if app.repositories.entries.len() > 1
-            && let Some(root) = app.diff_tabs.repository_for_tab(tab)
-            && let Some(repository) = root.file_name()
-        {
-            let repository = crate::remote::workspace::display_name(root)
-                .map(std::borrow::Cow::Owned).unwrap_or_else(|| repository.to_string_lossy());
-            return std::borrow::Cow::Owned(format!("{name} ({label} · {repository})"));
-        }
-        return std::borrow::Cow::Owned(format!("{name} ({label})"));
+        return std::borrow::Cow::Owned(diff_tab_title(app, tab, &name));
     }
     if tab.kind == crate::app::TabKind::MarkdownPreview {
         return role_name_with_context(app, tab, format!("Preview: {name}"), duplicates);
@@ -319,6 +311,24 @@ fn tab_display_name_with_duplicates<'a>(
         return std::borrow::Cow::Owned(format!("{name} ({context}){review_mark}"));
     }
     if pending { std::borrow::Cow::Owned(format!("{name}{review_mark}")) } else { name }
+}
+
+fn diff_tab_title(app: &App, tab: &crate::app::Tab, name: &str) -> String {
+    let label = match app.diff_tabs.staged_for_tab(tab) {
+        Some(true) => "Staged Diff",
+        Some(false) => "Unstaged Diff",
+        None => "Diff",
+    };
+    if app.repositories.entries.len() > 1
+        && let Some(root) = app.diff_tabs.repository_for_tab(tab)
+        && let Some(repository) = root.file_name()
+    {
+        let repository = crate::remote::workspace::display_name(root)
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or_else(|| repository.to_string_lossy());
+        return format!("{name} ({label} · {repository})");
+    }
+    format!("{name} ({label})")
 }
 
 fn role_name_with_context<'a>(app: &App, tab: &crate::app::Tab, name: String, duplicates: Option<&TabNameDuplicates>) -> std::borrow::Cow<'a, str> {
@@ -369,6 +379,22 @@ pub(crate) fn terminal_completion_background(
 
 pub(crate) fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
     draw_tab_bar_at(f, app, area, std::time::Instant::now());
+}
+
+pub(crate) fn draw_active_tab_bar(f: &mut Frame, app: &mut App, area: Rect) {
+    app.tab_bar_area = Some(area);
+    // The earlier reveal uses the previous pane width and estimates for
+    // neighboring labels. Confirm the diff will fit in this frame's strip.
+    if !app.rendering_animation_frame
+        && app.tab_scroll_offset != app.active_tab
+        && app.tab_scroll_manual_anchor != Some(app.active_tab)
+        && app.tabs.get(app.active_tab).is_some_and(|tab| matches!(tab.kind, crate::app::TabKind::Diff(_)))
+        && !TabBarHits::for_group_with_names(app, area, app.active_group, None)
+            .tabs.iter().any(|(index, _, _)| *index == app.active_tab)
+    {
+        app.tab_scroll_offset = app.active_tab;
+    }
+    draw_tab_bar(f, app, area);
 }
 
 pub(crate) fn draw_tab_bar_for_group(

@@ -19,7 +19,7 @@ impl App {
             "file_stats" => {
                 if let Some(ed) = self.editor() {
                     let (lines, non_blank, words, chars) = ed.compute_file_stats();
-                    self.notify(format!("{lines} lines ({non_blank} non-blank), {words} words, {chars} chars"));
+                    self.notify(format!("{} ({non_blank} non-blank), {}, {}", crate::helpers::counted(lines, "line", "lines"), crate::helpers::counted(words, "word", "words"), crate::helpers::counted(chars, "char", "chars")));
                 }
             }
             "fold_all" => {
@@ -417,7 +417,7 @@ impl App {
                     }
                     let chars = ed.rope.len_chars();
                     let lines = ed.line_count();
-                    self.notify(format!("{lines} lines, {words} words, {chars} characters"));
+                    self.notify(format!("{}, {}, {}", crate::helpers::counted(lines, "line", "lines"), crate::helpers::counted(words, "word", "words"), crate::helpers::counted(chars, "character", "characters")));
                 }
             }
             "char_count" => {

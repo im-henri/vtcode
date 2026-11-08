@@ -710,8 +710,11 @@ impl App {
         if let Some(v) = s.auto_save_delay {
             self.auto_save_delay = v.max(100);
         }
-        if let Some(v) = s.scroll_speed {
-            self.scroll_speed = v.clamp(1, 10);
+        if let Some(speed) = s.scroll_speed.map(|speed| speed.clamp(1, 10))
+            && speed != self.scroll_speed
+        {
+            self.cancel_wheel_scroll();
+            self.scroll_speed = speed;
         }
         if let Some(ref v) = s.language_associations {
             let fx: rustc_hash::FxHashMap<String, String> =
@@ -972,6 +975,17 @@ impl App {
         key: &str,
         patch: impl Fn(&mut Settings),
     ) -> Result<(), String> {
+        self.patch_settings_layer(scope, key, patch)?;
+        self.apply_effective_settings();
+        Ok(())
+    }
+
+    fn patch_settings_layer(
+        &mut self,
+        scope: crate::settings::SettingsScope,
+        key: &str,
+        patch: impl Fn(&mut Settings),
+    ) -> Result<(), String> {
         use crate::settings::SettingsScope;
         let (path, layer) = match scope {
             SettingsScope::Global => (&self.settings_global_path, &self.settings_global),
@@ -990,8 +1004,21 @@ impl App {
             SettingsScope::Global => self.settings_global = layer,
             SettingsScope::Workspace => self.settings_workspace = layer,
         }
-        self.apply_effective_settings();
         Ok(())
+    }
+
+    pub(crate) fn save_minimap_width(&mut self, width: u16) {
+        use crate::settings::SettingsScope::{Global, Workspace};
+        let scope = if self.settings_workspace.minimap_width.is_some() { Workspace } else { Global };
+        match self.patch_settings_layer(scope, "minimapWidth", |settings| {
+            settings.minimap_width = Some(width);
+        }) {
+            Ok(()) => {
+                self.minimap_width = width;
+                self.settings_effective.minimap_width = Some(width);
+            }
+            Err(error) => self.notify_error(format!("Could not save minimap width: {error}")),
+        }
     }
 
     fn write_settings_scope(
@@ -1686,7 +1713,9 @@ impl App {
         self.global_search_field_selection_anchors = [None; 4];
         if self.show_explorer && self.sidebar_view == SidebarView::SourceControl {
             self.refresh_source_control_async();
-            self.refresh_git_log_async();
+            if self.repositories.active.is_some() {
+                self.refresh_git_log_async();
+            }
         }
         self.zen_mode = session.zen_mode;
         self.zen_pre_state = session.zen_mode.then_some((
@@ -2267,7 +2296,9 @@ mod tests {
 
         assert_eq!(restored.sidebar_view, SidebarView::SourceControl);
         assert!(restored.bg_git_status_running);
-        assert!(restored.bg_git_log_running);
+        assert!(!restored.bg_git_log_running);
+        restored.ensure_initial_source_control_status();
+        assert!(!restored.bg_git_status_pending);
     }
 
     #[test]

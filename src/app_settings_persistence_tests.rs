@@ -22,6 +22,46 @@ fn saved(app: &App, scope: SettingsScope) -> Settings {
     })
 }
 
+#[test]
+fn minimap_width_updates_the_effective_settings_layer_and_survives_reload() {
+    for workspace_override in [false, true] {
+        let (_dir, mut app) = fixture();
+        app.patch_settings_scope(SettingsScope::Global, "minimapWidth", |s| s.minimap_width = Some(12)).unwrap();
+        if workspace_override {
+            app.patch_settings_scope(SettingsScope::Workspace, "minimapWidth", |s| s.minimap_width = Some(15)).unwrap();
+        }
+        let (scope, path) = if workspace_override {
+            (SettingsScope::Workspace, app.settings_workspace_path.clone())
+        } else {
+            (SettingsScope::Global, app.settings_global_path.clone())
+        };
+        app.settings_scope = if workspace_override { SettingsScope::Global } else { SettingsScope::Workspace };
+        let existing = format!(r#"{{"minimapWidth":{},"external.setting":123}}"#, app.minimap_width);
+        std::fs::write(&path, existing).unwrap();
+        let mut editor = crate::editor::Editor::test_with_text("pane");
+        editor.word_wrap = !app.default_word_wrap;
+        app.tabs.push(Tab::new_file(editor));
+        app.save_minimap_width(23);
+        assert_eq!(app.minimap_width, 23);
+        assert_ne!(app.editor().unwrap().word_wrap, app.default_word_wrap);
+        let persisted: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted["minimapWidth"], 23);
+        assert_eq!(persisted["external.setting"], 123);
+        assert_eq!(persisted.as_object().unwrap().len(), 2);
+        assert_eq!(saved(&app, scope).minimap_width, Some(23));
+        if workspace_override {
+            assert_eq!(saved(&app, SettingsScope::Global).minimap_width, Some(12));
+        } else {
+            assert!(!app.settings_workspace_path.exists());
+        }
+        let mut restarted = App::test_new();
+        restarted.settings_global = saved(&app, SettingsScope::Global);
+        restarted.settings_workspace = saved(&app, SettingsScope::Workspace);
+        restarted.apply_effective_settings();
+        assert_eq!(restarted.minimap_width, 23);
+    }
+}
+
 fn numeric(app: &mut App, id: &str, value: &str) {
     app.begin_numeric_setting_edit(id, "0");
     app.settings_value_buffer = value.into();

@@ -43,6 +43,7 @@ fn discard_is_undoable_before_background_reload_and_keeps_each_hunk_separate() {
     let editor = app.editor_mut().unwrap();
     editor.record_saved_snapshot(editor.rope.clone());
     app.git_stage_hunk(&file, 1);
+    app.wait_for_git_action();
     app.git_discard_hunk(&file, 3);
     assert_eq!(
         app.editor().unwrap().rope.to_string(),
@@ -83,6 +84,7 @@ fn discard_is_undoable_before_background_reload_and_keeps_each_hunk_separate() {
         );
     }
     app.git_unstage_hunk(&file, 1);
+    app.wait_for_git_action();
     assert_eq!(git_stdout(&root, &["show", ":file.txt"]), original);
     assert_eq!(
         app.editor().unwrap().undo_stack.len(),
@@ -121,6 +123,7 @@ fn stage_unstage_discard_round_trips_line_endings_empty_files_and_eof() {
     ] {
         let (root, file, mut app) = make_git_app_with_file(name, original, changed);
         app.git_stage_hunk(&file, line);
+        app.wait_for_git_action();
         assert_eq!(
             git_stdout(&root, &["show", ":file.txt"]),
             changed,
@@ -128,6 +131,7 @@ fn stage_unstage_discard_round_trips_line_endings_empty_files_and_eof() {
             app.notification_history
         );
         app.git_unstage_hunk(&file, line);
+        app.wait_for_git_action();
         assert_eq!(
             git_stdout(&root, &["show", ":file.txt"]),
             original,
@@ -179,6 +183,7 @@ fn stale_preview_never_stages_discards_or_unstages_a_replacement_hunk() {
         }
         let index = git_stdout(&root, &["show", ":file.txt"]);
         app.execute_hunk_popup_action(usize::from(action == "discard"));
+        app.wait_for_git_action();
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             "newer change\n",
@@ -281,6 +286,7 @@ fn hunk_actions_use_literal_filenames_and_stable_patch_options() {
     app.wait_for_hunk_preview();
     assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 2);
     app.execute_hunk_popup_action(0);
+    app.wait_for_git_action();
     assert_eq!(git_stdout(&root, &["show", ":file[1].txt"]), first_only);
     assert_eq!(git_stdout(&root, &["show", ":file1.txt"]), original);
     assert_eq!(
@@ -288,6 +294,7 @@ fn hunk_actions_use_literal_filenames_and_stable_patch_options() {
         "unrelated change\n"
     );
     app.git_unstage_hunk(&file, 1);
+    app.wait_for_git_action();
     assert_eq!(git_stdout(&root, &["show", ":file[1].txt"]), original);
     app.git_discard_hunk(&file, 5);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), first_only);
@@ -306,12 +313,14 @@ fn hunk_actions_preserve_whitespace_despite_git_apply_configuration() {
             .set_str("apply.whitespace", policy)
             .unwrap();
         app.git_stage_hunk(&file, 0);
+        app.wait_for_git_action();
         assert_eq!(
             git_stdout(&root, &["show", ":file.txt"]),
             "new  \n",
             "{policy}"
         );
         app.git_unstage_hunk(&file, 0);
+        app.wait_for_git_action();
         assert_eq!(
             git_stdout(&root, &["show", ":file.txt"]),
             "old \n",

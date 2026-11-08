@@ -316,11 +316,21 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Hint
     let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
-    let hint = if app.keybindings_editing {
-        "Press any key combo to set  │  Esc = cancel"
+    // Prefer the most descriptive hint that fits; never clip it mid-word.
+    let hints: &[&str] = if app.keybindings_editing {
+        &["Press any key combo to set  │  Esc = cancel", "Press keys  │  Esc cancel", "Esc cancel"]
     } else {
-        "↑↓ navigate  │  Enter = edit shortcut  │  Esc = close"
+        &[
+            "↑↓ navigate  │  Enter = edit shortcut  │  Esc = close",
+            "↑↓ navigate  │  Enter edit  │  Esc close",
+            "Enter edit  │  Esc close",
+        ]
     };
+    let hint = hints
+        .iter()
+        .copied()
+        .find(|hint| UnicodeWidthStr::width(*hint) <= hint_area.width as usize)
+        .unwrap_or("");
     f.render_widget(
         Paragraph::new(Span::styled(
             hint,
@@ -330,4 +340,38 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         )),
         hint_area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn rows(width: u16) -> Vec<String> {
+        let mut app = App::test_new();
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal
+            .draw(|f| draw(f, &mut app, Rect::new(0, 0, width, 12)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..12)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect()
+    }
+
+    #[test]
+    fn footer_hint_shortens_instead_of_clipping_mid_word() {
+        for (width, expected) in [
+            (80, "↑↓ navigate  │  Enter = edit shortcut  │  Esc = close"),
+            (44, "↑↓ navigate  │  Enter edit  │  Esc close"),
+            (30, "Enter edit  │  Esc close"),
+        ] {
+            let screen = rows(width);
+            assert!(
+                screen.iter().any(|row| row.contains(expected)),
+                "{width}: {screen:#?}"
+            );
+            assert!(!screen.iter().any(|row| row.trim_end().ends_with("Es")), "{width}");
+        }
+    }
 }

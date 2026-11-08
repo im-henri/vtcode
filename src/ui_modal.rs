@@ -859,7 +859,7 @@ fn copy(app: &App, kind: Kind) -> Copy {
             title: "Go to Line",
             message: "Jump to a position in the current file.".into(),
             context: vec![app.editor().map_or("No document open".into(), |e| {
-                format!("{}  ·  {} lines", document_name(e), e.line_count())
+                format!("{}  ·  {}", document_name(e), crate::helpers::counted(e.line_count(), "line", "lines"))
             })],
             help: "Enter a line or line:column. Escape restores your original position.".into(),
             field: "Line : column",

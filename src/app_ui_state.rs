@@ -216,6 +216,7 @@ impl App {
         self.terminal_dock_drop_target = None;
         self.resizing_explorer = false;
         self.explorer_scrollbar_drag = None;
+        self.explorer_context_scrollbar_drag = None;
         self.resizing_panel = false;
         if self.terminal_sidebar.dragging() { self.drag_start_pos = None; }
         self.terminal_sidebar.cancel_drag();
@@ -231,6 +232,7 @@ impl App {
         self.dragging_diff_left_h_scrollbar = false;
         self.dragging_minimap = false;
         self.minimap_drag_start = None;
+        self.minimap_resize.cancel();
     }
 
     pub(crate) fn clear_tab_tooltip(&mut self) {
@@ -625,7 +627,7 @@ impl App {
             if let Some(ed) = self.editor_mut() {
                 let position = (result.line_num.saturating_sub(1), result.col_start);
                 ed.clear_selection();
-                ed.set_cursor(position.0, position.1);
+                ed.set_centered_cursor(position.0, position.1);
             }
             self.finish_navigation();
             return true;
@@ -1663,6 +1665,7 @@ mod tests {
         app.alt_cursor_mouse_down_active = true;
         app.resizing_explorer = true;
         app.explorer_scrollbar_drag = Some((crate::ui_chrome::ExplorerSection::Files, 2, 4));
+        app.explorer_context_scrollbar_drag = Some((2, 4));
         app.resizing_panel = true;
         app.resizing_sc_graph = true;
         app.resizing_split = true;
@@ -1690,6 +1693,7 @@ mod tests {
         assert_eq!(app.terminal_dock_drop_target, None);
         assert!(!app.resizing_explorer);
         assert!(app.explorer_scrollbar_drag.is_none());
+        assert!(app.explorer_context_scrollbar_drag.is_none());
         assert!(!app.resizing_panel);
         assert!(!app.resizing_sc_graph);
         assert!(!app.resizing_split);

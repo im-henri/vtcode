@@ -11,6 +11,10 @@ pub(crate) use crate::ui_chrome_tabs::tab_render_width;
 
 const ACTIVITY_SETTINGS_INDEX: usize = 6;
 
+#[path = "mouse_explorer_context.rs"]
+mod explorer_context;
+pub(crate) use explorer_context::handle_mouse as handle_explorer_context_mouse;
+
 pub(crate) fn explorer_resize_hit(
     area: ratatui::layout::Rect,
     sidebar_right: bool,
@@ -61,6 +65,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if crate::terminal_sidebar::captured_mouse(app, mouse) { return; }
     if crate::terminal_scrollbar::captured_mouse(app, mouse) { return; }
     if crate::ui_panels::captured_mouse(app, mouse) { return; }
+    if crate::ui_minimap_resize::captured_mouse(app, mouse) { return; }
     if crate::ui_side_notice::handle_mouse(app, mouse) { return; }
     if crate::ui_logs::mouse(app, mouse) { return; }
     if crate::ui_remote_connection::handle_mouse(app, mouse) { return; }
@@ -73,7 +78,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
         return;
     }
     app.record_navigation();
+    let previous = (app.mouse_col, app.mouse_row).into();
     handle_mouse_inner(app, mouse);
+    if mouse.kind == MouseEventKind::Moved {
+        app.mouse_hover_changed |= crate::ui_minimap_resize::hover_changed(app, previous);
+    }
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
         app.update_sidebar_auto_hide(mouse);
     }
@@ -231,17 +240,16 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             _ => {}
         }
     }
-    if crate::ui_status::handle_mouse(app, mouse) { return; }
-    if crate::ui_performance_details::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
-
-    // Tab menus render above Find and other workbench input fields. Only
+    // Context menus render above Find and other workbench input fields. Only
     // extension overlays are drawn above them and get first refusal here.
-    if app.tab_context_active {
+    if app.tab_context_active || app.explorer_context_active {
         if !crate::mouse_overlay::handle_overlay_mouse(app, mouse.kind, col, row) {
             crate::mouse_dialogs::handle_mouse_dialogs(app, &mouse, col, row);
         }
         return;
     }
+    if crate::ui_status::handle_mouse(app, mouse) { return; }
+    if crate::ui_performance_details::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
 
     // Wheel input belongs to the open menu, including in a clipped viewport.
     if app.menu_active && app.menu_open
@@ -1056,6 +1064,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     return;
                 }
             }
+
+            if crate::ui_minimap_resize::press(app, mouse) { return; }
 
             // In split mode, switch focus first so tab drag/click works in non-focused panes.
             crate::mouse_selection::switch_focus_if_split(app, col, row, true);

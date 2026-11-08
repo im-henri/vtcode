@@ -162,7 +162,7 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let widths = app.editor().and_then(|editor| {
         has_overlay.then(|| measure_wrap(
             &app.diff_render_cache, editor, DiffMode::SideBySide, area.width,
-            app.diff_split_ratio, app.show_minimap.then_some(app.minimap_width),
+            app.diff_split_ratio, app.show_minimap.then_some(app.minimap_render_width()),
             app.animation_settings.scope_enabled_for(editor),
         )).flatten()
     });
@@ -1548,7 +1548,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
 
     let diff_cache = std::sync::Arc::clone(&app.diff_render_cache);
     let review_row = crate::commit_review::painting_row(app);
-    let mut layout = inline_diff_layout(area, app.show_minimap && !app.context_diff_active() && review_row.is_none(), app.minimap_width);
+    let mut layout = inline_diff_layout(area, app.show_minimap && !app.context_diff_active() && review_row.is_none(), app.minimap_render_width());
     let number_width = inline_number_width(&diff_cache, app.editor().map_or(1, Editor::line_count));
     let gutter_width = (number_width * 2 + 4).min(layout.code_area.width as usize);
     let text_width = layout.code_area.width.saturating_sub(gutter_width as u16);

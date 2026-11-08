@@ -46,6 +46,8 @@ fn status(
         root,
         workspace_generation,
         repository_generation,
+        complete: true,
+        include_untracked: true,
     }
 }
 
@@ -101,9 +103,14 @@ fn disabling_after_discovery_skips_worktree_status_scan() {
 #[test]
 fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
     let dir = tempfile::tempdir().unwrap();
-    drop(git2::Repository::init(dir.path()).unwrap());
-    std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
-    let mut app = App::new(dir.path().into());
+    let root = dir.path().join("startup-project");
+    drop(git2::Repository::init(&root).unwrap());
+    let root = std::fs::canonicalize(root).unwrap();
+    let nested = root.join("nested");
+    drop(git2::Repository::init(&nested).unwrap());
+    std::fs::write(root.join(".git/info/exclude"), "nested/\n").unwrap();
+    std::fs::write(root.join("new.txt"), "new\n").unwrap();
+    let mut app = App::new(root.clone());
     app.refresh_source_control_async();
     let found = app
         .background
@@ -111,8 +118,8 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
         .recv_timeout(Duration::from_secs(5))
         .unwrap();
     assert!(
-        matches!(read_result(&found), BackgroundResult::GitRepositoryFound { root, workspace_generation, .. }
-        if *root == app.explorer.root && *workspace_generation == app.workspace_generation)
+        matches!(read_result(&found), BackgroundResult::GitRepositoryFound { root, workspace_generation, repository, .. }
+        if *root == app.explorer.root && *workspace_generation == app.workspace_generation && repository == root)
     );
     let status = app
         .background
@@ -120,13 +127,36 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
         .recv_timeout(Duration::from_secs(5))
         .unwrap();
     assert!(
-        matches!(read_result(&status), BackgroundResult::GitRepositories { scans, .. }
-        if scans.len() == 1 && scans[0].files.len() == 1)
+        matches!(read_result(&status), BackgroundResult::GitRepositories { complete: false, scans, .. }
+        if scans.len() == 1 && scans[0].root == root && scans[0].files.len() == 1)
     );
+    let complete = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        read_result(&complete), BackgroundResult::GitRepositories { complete: true, scans, .. }
+        if scans.len() == 1 && scans[0].root == nested
+    ), "the final scan must only read the remaining projects");
+
     app.background.sender.send(found).unwrap();
+    app.poll_background_results();
+    assert_eq!(app.source_control_repository_state, State::Loading);
+    assert!(app.source_control_files.is_empty());
+    let area = Rect::new(0, 0, 60, 18);
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
+    assert!(text(terminal.backend().buffer(), area).contains("startup-project"));
+    assert!(app.source_control_commit_area.is_none());
+
     app.background.sender.send(status).unwrap();
+    app.poll_background_results();
+    assert_eq!(app.source_control_repository_state, State::Available);
+    assert!(app.bg_git_status_running && !app.repositories.discovered);
+    assert_eq!(app.source_control_files[0].path, "new.txt");
+    assert!(app.repository_hint_for_path(&nested.join("file.txt")).is_none());
+
+    app.background.sender.send(complete).unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
     assert_eq!(app.source_control_repository_state, State::Available);
+    assert_eq!(app.repository_hint_for_path(&nested.join("file.txt")), Some(nested));
 
     app.refresh_source_control_async();
     assert_eq!(app.source_control_repository_state, State::Available);
@@ -141,12 +171,40 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
     let status = loop {
         let result = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(!matches!(read_result(&result), BackgroundResult::GitRepositoryFound { .. }), "no redundant discovery event");
-        if matches!(read_result(&result), BackgroundResult::GitRepositories { .. }) { break result; }
+        if matches!(read_result(&result), BackgroundResult::GitRepositories { complete: true, .. }) { break result; }
         other_reads.push(result);
     };
     for result in other_reads { app.background.sender.send(result).unwrap(); }
     app.background.sender.send(status).unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
+}
+
+#[test]
+fn restored_nested_repository_publishes_changes_before_the_final_discovery_result() {
+    let temp = tempfile::tempdir().unwrap();
+    drop(git2::Repository::init(temp.path()).unwrap());
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    let nested = root.join("nested");
+    drop(git2::Repository::init(&nested).unwrap());
+    std::fs::write(root.join(".git/info/exclude"), "nested/\n").unwrap();
+    std::fs::write(nested.join("new.txt"), "new\n").unwrap();
+    let mut app = App::new(root.clone());
+    app.repositories.preferred = Some(nested.clone());
+    app.refresh_source_control_async();
+    let found = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(read_result(&found), BackgroundResult::GitRepositoryFound { repository, .. } if repository == &nested));
+    let initial = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(read_result(&initial), BackgroundResult::GitRepositories { complete: false, scans, .. }
+        if scans.len() == 1 && scans[0].root == nested && scans[0].files.len() == 1));
+    let final_result = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(read_result(&final_result), BackgroundResult::GitRepositories { complete: true, scans, .. }
+        if scans.len() == 1 && scans[0].root == root));
+    for result in [found, initial, final_result] { app.background.sender.send(result).unwrap(); }
+    app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
+    assert_eq!(app.source_control_repository_state, State::Available);
+    assert_eq!(app.repositories.active.as_deref(), Some(nested.as_path()));
+    assert_eq!(app.repositories.entries.iter().map(|repo| &repo.root).collect::<Vec<_>>(), vec![&root, &nested]);
+    assert_eq!(app.source_control_files[0].path, "new.txt");
 }
 
 fn assert_missing_repository_ui(app: &mut App) {
@@ -283,7 +341,8 @@ fn progress_changes_the_loading_phase_without_publishing_a_zero_count() {
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
     let mut app = App::new_deferred(dir.path().into());
     app.bg_git_status_running = true;
-    let found = |root, workspace_generation| BackgroundResult::GitRepositoryFound {
+    let found = |root: std::path::PathBuf, workspace_generation| BackgroundResult::GitRepositoryFound {
+        repository: root.clone(),
         root,
         workspace_generation,
         repository_generation: 0,

@@ -68,6 +68,7 @@ fn queued_and_late_results_cannot_revive_disabled_or_reenabled_state() {
     old.send(BackgroundResult::GitRepositories {
         root: app.explorer.root.clone(), workspace_generation: app.workspace_generation,
         repository_generation: app.repositories.membership_generation,
+        complete: true, include_untracked: true,
         discovery: crate::git_repositories::Discovery {
             errors: Vec::new(),
             workspace: app.explorer.root.clone(), roots: vec![app.explorer.root.clone()], parent: None,

@@ -1059,15 +1059,18 @@ impl Editor {
         self.scroll_offset = top_line;
     }
 
-    pub(crate) fn set_wrap_scroll_offset(&mut self, offset: usize) {
+    pub(crate) fn max_wrap_scroll_offset(&mut self) -> usize {
         let wrap_width = self.effective_wrap_width();
-        let max_wrap_row = self.wrapped_total_rows(wrap_width).saturating_sub(if self.scroll_past_end {
+        self.wrapped_total_rows(wrap_width).saturating_sub(if self.scroll_past_end {
             1
         } else {
             self.viewport_height.max(1)
-        });
-        self.wrap_scroll_offset = offset.min(max_wrap_row);
-        self.sync_line_scroll_from_wrap(wrap_width);
+        })
+    }
+
+    pub(crate) fn set_wrap_scroll_offset(&mut self, offset: usize) {
+        self.wrap_scroll_offset = offset.min(self.max_wrap_scroll_offset());
+        self.sync_line_scroll_from_wrap(self.effective_wrap_width());
         self.horizontal_scroll = 0;
     }
 

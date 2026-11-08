@@ -30,6 +30,7 @@ const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
   for (const id of ['git-commit','git-rebase','ignore']) {
     grammars.set(id,JSON.parse(fs.readFileSync(path.join(root,`grammars/Git/${id}.tmLanguage.json`),'utf8')));
   }
+  grammars.set('antlr', JSON.parse(fs.readFileSync(path.join(root, 'grammars/ANTLR4/antlr.tmLanguage.json'), 'utf8')));
   const byScope = new Map();
   const injections = new Map();
   for (const [id, grammar] of grammars) {

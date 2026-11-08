@@ -30,6 +30,7 @@ pub(crate) enum TextInputId {
     GotoLine,
     GlobalSearch(u8),
     ExplorerFind,
+    ExplorerFindPath,
     GitBranch,
     GitOperationTarget,
     CommandPalette,
@@ -782,6 +783,11 @@ impl App {
                 &mut self.explorer.find.cursor,
                 &mut self.explorer.find.anchor,
             ),
+            TextInputId::ExplorerFindPath => (
+                &mut self.explorer.find.path,
+                &mut self.explorer.find.path_cursor,
+                &mut self.explorer.find.path_anchor,
+            ),
             TextInputId::GitBranch => (
                 &mut self.git_branch_picker_query,
                 &mut self.git_branch_picker_cursor,
@@ -915,6 +921,10 @@ impl App {
                 self.active_pane = crate::app::ActivePane::Explorer;
                 self.explorer.find.focus = crate::explorer_find::Focus::Input;
             }
+            TextInputId::ExplorerFindPath => {
+                self.active_pane = crate::app::ActivePane::Explorer;
+                self.explorer.find.focus = crate::explorer_find::Focus::Path;
+            }
             TextInputId::SettingsSearch => {
                 self.settings_focus_categories = false;
                 self.settings_focus_control = false;
@@ -1028,9 +1038,13 @@ impl App {
         }
         if self.show_explorer && self.sidebar_view == crate::app::SidebarView::Explorer
             && self.active_pane == crate::app::ActivePane::Explorer
-            && self.explorer.find.open && self.explorer.find.focus == crate::explorer_find::Focus::Input
+            && self.explorer.find.open
         {
-            return Some(TextInputId::ExplorerFind);
+            match self.explorer.find.focus {
+                crate::explorer_find::Focus::Input => return Some(TextInputId::ExplorerFind),
+                crate::explorer_find::Focus::Path => return Some(TextInputId::ExplorerFindPath),
+                _ => {}
+            }
         }
         if self.active_pane == crate::app::ActivePane::Editor
             && self.file_search_visible() && self.search_input_focused
@@ -1089,7 +1103,7 @@ impl App {
                 TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => self.change_dir_active,
                 TextInputId::SearchFind | TextInputId::SearchReplace => self.search_active,
                 TextInputId::QuickOpen => self.quick_open_active,
-                TextInputId::ExplorerFind => self.explorer.find.open,
+                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath => self.explorer.find.open,
                 TextInputId::GotoLine => self.goto_line_active,
                 TextInputId::GlobalSearch(_) => {
                     self.global_search_active
@@ -1203,6 +1217,10 @@ impl App {
             TextInputId::FolderAddress | TextInputId::FolderName => self.folder_browser.error = None,
             TextInputId::QuickOpen => self.update_quick_open(),
             TextInputId::ExplorerFind => self.update_explorer_find(),
+            TextInputId::ExplorerFindPath => {
+                self.explorer.find.path_dirty = true;
+                self.explorer.find.path_error = None;
+            }
             TextInputId::GitBranch => {
                 self.git_branch_dialog.field_changed();
                 self.git_branch_picker_selected = 0;
@@ -1356,6 +1374,7 @@ impl App {
             TextInputId::SettingsSearch
             | TextInputId::OutputFind
             | TextInputId::ExplorerFind
+            | TextInputId::ExplorerFindPath
             | TextInputId::SettingsValue
             | TextInputId::Chat
             | TextInputId::ExtensionsFilter
@@ -1669,6 +1688,7 @@ mod tests {
         TextInputId::GlobalSearch(2),
         TextInputId::GlobalSearch(3),
         TextInputId::ExplorerFind,
+        TextInputId::ExplorerFindPath,
         TextInputId::GitBranch,
         TextInputId::GitOperationTarget,
         TextInputId::CommandPalette,
@@ -1751,6 +1771,10 @@ mod tests {
             }
             TextInputId::QuickOpen => app.quick_open_active = true,
             TextInputId::ExplorerFind => app.open_explorer_find(),
+            TextInputId::ExplorerFindPath => {
+                app.open_explorer_find();
+                app.focus_text_input(id);
+            }
             TextInputId::GotoLine => app.goto_line_active = true,
             TextInputId::GlobalSearch(field) => {
                 app.global_search_active = true;
@@ -1961,7 +1985,7 @@ mod tests {
                     crate::ui_helpers::draw_extensions_sidebar(frame, app, area)
                 }
                 TextInputId::ExplorerRename => crate::ui_chrome::draw_explorer(frame, app, area),
-                TextInputId::ExplorerFind => crate::ui_chrome::draw_explorer(frame, app, area),
+                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath => crate::ui_chrome::draw_explorer(frame, app, area),
                 TextInputId::SourceControlCommit => {
                     crate::ui_source_control::draw_source_control_sidebar(frame, app, area)
                 }

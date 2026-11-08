@@ -33,7 +33,11 @@ pub(crate) struct Workspace {
     root_unicode: bool,
     connection_identity: Arc<[u8]>,
     recovery: Arc<Mutex<Option<RecoveryCheckpoints>>>,
-    pub(super) git_sources: Arc<Mutex<cache::Cache<Arc<git::Sources>>>>,
+    /// HEAD/index texts with the source epoch at which they were validated.
+    pub(super) git_sources: Arc<Mutex<cache::Cache<(u64, Arc<git::Sources>)>>>,
+    /// One request per (file, staged) at a time: an open's prefetch and the
+    /// gutter refresh that follows share a single transfer.
+    pub(super) git_sources_inflight: Arc<Mutex<std::collections::HashMap<(RemotePath, bool), Arc<git::SourceFlight>>>>,
     pub(super) blame_sources: Arc<Mutex<cache::Cache<Arc<blame::Base>>>>,
     pub(super) git_snapshots: Arc<Mutex<git::Snapshots>>,
     pub(super) git_source_state: Arc<Mutex<git::SourceState>>,
@@ -241,6 +245,7 @@ impl Workspace {
             disconnect_requested: Arc::default(),
             search_scope_cache: Arc::default(),
             git_sources: Arc::default(),
+            git_sources_inflight: Arc::default(),
             blame_sources: Arc::default(),
             git_snapshots: Arc::default(),
             git_source_state: Arc::default(),
@@ -360,7 +365,7 @@ impl Workspace {
         };
         Ok(self.view_key(&path))
     }
-    pub(super) fn windows_paths(&self) -> bool {
+    pub(crate) fn windows_paths(&self) -> bool {
         let root = self.client.hello().root.as_bytes();
         root.starts_with(b"\\\\") || root.get(1) == Some(&b':')
     }

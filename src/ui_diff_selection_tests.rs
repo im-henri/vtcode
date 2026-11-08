@@ -138,6 +138,67 @@ fn drag(app: &mut App, first: (u16, u16), last: (u16, u16)) {
 }
 
 #[test]
+fn find_prefills_the_selected_diff_text_in_both_layouts() {
+    let base = "first\nold café phrase suffix\nlast";
+    let target = "first\nnew café phrase suffix\nlast";
+    for mode in [DiffMode::Inline, DiffMode::SideBySide] {
+        for (original, expected) in [(true, "old café phrase"), (false, "new café phrase")] {
+            for keyboard in [true, false] {
+                let mut app = comparison(base, target, mode, false);
+                app.search_query = "previous query".into();
+                render(&mut app, 120, 16);
+                let first = source_origin(&app, 1, original);
+                let width = expected.chars().count();
+                drag(&mut app, first, (first.0 + width as u16, first.1));
+                assert_eq!(app.diff_selected_text().as_deref(), Some(expected));
+
+                if keyboard {
+                    crate::input_keyboard::handle_keyboard_event(
+                        &mut app,
+                        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+                    );
+                } else {
+                    app.execute_palette_command("find");
+                }
+
+                assert!(app.search_active);
+                assert!(app.search_input_focused);
+                assert_eq!(
+                    app.search_query,
+                    expected,
+                    "inline={}, keyboard={keyboard}",
+                    mode == DiffMode::Inline,
+                );
+                assert_eq!(app.search_cursor, expected.len());
+                assert_eq!(app.search_selection_anchor, Some(0));
+                if !original {
+                    assert_eq!(app.search_matches, [(1, 0, width)]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn ctrl_f_keeps_the_previous_query_when_only_a_diff_caret_is_present() {
+    let mut app = comparison("old text", "new text", DiffMode::SideBySide, false);
+    app.search_query = "previous query".into();
+    render(&mut app, 120, 16);
+    let first = source_origin(&app, 0, true);
+    drag(&mut app, first, first);
+    assert!(!app.has_diff_selection());
+    assert_eq!(app.diff_selected_text().as_deref(), Some("old text\n"));
+
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+    );
+
+    assert!(app.search_active);
+    assert_eq!(app.search_query, "previous query");
+}
+
+#[test]
 fn copy_animation_covers_original_diff_selections_in_both_layouts() {
     for mode in [DiffMode::Inline, DiffMode::SideBySide] {
         let mut app = comparison("alpha\nremoved abcdef\nlast\n", "alpha\nadded xyz\nlast\n", mode, false);

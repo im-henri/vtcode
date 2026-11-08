@@ -19,15 +19,27 @@ struct Pending {
     last: Instant,
     // None is an authoritative refresh (metadata, overflow, or lost coverage).
     paths: Option<FxHashSet<PathBuf>>,
+    refs_changed: bool,
 }
 
 impl WatcherRefresh {
+    pub(crate) fn pending_for(&self, root: &std::path::Path) -> bool {
+        self.pending.as_ref().is_some_and(|pending| pending.root == root)
+    }
+
+    #[cfg(test)]
     fn queue(&mut self, root: PathBuf, paths: Option<FxHashSet<PathBuf>>, now: Instant) {
+        let refs_changed = paths.is_none();
+        self.queue_with_refs(root, paths, refs_changed, now);
+    }
+
+    fn queue_with_refs(&mut self, root: PathBuf, paths: Option<FxHashSet<PathBuf>>, refs_changed: bool, now: Instant) {
         if paths.as_ref().is_some_and(FxHashSet::is_empty) {
             return;
         }
         if let Some(pending) = self.pending.as_mut().filter(|pending| pending.root == root) {
             pending.last = now;
+            pending.refs_changed |= refs_changed;
             merge(&mut pending.paths, paths);
         } else {
             self.pending = Some(Pending {
@@ -35,6 +47,7 @@ impl WatcherRefresh {
                 first: now,
                 last: now,
                 paths,
+                refs_changed,
             });
         }
         if let Some(pending) = &mut self.pending
@@ -56,11 +69,15 @@ impl WatcherRefresh {
         }
     }
 
-    fn take(&mut self, root: &std::path::Path) -> Option<Option<FxHashSet<PathBuf>>> {
+    fn take_refresh(&mut self, root: &std::path::Path) -> Option<Pending> {
         self.pending
             .take()
             .filter(|pending| pending.root == root)
-            .map(|pending| pending.paths)
+    }
+
+    #[cfg(test)]
+    fn take(&mut self, root: &std::path::Path) -> Option<Option<FxHashSet<PathBuf>>> {
+        self.take_refresh(root).map(|pending| pending.paths)
     }
 }
 
@@ -87,9 +104,15 @@ impl App {
         } else {
             self.refresh_source_control_diffs_for_paths(Some(&paths));
         }
-        self.git_watcher_refresh.queue(
+        // Writing the index changes staged rows, not commits or ahead/behind.
+        // Unknown metadata and overflows retain the authoritative refs refresh.
+        let refs_changed = metadata && (paths.is_empty() || !paths.iter().all(|path|
+            path.components().any(|part| part.as_os_str() == ".git")
+                && path.file_name().is_some_and(|name| name == "index" || name == "index.lock")));
+        self.git_watcher_refresh.queue_with_refs(
             self.explorer.root.clone(),
             (!metadata).then_some(paths),
+            refs_changed,
             Instant::now(),
         );
     }
@@ -113,14 +136,13 @@ impl App {
         if self.git_watcher_refresh_wait(now) != Some(Duration::ZERO) {
             return false;
         }
-        let Some(paths) = self.git_watcher_refresh.take(&self.explorer.root) else {
+        let Some(pending) = self.git_watcher_refresh.take_refresh(&self.explorer.root) else {
             return false;
         };
         let passive = self.source_control_repository_state
             == crate::app::SourceControlRepositoryState::Available;
-        let metadata = paths.is_none();
-        self.start_source_control_status_refresh_with_feedback(paths, passive);
-        if metadata {
+        self.start_source_control_status_refresh_with_feedback(pending.paths, passive);
+        if pending.refs_changed {
             self.refresh_git_log_async();
             self.refresh_git_branch_async();
         }
@@ -131,10 +153,9 @@ impl App {
         &mut self,
         paths: &mut Option<FxHashSet<PathBuf>>,
     ) -> bool {
-        if let Some(pending) = self.git_watcher_refresh.take(&self.explorer.root) {
-            let metadata = pending.is_none();
-            merge(paths, pending);
-            return metadata;
+        if let Some(pending) = self.git_watcher_refresh.take_refresh(&self.explorer.root) {
+            merge(paths, pending.paths);
+            return pending.refs_changed;
         }
         false
     }

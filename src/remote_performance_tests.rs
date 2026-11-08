@@ -1983,3 +1983,118 @@ fn headless_git_status_keeps_non_unicode_paths_lossless_when_a_delta_falls_back(
     assert_eq!(scans[0].files.len(), 2);
     assert_ne!(scans[0].files[0].path, scans[0].files[1].path);
 }
+
+#[test]
+fn full_status_refreshes_revalidate_git_sources_without_resending_unchanged_blobs() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(root.path()).unwrap();
+    // Distinct lines, so compression cannot hide a resent blob.
+    let text: String = (0..20_000u64)
+        .map(|i| format!("fn committed_{i}_{:x}() {{}}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+        .collect();
+    std::fs::write(root.path().join("big.rs"), &text).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("big.rs")).unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+    let signature = git2::Signature::now("test", "test@example.com").unwrap();
+    repo.commit(Some("HEAD"), &signature, &signature, "base", &tree, &[]).unwrap();
+    std::fs::write(root.path().join("big.rs"), format!("{text}// worktree edit\n")).unwrap();
+    let received = Arc::new(AtomicUsize::new(0));
+    let workspace = workspace::Workspace::new(tests::connection_with_traffic(
+        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+    let cancel = crate::background::CancellationToken::new();
+    workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let key = workspace.view_key(&path("big.rs"));
+    let before = received.load(Ordering::Relaxed);
+    let first = workspace.git_sources(&key, None, false).unwrap();
+    let initial = received.load(Ordering::Relaxed) - before;
+    assert_eq!(first.head.as_deref(), Some(text.as_str()));
+    assert!(first.revisions.is_some());
+
+    // A full refresh (no changed paths) used to discard every cached text.
+    workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let before = received.load(Ordering::Relaxed);
+    let revalidated = workspace.git_sources(&key, None, false).unwrap();
+    let conditional = received.load(Ordering::Relaxed) - before;
+    assert_eq!(revalidated.head, first.head);
+    assert_eq!(revalidated.index, first.index);
+    assert!(Arc::ptr_eq(revalidated.head.as_ref().unwrap(), first.head.as_ref().unwrap()));
+    assert!(conditional * 20 < initial, "conditional {conditional} bytes vs initial {initial}");
+    // Cached at the current epoch: no further traffic.
+    let before = received.load(Ordering::Relaxed);
+    workspace.git_sources(&key, None, false).unwrap();
+    assert_eq!(received.load(Ordering::Relaxed), before);
+
+    // Staging changes the index blob; the next revalidation sends it.
+    let staged_text = "fn staged() {}\n";
+    std::fs::write(root.path().join("big.rs"), staged_text).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("big.rs")).unwrap();
+    index.write().unwrap();
+    workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let staged = workspace.git_sources(&key, None, false).unwrap();
+    assert_eq!(staged.index.as_deref(), Some(staged_text));
+    assert_eq!(staged.head.as_deref(), Some(text.as_str()));
+}
+
+#[test]
+fn concurrent_git_source_requests_for_one_file_share_a_single_transfer() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(root.path()).unwrap();
+    let text: String = (0..20_000u64)
+        .map(|i| format!("fn shared_{i}_{:x}() {{}}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+        .collect();
+    std::fs::write(root.path().join("big.rs"), &text).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("big.rs")).unwrap();
+    index.write().unwrap();
+    let received = Arc::new(AtomicUsize::new(0));
+    let workspace = workspace::Workspace::new(tests::connection_with_traffic(
+        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+    let key = workspace.view_key(&path("big.rs"));
+    let before = received.load(Ordering::Relaxed);
+    let callers: Vec<_> = (0..4).map(|_| {
+        let workspace = workspace.clone();
+        let key = key.clone();
+        std::thread::spawn(move || workspace.git_sources(&key, None, false).unwrap())
+    }).collect();
+    let results: Vec<_> = callers.into_iter().map(|caller| caller.join().unwrap()).collect();
+    let concurrent = received.load(Ordering::Relaxed) - before;
+    assert!(results.iter().all(|sources| sources.index.as_deref() == Some(text.as_str())));
+    // One transfer of the index text (compressed and framed), not four.
+    assert!(concurrent < text.len(), "{concurrent} bytes for {} bytes of text", text.len());
+}
+
+#[test]
+fn open_time_git_source_prefetch_is_size_capped_and_reused_by_the_gutter_request() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(root.path()).unwrap();
+    let text: String = (0..20_000u64)
+        .map(|i| format!("fn prefetched_{i}_{:x}() {{}}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+        .collect();
+    std::fs::write(root.path().join("big.rs"), &text).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("big.rs")).unwrap();
+    index.write().unwrap();
+    let received = Arc::new(AtomicUsize::new(0));
+    let workspace = workspace::Workspace::new(tests::connection_with_traffic(
+        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+    assert!(workspace.client.hello().git_sources_limit);
+    let key = workspace.view_key(&path("big.rs"));
+    // Over the cap: nothing but a small reply, and nothing cached.
+    let before = received.load(Ordering::Relaxed);
+    workspace.prefetch_git_sources(&key, None, 1024);
+    assert!(received.load(Ordering::Relaxed) - before < 4_096);
+    let before = received.load(Ordering::Relaxed);
+    assert_eq!(workspace.git_sources(&key, None, false).unwrap().index.as_deref(), Some(text.as_str()));
+    assert!(received.load(Ordering::Relaxed) - before > text.len() / 4);
+    // Within the cap: the prefetched texts serve the gutter request.
+    let other = workspace::Workspace::new(tests::connection_with_traffic(
+        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+    let key = other.view_key(&path("big.rs"));
+    other.prefetch_git_sources(&key, None, 64 * 1024 * 1024);
+    let before = received.load(Ordering::Relaxed);
+    assert_eq!(other.git_sources(&key, None, false).unwrap().index.as_deref(), Some(text.as_str()));
+    assert_eq!(received.load(Ordering::Relaxed), before);
+}

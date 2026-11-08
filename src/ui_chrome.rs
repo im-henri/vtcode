@@ -76,7 +76,8 @@ pub(crate) fn explorer_find_area(app: &App, area: Rect) -> Rect {
     let tree = explorer_section_area(app, tree);
     Rect::new(tree.x, tree.y.saturating_add(tree.height.min(1)), tree.width,
         if app.explorer.find.open {
-            tree.height.saturating_sub(1).min(5 + u16::from(app.explorer.find.results.error.is_some()))
+            tree.height.saturating_sub(1).min(6
+                + u16::from(app.explorer.find.results.error.is_some() || app.explorer.find.path_error.is_some()))
         } else { 0 })
 }
 
@@ -1096,8 +1097,7 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
             ])
             .split(area);
         if show_tabs {
-            app.tab_bar_area = Some(pane_layout[0]);
-            crate::ui_chrome_tabs::draw_tab_bar(f, app, pane_layout[0]);
+            crate::ui_chrome_tabs::draw_active_tab_bar(f, app, pane_layout[0]);
             // In split mode, highlight active group with a colored accent on the active tab
             if app.split_active() {
                 let accent = app.colors.fg_accent_blue;
@@ -1311,8 +1311,7 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
     };
 
     if show_tabs {
-        app.tab_bar_area = Some(layout[0]);
-        crate::ui_chrome_tabs::draw_tab_bar(f, app, layout[0]);
+        crate::ui_chrome_tabs::draw_active_tab_bar(f, app, layout[0]);
     } else if !is_split {
         app.tab_bar_area = None;
     }

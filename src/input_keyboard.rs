@@ -79,6 +79,9 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
     if key.code == KeyCode::Esc && app.paste_in_progress() {
         app.cancel_pending_paste(); return false;
     }
+    if app.minimap_resize.cancel() && key.code == KeyCode::Esc {
+        return false;
+    }
     app.copy_animation.clear();
     app.dismiss_lsp_hover();
     app.inline_blame_hover = None;
@@ -645,7 +648,10 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                     app.focus_text_input(TextInputId::SearchFind);
                     app.replace_mode = false;
                     app.search_focus_replace = false;
-                    if let Some(ed) = app.editor() {
+                    if let Some(sel) = app.diff_selected_search_text() {
+                        app.search_query = sel;
+                        app.update_search();
+                    } else if let Some(ed) = app.editor() {
                         if let Some((sl, sc, el, ec)) = ed.selection_range() {
                             if sl != el {
                                 // Multi-line selection: enable search-in-selection
@@ -899,16 +905,21 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         match key.code {
             KeyCode::Esc => {
                 app.explorer_context_active = false;
+                app.explorer_context_inner = None;
+                app.explorer_context_scrollbar_drag = None;
             }
             KeyCode::Up => {
-                if app.explorer_context_selected > 0 {
-                    app.explorer_context_selected -= 1;
+                let items = app.explorer_context_menu_items();
+                if let Some(index) = (0..app.explorer_context_selected.min(items.len())).rev()
+                    .find(|&index| items[index] != "─") {
+                    app.explorer_context_selected = index;
                 }
             }
             KeyCode::Down => {
-                let count = app.explorer_context_menu_items().len();
-                if app.explorer_context_selected + 1 < count {
-                    app.explorer_context_selected += 1;
+                let items = app.explorer_context_menu_items();
+                if let Some(index) = (app.explorer_context_selected.saturating_add(1)..items.len())
+                    .find(|&index| items[index] != "─") {
+                    app.explorer_context_selected = index;
                 }
             }
             KeyCode::Enter => {

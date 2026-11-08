@@ -83,6 +83,7 @@ pub(crate) fn draw_context_menu(f: &mut Frame, app: &mut App) {
 pub(crate) fn draw_explorer_context_menu(f: &mut Frame, app: &mut App) {
     use crate::explorer::ExplorerSortMode;
 
+    let mut scroll = app.explorer_context_scroll;
     let str_items = app.explorer_context_menu_items();
     let mut items = crate::ui_widgets::items_from_str_slice(&str_items);
     let selected_sort = match app.explorer.sort_mode {
@@ -101,8 +102,9 @@ pub(crate) fn draw_explorer_context_menu(f: &mut Frame, app: &mut App) {
         .min_width(22)
         .selected(app.explorer_context_selected)
         .mouse(app.mouse_row, app.mouse_col)
-        .render(f);
-    app.explorer_context_inner = Some(inner);
+        .render_scrolled(f, &mut scroll);
+    app.explorer_context_scroll = scroll;
+    app.explorer_context_inner = (!inner.is_empty()).then_some(inner);
 }
 
 pub(crate) fn draw_source_control_context_menu(f: &mut Frame, app: &mut App) {

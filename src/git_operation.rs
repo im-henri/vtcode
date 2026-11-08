@@ -66,7 +66,7 @@ fn metadata(path: impl AsRef<Path>) -> String {
     value.trim().to_owned()
 }
 
-pub(crate) fn read(repo: &Repository) -> Result<Option<State>, String> {
+fn operation_metadata(repo: &Repository) -> Option<(Kind, Option<std::path::PathBuf>, String)> {
     let git = repo.path();
     let rebase = if git.join("rebase-merge").is_dir() {
         Some(git.join("rebase-merge"))
@@ -82,8 +82,30 @@ pub(crate) fn read(repo: &Repository) -> Result<Option<State>, String> {
     } else if !cherry_head.is_empty() || todo.lines().any(|line| line.starts_with("pick ")) {
         Kind::CherryPick
     } else {
-        return Ok(None);
+        return None;
     };
+    Some((kind, rebase, cherry_head))
+}
+
+pub(crate) fn in_progress(repo: &Repository) -> bool {
+    operation_metadata(repo).is_some()
+}
+
+pub(crate) fn read(repo: &Repository) -> Result<Option<State>, String> {
+    read_with_summary(repo, None)
+}
+
+/// Status refresh already read the worktree. Reuse that snapshot for the
+/// operation banner instead of walking a large repository a second time.
+pub(crate) fn read_with_changes<P>(repo: &Repository, files: &[crate::app::GitFileChange<P>]) -> Result<Option<State>, String> {
+    let conflicts = files.iter().filter(|file| file.status == '!').count();
+    let unstaged = files.iter().filter(|file| !file.staged && matches!(file.status, 'M' | 'D' | 'R' | 'A')).count();
+    read_with_summary(repo, Some((conflicts, unstaged)))
+}
+
+fn read_with_summary(repo: &Repository, summary: Option<(usize, usize)>) -> Result<Option<State>, String> {
+    let Some((kind, rebase, cherry_head)) = operation_metadata(repo) else { return Ok(None); };
+    let git = repo.path();
     let head = repo
         .head()
         .and_then(|head| head.peel_to_commit())
@@ -163,27 +185,16 @@ pub(crate) fn read(repo: &Repository) -> Result<Option<State>, String> {
         kind.command(),
         head.id()
     );
-    let mut options = git2::StatusOptions::new();
-    options.include_untracked(false).include_ignored(false);
-    let statuses = repo
-        .statuses(Some(&mut options))
-        .map_err(|error| error.to_string())?;
-    let conflicts = statuses
-        .iter()
-        .filter(|entry| entry.status().contains(Status::CONFLICTED))
-        .count();
-    let unstaged = statuses
-        .iter()
-        .filter(|entry| {
-            entry.status().intersects(
-                Status::WT_MODIFIED
-                    | Status::WT_DELETED
-                    | Status::WT_RENAMED
-                    | Status::WT_TYPECHANGE
-                    | Status::WT_UNREADABLE,
-            )
-        })
-        .count();
+    let (conflicts, unstaged) = if let Some(summary) = summary { summary } else {
+        let mut options = git2::StatusOptions::new();
+        options.include_untracked(false).include_ignored(false);
+        let statuses = repo.statuses(Some(&mut options)).map_err(|error| error.to_string())?;
+        let conflicts = statuses.iter().filter(|entry| entry.status().contains(Status::CONFLICTED)).count();
+        let unstaged = statuses.iter().filter(|entry| entry.status().intersects(
+            Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_TYPECHANGE | Status::WT_UNREADABLE,
+        )).count();
+        (conflicts, unstaged)
+    };
     let mut blocker = if conflicts > 0 {
         Some(format!(
             "Resolve and stage {conflicts} conflicted file{}.",

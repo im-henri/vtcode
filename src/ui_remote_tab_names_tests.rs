@@ -11,6 +11,8 @@ fn workspace() -> Workspace {
     let hello = remote::Hello {
         version: remote::VERSION,
         app_version: env!("CARGO_PKG_VERSION").into(),
+        git_file_stats: false,
+        git_sources_limit: false,
         root: "/repo".into(),
         root_uri: "file:///repo/".into(),
         session: 42,

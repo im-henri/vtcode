@@ -261,13 +261,13 @@ fn complete_group(
                 let pending_selection = NavigationSelection::capture(&placeholder.editor);
                 let cursor = placeholder.editor.pending_cursor_position;
                 let utf16 = placeholder.editor.pending_cursor_utf16;
+                let center = placeholder.editor.pending_cursor_center;
                 let selection = placeholder.editor.pending_navigation_selection;
                 let editor = &mut tabs[target].editor;
                 if cursor.is_some() {
                     editor.pending_cursor_position = cursor;
                     editor.pending_cursor_utf16 = utf16;
-                }
-                if selection.is_some() {
+                    editor.pending_cursor_center = center;
                     editor.pending_navigation_selection = selection;
                 }
                 if !editor.bg_loading {

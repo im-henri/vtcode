@@ -264,7 +264,7 @@ pub(crate) fn status_label(status: &IndexStatus) -> String {
             _ => "VTComplete",
         },
     };
-    format!("{label} · {}", status.indexed_files)
+    format!("{label} · {}", crate::helpers::counted(status.indexed_files, "file", "files"))
 }
 fn control_rows(settings: &IndexSettings) -> [(String, String); CONTROL_COUNT] {
     [

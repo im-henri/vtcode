@@ -613,7 +613,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         rows[2].width,
         rows[2].height.min(1),
     );
-    let count_label = if kind == Kind::Symbols && app.source_symbol_work.picker_pending() {
+    let count_label = if (kind == Kind::Symbols && app.source_symbol_work.picker_pending())
+        || (kind == Kind::Files && count == 0 && app.bg_quick_open_running) {
         "Loading…".into()
     } else if count == 0 {
         "0 results".into()
@@ -765,6 +766,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             ("Loading branches…", "Reading the repository")
         } else if kind == Kind::Symbols && app.source_symbol_work.picker_pending() {
             ("Reading source symbols…", "You can keep typing while the list loads")
+        } else if kind == Kind::Files && app.bg_quick_open_running {
+            ("Searching files…", "You can keep typing while the list loads")
         } else if query.is_empty() {
             match kind {
                 Kind::Files => (
@@ -914,6 +917,24 @@ mod tests {
             })
             .unwrap();
         terminal
+    }
+
+    #[test]
+    fn quick_open_reports_a_pending_search_instead_of_no_results() {
+        let mut app = example(Kind::Files);
+        app.quick_open_query = "project".into();
+        app.quick_open_results.clear();
+        let screen = |app: &mut App| {
+            let terminal = render(app, Kind::Files, 90, 24);
+            terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect::<String>()
+        };
+        app.bg_quick_open_running = true;
+        let pending = screen(&mut app);
+        assert!(pending.contains("Searching files…") && pending.contains("Loading…"), "{pending}");
+        assert!(!pending.contains("No matching results"));
+        app.bg_quick_open_running = false;
+        let finished = screen(&mut app);
+        assert!(finished.contains("No matching results") && finished.contains("0 results"));
     }
 
     #[test]

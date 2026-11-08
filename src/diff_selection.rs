@@ -891,6 +891,16 @@ impl App {
             )
     }
 
+    pub(crate) fn diff_selected_search_text(&self) -> Option<String> {
+        // Check the range before extracting text so Find only copies an
+        // actual single-line selection.
+        let (start, end) = self.diff_selection.range();
+        if start == end || start.row != end.row {
+            return None;
+        }
+        self.diff_selected_text().filter(|text| !text.is_empty())
+    }
+
     pub(crate) fn diff_selected_text(&self) -> Option<String> {
         let state = &self.diff_selection;
         if !state.fresh(self) {

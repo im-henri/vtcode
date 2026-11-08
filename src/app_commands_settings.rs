@@ -695,7 +695,12 @@ impl App {
             "word_wrap_column" => {
                 value.word_wrap_column = Some(if raw == 0 { 0 } else { raw.clamp(40, 500) as usize })
             }
-            "minimap_width" => value.minimap_width = Some(raw.clamp(5, 40) as u16),
+            "minimap_width" => {
+                value.minimap_width = Some(raw.clamp(
+                    crate::settings::MIN_MINIMAP_WIDTH.into(),
+                    crate::settings::MAX_MINIMAP_WIDTH.into(),
+                ) as u16);
+            }
             "panel_height" => value.panel_height = Some(raw.clamp(3, u16::MAX as u64) as u16),
             "sticky_scroll_max" => value.sticky_scroll_max = Some(raw.clamp(1, 5) as usize),
             "max_global_search_results" => {

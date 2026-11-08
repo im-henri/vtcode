@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 pub(crate) type ExcludePatterns = std::collections::BTreeMap<String, serde_json::Value>;
 pub(crate) const DEFAULT_SEARCH_DEBOUNCE_MS: u64 = 300;
+pub(crate) const MIN_MINIMAP_WIDTH: u16 = 5;
+pub(crate) const MAX_MINIMAP_WIDTH: u16 = 40;
 const MAX_SETTINGS_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) fn default_files_exclude() -> ExcludePatterns {
@@ -562,7 +564,7 @@ impl Settings {
             if *v < 15 { *v = 15; }
         }
         if let Some(ref mut v) = self.minimap_width {
-            *v = (*v).clamp(5, 40);
+            *v = (*v).clamp(MIN_MINIMAP_WIDTH, MAX_MINIMAP_WIDTH);
         }
         if let Some(ref mut v) = self.sticky_scroll_max {
             *v = (*v).clamp(1, 5);

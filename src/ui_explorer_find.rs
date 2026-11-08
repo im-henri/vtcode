@@ -13,6 +13,9 @@ use crate::explorer_find::Focus;
 use crate::text_input::TextInputId;
 use crate::ui_widgets::{InputField, Tooltip};
 
+#[path = "explorer_find_path.rs"]
+mod path;
+
 #[cfg(test)]
 #[path = "ui_explorer_find_tests.rs"]
 mod tests;
@@ -21,6 +24,8 @@ pub(crate) struct Layout {
     pub panel: Rect,
     pub title: Rect,
     pub input: Rect,
+    pub scope: Rect,
+    pub workspace: Rect,
     pub filter: Rect,
     pub fuzzy: Rect,
     pub regex: Rect,
@@ -46,12 +51,21 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
         )
     };
     let input = row(0);
-    // With only two interior rows, keep the hidden-files notice visible.
+    let scope_row = if inner.height > 2 {
+        row(1)
+    } else {
+        Rect::default()
+    };
+    let scope_height = u16::from(!scope_row.is_empty());
+    let workspace_width = scope_row.width.min(if scope_row.width >= 27 { 11 } else { 3 });
+    let scope = Rect::new(scope_row.x, scope_row.y, scope_row.width - workspace_width, scope_row.height);
+    let workspace = Rect::new(scope.right(), scope_row.y, workspace_width, scope_row.height);
+    // In short panels, keep the hidden-files notice visible.
     // Options remain reachable through their keyboard shortcuts.
-    let bottom = if inner.height == 2 {
+    let bottom = if inner.height <= 2 + scope_height {
         Rect::default()
     } else {
-        row(1)
+        row(1 + scope_height)
     };
     let collapse = Rect::new(
         bottom.right().saturating_sub(bottom.width.min(3)),
@@ -90,9 +104,9 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
             .min(if compact { 4 } else { 8 }),
         bottom.height,
     );
-    let status = row(if inner.height == 2 { 1 } else { 2 });
-    let error = if app.explorer.find.results.error.is_some() {
-        row(3)
+    let status = row(if inner.height <= 2 + scope_height { 1 } else { 2 } + scope_height);
+    let error = if error_text(&app.explorer.find).is_some() {
+        row(3 + scope_height)
     } else {
         Rect::default()
     };
@@ -100,6 +114,8 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
         panel,
         title,
         input,
+        scope,
+        workspace,
         filter,
         fuzzy,
         regex,
@@ -111,6 +127,17 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
 }
 
 impl App {
+    pub(crate) fn open_explorer_find_in(&mut self, directory: std::path::PathBuf) {
+        let directory = (directory != self.explorer.root).then_some(directory);
+        let changed = self.explorer.find.directory != directory;
+        self.explorer.find.directory = directory;
+        self.sync_explorer_find_path();
+        self.open_explorer_find();
+        if changed && !self.explorer.find.query.is_empty() {
+            self.update_explorer_find();
+        }
+    }
+
     pub(crate) fn open_explorer_find(&mut self) {
         if !self.has_open_folder() { crate::ui_workspaces::open_folder(self); return; }
         self.show_explorer = true;
@@ -146,12 +173,14 @@ impl App {
     pub(crate) fn close_explorer_find(&mut self) {
         self.explorer.find.open = false;
         self.explorer.find.query.clear();
+        self.explorer.find.directory = None;
+        self.sync_explorer_find_path();
         self.explorer.find.cursor = 0;
         self.explorer.find.anchor = None;
         self.explorer.find.focus = Focus::Tree;
         self.update_explorer_find();
         self.set_explorer_single_selection(self.explorer.selected);
-        self.remove_text_input_regions(|id| id == TextInputId::ExplorerFind);
+        self.remove_text_input_regions(|id| matches!(id, TextInputId::ExplorerFind | TextInputId::ExplorerFindPath));
     }
 }
 
@@ -181,6 +210,10 @@ fn activate(app: &mut App, focus: Focus) {
             if can_collapse_results(app) {
                 app.collapse_all_explorer_async();
             }
+            return;
+        }
+        Focus::Workspace => {
+            app.open_explorer_find_in(app.explorer.root.clone());
             return;
         }
         Focus::Close => {
@@ -237,6 +270,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 activate(app, Focus::Regex);
                 return true;
             }
+            KeyCode::Char('w' | 'W') => {
+                activate(app, Focus::Workspace);
+                return true;
+            }
+            KeyCode::Char('p' | 'P') => {
+                app.focus_text_input(TextInputId::ExplorerFindPath);
+                return true;
+            }
             _ => {}
         }
     }
@@ -247,27 +288,39 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     {
         let order = [
             Focus::Input,
+            Focus::Path,
             Focus::Filter,
             Focus::Fuzzy,
             Focus::Regex,
             Focus::Collapse,
+            Focus::Workspace,
             Focus::Close,
             Focus::Tree,
         ];
         let i = order.iter().position(|&item| item == focus).unwrap_or(0);
         let backwards = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-        app.explorer.find.focus =
-            order[(i + if backwards { order.len() - 1 } else { 1 }) % order.len()];
+        let step = if backwards { order.len() - 1 } else { 1 };
+        let next = (i + step) % order.len();
+        app.explorer.find.focus = order[next];
         return true;
     }
     if matches!(
         focus,
-        Focus::Filter | Focus::Fuzzy | Focus::Regex | Focus::Collapse | Focus::Close
+        Focus::Filter | Focus::Fuzzy | Focus::Regex | Focus::Collapse | Focus::Workspace | Focus::Close
     ) {
         if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
             activate(app, focus);
             return true;
         }
+    }
+    if focus == Focus::Path && key.code != KeyCode::F(3) {
+        if key.code == KeyCode::Enter {
+            app.apply_explorer_find_path();
+            return true;
+        }
+        let result = app.edit_text_input(TextInputId::ExplorerFindPath, key.code, key.modifiers, None);
+        if result.changed { app.text_input_changed(TextInputId::ExplorerFindPath); }
+        return result.consumed || matches!(key.code, KeyCode::Up | KeyCode::Down);
     }
     let from_input =
         focus == Focus::Input && matches!(key.code, KeyCode::Down | KeyCode::Up | KeyCode::Enter);
@@ -312,6 +365,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             (layout.fuzzy, Focus::Fuzzy),
             (layout.regex, Focus::Regex),
             (layout.collapse, Focus::Collapse),
+            (layout.workspace, Focus::Workspace),
             (layout.close, Focus::Close),
         ] {
             if rect.contains((mouse.column, mouse.row).into()) {
@@ -388,6 +442,18 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .render(f, layout.input);
     app.register_text_input(TextInputId::ExplorerFind, hit_map);
     let find = &app.explorer.find;
+    let path_focused = focused && find.focus == Focus::Path;
+    let hit_map = InputField::new(&find.path)
+        .viewport(app.text_input_viewport(TextInputId::ExplorerFindPath))
+        .theme_control(&app.colors, app.colors.ui.input_colors, bg)
+        .prefix("In: ", app.colors.ui.description_color(bg))
+        .placeholder_text("Workspace")
+        .cursor_marker(if path_focused && app.cursor_visible { "│" } else { "" })
+        .cursor_pos(find.path_cursor)
+        .selection_range(App::inline_selection_range(find.path_cursor, find.path_anchor))
+        .render(f, layout.scope);
+    app.register_text_input(TextInputId::ExplorerFindPath, hit_map);
+    let find = &app.explorer.find;
     for (rect, label, focus, selected) in [
         (
             layout.filter,
@@ -426,6 +492,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             find.regex,
         ),
         (layout.collapse, " ⊟ ", Focus::Collapse, false),
+        (
+            layout.workspace,
+            if layout.workspace.width < 11 { " ↗ " } else { " Workspace " },
+            Focus::Workspace,
+            false,
+        ),
         (
             layout.close,
             if layout.close.width < 12 {
@@ -479,9 +551,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         }),
         layout.status,
     );
-    if let Some(error) = &find.results.error {
+    if let Some(error) = error_text(find) {
         f.render_widget(
-            Paragraph::new(error.as_str()).style(
+            Paragraph::new(error).style(
                 Style::default()
                     .fg(app.colors.ui.error_text_color(bg))
                     .bg(bg),
@@ -491,7 +563,22 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+fn scope_text(app: &App) -> Option<String> {
+    let directory = app.explorer.find.directory.as_deref()?;
+    let label = crate::remote::workspace::display_key(directory).unwrap_or_else(|| {
+        app.display_path_label(directory.strip_prefix(&app.explorer.root).unwrap_or(directory))
+    });
+    Some(format!("In: {label}"))
+}
+
 fn status_text(find: &crate::explorer_find::State) -> Cow<'static, str> {
+    if find.path_error.is_some() {
+        return "Folder path not applied".into();
+    }
+    if find.path_dirty {
+        return Cow::Borrowed(if find.focus == Focus::Path { "Enter to apply folder path" }
+            else { "Folder path not applied" });
+    }
     if find.filtering() {
         if find.loading {
             "Files hidden · searching…".into()
@@ -534,6 +621,10 @@ fn status_text(find: &crate::explorer_find::State) -> Cow<'static, str> {
     }
 }
 
+fn error_text(find: &crate::explorer_find::State) -> Option<&str> {
+    find.path_error.as_deref().or(find.results.error.as_deref())
+}
+
 pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
     if !active(app) || !app.explorer.find.open {
         return;
@@ -542,14 +633,15 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
         return;
     };
     let layout = layout(app, area);
-    if let Some(error) = &app.explorer.find.results.error
+    if let Some(error) = error_text(&app.explorer.find)
         && (layout.input.contains((app.mouse_col, app.mouse_row).into())
+            || layout.scope.contains((app.mouse_col, app.mouse_row).into())
             || layout.error.contains((app.mouse_col, app.mouse_row).into())
             || layout
                 .status
                 .contains((app.mouse_col, app.mouse_row).into()))
     {
-        Tooltip::hover(vec![Line::raw(error.as_str())], &app.colors)
+        Tooltip::hover(vec![Line::raw(error)], &app.colors)
             .max_width(100)
             .prefer_below()
             .render(f, layout.input.x, layout.error.y);
@@ -560,6 +652,10 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
         .contains((app.mouse_col, app.mouse_row).into())
     {
         let mut lines = vec![Line::raw(status_text(&app.explorer.find))];
+        if let Some(scope) = scope_text(app) {
+            lines.push(Line::raw(scope));
+            lines.push(Line::raw("Search Workspace (Alt+W) removes the folder scope."));
+        }
         if app.explorer.find.filtering() {
             lines.push(Line::raw("Show All or Escape restores the full Explorer."));
         }
@@ -570,11 +666,22 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
         );
         return;
     }
+    if layout.scope.contains((app.mouse_col, app.mouse_row).into()) {
+        let mut lines = vec![Line::raw("Folder path (Alt+P). Press Enter to apply."),
+            Line::raw("Use a workspace-relative or absolute path. Empty searches the workspace.")];
+        if let Some(directory) = &app.explorer.find.directory {
+            lines.push(Line::raw(format!("Applied: {}", app.display_path_label(directory))));
+        }
+        Tooltip::hover(lines, &app.colors)
+            .prefer_below().render(f, layout.scope.x, layout.scope.y);
+        return;
+    }
     for (rect, text) in [
         (layout.filter, "Filter / Highlight (Alt+F)"),
         (layout.fuzzy, "Fuzzy Match (Alt+M)"),
         (layout.regex, "Use Regular Expression (Alt+R)"),
         (layout.collapse, "Collapse All Results"),
+        (layout.workspace, "Search Workspace (Alt+W)"),
         (
             layout.close,
             if app.explorer.find.filtering() {

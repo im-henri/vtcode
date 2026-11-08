@@ -60,6 +60,44 @@ pub(crate) struct WorktreeScope {
     pub paths: Vec<RemotePath>,
     pub ignore_case: bool,
 }
+/// Completion signal for an in-flight Git source request.
+#[derive(Default)]
+pub(crate) struct SourceFlight {
+    done: std::sync::Mutex<bool>,
+    ready: std::sync::Condvar,
+}
+
+impl SourceFlight {
+    fn wait(&self) {
+        let mut done = self.done.lock().unwrap_or_else(|error| error.into_inner());
+        while !*done {
+            done = self.ready.wait(done).unwrap_or_else(|error| error.into_inner());
+        }
+    }
+}
+
+/// Publishes completion (success, error or unwind) and retires the flight.
+struct FlightGuard<'a> {
+    map: &'a std::sync::Mutex<std::collections::HashMap<(RemotePath, bool), std::sync::Arc<SourceFlight>>>,
+    key: (RemotePath, bool),
+    flight: std::sync::Arc<SourceFlight>,
+}
+
+impl Drop for FlightGuard<'_> {
+    fn drop(&mut self) {
+        self.map.lock().unwrap_or_else(|error| error.into_inner()).remove(&self.key);
+        *self.flight.done.lock().unwrap_or_else(|error| error.into_inner()) = true;
+        self.flight.ready.notify_all();
+    }
+}
+
+/// Git blob identities of the `head` and `index` texts in [`Sources`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SourceRevisions {
+    pub head: Option<[u8; 20]>,
+    pub index: Option<[u8; 20]>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Sources {
     pub repository: RemotePath,
@@ -71,6 +109,17 @@ pub(crate) struct Sources {
     pub conflicted: bool,
     pub ignored: bool,
     pub staged: bool,
+    /// Present when the texts can be revalidated by identity (not for
+    /// conflicts). Older peers omit it and always send the texts.
+    #[serde(default)]
+    pub revisions: Option<SourceRevisions>,
+    /// The request's `known` revisions still match: `head` and `index` were
+    /// omitted, and the caller keeps the texts it already has.
+    #[serde(default)]
+    pub unchanged: bool,
+    /// A blob exceeded the request's `max_bytes`; no texts were sent.
+    #[serde(default)]
+    pub oversized: bool,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct NetworkResult {
@@ -116,6 +165,8 @@ pub(crate) fn sources(
     file: RemotePath,
     repository: Option<RemotePath>,
     staged: bool,
+    known: Option<SourceRevisions>,
+    max_bytes: Option<u64>,
 ) -> io::Result<Reply> {
     let file = file.resolve(root)?;
     let repository = repository
@@ -133,9 +184,34 @@ pub(crate) fn sources(
     let ignored = repo
         .status_file(&relative)
         .is_ok_and(|status| status.is_ignored());
-    let head =
-        crate::app_git::head_file_content(&repo, &relative, staged).map_err(io::Error::other)?;
-    let (index, conflicted) = crate::app_git::line_diff_index_content(&repo, &relative).map_err(io::Error::other)?;
+    let head_id = crate::app_git::head_file_id(&repo, &relative, staged).map_err(io::Error::other)?;
+    let (index_id, conflicted) = crate::app_git::line_diff_index_id(&repo, &relative).map_err(io::Error::other)?;
+    if let Some(limit) = max_bytes {
+        // Object headers give sizes without inflating the blobs.
+        let odb = repo.odb().map_err(io::Error::other)?;
+        let oversized = |id: Option<git2::Oid>| id.is_some_and(|id| odb.read_header(id)
+            .is_ok_and(|(size, _)| size as u64 > limit));
+        if oversized(head_id) || oversized(index_id) {
+            return Ok(Reply::GitSources(Sources {
+                repository: from_native(&workdir, root)?, head: None, index: None, conflicted, ignored,
+                staged, revisions: None, unchanged: false, oversized: true,
+            }));
+        }
+    }
+    let bytes = |id: git2::Oid| <[u8; 20]>::try_from(id.as_bytes()).ok();
+    let revisions = (!conflicted).then(|| SourceRevisions {
+        head: head_id.and_then(bytes),
+        index: index_id.and_then(bytes),
+    });
+    // Status refreshes (saves, focus, periodic revalidation) rarely change
+    // HEAD or the index. Avoid resending whole files for an unchanged blob.
+    let unchanged = revisions.is_some() && revisions == known;
+    let (head, index) = if unchanged {
+        (None, None)
+    } else {
+        (crate::app_git::blob_file_content(&repo, head_id).map_err(io::Error::other)?,
+            crate::app_git::blob_file_content(&repo, index_id).map_err(io::Error::other)?)
+    };
     Ok(Reply::GitSources(Sources {
         repository: from_native(&workdir, root)?,
         head,
@@ -143,6 +219,9 @@ pub(crate) fn sources(
         conflicted,
         ignored,
         staged,
+        revisions,
+        unchanged,
+        oversized: false,
     }))
 }
 
@@ -275,21 +354,59 @@ pub(crate) fn status(
 }
 
 impl workspace::Workspace {
+    pub(crate) fn git_file_stats(
+        &self,
+        root: &Path,
+        change: crate::app::GitFileChange,
+        cancel: &crate::background::CancellationToken,
+    ) -> io::Result<crate::app_source_control_hover::ChangeStats> {
+        if !self.client.hello().git_file_stats {
+            return Ok(crate::app_source_control_hover::ChangeStats::Unavailable);
+        }
+        let repo = self.remote_path(root)?;
+        let change = change.try_map_paths(|path| self.remote_path(&root.join(path))?.relative_to(&repo))?;
+        let Reply::GitFileStats(stats) = self.client.call_cancellable(
+            Command::GitFileStats { repo, change },
+            cancel,
+        )? else {
+            return Err(io::Error::other("Invalid Git file statistics reply"));
+        };
+        Ok(stats)
+    }
+
     pub(crate) fn git_diff_sources(&self, key: &Path, hint: Option<&Path>, staged: bool,
         known: Option<crate::git_diff_sources::Revisions>, cancel: &crate::background::CancellationToken,
     ) -> io::Result<crate::git_diff_sources::Sources> {
         let file = self.remote_path(key)?;
+        // An unstaged diff compares against the index blob. Gutter markers
+        // usually fetched that exact blob already; offer its identity so an
+        // unchanged index is not sent again, and fill the text in locally.
+        let cached = (known.is_none() && !staged).then(|| {
+            self.git_sources.lock().unwrap().get(&file)
+                .filter(|(_, sources)| !sources.staged && !sources.conflicted)
+                .and_then(|(_, sources)| Some((sources.revisions?.index?, sources.index.clone()?)))
+        }).flatten();
+        let request_known = known.or_else(|| cached.as_ref().map(|(id, _)| crate::git_diff_sources::Revisions {
+            base: Some(*id), index: Some(*id),
+        }));
         let repository = hint.map(|path| self.remote_path(path)).transpose()?;
-        let Reply::GitDiffSources(sources) = self.client.call_cancellable(
-            Command::GitDiffSources { file, repository, staged, known }, cancel)?
+        let Reply::GitDiffSources(mut sources) = self.client.call_cancellable(
+            Command::GitDiffSources { file, repository, staged, known: request_known }, cancel)?
         else { return Err(io::Error::other("Invalid conditional Git source reply")); };
+        if let Some((id, text)) = cached
+            && sources.base.is_none()
+            && sources.revisions.base == Some(id)
+        {
+            sources.base = Some(text);
+        }
         Ok(sources)
     }
 
     pub(super) fn refresh_git_source_cache(&self, force: bool) -> u64 {
         let mut state = self.git_source_state.lock().unwrap();
         if force || state.checked.elapsed() >= std::time::Duration::from_secs(30) {
-            *self.git_sources.lock().unwrap() = Default::default();
+            // Git sources are tagged with their epoch: older entries become
+            // stale and are revalidated by blob identity, not downloaded again.
             *self.blame_sources.lock().unwrap() = Default::default();
             state.epoch = state.epoch.wrapping_add(1);
             state.checked = std::time::Instant::now();
@@ -340,41 +457,89 @@ impl workspace::Workspace {
         hint: Option<&Path>,
         staged: bool,
     ) -> io::Result<std::sync::Arc<Sources>> {
-        let epoch = self.refresh_git_source_cache(false);
-        let file = self.remote_path(key)?;
-        if let Some(cached) = self
-            .git_sources
-            .lock()
-            .unwrap()
-            .get(&file)
-            .filter(|source| source.staged == staged)
-            .cloned()
-        {
-            return Ok(cached);
+        self.git_sources_limited(key, hint, staged, None)?
+            .ok_or_else(|| io::Error::other("Unexpected oversized Git source reply"))
+    }
+
+    /// Start fetching a file's Git baseline while the file itself is still
+    /// being opened, so gutter markers need no extra round trip afterwards.
+    /// Blobs larger than `limit` are skipped (and not cached).
+    pub(crate) fn prefetch_git_sources(&self, key: &Path, hint: Option<&Path>, limit: u64) {
+        if self.client.hello().git_sources_limit {
+            let _ = self.git_sources_limited(key, hint, false, Some(limit));
         }
+    }
+
+    fn git_sources_limited(
+        &self,
+        key: &Path,
+        hint: Option<&Path>,
+        staged: bool,
+        max_bytes: Option<u64>,
+    ) -> io::Result<Option<std::sync::Arc<Sources>>> {
+        let file = self.remote_path(key)?;
+        let (epoch, cached, _flight) = loop {
+            let epoch = self.refresh_git_source_cache(false);
+            let cached = self
+                .git_sources
+                .lock()
+                .unwrap()
+                .get(&file)
+                .filter(|(_, source)| source.staged == staged)
+                .cloned();
+            if let Some((checked, sources)) = &cached
+                && *checked == epoch
+            {
+                return Ok(Some(sources.clone()));
+            }
+            let flight_key = (file.clone(), staged);
+            let waiting = {
+                let mut inflight = self.git_sources_inflight.lock().unwrap();
+                match inflight.get(&flight_key) {
+                    Some(flight) => Some(flight.clone()),
+                    None => {
+                        let flight = std::sync::Arc::new(SourceFlight::default());
+                        inflight.insert(flight_key.clone(), flight.clone());
+                        break (epoch, cached, FlightGuard { map: &self.git_sources_inflight, key: flight_key, flight });
+                    }
+                }
+            };
+            // Another caller is fetching this file; reuse its result.
+            if let Some(flight) = waiting { flight.wait(); }
+        };
+        let previous = cached.map(|(_, sources)| sources);
+        let known = previous.as_ref().and_then(|sources| sources.revisions);
         let repository = hint.map(|path| self.remote_path(path)).transpose()?;
-        let Reply::GitSources(sources) = self.client.call(Command::GitSources {
+        let Reply::GitSources(mut sources) = self.client.call(Command::GitSources {
             file: file.clone(),
             repository,
             staged,
+            known,
+            max_bytes,
         })?
         else {
             return Err(io::Error::other("Invalid Git source reply"));
         };
+        if sources.oversized {
+            return Ok(None);
+        }
+        if sources.unchanged {
+            let previous = previous.ok_or_else(|| io::Error::other("Unexpected unchanged Git source reply"))?;
+            sources.head = previous.head.clone();
+            sources.index = previous.index.clone();
+            sources.unchanged = false;
+        }
         let bytes = sources.head.as_ref().map_or(0, |text| text.len())
             + sources.index.as_ref().map_or(0, |text| text.len());
         let sources = std::sync::Arc::new(sources);
-        // Invalidations and cache publication share this short worker lock.
-        // A response started before a refresh may complete afterward, but it
-        // must not repopulate the cache with its superseded HEAD/index state.
-        let state = self.git_source_state.lock().unwrap();
-        if state.epoch == epoch {
-            self.git_sources
-                .lock()
-                .unwrap()
-                .insert(file, bytes, sources.clone());
-        }
-        Ok(sources)
+        // A response that started before a refresh keeps its request epoch,
+        // so the next use revalidates it instead of trusting superseded state.
+        let _state = self.git_source_state.lock().unwrap();
+        self.git_sources
+            .lock()
+            .unwrap()
+            .insert(file, bytes, (epoch, sources.clone()));
+        Ok(Some(sources))
     }
     pub(crate) fn git_snapshot(
         &self,

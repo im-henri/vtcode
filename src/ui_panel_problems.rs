@@ -152,7 +152,7 @@ pub(super) fn activate(app: &mut App, col: u16, row: u16) {
     if let Some(editor) = app.editor_mut() {
         editor.clear_selection();
         if editor.bg_loading {
-            editor.pending_cursor_position = Some((line, column));
+            editor.set_cursor_without_scrolling(line, column);
             editor.pending_cursor_utf16 = utf16;
         } else {
             let column = if utf16 {
@@ -177,9 +177,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .min(layout.total.saturating_sub(area.height as usize));
     let (errors, warnings, info) = app.lsp_manager.problem_counts();
     let summary = format!(
-        " Problems: {} errors, {} warnings, {} info",
-        errors + app.cached_problems_error_count,
-        warnings + app.cached_problems_warning_count,
+        " Problems: {}, {}, {} info",
+        crate::helpers::counted(errors + app.cached_problems_error_count, "error", "errors"),
+        crate::helpers::counted(warnings + app.cached_problems_warning_count, "warning", "warnings"),
         info + app.cached_problems_info_count
     );
     let bg = app.colors.ui.bg_panel;

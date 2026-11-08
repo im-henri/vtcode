@@ -63,6 +63,17 @@
       "package.json": "f6866ae58f87e0498f6256291cd64150ced976dc473a6d0e1bbabaae16ea2112"
     }
   },
+  "ANTLR4 TextMate": {
+    "repository": "mike-lischke/vscode-antlr4",
+    "revision": "3e9469d1d490c71b3e3b909edf1235582a3f8db8",
+    "path": "syntaxes/antlr.json",
+    "destination": "grammars/ANTLR4",
+    "policy": "Limit the upstream file associations to .g4.",
+    "sha256": {
+      "antlr.tmLanguage.json": "45ca89e0739dbe2860e0714a3f9d2eb58083b540a51b08a12cdf9f7340956f0d",
+      "License.txt": "ecd53939d7fea4266bdc5e81b3641fed3db74ce6b02bbb31a958fcf26aff4263"
+    }
+  },
   "language metadata": {
     "path": "src/language_metadata.json",
     "sources": [

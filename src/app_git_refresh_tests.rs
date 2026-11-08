@@ -328,6 +328,62 @@ fn metadata_initial_discovery_and_unwatched_refreshes_still_scan_every_repositor
 }
 
 #[test]
+fn navigation_reuses_watched_status_but_expired_full_reads_still_catch_missed_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    let mut app = app_at(&root);
+    full(&mut app);
+    let navigation = |app: &mut App| {
+        app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
+        app.refresh_source_control_for_navigation();
+    };
+    for _ in 0..10 {
+        navigation(&mut app);
+        assert!(!app.bg_git_status_running && !app.bg_git_status_pending, "fresh navigation must do no Git work");
+    }
+    // A missed event must still be caught by a complete revalidation, even if
+    // ordinary file events have kept the incremental snapshot active.
+    std::fs::write(root.join("other.txt"), "missed event\n").unwrap();
+    app.repositories.entries[0].last_full_read = Some(Instant::now() - Duration::from_secs(31));
+    changed(&mut app, [root.join("first.txt")]);
+    assert!(app.source_control_files.is_empty());
+    // Recent worktree deltas must not let the two-second navigation throttle
+    // extend an expired complete-read deadline either.
+    app.refresh_source_control_for_navigation();
+    assert!(app.bg_git_status_running);
+    settle(&mut app);
+    assert!(app.source_control_files.iter().any(|file| file.path == "other.txt"));
+    // Explicit refresh and loss of watcher coverage bypass the cached deadline.
+    std::fs::write(root.join("other.txt"), "other\n").unwrap();
+    full(&mut app);
+    assert!(app.source_control_files.is_empty());
+    std::fs::write(root.join("other.txt"), "unwatched\n").unwrap();
+    app.workspace_watcher_active = false;
+    navigation(&mut app);
+    assert!(app.bg_git_status_running);
+    settle(&mut app);
+    assert_matches_full(&app, &root);
+}
+
+#[test]
+fn navigation_flushes_pending_file_events_without_rescanning_unrelated_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    init(&root);
+    let mut app = app_at(&root);
+    full(&mut app);
+    for name in ["first.txt", "other.txt"] { std::fs::write(root.join(name), "changed\n").unwrap(); }
+    app.refresh_source_control_from_watcher([root.join("first.txt")].into_iter().collect(), false);
+    app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
+    app.refresh_source_control_for_navigation();
+    assert!(app.bg_git_status_running);
+    settle(&mut app);
+    assert_eq!(app.source_control_files.len(), 1);
+    assert_eq!(app.source_control_files[0].path, "first.txt");
+}
+
+#[test]
 fn local_pending_paths_merge_without_downgrading_a_full_refresh() {
     let mut app = App::test_new();
     app.workspace_watcher_active = true;

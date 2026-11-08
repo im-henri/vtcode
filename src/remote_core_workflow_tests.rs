@@ -44,6 +44,8 @@ fn index(workspace: &workspace::Workspace, name: &str) -> String {
             file: path(name),
             repository: Some(path("core-workflow")),
             staged: false,
+                known: None,
+                max_bytes: None,
         })
         .unwrap()
     else {
@@ -391,6 +393,8 @@ pub(super) fn raw_git_paths(workspace: &workspace::Workspace) {
                 file: workspace.remote_path(key).unwrap(),
                 repository: Some(repository.clone()),
                 staged: false,
+                known: None,
+                max_bytes: None,
             })
             .unwrap()
         else {

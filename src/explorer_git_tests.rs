@@ -534,7 +534,7 @@ fn empty_and_cancelled_ignore_batches_do_not_discover_or_read_git() {
         .ignore_cache
         .mark_ignored(temp.path(), temp.path(), &mut [], None);
     write(temp.path(), "file.rs", "source");
-    explorer.scan_dir(temp.path(), 0, false, None);
+    explorer.scan_dir(temp.path(), 0, None, None);
     assert!(!explorer.entries.is_empty());
     cancel.cancel();
     explorer.ignore_cache.mark_ignored(

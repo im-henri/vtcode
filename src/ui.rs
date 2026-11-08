@@ -383,7 +383,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // Input geometry must never outlive the frame that produced it.  Widgets
     // below register hit maps using their exact rendered viewport.
     app.begin_text_input_frame();
+    app.source_control_file_hover.hit = None;
     app.settings_scroll_areas.clear();
+    crate::ui_minimap_resize::begin_frame(app);
     app.settings_category_area = None;
     app.terminal_surfaces.clear();
     app.terminal_find.begin_frame();
@@ -687,6 +689,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_explorer_find::draw_tooltip(f, app);
     ui_chrome::draw_navigation_tooltip(f, app);
     crate::ui_source_control::draw_action_tooltip(f, app);
+    crate::ui_source_control::draw_file_tooltip(f, app);
     crate::ui_panels::draw_tooltip(f, app);
     crate::app_terminal_find::draw_tooltip(f, app);
     crate::ui_editor_folds::draw_tooltip(f, app);
@@ -695,6 +698,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
 
     // Search bar overlay (rendered last, on top)
     ui_search_dialog::draw_file_search_bars(f, app);
+    crate::ui_minimap_resize::draw(f, app);
 
     // Context menu
     if app.context_menu_active {
@@ -870,7 +874,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                     .or(info.line_count)
                     .or_else(|| app.explorer_line_count_cache.get(&entry_path).copied());
                 let line_count_str = (!info.is_dir)
-                    .then(|| line_count.map(|lines| format!("{lines} lines")))
+                    .then(|| line_count.map(|lines| crate::helpers::counted(lines, "line", "lines")))
                     .flatten();
                 let tooltip_header = if info.is_dir {
                     format!(" 📁 {modified_str} ")

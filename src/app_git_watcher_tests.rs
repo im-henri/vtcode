@@ -179,3 +179,33 @@ fn overflow_and_metadata_storms_coalesce_history_and_branch_reads_too() {
     assert_eq!(app.git_history.generation, generation + 1);
     app.wait_for_background(Duration::from_secs(10), ready);
 }
+
+#[test]
+fn index_only_events_update_staging_without_reloading_history_or_branch_counts() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    let repo = git2::Repository::init(&root).unwrap();
+    let mut app = App::new_deferred(root.clone());
+    app.workspace_watcher_active = true;
+    let ready = |app: &App| !app.bg_git_status_running && !app.bg_git_status_pending
+        && !app.bg_git_log_running && !app.bg_git_branch_running && !app.bg_git_branch_pending;
+    app.refresh_source_control_async();
+    app.wait_for_background(Duration::from_secs(10), ready);
+    let generation = app.git_history.generation;
+    std::fs::write(root.join("staged.txt"), "staged\n").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("staged.txt")).unwrap();
+    index.write().unwrap();
+    app.refresh_source_control_from_watcher([root.join(".git/index"), root.join(".git/index.lock")].into_iter().collect(), true);
+    assert!(app.poll_git_watcher_refresh(Instant::now() + MAX_DELAY));
+    assert_eq!(app.git_history.generation, generation);
+    assert!(!app.bg_git_branch_running && !app.bg_git_branch_pending);
+    app.wait_for_background(Duration::from_secs(10), ready);
+    assert!(app.source_control_files.iter().any(|file| file.path == "staged.txt" && file.staged));
+    // A mixed HEAD/index burst cannot be downgraded to index-only refresh.
+    app.refresh_source_control_from_watcher([root.join(".git/index")].into_iter().collect(), true);
+    app.refresh_source_control_from_watcher([root.join(".git/HEAD")].into_iter().collect(), true);
+    assert!(app.poll_git_watcher_refresh(Instant::now() + MAX_DELAY));
+    assert_eq!(app.git_history.generation, generation + 1);
+    app.wait_for_background(Duration::from_secs(10), ready);
+}

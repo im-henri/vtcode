@@ -1,5 +1,12 @@
 use crate::editor::Editor;
 
+/// Preserve a centered jump until the destination pane measures its viewport.
+#[derive(Clone, Copy)]
+pub(crate) struct CursorCenter {
+    pub(crate) position: (usize, usize),
+    scroll: usize,
+}
+
 /// Occurrence endpoints arrive in source order and often share a line. Reuse
 /// its character bounds instead of seeking the rope tree for every endpoint.
 fn occurrence_position(
@@ -28,9 +35,13 @@ impl Editor {
 
     /// Center the viewport on the current cursor line.
     pub(crate) fn center_cursor(&mut self) {
+        self.center_cursor_in_layout(self.word_wrap);
+    }
+
+    fn center_cursor_in_layout(&mut self, wrapped: bool) {
         if self.viewport_height > 0 {
             let center = self.viewport_height / 2;
-            if self.word_wrap {
+            if wrapped {
                 let wrap_width = self.effective_wrap_width();
                 let cursor_row =
                     self.wrapped_row_for_position(self.cursor_line, self.cursor_col, wrap_width);
@@ -39,6 +50,63 @@ impl Editor {
                 let row = self.visible_row_for_line(self.cursor_line).saturating_sub(center);
                 self.set_visible_scroll_offset(row);
             }
+        }
+    }
+
+    pub(crate) fn set_centered_cursor(&mut self, line: usize, col: usize) {
+        self.set_cursor(line, col);
+        let position = if self.bg_loading {
+            (line, col)
+        } else {
+            self.center_cursor();
+            (self.cursor_line, self.cursor_col)
+        };
+        self.pending_cursor_center = Some(CursorCenter {
+            position,
+            scroll: self.scroll_offset,
+        });
+    }
+
+    pub(crate) fn set_find_cursor(&mut self, line: usize, col: usize) {
+        let (row, first) = if self.word_wrap {
+            let width = self.effective_wrap_width();
+            (self.wrapped_row_for_position(line, col, width), self.wrap_scroll_offset)
+        } else {
+            (self.visible_row_for_line(line), self.visible_scroll_offset())
+        };
+        if self.is_line_folded(line)
+            || !(first..first.saturating_add(self.viewport_height)).contains(&row)
+        {
+            self.set_centered_cursor(line, col);
+        } else {
+            self.set_cursor_without_scrolling(line, col);
+            if !self.word_wrap {
+                self.reveal_find_cursor_column();
+            }
+        }
+    }
+
+    pub(crate) fn apply_pending_cursor_center(&mut self, wrapped: bool) {
+        if self.bg_loading || self.viewport_height == 0 {
+            return;
+        }
+        let Some(pending) = self.pending_cursor_center.take() else {
+            return;
+        };
+        // A manual caret move or scroll supersedes a deferred jump.
+        if pending.position != (self.cursor_line, self.cursor_col)
+            || pending.scroll != self.scroll_offset
+        {
+            return;
+        }
+        self.center_cursor_in_layout(wrapped);
+        // The provisional layout uses logical lines. Recenter once the
+        // worker's exact visual rows become available for this viewport.
+        if wrapped && !self.wrap_layout_ready(self.effective_wrap_width()) {
+            self.pending_cursor_center = Some(CursorCenter {
+                scroll: self.scroll_offset,
+                ..pending
+            });
         }
     }
 

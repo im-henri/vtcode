@@ -14,6 +14,8 @@ const UNWATCHED_TTL: Duration = Duration::from_secs(2);
 const WATCHED_TTL: Duration = Duration::from_secs(30);
 const MAX_DIRECTORIES: usize = 1_024;
 const MAX_ENTRIES: usize = 100_000;
+/// Below this, comparing names directly is cheaper than building sort keys.
+const KEYED_SORT_MIN_ENTRIES: usize = 64;
 
 struct Listing {
     entries: Arc<Vec<DirectoryEntry>>,
@@ -270,19 +272,40 @@ impl DirectoryCache {
             }
         }
         let mut indices: Vec<_> = (0..entries.len()).collect();
-        indices.sort_by(|&a, &b| {
-            let (_, a_dir, a_size, a_time, a_name) = &entries[a];
-            let (_, b_dir, b_size, b_time, b_name) = &entries[b];
-            b_dir.cmp(a_dir).then_with(|| {
-                let name = || ordering.names(a_name, b_name);
-                match sort {
-                    ExplorerSortMode::Name => name(),
-                    ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
-                    ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
-                    ExplorerSortMode::Type => if *a_dir { name() } else { ordering.extensions(a_name, b_name) },
-                }
-            })
-        });
+        if entries.len() >= KEYED_SORT_MIN_ENTRIES && ordering.has_sort_keys() {
+            // Collation keys once per name: a 20,000-entry folder otherwise
+            // runs ~290,000 full collation comparisons on expansion.
+            let keys: Vec<_> = entries.iter().map(|(_, is_dir, _, _, name)| {
+                if sort == ExplorerSortMode::Type && !*is_dir { ordering.extension_key(name) } else { ordering.name_key(name) }
+            }).collect();
+            if cancel.is_some_and(|token| token.is_cancelled()) { return None; }
+            indices.sort_by(|&a, &b| {
+                let (_, a_dir, a_size, a_time, _) = &entries[a];
+                let (_, b_dir, b_size, b_time, _) = &entries[b];
+                b_dir.cmp(a_dir).then_with(|| {
+                    let name = || keys[a].cmp(&keys[b]);
+                    match sort {
+                        ExplorerSortMode::Name | ExplorerSortMode::Type => name(),
+                        ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
+                        ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
+                    }
+                })
+            });
+        } else {
+            indices.sort_by(|&a, &b| {
+                let (_, a_dir, a_size, a_time, a_name) = &entries[a];
+                let (_, b_dir, b_size, b_time, b_name) = &entries[b];
+                b_dir.cmp(a_dir).then_with(|| {
+                    let name = || ordering.names(a_name, b_name);
+                    match sort {
+                        ExplorerSortMode::Name => name(),
+                        ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
+                        ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
+                        ExplorerSortMode::Type => if *a_dir { name() } else { ordering.extensions(a_name, b_name) },
+                    }
+                })
+            });
+        }
         if cancel.is_some_and(|token| token.is_cancelled()) { return None; }
         let indices = Arc::new(indices);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -312,6 +335,50 @@ mod tests {
     fn names(listing: &OrderedListing) -> Vec<&str> {
         listing.iter().map(|entry| entry.4.as_str()).collect()
     }
+
+    #[test]
+    fn keyed_ordering_of_large_listings_matches_the_comparers_in_every_mode() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/vscode-ordering.json")).unwrap();
+        let mut names: Vec<String> = fixture["inputs"]["names"].as_array().unwrap().iter()
+            .map(|value| value.as_str().unwrap().to_owned()).collect();
+        for index in 0..300 {
+            names.push(format!("item_{index}.txt"));
+            names.push(format!("Item_{:03}.{}", index % 17, ["rs", "RS", "md", "", "tar.gz"][index % 5]));
+            names.push(format!(".hidden{}", index % 11));
+            names.push(format!("É{}é", index % 7));
+        }
+        let directory = Path::new("keyed");
+        let entries: Vec<DirectoryEntry> = names.iter().enumerate().map(|(index, name)| (directory.join(format!("{index}")),
+            index % 9 == 0, (index % 13) as u64, SystemTime::UNIX_EPOCH + Duration::from_secs((index % 5) as u64), name.clone())).collect();
+        assert!(entries.len() >= KEYED_SORT_MIN_ENTRIES);
+        // fr-CA uses the comparer path (backwards secondary); it must agree too.
+        for locale in ["en-US", "de-DE", "sv-SE", "ja-JP", "tr-TR", "fr-CA"] {
+            let ordering = crate::file_order::FileOrder::new(locale).unwrap();
+            assert_eq!(ordering.has_sort_keys(), locale != "fr-CA");
+            for sort in [ExplorerSortMode::Name, ExplorerSortMode::Size, ExplorerSortMode::Modified, ExplorerSortMode::Type] {
+                let cache = DirectoryCache::default();
+                let listing = cache.get_ordered(directory, sort, &ordering, true, None, || Some(entries.clone())).unwrap();
+                let mut expected: Vec<_> = (0..entries.len()).collect();
+                expected.sort_by(|&a, &b| {
+                    let (_, a_dir, a_size, a_time, a_name) = &entries[a];
+                    let (_, b_dir, b_size, b_time, b_name) = &entries[b];
+                    b_dir.cmp(a_dir).then_with(|| {
+                        let name = || ordering.names(a_name, b_name);
+                        match sort {
+                            ExplorerSortMode::Name => name(),
+                            ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
+                            ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
+                            ExplorerSortMode::Type => if *a_dir { name() } else { ordering.extensions(a_name, b_name) },
+                        }
+                    })
+                });
+                let expected: Vec<&str> = expected.iter().map(|&index| entries[index].4.as_str()).collect();
+                assert_eq!(names_of(&listing), expected, "{locale} {sort:?}");
+            }
+        }
+    }
+
+    fn names_of(listing: &OrderedListing) -> Vec<&str> { listing.iter().map(|entry| entry.4.as_str()).collect() }
 
     #[test]
     fn sort_and_locale_projections_share_one_snapshot_and_keep_inflight_ordering() {

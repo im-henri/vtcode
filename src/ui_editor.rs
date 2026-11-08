@@ -1405,8 +1405,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 | "Svelte"
         );
     let effective_word_wrap = editor.word_wrap && rich_features_enabled;
+    let configured_minimap_width = app.minimap_render_width();
     let minimap_est: u16 = if app.show_minimap && area.width > 80 {
-        app.minimap_width + 1
+        configured_minimap_width + 1
     } else {
         0
     };
@@ -1433,7 +1434,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Split: gutter | code | minimap_separator | minimap | scrollbar
     let minimap_width: u16 = if app.show_minimap && editor_row_area.width > 80 {
-        app.minimap_width
+        configured_minimap_width
     } else {
         0
     };
@@ -1515,6 +1516,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         if editor.word_wrap && !bounded_render_mode {
             editor.wrapped_total_rows(editor.effective_wrap_width());
         }
+        editor.apply_pending_cursor_center(effective_word_wrap);
     }
     let change_rows =
         cached_overview_change_rows(app, scrollbar_area.height as usize, diff_changes);
@@ -4538,7 +4540,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_and_diff_layouts_render_fractional_change_markers_with_and_without_minimaps() {
+    fn editor_and_diff_layouts_render_solid_half_cell_markers_with_and_without_minimaps() {
         for (mode, unsaved, show_minimap) in [
             (crate::app::DiffMode::Off, false, false),
             (crate::app::DiffMode::Off, true, false),
@@ -4615,7 +4617,7 @@ mod tests {
                 (bar.y..bar.bottom()).any(|y| {
                     (bar.x..bar.right()).any(|x| {
                         let cell = &terminal.backend().buffer()[(x, y)];
-                        cell.fg == color && cell.symbol() != "█" && cell.symbol() != " "
+                        cell.fg == color && matches!(cell.symbol(), "▀" | "▄")
                     })
                 }),
                 "layout={}, unsaved={unsaved}, minimap={show_minimap}",

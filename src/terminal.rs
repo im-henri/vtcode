@@ -356,6 +356,44 @@ impl TermGrid {
         }
     }
 
+    /// SGR with colon subparameters (`38:2::R:G:B`, `58:5:N`, `4:3`). Each
+    /// group is one attribute; flattening them used to apply the color
+    /// components as separate attributes (dim, reset, a background, ...).
+    fn set_sgr_groups(&mut self, params: &vte::Params) {
+        let mut run = Vec::new();
+        for group in params.iter() {
+            if let [value] = group {
+                run.push(*value);
+                continue;
+            }
+            if !run.is_empty() {
+                self.set_sgr(&run);
+                run.clear();
+            }
+            match group[0] {
+                38 | 48 => {
+                    let color = match group.get(1) {
+                        Some(5) => group.get(2).map(|&index| Color::Indexed(index as u8)),
+                        // ITU form has a color-space id; the common form omits it.
+                        Some(2) => match group.len() {
+                            6.. => Some(Color::Rgb(group[3] as u8, group[4] as u8, group[5] as u8)),
+                            5 => Some(Color::Rgb(group[2] as u8, group[3] as u8, group[4] as u8)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(color) = color {
+                        if group[0] == 38 { self.fg = color; } else { self.bg = color; }
+                    }
+                }
+                4 => self.underline = group.get(1).is_none_or(|&style| style != 0),
+                // Underline colors and other styled attributes are not rendered.
+                _ => {}
+            }
+        }
+        if !run.is_empty() { self.set_sgr(&run); }
+    }
+
     fn set_sgr(&mut self, params: &[u16]) {
         if params.is_empty() { self.reset_attrs(); return; }
         let mut i = 0;
@@ -691,11 +729,14 @@ impl vte::Perform for TermGrid {
             'S' => self.scroll_up(p0.max(1) as usize),
             'T' => self.scroll_down(p0.max(1) as usize),
             'X' => {
+                // ECH erases with the current background (xterm BCE), which
+                // the advertised xterm-256color terminfo promises.
                 let n = p0.max(1) as usize;
+                let blank = TermCell { bg: self.bg, ..TermCell::default() };
                 if let Some(tail) = self.cells.get_mut(self.cursor_row)
                     .and_then(|row| row.get_mut(self.cursor_col..)) {
                     let n = n.min(tail.len());
-                    tail[..n].fill(TermCell::default());
+                    tail[..n].fill(blank);
                 }
             }
             'd' => {
@@ -746,6 +787,7 @@ impl vte::Perform for TermGrid {
                     }
                 }
             }
+            'm' if params.iter().any(|group| group.len() > 1) => self.set_sgr_groups(params),
             'm' => self.set_sgr(ps),
             'r' => {
                 let top = (p0.max(1) as usize).saturating_sub(1);

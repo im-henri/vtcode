@@ -390,14 +390,17 @@ pub enum BackgroundResult {
         root: PathBuf,
         workspace_generation: u64,
         repository_generation: u64,
+        complete: bool,
+        include_untracked: bool,
         discovery: crate::git_repositories::Discovery,
         scans: Vec<crate::git_repositories::Scan>,
     },
-    /// Discovery finished; the worktree scan has not produced a change count yet.
+    /// A repository is open, but its status and the full project list may still be loading.
     GitRepositoryFound {
         root: PathBuf,
         workspace_generation: u64,
         repository_generation: u64,
+        repository: PathBuf,
     },
     /// One bounded page from the current Git history traversal.
     GitLogPage(crate::git_history::HistoryPage),
@@ -413,6 +416,7 @@ pub enum BackgroundResult {
     ExplorerRefreshFailed { generation: u64, error: String },
     /// Metadata and optional line count requested by an Explorer hover.
     ExplorerHoverInfo { generation: u64, info: Option<ExplorerHoverInfo> },
+    SourceControlFileStats(crate::app_source_control_hover::ChangeStats),
     /// Directory picker contents collected without blocking keyboard/mouse
     /// navigation on a slow filesystem.
     FolderBrowserEntries {
@@ -1019,6 +1023,8 @@ pub struct BackgroundWorkers {
     /// Number of queued or executing short-lived jobs. The long-lived file
     /// watcher is deliberately excluded.
     active_jobs: Arc<AtomicUsize>,
+    /// Idle work runs on the analysis pool without counting as activity.
+    idle_jobs: Arc<AtomicUsize>,
     pending_results: Arc<AtomicUsize>,
     wake: UiWake,
     /// Cancels the watcher for the previous workspace when a folder switch
@@ -1057,6 +1063,7 @@ impl BackgroundWorkers {
             read_pool: None,
             prioritized_read_path: None,
             active_jobs,
+            idle_jobs: Arc::new(AtomicUsize::new(0)),
             pending_results,
             wake,
             file_watcher_control: None,
@@ -1101,6 +1108,21 @@ impl BackgroundWorkers {
         let token = CancellationToken::new();
         let worker_token = token.clone();
         let _ = self.pool_sender.send(Box::new(move || f(worker_token)));
+        token
+    }
+
+    /// Optional work ahead of demand (syntax checkpoints beyond the viewport).
+    /// It queues behind analysis on the same bounded pool, but it is not
+    /// user-visible activity: it never makes the status bar report "Working"
+    /// and never holds idle/quiescence checks open. Jobs must be cancellable.
+    pub(crate) fn submit_idle(
+        &self,
+        f: impl FnOnce(CancellationToken) + Send + 'static,
+    ) -> CancellationToken {
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let sender = BackgroundTaskSender { active_jobs: Arc::clone(&self.idle_jobs), ..self.pool_sender.clone() };
+        let _ = sender.send(Box::new(move || f(worker_token)));
         token
     }
 

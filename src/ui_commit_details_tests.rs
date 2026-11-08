@@ -979,12 +979,13 @@ fn commit_inspector_context_reveals_find_results_without_changing_the_setting() 
             .unwrap();
         assert!(!app.diff_render_cache.visible_target_lines.contains(&70));
         app.search_active = true;
-        app.search_query = "value_70".into();
+        app.search_regex = true;
+        app.search_query = "value_7[01]".into();
         app.update_search();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| {
             !app.bg_file_search_running && !app.file_search_refresh_pending
         });
-        assert_eq!(app.search_matches.len(), 1);
+        assert_eq!(app.search_matches.len(), 2);
         app.jump_to_current_match();
         terminal
             .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -1003,6 +1004,14 @@ fn commit_inspector_context_reveals_find_results_without_changing_the_setting() 
                 .iter()
                 .any(|row| row.is_some_and(|row| row.line_idx == 70))
         );
+        let scroll = app.diff_inline_scroll.row;
+        app.search_next();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        assert_eq!(app.editor().unwrap().cursor_line, 71);
+        assert_eq!(app.commit_details.context_revealed_line, Some(70));
+        assert_eq!(app.diff_inline_scroll.row, scroll);
         app.search_active = false;
         terminal
             .draw(|frame| crate::ui::draw(frame, &mut app))

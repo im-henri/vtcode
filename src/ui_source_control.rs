@@ -316,6 +316,7 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.source_control_actions_area = None;
     app.source_control_refresh_area = None;
     app.source_control_file_actions.clear();
+    app.source_control_file_hover.hit = None;
     app.repositories.headers.clear();
     app.repositories.closes.clear();
     app.repositories.parent_button = None;
@@ -382,7 +383,7 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
 }
 
 fn draw_repository_headers(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
-    if !app.repositories.discovered { return area; }
+    if !app.repositories.discovered && app.repositories.entries.is_empty() { return area; }
     let bg = app.colors.bg_sidebar;
     let mut y = area.y.saturating_add(1).min(area.bottom());
     if app.repositories.parent.is_some() && !app.repositories.parent_open && y < area.bottom() {
@@ -531,10 +532,23 @@ fn draw_sc_repository_state(f: &mut Frame, app: &mut App, area: Rect, missing: b
     }
 
     if !missing {
+        let loading = app.source_control_repository_state == crate::app::SourceControlRepositoryState::Loading;
+        if loading && area.height > 1
+            && let Some(root) = &app.repositories.loading_root
+        {
+            let name = root.file_name().map(std::path::Path::new).unwrap_or(root.as_path());
+            let name = app.display_path(name);
+            let header = Rect::new(area.x.saturating_add(1), area.y + 1, area.width.saturating_sub(1), 1);
+            f.render_widget(
+                Paragraph::new(truncate_to_width(&name, header.width as usize)).style(Style::default()
+                    .fg(app.colors.ui.sidebar_text_color(app.colors.bg_sidebar)).add_modifier(Modifier::BOLD)),
+                header,
+            );
+        }
         if area.height > 2 {
             f.render_widget(
                 Paragraph::new(Span::styled(
-                    if app.source_control_repository_state == crate::app::SourceControlRepositoryState::Loading {
+                    if loading {
                         "Loading Git changes…"
                     } else {
                         "Detecting Git repository…"
@@ -551,11 +565,14 @@ fn draw_sc_repository_state(f: &mut Frame, app: &mut App, area: Rect, missing: b
                 ),
             );
         }
-        if area.height > 4
-            && app.source_control_repository_state == crate::app::SourceControlRepositoryState::Loading
-        {
+        if area.height > 4 && loading {
+            let message = if app.sc_visibility.untracked {
+                "Scanning tracked and untracked files…"
+            } else {
+                "Scanning tracked files…"
+            };
             f.render_widget(
-                Paragraph::new("Scanning tracked and untracked files…")
+                Paragraph::new(message)
                     .style(Style::default().fg(app.colors.ui.description_color(app.colors.bg_sidebar)))
                     .alignment(Alignment::Center)
                     .wrap(Wrap { trim: true }),
@@ -863,10 +880,14 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let file = &files[i];
 
+        let row_area = Rect::new(
+            content_area.x,
+            list_start_y + len_as_u16(lines.len()),
+            content_area.width,
+            1,
+        );
         let is_selected = app.source_control_file_selected(i);
-        let is_hovered = app.mouse_row == list_start_y + len_as_u16(lines.len())
-            && app.mouse_col >= content_area.x
-            && app.mouse_col < content_area.x + content_area.width;
+        let is_hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
         let active = app.active_pane == crate::app::ActivePane::Explorer && !app.source_control_input_mode && !app.sc_graph_focused;
         let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground, bg, is_selected, active, is_hovered);
         let row_bg = row_style.bg.unwrap_or(bg);
@@ -910,11 +931,23 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let status_width = UnicodeWidthStr::width(status_badge.as_str());
         let action_width = FileActionRow::width(file.staged, content_area.width
             .saturating_sub((fixed_prefix_width + status_width + 4) as u16));
+        let actions = Rect::new(
+            row_area.right().saturating_sub(status_width as u16 + action_width),
+            row_area.y,
+            action_width,
+            1,
+        );
         if action_width > 0 {
             app.source_control_file_actions.push(FileActionRow {
                 index: i, change: file.clone(), repository: repository.clone(),
-                area: Rect::new(content_area.right().saturating_sub(status_width as u16 + action_width),
-                    list_start_y + len_as_u16(lines.len()), action_width, 1), background: row_bg,
+                area: actions, background: row_bg,
+            });
+        }
+        if is_hovered && !file.directory {
+            app.source_control_file_hover.hit = Some(crate::app_source_control_hover::RowHit {
+                index: i,
+                row: row_area,
+                actions,
             });
         }
         let (display_name, display_parent, gap_len) = sc_file_row_text(
@@ -1074,6 +1107,34 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
             return;
         }
     }
+}
+
+pub(crate) fn draw_file_tooltip(f: &mut Frame, app: &App) {
+    use crate::{app_source_control_hover::ChangeStats, ui_widgets::Tooltip};
+
+    let Some((file, area, stats)) = crate::app_source_control_hover::summary(app) else { return; };
+    let path = match &file.original_path {
+        Some(old) => Line::raw(format!("{old} → {}", file.path)),
+        None => Line::raw(file.path.as_str()),
+    };
+    let tooltip = match stats {
+        ChangeStats::Text { added, deleted } => Tooltip::hover(
+            vec![path, Line::from(vec![
+                Span::raw(format!("+{added} added")),
+                Span::raw("   "),
+                Span::raw(format!("-{deleted} removed")),
+            ])],
+            &app.colors,
+        )
+        .span_foreground(1, 0, app.colors.ui.git_decoration('A'))
+        .span_foreground(1, 2, app.colors.ui.git_decoration('D')),
+        ChangeStats::Binary => Tooltip::hover(vec![path, Line::raw("Binary file")], &app.colors),
+        ChangeStats::Unavailable => Tooltip::hover(
+            vec![path, Line::raw(if file.status == '!' { "Merge conflict" } else { "Line counts unavailable" })],
+            &app.colors,
+        ),
+    };
+    tooltip.prefer_below().render(f, area.x, area.y);
 }
 
 fn draw_sc_graph_panel(f: &mut Frame, app: &mut App, area: Rect) {

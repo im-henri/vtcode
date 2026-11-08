@@ -652,7 +652,7 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
             } else {
                 ""
             };
-            format!(" {} results{}", app.global_search_results.len(), suffix)
+            format!(" {}{}", crate::helpers::counted(app.global_search_results.len(), "result", "results"), suffix)
         } else {
             String::new()
         };

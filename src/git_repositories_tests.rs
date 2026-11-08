@@ -171,6 +171,56 @@ fn discovery_finds_nested_ignored_repositories_and_git_files_without_entering_gi
     assert!(discover(&workspace, &cancelled).roots.is_empty());
 }
 
+#[test]
+fn cached_discovery_preserves_nested_and_global_ignore_scopes_and_case_policy() {
+    for insensitive in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = canonical(temp.path());
+        init(&root, "outer\n");
+        let repo = git2::Repository::open(&root).unwrap();
+        let excludes = root.join(".git/discovery-excludes");
+        std::fs::write(&excludes, "global-output/\n").unwrap();
+        repo.config().unwrap().set_str("core.excludesfile", excludes.to_str().unwrap()).unwrap();
+        repo.config().unwrap().set_bool("core.ignorecase", insensitive).unwrap();
+        std::fs::write(root.join(".gitignore"), "generated/\nUPPER/\n").unwrap();
+        for name in ["generated/deep/project", "global-output/deep/project", "upper/deep/project", "source/kept"] {
+            init(&root.join(name), "nested\n");
+        }
+        std::fs::write(root.join("source/.gitignore"), "local-output/\n").unwrap();
+        init(&root.join("source/local-output/deep/project"), "ignored\n");
+        let cancel = CancellationToken::new();
+        let previous = discover_impl(&root, &cancel, |_, _, _| {}, false);
+        let cached = discover(&root, &cancel);
+        assert_eq!(cached.roots, previous.roots);
+        assert_eq!(cached.errors, previous.errors);
+        assert!(cached.roots.contains(&root.join("source/kept")));
+        assert!(!cached.roots.contains(&root.join("generated/deep/project")));
+        assert_eq!(cached.roots.contains(&root.join("upper/deep/project")), !insensitive);
+    }
+}
+
+#[test]
+#[ignore = "read-only discovery benchmark: set VTCODE_GIT_BENCH_REPO"]
+fn benchmark_repository_discovery() {
+    let root = PathBuf::from(std::env::var_os("VTCODE_GIT_BENCH_REPO").expect("VTCODE_GIT_BENCH_REPO"));
+    let cancel = CancellationToken::new();
+    let mut times = [Vec::new(), Vec::new()];
+    let mut expected = None;
+    for sample in 0..5 {
+        for cached in [sample % 2 == 0, sample % 2 != 0] {
+            let start = std::time::Instant::now();
+            let discovery = discover_impl(&root, &cancel, |_, _, _| {}, cached);
+            let elapsed = start.elapsed();
+            assert!(discovery.errors.is_empty(), "{:?}", discovery.errors);
+            if let Some(expected) = &expected { assert_eq!(&discovery.roots, expected); }
+            else { expected = Some(discovery.roots); }
+            if sample > 0 { times[usize::from(cached)].push(elapsed); }
+        }
+    }
+    for times in &mut times { times.sort(); }
+    eprintln!("repository discovery: before={:?} cached={:?}; roots={}", times[0][times[0].len()/2], times[1][times[1].len()/2], expected.unwrap().len());
+}
+
 struct Fixture {
     app: App,
     _directory: tempfile::TempDir,
@@ -727,6 +777,7 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
             root: fixture.root.clone(),
             workspace_generation: app.workspace_generation,
             repository_generation: generation,
+            repository: fixture.root.clone(),
         })
         .unwrap();
     app.background
@@ -735,6 +786,8 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
             root: fixture.root.clone(),
             workspace_generation: app.workspace_generation,
             repository_generation: generation,
+            complete: true,
+            include_untracked: true,
             discovery: Discovery {
                 errors: Vec::new(),
                 roots: vec![fixture.root.clone(), fixture.nested.clone()],
@@ -783,6 +836,8 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
             root: fixture.root.clone(),
             workspace_generation: app.workspace_generation,
             repository_generation: generation,
+            complete: true,
+            include_untracked: true,
             discovery: Discovery {
                 errors: Vec::new(),
                 roots: vec![fixture.root.clone(), fixture.nested.clone()],

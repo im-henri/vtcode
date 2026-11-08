@@ -251,6 +251,7 @@ fn reopen_candidates_ignore_obsolete_paths_and_do_not_duplicate_a_closed_parent(
         root: root_path.clone(),
         files: Vec::new(),
         branch: String::new(),
+        last_full_read: None,
         counts: [0; Group::ALL.len()],
         view: Default::default(),
     });

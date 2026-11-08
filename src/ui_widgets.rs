@@ -102,6 +102,38 @@ pub(crate) struct DropdownLayers {
 // DropdownMenu – reusable dropdown / context‑menu widget
 // ---------------------------------------------------------------------------
 
+/// Shared scrollbar geometry for dropdown painting and pointer input.
+pub(crate) struct DropdownScrollbar {
+    pub area: Rect,
+    pub thumb: Rect,
+    pub max_scroll: usize,
+}
+
+impl DropdownScrollbar {
+    pub(crate) fn new(inner: Rect, rows: usize, offset: usize) -> Option<Self> {
+        let height = inner.height as usize;
+        let width = 2.min(inner.width.saturating_sub(1));
+        if height == 0 || width == 0 || rows <= height { return None; }
+        let thumb_height = (height * height / rows).max(1).min(height);
+        let max_scroll = rows - height;
+        let thumb_top = offset.min(max_scroll) * (height - thumb_height) / max_scroll;
+        let area = Rect::new(inner.right() - width, inner.y, width, inner.height);
+        let thumb = Rect::new(area.x, area.y + thumb_top as u16, width, thumb_height as u16);
+        Some(Self { area, thumb, max_scroll })
+    }
+
+    pub(crate) fn drag_offset(&self, start_row: u16, start_offset: usize, row: u16) -> usize {
+        let travel = (self.area.height - self.thumb.height).max(1) as usize;
+        let distance = (row.abs_diff(start_row) as usize).saturating_mul(self.max_scroll)
+            .saturating_add(travel / 2) / travel;
+        if row >= start_row {
+            start_offset.saturating_add(distance).min(self.max_scroll)
+        } else {
+            start_offset.saturating_sub(distance).min(self.max_scroll)
+        }
+    }
+}
+
 /// Generic dropdown / context menu widget.
 ///
 /// Renders a bordered popup at the given anchor position, clamped to the
@@ -305,7 +337,6 @@ impl<'a> DropdownMenu<'a> {
             return inner;
         }
 
-        let needs_scrollbar = visual_rows > inner.height as usize;
         if let Some(scroll) = scroll {
             let selected = self.selected.min(self.items.len() - 1);
             let selected_row = selected + self.items[..selected].iter().filter(|item| item.separator_after).count();
@@ -325,7 +356,8 @@ impl<'a> DropdownMenu<'a> {
         }
 
         // Item content area (narrowed by scrollbar if present)
-        let scrollbar_width = if needs_scrollbar { 2.min(inner.width.saturating_sub(1)) } else { 0 };
+        let scrollbar = DropdownScrollbar::new(inner, visual_rows, self.scroll_offset);
+        let scrollbar_width = scrollbar.as_ref().map_or(0, |bar| bar.area.width);
         let item_width = inner.width.saturating_sub(scrollbar_width);
 
         let has_shortcut = self.items.iter().any(|i| !i.shortcut.is_empty());
@@ -376,7 +408,7 @@ impl<'a> DropdownMenu<'a> {
             let is_selected = item_idx == self.selected;
             let is_hovered = self.mouse_row == row_y
                 && self.mouse_col >= inner.x
-                && self.mouse_col < inner.x + inner.width;
+                && self.mouse_col < inner.x + item_width;
             let (bg, fg) = if item.disabled {
                 (self.colors.bg, fg_disabled)
             } else if is_selected || is_hovered {
@@ -499,19 +531,9 @@ impl<'a> DropdownMenu<'a> {
         }
 
         // Draw scrollbar when items overflow
-        if needs_scrollbar && inner.height > 0 {
-            let track_x = inner.right() - scrollbar_width;
-            let track_h = inner.height as usize;
-            let total = visual_rows;
-            let thumb_h = ((track_h * track_h) / total).max(1).min(track_h);
-            let max_scroll = total.saturating_sub(track_h);
-            let thumb_top = if max_scroll > 0 {
-                (self.scroll_offset.min(max_scroll) * (track_h - thumb_h)) / max_scroll
-            } else {
-                0
-            };
-            for i in 0..track_h {
-                let fg_c = if i >= thumb_top && i < thumb_top + thumb_h {
+        if let Some(bar) = scrollbar {
+            for row in bar.area.y..bar.area.bottom() {
+                let fg_c = if row >= bar.thumb.y && row < bar.thumb.bottom() {
                     self.colors.scrollbar_fg
                 } else {
                     self.colors.scrollbar_bg
@@ -521,7 +543,7 @@ impl<'a> DropdownMenu<'a> {
                         " ".repeat(scrollbar_width as usize),
                         Style::default().fg(fg_c).bg(fg_c),
                     )),
-                    Rect::new(track_x, inner.y + i as u16, scrollbar_width, 1),
+                    Rect::new(bar.area.x, row, scrollbar_width, 1),
                 );
             }
         }
@@ -843,6 +865,9 @@ pub(crate) fn settings_dropdown_colors(c: &crate::app_theme::ThemeColors) -> Dro
 // InputField – reusable single-line text input with prefix, cursor, and suffix
 // ---------------------------------------------------------------------------
 
+/// Columns of text an [`InputField`] keeps visible before it hides its suffix.
+const MIN_TEXT_BESIDE_SUFFIX: usize = 4;
+
 /// A single-line text input widget with prefix, cursor, placeholder, and suffix support.
 pub(crate) struct InputField<'a> {
     contrast_palette: Option<[Color; 14]>,
@@ -992,9 +1017,13 @@ impl<'a> InputField<'a> {
         // its trailing cell even while hidden so scrolling and hit targets stay put.
         let cursor_needs_cell = cursor_pos == Some(self.text.len())
             && (!self.text.is_empty() || self.placeholder.is_empty());
-        let reserved = UnicodeWidthStr::width(self.prefix)
-            + UnicodeWidthStr::width(self.suffix)
-            + usize::from(cursor_needs_cell);
+        // A suffix (match counts, hints) is secondary to the text being
+        // edited. When both cannot fit, drop the suffix instead of squeezing
+        // the text to one glyph and clipping the suffix mid-word.
+        let fixed = UnicodeWidthStr::width(self.prefix) + usize::from(cursor_needs_cell);
+        let suffix = if fixed + UnicodeWidthStr::width(self.suffix) + MIN_TEXT_BESIDE_SUFFIX
+            <= area.width as usize { self.suffix } else { "" };
+        let reserved = fixed + UnicodeWidthStr::width(suffix);
         let max_text_width = (area.width as usize).saturating_sub(reserved).max(1);
         let signature = crate::text_input::InputViewport::new(self.text, cursor_pos, self.selection_byte_range, 0, 0);
         let manual = self.viewport.filter(|view| view.matches(signature));
@@ -1146,9 +1175,9 @@ impl<'a> InputField<'a> {
             ));
         }
 
-        if !self.suffix.is_empty() {
+        if !suffix.is_empty() {
             spans.push(Span::styled(
-                self.suffix,
+                suffix,
                 Style::default().fg(crate::ui_colors::ensure_contrast(self.suffix_color, self.bg, 4.5, palette)),
             ));
         }
@@ -1185,7 +1214,7 @@ impl<'a> InputField<'a> {
         }
         push_hit_width(
             &mut column_to_byte,
-            UnicodeWidthStr::width(self.suffix),
+            UnicodeWidthStr::width(suffix),
             self.text.len(),
         );
 
@@ -1702,6 +1731,27 @@ mod tests {
                 assert_eq!(buffer[(x,0)].bg, background);
             }
         }
+    }
+
+    #[test]
+    fn input_field_hides_a_suffix_that_would_squeeze_the_text_and_clip_itself() {
+        let colors = crate::app_theme::EditorTheme::Dark.colors();
+        let row = |width: u16| {
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 1)).unwrap();
+            terminal.draw(|frame| {
+                InputField::new("wörld").theme_colors(&colors).cursor_marker("│").cursor_pos(6)
+                    .suffix(" No results", Color::Gray).render(frame, Rect::new(0, 0, width, 1));
+            }).unwrap();
+            let buffer = terminal.backend().buffer();
+            (0..width).map(|x| buffer[(x, 0)].symbol()).collect::<String>()
+        };
+        let wide = row(40);
+        assert!(wide.contains("wörld") && wide.contains("No results"), "{wide}");
+        // Too narrow for both: keep the query readable and omit the suffix
+        // rather than rendering a fragment such as "…d N".
+        let narrow = row(9);
+        assert!(narrow.contains("ld"), "{narrow}");
+        assert!(!narrow.contains('N'), "{narrow}");
     }
 
     #[test]

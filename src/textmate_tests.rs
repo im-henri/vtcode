@@ -96,6 +96,7 @@ fn registry_detects_file_names_aliases_and_ambiguous_extensions() {
         ("Dockerfile", "docker"),
         ("CMakeLists.txt", "cmake"),
         ("tsx", "tsx"),
+        ("Expr.G4", "antlr"),
     ] {
         assert_eq!(
             registry
@@ -110,6 +111,7 @@ fn registry_detects_file_names_aliases_and_ambiguous_extensions() {
         ("JS", "javascript"),
         ("TypeScript", "typescript"),
         ("Rust", "rust"),
+        ("ANTLR4", "antlr"),
     ] {
         assert_eq!(
             registry.find_syntax_by_token(alias).map(|s| s.id.as_str()),
@@ -127,6 +129,50 @@ fn registry_detects_file_names_aliases_and_ambiguous_extensions() {
                 .find_syntax_by_first_line(header)
                 .map(|s| s.id.as_str()),
             Some(id)
+        );
+    }
+}
+
+#[test]
+fn antlr4_file_highlights_grammar_rules_literals_and_comments() {
+    let registry = SyntaxRegistry::embedded();
+    let path = std::path::Path::new("Expr.g4");
+    let syntax = crate::highlight::select_syntax(&registry, Some(path), None, "grammar Expr;");
+    assert_eq!(syntax.name, "ANTLR4");
+    assert_eq!(syntax.scope, "source.antlr");
+    assert!(registry.find_syntax_by_extension("Expr.g").is_none());
+
+    let theme = Theme::new(
+        "ANTLR4 test",
+        "#ffffff",
+        "#000000",
+        &[
+            json!({"scope":"keyword.other.antlr","settings":{"foreground":"#ff0000"}}),
+            json!({"scope":"entity.name.function.parser.antlr","settings":{"foreground":"#00ff00"}}),
+            json!({"scope":"string.quoted.single.antlr","settings":{"foreground":"#0000ff"}}),
+            json!({"scope":"comment.line.double-slash.antlr","settings":{"foreground":"#888888"}}),
+        ],
+    )
+    .unwrap();
+    let mut parser = crate::textmate_backend::State::new(syntax, &theme);
+    for (line, sample, color) in [
+        ("grammar Expr;", "grammar", "#ff0000"),
+        ("expr: NUMBER;", "expr", "#00ff00"),
+        ("NUMBER: '1';", "'1'", "#0000ff"),
+        ("// A comment", "// A comment", "#888888"),
+    ] {
+        let start = line.find(sample).unwrap();
+        let expected = Color::parse(color).unwrap();
+        let spans = parser.line(line, true, &mut Vec::new());
+        let colors: Vec<_> = spans
+            .iter()
+            .flat_map(|(style, text)| std::iter::repeat_n(style.foreground, text.len()))
+            .collect();
+        assert!(
+            colors[start..start + sample.len()]
+                .iter()
+                .all(|color| *color == expected),
+            "{line}"
         );
     }
 }

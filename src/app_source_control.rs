@@ -228,6 +228,8 @@ impl App {
         // A commit, discard, checkout or remote operation that has already
         // started must finish normally; only optional readers are cancelled.
         self.source_control_cancel.cancel();
+        self.source_control_file_hover.clear_target();
+        self.repositories.loading_root = None;
         self.source_control_cancel = crate::background::CancellationToken::new();
         if !self.source_control_enabled { self.source_control_cancel.cancel(); }
         self.bg_git_status_running = false;
@@ -304,7 +306,7 @@ impl App {
                 }
             }
         }
-        if self.repositories.discovered {
+        if self.repositories.discovered || self.repositories.active.is_some() {
             if visibility.untracked {
                 // A tracked-only or path-limited snapshot cannot populate
                 // the newly visible group. Coalesce a complete refresh.
