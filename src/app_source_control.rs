@@ -5,6 +5,15 @@ use crate::source_control_rows::{Group, Layout, Visibility};
 
 type ChangeKey = (String, bool);
 
+pub(crate) struct FileClick {
+    change: ChangeKey,
+    repository: PathBuf,
+    position: (u16, u16),
+    time: std::time::Instant,
+    serial: u64,
+    workspace: u64,
+}
+
 pub(crate) struct SourceControlSender {
     sender: crate::background::BackgroundResultSender,
     cancel: crate::background::CancellationToken,
@@ -228,6 +237,7 @@ impl App {
         // A commit, discard, checkout or remote operation that has already
         // started must finish normally; only optional readers are cancelled.
         self.source_control_cancel.cancel();
+        self.source_control_file_click = None;
         self.source_control_file_hover.clear_target();
         self.repositories.loading_root = None;
         self.source_control_cancel = crate::background::CancellationToken::new();
@@ -342,6 +352,37 @@ impl App {
             .filter(|(index, _)| self.source_control_file_selected(*index))
             .map(|(_, file)| file.clone())
             .collect()
+    }
+
+    pub(crate) fn click_source_control_file(&mut self, index: usize, column: u16, row: u16) {
+        if !self.source_control_file_visible(index) { return; }
+        let Some(change) = self.source_control_files.get(index).map(key) else { return; };
+        let repository = self.source_control_root().to_owned();
+        let position = (column, row);
+        let time = std::time::Instant::now();
+        let keep_open = self.source_control_file_click.as_ref().is_some_and(|last| {
+            last.serial.wrapping_add(1) == self.mouse_press_serial
+                && last.position == position
+                && last.workspace == self.workspace_generation
+                && last.repository == repository
+                && last.change == change
+                && time.duration_since(last.time) < std::time::Duration::from_millis(400)
+        });
+        let path = self.workspace_file_path(&repository.join(&change.0));
+        self.source_control_file_click = Some(FileClick {
+            change, repository, position, time, serial: self.mouse_press_serial,
+            workspace: self.workspace_generation,
+        });
+        self.select_source_control_file(index, false, false);
+        self.open_source_control_diff(index);
+        // Opening an existing diff may focus another split. Keep that exact
+        // tab, including a still-loading preview, without pinning its position.
+        if keep_open && self.tabs.get(self.active_tab).is_some_and(|tab| {
+            matches!(tab.kind, crate::app::TabKind::Diff(_))
+                && tab.editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, &path))
+        }) {
+            self.pin_preview_tab();
+        }
     }
 
     pub(crate) fn select_source_control_file(&mut self, index: usize, toggle: bool, range: bool) {

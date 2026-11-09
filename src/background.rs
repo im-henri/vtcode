@@ -401,6 +401,7 @@ pub enum BackgroundResult {
         workspace_generation: u64,
         repository_generation: u64,
         repository: PathBuf,
+        branch: String,
     },
     /// One bounded page from the current Git history traversal.
     GitLogPage(crate::git_history::HistoryPage),

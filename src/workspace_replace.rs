@@ -275,6 +275,8 @@ pub(crate) fn file(
 pub(crate) struct State {
     pub cancel: Option<CancellationToken>,
     pub open: Outcome,
+    /// Search generation, selected match and viewport retained for a one-match edit.
+    pub selection: Option<(u64, usize, usize)>,
 }
 impl State {
     pub(crate) fn cancel(&mut self) {
@@ -282,6 +284,7 @@ impl State {
             cancel.cancel();
         }
         self.open = Outcome::default();
+        self.selection = None;
     }
 }
 impl Drop for State {

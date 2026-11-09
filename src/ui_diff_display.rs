@@ -1820,32 +1820,6 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         &diff_cache,
         &app.diff_inline_scroll.wrap,
     );
-    // A two-column bar reserves its first column for the thumb. A single-column
-    // bar (beside a minimap) must retain the shared renderer's change markers;
-    // repainting a thumb there would erase every overview decoration.
-    if review_row.is_none() && app.diff_inline_scroll.row_count() > visible && layout.scrollbar_area.width > 1 {
-        let height = layout.scrollbar_area.height as usize;
-        let (max_scroll, thumb) = crate::inline_diff::scrollbar_thumb(
-            app.diff_inline_scroll.row_count(),
-            visible,
-            height,
-            1,
-        );
-        let top = scroll.saturating_mul(height.saturating_sub(thumb)) / max_scroll.max(1);
-        let (track, slider) = app.colors.ui.scrollbar_colors(app.colors.ui.bg_overview, app.hovered_scrollbar, app.dragging_v_scrollbar);
-        for row in 0..height {
-            let in_thumb = (top..top + thumb).contains(&row);
-            let color = if in_thumb {
-                slider
-            } else {
-                track
-            };
-            if let Some(cell) = f.buffer_mut().cell_mut((layout.scrollbar_area.x, layout.scrollbar_area.y + row as u16)) {
-                cell.set_symbol(if in_thumb { "█" } else { " " });
-                cell.set_style(Style::default().fg(color).bg(color));
-            }
-        }
-    }
     if let Some(horizontal_area) = horizontal_area {
         // The scrollbar covers only the text viewport. Paint the reserved
         // gutter and overview end caps just as the regular editor does.

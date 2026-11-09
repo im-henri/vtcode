@@ -389,6 +389,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.settings_category_area = None;
     app.terminal_surfaces.clear();
     app.terminal_find.begin_frame();
+    app.terminal_links.begin_frame();
     app.terminal_scrollbar.areas.clear();
     app.search_control_regions.clear();
     app.search_bar_area = None;
@@ -692,6 +693,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_source_control::draw_file_tooltip(f, app);
     crate::ui_panels::draw_tooltip(f, app);
     crate::app_terminal_find::draw_tooltip(f, app);
+    crate::app_terminal_links::draw_tooltip(f, app);
     crate::ui_editor_folds::draw_tooltip(f, app);
 
     crate::ui_inline_blame::draw(f, app);

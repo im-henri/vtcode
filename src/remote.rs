@@ -431,6 +431,8 @@ pub(crate) enum Command {
         changed: Option<Vec<RemotePath>>,
         #[serde(default)]
         revalidate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        progress: Option<git::StatusProgressOptions>,
     },
     GitAction {
         repo: RemotePath,
@@ -723,6 +725,7 @@ pub(crate) enum Reply {
         discovery: git::Discovery,
         scans: Vec<git::Scan>,
     },
+    GitStatusProgress { request: u64, progress: git::StatusProgress },
     GitAction(crate::background::GitActionOutcome),
     GitSources(git::Sources),
     GitDiffSources(crate::git_diff_sources::Sources),

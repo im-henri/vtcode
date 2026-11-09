@@ -380,6 +380,125 @@ fn file_action(app: &mut App, path: &str, staged: bool, label: &str) -> Rect {
 }
 
 #[test]
+fn source_control_double_click_keeps_loading_diffs_and_preserves_each_view() {
+    let (_directory, mut app) = fixture();
+    click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
+    let first = app.tabs[app.active_tab].editor.navigation_id;
+    assert!(app.tabs[app.active_tab].preview);
+    assert!(app.editor().unwrap().bg_loading);
+    click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
+    assert!(!app.tabs[app.active_tab].preview, "double-click keeps a loading diff open");
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.tabs[app.active_tab].editor.navigation_id, first);
+    assert!(!app.tabs[app.active_tab].pinned);
+
+    click_file(&mut app, "b.txt", MouseButton::Left, KeyModifiers::NONE);
+    let second = app.tabs[app.active_tab].editor.navigation_id;
+    assert_eq!(app.tabs.len(), 2);
+    assert!(app.tabs[app.active_tab].preview);
+    click_file(&mut app, "b.txt", MouseButton::Left, KeyModifiers::NONE);
+    assert!(!app.tabs[app.active_tab].preview);
+    assert_eq!(app.tabs[app.active_tab].editor.navigation_id, second);
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.tabs.iter().all(|tab| !tab.editor.bg_loading)
+            && app.should_render_diff_for_active_editor()
+    });
+    let second_cache = app.diff_render_cache.clone();
+    app.editor_mut().unwrap().cursor_col = 3;
+
+    click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
+    assert_eq!(app.tabs[app.active_tab].editor.navigation_id, first);
+    assert!(!app.tabs[app.active_tab].preview);
+    app.wait_for_background(Duration::from_secs(10), |app| app.should_render_diff_for_active_editor());
+    let first_cache = app.diff_render_cache.clone();
+    assert!(!std::sync::Arc::ptr_eq(&first_cache, &second_cache));
+
+    click_file(&mut app, "c.txt", MouseButton::Left, KeyModifiers::NONE);
+    assert_eq!(app.tabs.len(), 3);
+    assert!(app.tabs[app.active_tab].preview);
+    for (path, id, cache) in [("b.txt", second, second_cache), ("a.txt", first, first_cache)] {
+        click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
+        assert_eq!(app.tabs.len(), 3);
+        assert_eq!(app.tabs[app.active_tab].editor.navigation_id, id);
+        assert!(!app.tabs[app.active_tab].preview);
+        assert!(std::sync::Arc::ptr_eq(&cache, &app.diff_render_cache));
+        assert_eq!(app.compare_base_content.as_deref(), Some("base\n"));
+        assert_eq!(app.editor().unwrap().rope.to_string(), "modified\n");
+        if path == "b.txt" { assert_eq!(app.editor().unwrap().cursor_col, 3); }
+    }
+}
+
+#[test]
+fn source_control_single_clicks_follow_preview_setting_and_keep_only_one_preview() {
+    for enabled in [false, true] {
+        let (_directory, mut app) = fixture();
+        app.set_preview_tabs_enabled(enabled);
+        for path in ["a.txt", "b.txt", "c.txt"] {
+            click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
+            assert_eq!(app.tabs[app.active_tab].preview, enabled);
+            assert_eq!(app.editor().unwrap().file_name(), path);
+        }
+        assert_eq!(app.tabs.len(), if enabled { 1 } else { 3 });
+        let current = app.tabs[app.active_tab].editor.navigation_id;
+        // A later single click on the same diff must not keep its preview.
+        app.source_control_file_click.as_mut().unwrap().time = std::time::Instant::now() - Duration::from_secs(1);
+        click_file(&mut app, "c.txt", MouseButton::Left, KeyModifiers::NONE);
+        assert_eq!(app.tabs[app.active_tab].editor.navigation_id, current);
+        assert_eq!(app.tabs[app.active_tab].preview, enabled);
+    }
+}
+
+#[test]
+fn source_control_double_click_requires_the_same_file_and_consecutive_plain_clicks() {
+    for boundary in ["row refresh", "ctrl", "shift", "middle", "workspace", "timeout"] {
+        let (_directory, mut app) = fixture();
+        click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
+        let mut path = "a.txt";
+        match boundary {
+            "row refresh" => {
+                let a = file(&app, "a.txt", false);
+                let b = file(&app, "b.txt", false);
+                app.source_control_files.swap(a, b);
+                path = "b.txt";
+            }
+            "ctrl" => click_file(&mut app, path, MouseButton::Left, KeyModifiers::CONTROL),
+            "shift" => click_file(&mut app, path, MouseButton::Left, KeyModifiers::SHIFT),
+            "middle" => click_file(&mut app, path, MouseButton::Middle, KeyModifiers::NONE),
+            "workspace" => app.workspace_generation += 1,
+            "timeout" => app.source_control_file_click.as_mut().unwrap().time -= Duration::from_secs(1),
+            _ => unreachable!(),
+        }
+        click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
+        assert!(app.tabs[app.active_tab].preview, "{boundary} must interrupt the double-click");
+        click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
+        assert!(!app.tabs[app.active_tab].preview, "a subsequent real double-click keeps the diff");
+    }
+}
+
+#[test]
+fn source_control_double_click_keeps_staged_and_unstaged_diffs_of_the_same_file() {
+    let (directory, mut app) = fixture();
+    let repo = git2::Repository::open(directory.path()).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("a.txt")).unwrap();
+    index.write().unwrap();
+    std::fs::write(directory.path().join("a.txt"), "worktree\n").unwrap();
+    refresh(&mut app);
+    for (staged, label, base, target) in [(true, "Unstage Changes", "base\n", "modified\n"),
+        (false, "Stage Changes", "modified\n", "worktree\n")] {
+        let row = file_action(&mut app, "a.txt", staged, label).y;
+        for _ in 0..2 { mouse(&mut app, MouseButton::Left, 10, row, KeyModifiers::NONE); }
+        assert!(!app.tabs[app.active_tab].preview);
+        assert_eq!(app.diff_tabs.staged_for_tab(&app.tabs[app.active_tab]), Some(staged));
+        app.wait_for_background(Duration::from_secs(10), |app| app.should_render_diff_for_active_editor());
+        assert_eq!(app.compare_base_content.as_deref(), Some(base));
+        assert_eq!(app.editor().unwrap().rope.to_string(), target);
+    }
+    assert_eq!(app.tabs.len(), 2);
+    assert!(app.tabs.iter().all(|tab| !tab.preview && !tab.pinned));
+}
+
+#[test]
 fn file_row_buttons_stage_and_unstage_the_clicked_file() {
     let (directory, mut app) = fixture();
     for (staged, label, expected) in [(false, "Stage Changes", "modified\n"), (true, "Unstage Changes", "base\n")] {

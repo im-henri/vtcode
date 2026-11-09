@@ -127,6 +127,7 @@ pub(crate) struct Scan<P = String> {
     pub include_untracked: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct Discovery {
     pub roots: Vec<PathBuf>,
     pub parent: Option<PathBuf>,
@@ -212,8 +213,20 @@ pub(crate) fn open_file_repository(
 /// prune ignored trees. Check for a repository *before* pruning, so an ignored
 /// submodule or embedded project is still discoverable without scanning its
 /// build/dependency output. This traversal is cached until a structural change.
+#[cfg(test)]
 pub(crate) fn discover(workspace: &Path, cancel: &CancellationToken) -> Discovery {
     discover_reporting(workspace, cancel, |_, _, _| {})
+}
+
+pub(crate) fn branch_name(repo: &git2::Repository) -> Result<String, git2::Error> {
+    match repo.head() {
+        Ok(head) => Ok(head.shorthand().unwrap_or_default().to_owned()),
+        Err(error) if matches!(error.code(), git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch) => {
+            Ok(repo.find_reference("HEAD").ok().and_then(|head| head.symbolic_target()
+                .and_then(|name| name.strip_prefix("refs/heads/")).map(str::to_owned)).unwrap_or_default())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn discover_reporting(
@@ -221,14 +234,72 @@ pub(crate) fn discover_reporting(
     cancel: &CancellationToken,
     found: impl FnMut(&Path, &Path, &git2::Repository),
 ) -> Discovery {
-    discover_impl(workspace, cancel, found, true)
+    discover_scan(workspace, cancel, found, true, true)
 }
 
+#[cfg(test)]
 fn discover_impl(
+    workspace: &Path, cancel: &CancellationToken,
+    found: impl FnMut(&Path, &Path, &git2::Repository), cache_ignores: bool,
+) -> Discovery {
+    discover_scan(workspace, cancel, found, cache_ignores, true)
+}
+
+#[cfg(test)]
+thread_local! { static MARKER_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn repository_marker_exists(directory: &Path) -> std::io::Result<bool> {
+    #[cfg(test)]
+    MARKER_PROBES.set(MARKER_PROBES.get() + 1);
+    directory.join(".git").try_exists()
+}
+
+fn discovery_children(
+    directory: &Path, cancel: &CancellationToken, errors: &mut Vec<crate::git_trust::Failure>,
+    read_marker: bool,
+) -> std::io::Result<(Vec<PathBuf>, bool)> {
+    let mut directories = Vec::new();
+    let mut marker = false;
+    for child in std::fs::read_dir(directory)? {
+        if cancel.is_cancelled() { break; }
+        let child = match child {
+            Ok(child) => child,
+            Err(error) => { errors.push(crate::git_trust::Failure::discovery(directory, error)); continue; }
+        };
+        let kind = match child.file_type() {
+            Ok(kind) => kind,
+            Err(error) => {
+                if read_marker && child.file_name().to_str().is_some_and(|name|
+                    name == ".git" || cfg!(windows) && name.eq_ignore_ascii_case(".git"))
+                { return Err(error); }
+                errors.push(crate::git_trust::Failure::discovery(&child.path(), error));
+                continue;
+            }
+        };
+        // Known roots and directly probed directories need only subdirectories;
+        // avoid cloning the name of every regular file in those listings.
+        if !read_marker && !kind.is_dir() { continue; }
+        let name = child.file_name();
+        if name == ".git" || cfg!(windows)
+            && name.to_str().is_some_and(|name| name.eq_ignore_ascii_case(".git"))
+            && repository_marker_exists(directory)?
+        {
+            marker = if kind.is_symlink() { repository_marker_exists(directory)? } else { true };
+            continue;
+        }
+        if crate::fs_ops::is_copy_temporary_name(&name)
+            || name.to_string_lossy().starts_with(crate::formatters::TEMP_DIR_PREFIX) { continue; }
+        if kind.is_dir() && !kind.is_symlink() { directories.push(child.path()); }
+    }
+    Ok((directories, marker))
+}
+
+fn discover_scan(
     workspace: &Path,
     cancel: &CancellationToken,
     mut found: impl FnMut(&Path, &Path, &git2::Repository),
     cache_ignores: bool,
+    listing_markers: bool,
 ) -> Discovery {
     let mut result = Discovery {
         roots: Vec::new(), parent: None, workspace: workspace.to_owned(), errors: Vec::new(),
@@ -251,26 +322,46 @@ fn discover_impl(
     if containing.as_ref().is_some_and(|repo| repo.is_bare()) { return result; }
     let mut contexts = containing.into_iter().filter_map(|repo| {
         let workdir = repo.workdir().map(canonical)?;
-        let rules = cache_ignores.then(|| crate::git_ignore::Rules::new(&repo, &workdir, &mut || {}));
+        if workdir == workspace { result.roots.push(workdir.clone()); }
+        else { result.parent = Some(workdir.clone()); }
+        found(&workspace, &workdir, &repo);
+        let rules = (cache_ignores && !cancel.is_cancelled()).then(|| crate::git_ignore::Rules::new(&repo, &workdir, &mut || {}));
         Some((repo, workdir, rules))
     }).collect::<Vec<_>>();
-    if let Some((repo, root, _)) = contexts.first() {
-        if root == &workspace {
-            result.roots.push(root.clone());
-        } else {
-            result.parent = Some(root.clone());
-        }
-        found(&workspace, root, repo);
-    }
     let mut stack = vec![(workspace.clone(), (!contexts.is_empty()).then_some(0))];
     let mut failed_contexts = FxHashSet::default();
     while let Some((directory, mut context)) = stack.pop() {
         if cancel.is_cancelled() { break; }
         if context.is_some_and(|index| failed_contexts.contains(&index)) { continue; }
+        let mut listing = None;
         if directory != workspace {
-            let marker = directory.join(".git");
+            let traversal = if !crate::background::workspace_path_is_watched(&workspace, &directory) {
+                Ok(false)
+            } else if let Some(index) = context
+                && let Some((repo, root, rules)) = contexts.get_mut(index)
+                && let Ok(relative) = directory.strip_prefix(root.as_path())
+            {
+                let cached = rules.as_mut().filter(|rules| rules.reliable() && directory.to_str().is_some()).and_then(|rules| {
+                    let ignored = rules.is_ignored(&directory, true, &mut || {});
+                    rules.trim(8_192);
+                    rules.reliable().then_some(ignored)
+                });
+                cached.map(Ok).unwrap_or_else(|| repo.status_should_ignore(relative))
+                    .map(|ignored| !ignored).map_err(|error| crate::git_trust::Failure::reading(root, error))
+            } else { Ok(true) };
+            // Ordinary source directories are listed anyway. Their entries
+            // reveal .git without a separate metadata lookup per directory,
+            // which is particularly costly on remote/network filesystems.
+            // Pruned and non-repository trees retain the direct marker probe
+            // so ignored embedded repositories can still be discovered.
+            if listing_markers && context.is_some() && matches!(traversal, Ok(true)) {
+                listing = Some(discovery_children(&directory, cancel, &mut result.errors, true));
+            }
+            if cancel.is_cancelled() { break; }
             let mut opened = false;
-            let has_marker = match marker.try_exists() {
+            let marker = if let Some(Ok((_, marker))) = &listing { Ok(*marker) }
+                else { repository_marker_exists(&directory) };
+            let has_marker = match marker {
                 Ok(present) => present,
                 Err(error) => {
                     result.errors.push(crate::git_trust::Failure::discovery(&directory, error));
@@ -287,7 +378,7 @@ fn discover_impl(
                             result.roots.push(root.clone());
                             found(&workspace, &root, &repo);
                             context = Some(contexts.len());
-                            let rules = cache_ignores.then(|| crate::git_ignore::Rules::new(&repo, &root, &mut || {}));
+                            let rules = (cache_ignores && !cancel.is_cancelled()).then(|| crate::git_ignore::Rules::new(&repo, &root, &mut || {}));
                             contexts.push((repo, root, rules));
                             opened = true;
                         }
@@ -302,63 +393,25 @@ fn discover_impl(
                 }
             }
             if !opened {
-                if !crate::background::workspace_path_is_watched(&workspace, &directory) { continue; }
-                if let Some(index) = context
-                    && let Some((repo, root, rules)) = contexts.get_mut(index)
-                    && let Ok(relative) = directory.strip_prefix(root.as_path())
-                {
-                    // read_dir already established that this is a directory.
-                    // Reuse inherited ignore rules instead of repeatedly
-                    // statting the same ancestor ignore files through libgit2.
-                    let cached = rules.as_mut().filter(|rules| rules.reliable() && directory.to_str().is_some()).and_then(|rules| {
-                        let ignored = rules.is_ignored(&directory, true, &mut || {});
-                        rules.trim(8_192);
-                        rules.reliable().then_some(ignored)
-                    });
-                    let ignored = cached.map(Ok).unwrap_or_else(|| repo.status_should_ignore(relative));
-                    match ignored {
-                        Ok(true) => continue,
-                        Ok(false) => {}
-                        Err(error) => {
-                            result.errors.push(crate::git_trust::Failure::reading(root, error));
-                            failed_contexts.insert(index);
-                            continue;
-                        }
+                match traversal {
+                    Ok(false) => continue,
+                    Ok(true) => {}
+                    Err(error) => {
+                        result.errors.push(error);
+                        if let Some(index) = context { failed_contexts.insert(index); }
+                        continue;
                     }
                 }
             }
         }
-        let children = match std::fs::read_dir(&directory) {
-            Ok(children) => children,
+        let children = match listing.unwrap_or_else(|| discovery_children(&directory, cancel, &mut result.errors, false)) {
+            Ok((children, _)) => children,
             Err(error) => {
                 result.errors.push(crate::git_trust::Failure::discovery(&directory, error));
                 continue;
             }
         };
-        for child in children {
-            if cancel.is_cancelled() { break; }
-            let child = match child {
-                Ok(child) => child,
-                Err(error) => {
-                    result.errors.push(crate::git_trust::Failure::discovery(&directory, error));
-                    continue;
-                }
-            };
-            let kind = match child.file_type() {
-                Ok(kind) => kind,
-                Err(error) => {
-                    result.errors.push(crate::git_trust::Failure::discovery(&child.path(), error));
-                    continue;
-                }
-            };
-            if !kind.is_dir() || kind.is_symlink() { continue; }
-            let name = child.file_name();
-            if name == ".git" || crate::fs_ops::is_copy_temporary_name(&name)
-                || name.to_string_lossy().starts_with(crate::formatters::TEMP_DIR_PREFIX) {
-                continue;
-            }
-            stack.push((child.path(), context));
-        }
+        stack.extend(children.into_iter().map(|child| (child, context)));
     }
     result.roots.sort_unstable();
     result.roots.dedup();

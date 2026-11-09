@@ -14,10 +14,24 @@ __vtcode_preexec() {
 }
 __vtcode_precmd() {
     local result=$?
+    if [[ ${__vtcode_directory-} != "$PWD" ]]; then
+        __vtcode_directory=$PWD
+        local directory=${PWD//%/%25}
+        directory=${directory// /%20}
+        directory=${directory//\#/%23}
+        directory=${directory//\?/%3F}
+        directory=${directory//;/%3B}
+        directory=${directory//$'\a'/%07}
+        directory=${directory//$'\e'/%1B}
+        directory=${directory//$'\n'/%0A}
+        directory=${directory//$'\r'/%0D}
+        printf '\e]7;file://%s\a' "$directory"
+    fi
     if (( __vtcode_running )); then
         __vtcode_running=0
         printf '\e]633;D;%s\a' "$result"
     fi
+    return "$result"
 }
 typeset -ga preexec_functions precmd_functions
 preexec_functions=(__vtcode_preexec "${preexec_functions[@]}")

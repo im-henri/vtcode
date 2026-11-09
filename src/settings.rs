@@ -125,6 +125,8 @@ pub struct Settings {
     pub indent_rainbow: Option<bool>,
     pub color_preview: Option<bool>,
     pub bracket_pair_colorization: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight_words_across_tabs: Option<bool>,
     pub error_lens: Option<bool>,
     pub hover_enabled: Option<bool>,
     pub quick_suggestions: Option<bool>,
@@ -427,6 +429,7 @@ impl Settings {
             indent_rainbow: other.indent_rainbow.or(self.indent_rainbow),
             color_preview: other.color_preview.or(self.color_preview),
             bracket_pair_colorization: other.bracket_pair_colorization.or(self.bracket_pair_colorization),
+            highlight_words_across_tabs: other.highlight_words_across_tabs.or(self.highlight_words_across_tabs),
             error_lens: other.error_lens.or(self.error_lens),
             hover_enabled: other.hover_enabled.or(self.hover_enabled),
             quick_suggestions: other.quick_suggestions.or(self.quick_suggestions),

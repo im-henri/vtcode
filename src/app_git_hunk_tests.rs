@@ -287,6 +287,8 @@ fn hunk_actions_use_literal_filenames_and_stable_patch_options() {
     assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 2);
     app.execute_hunk_popup_action(0);
     app.wait_for_git_action();
+    app.wait_for_hunk_preview();
+    app.close_hunk_popup();
     assert_eq!(git_stdout(&root, &["show", ":file[1].txt"]), first_only);
     assert_eq!(git_stdout(&root, &["show", ":file1.txt"]), original);
     assert_eq!(

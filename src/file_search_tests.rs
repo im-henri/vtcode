@@ -49,6 +49,151 @@ fn draw(app: &mut App, terminal: &mut Terminal<TestBackend>) {
     terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
 }
 
+fn middle_mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
+    crate::mouse::handle_mouse(
+        app,
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+}
+
+#[test]
+fn middle_click_column_selection_returns_keyboard_focus_from_find_and_replace() {
+    for wrapped in [false, true] {
+        for field in [TextInputId::SearchFind, TextInputId::SearchReplace] {
+            let mut app = app();
+            app.tabs[0].editor = Editor::test_with_text(&"alpha alpha\n".repeat(3));
+            app.editor_mut().unwrap().word_wrap = wrapped;
+            find(&mut app, "alpha");
+            app.replace_mode = true;
+            app.replace_query = "replacement".into();
+            app.replace_cursor = app.replace_query.len();
+            app.focus_text_input(field);
+            let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+            draw(&mut app, &mut terminal);
+            assert_eq!(app.focused_text_input_id(), Some(field));
+            assert!(app.search_pre_cursor.is_some());
+            let inputs = (
+                app.search_query.clone(),
+                app.search_cursor,
+                app.search_selection_anchor,
+                app.replace_query.clone(),
+                app.replace_cursor,
+                app.replace_selection_anchor,
+            );
+            let area = app.code_area.unwrap();
+            let column = area.x + 2;
+            middle_mouse(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Middle),
+                column,
+                area.y,
+            );
+            assert_eq!(app.active_pane, crate::app::ActivePane::Editor);
+            assert!(app.search_active);
+            assert!(!app.search_input_focused);
+            assert!(app.search_pre_cursor.is_none());
+            assert!(app.focused_text_input_id().is_none());
+            assert_eq!(
+                (
+                    app.editor().unwrap().cursor_line,
+                    app.editor().unwrap().cursor_col
+                ),
+                (0, 2)
+            );
+            middle_mouse(
+                &mut app,
+                MouseEventKind::Drag(MouseButton::Middle),
+                column,
+                area.y + 2,
+            );
+            middle_mouse(
+                &mut app,
+                MouseEventKind::Up(MouseButton::Middle),
+                column,
+                area.y + 2,
+            );
+            assert_eq!(app.editor().unwrap().extra_cursors, [(1, 2), (2, 2)]);
+            draw(&mut app, &mut terminal);
+            assert_eq!(app.file_search_bars.len(), 1);
+            key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+            assert_eq!(app.editor().unwrap().cursor_col, 3);
+            assert_eq!(app.editor().unwrap().extra_cursors, [(1, 3), (2, 3)]);
+            key(&mut app, KeyCode::Char('X'), KeyModifiers::NONE);
+            assert_eq!(
+                app.editor().unwrap().rope.to_string(),
+                "alpXha alpha\n".repeat(3)
+            );
+            assert_eq!(
+                (
+                    app.search_query.clone(),
+                    app.search_cursor,
+                    app.search_selection_anchor,
+                    app.replace_query.clone(),
+                    app.replace_cursor,
+                    app.replace_selection_anchor
+                ),
+                inputs,
+            );
+        }
+    }
+}
+
+#[test]
+fn middle_clicking_an_inactive_split_releases_only_that_editors_find_focus() {
+    for direction in [SplitDirection::Horizontal, SplitDirection::Vertical] {
+        let mut app = app();
+        app.tabs[0].editor = Editor::test_with_text(&"alpha alpha\n".repeat(3));
+        find(&mut app, "alpha");
+        let target_group = app.active_group;
+        app.create_split_group_dir(1, direction);
+        find(&mut app, "beta");
+        let other_group = app.active_group;
+        let mut terminal = Terminal::new(TestBackend::new(220, 40)).unwrap();
+        draw(&mut app, &mut terminal);
+        let area = app.groups[target_group].code_area.unwrap();
+        let column = area.x + 2;
+        middle_mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Middle),
+            column,
+            area.y,
+        );
+        assert_eq!(app.active_group, target_group);
+        assert!(app.search_active);
+        assert!(!app.search_input_focused);
+        assert!(app.search_pre_cursor.is_none());
+        middle_mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Middle),
+            column,
+            area.y + 1,
+        );
+        middle_mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Middle),
+            column,
+            area.y + 1,
+        );
+        key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        key(&mut app, KeyCode::Char('X'), KeyModifiers::NONE);
+        assert_eq!(
+            app.editor().unwrap().rope.to_string(),
+            "alpXha alpha\nalpXha alpha\nalpha alpha\n"
+        );
+        assert_eq!(app.search_query, "alpha");
+        let other = &app.groups[other_group].tabs[0];
+        assert!(other.file_search.search_input_focused);
+        assert!(other.file_search.search_pre_cursor.is_some());
+        assert_eq!(other.file_search.search_query, "beta");
+        assert_eq!(other.editor.rope.to_string(), "beta beta\n");
+    }
+}
+
 #[test]
 fn tabs_keep_independent_find_replace_matches_and_input_history() {
     let mut app = app();

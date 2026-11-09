@@ -235,6 +235,7 @@ impl App {
             indent_rainbow: Some(self.indent_rainbow),
             color_preview: Some(self.show_color_preview),
             bracket_pair_colorization: Some(self.bracket_pair_colorization),
+            highlight_words_across_tabs: Some(self.highlight_words_across_tabs),
             error_lens: Some(self.error_lens),
             hover_enabled: Some(self.hover_enabled),
             quick_suggestions: Some(self.quick_suggestions),
@@ -585,6 +586,10 @@ impl App {
         }
         if let Some(v) = s.bracket_pair_colorization {
             self.bracket_pair_colorization = v;
+        }
+        if let Some(v) = s.highlight_words_across_tabs {
+            self.highlight_words_across_tabs = v;
+            if !v { self.shared_word_highlight = None; }
         }
         if let Some(v) = s.error_lens {
             self.error_lens = v;

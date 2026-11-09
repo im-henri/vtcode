@@ -39,51 +39,45 @@ impl App {
 ///   ' ' = unchanged. A file whose final lines were all deleted retains one
 ///   synthetic `D` entry so the editor's remaining empty line can show it.
 pub(crate) fn compute_line_diff(old: &[&str], new: &[&str]) -> Vec<char> {
-    use similar::{ChangeTag, TextDiff};
-
     // Use from_slices to avoid O(n) join allocations
-    let diff = TextDiff::from_slices(old, new);
+    let diff = similar::TextDiff::from_slices(old, new);
+    line_diff_from_ops(old.len(), new.len(), diff.ops())
+}
 
-    let mut result = Vec::with_capacity(new.len());
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Equal => result.push(' '),
-            ChangeTag::Insert => result.push('A'),
-            ChangeTag::Delete => {}
+fn line_diff_from_ops(old_len: usize, new_len: usize, ops: &[similar::DiffOp]) -> Vec<char> {
+    let mut result = vec![' '; new_len.max(usize::from(old_len > 0 && new_len == 0))];
+    for op in ops {
+        let (start, len, marker) = match *op {
+            similar::DiffOp::Insert { new_index, new_len, .. } => (new_index, new_len, 'A'),
+            similar::DiffOp::Replace { new_index, new_len, .. } => (new_index, new_len, 'M'),
+            _ => continue,
+        };
+        result[start..start + len].fill(marker);
+    }
+    for op in ops {
+        if let similar::DiffOp::Delete { new_index, .. } = *op {
+            let line = new_index.min(result.len().saturating_sub(1));
+            result[line] = 'D';
         }
     }
-
-    // Mark insertions that replace deletions as 'M' (modified)
-    for op in diff.ops() {
-        match *op {
-            similar::DiffOp::Replace {
-                new_index, new_len, ..
-            } => {
-                for i in new_index..(new_index + new_len) {
-                    if i < result.len() {
-                        result[i] = 'M';
-                    }
-                }
-            }
-            similar::DiffOp::Delete { new_index, .. } => {
-                if result.is_empty() {
-                    result.push('D');
-                } else {
-                    let marker_line = new_index.min(result.len() - 1);
-                    result[marker_line] = 'D';
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Ensure result length matches `new`, except for a fully deleted file: a
-    // Rope still has one empty display line where the deletion marker belongs.
-    let display_len = new
-        .len()
-        .max(usize::from(!old.is_empty() && new.is_empty()));
-    result.resize(display_len, ' ');
     result
+}
+
+/// Both marker sets must use worktree coordinates. Reuse the unstaged diff's
+/// equal ranges instead of diffing a second time or mapping each line separately.
+pub(crate) fn compute_worktree_line_diffs(staged: &[char], index: &[&str], worktree: &[&str]) -> (Vec<char>, Vec<char>) {
+    let diff = similar::TextDiff::from_slices(index, worktree);
+    let unstaged = line_diff_from_ops(index.len(), worktree.len(), diff.ops());
+    let mut mapped = vec![' '; worktree.len().max(1)];
+    for op in diff.ops() {
+        if let similar::DiffOp::Equal { old_index, new_index, len } = *op
+            && let Some(source) = staged.get(old_index..old_index + len)
+        {
+            mapped[new_index..new_index + len].copy_from_slice(source);
+        }
+    }
+    if index.is_empty() && worktree.is_empty() && staged.first() == Some(&'D') { mapped[0] = 'D'; }
+    (mapped, unstaged)
 }
 
 pub(crate) fn target_line_markers_from_compare_diff(

@@ -1,6 +1,32 @@
 //! Repository discovery and native libgit2 status collection live on the remote
-//! filesystem. The client receives one snapshot, not a network stat per file.
+//! filesystem. Bootstrap metadata and the primary snapshot can arrive before
+//! nested discovery; all filesystem work stays on the node.
 use super::*;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct StatusProgressOptions {
+    pub preferred: Option<RemotePath>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum StatusProgress {
+    Repository { root: RemotePath, branch: String },
+    Snapshot { discovery: Discovery, scan: Box<Scan> },
+}
+
+pub(crate) struct StatusQuery {
+    pub include_untracked: bool,
+    pub known: Option<Discovery>,
+    pub parent_open: bool,
+    pub closed: Vec<RemotePath>,
+    pub changed: Option<Vec<RemotePath>>,
+    pub revalidate: bool,
+}
+
+pub(crate) enum StatusUpdate {
+    Repository { root: PathBuf, branch: String },
+    Snapshot { discovery: crate::git_repositories::Discovery, scan: Box<crate::git_repositories::Scan> },
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Discovery {
@@ -285,10 +311,59 @@ pub(crate) fn status(
     (changed, revalidate): (Option<Vec<RemotePath>>, bool),
     cancel: &crate::background::CancellationToken,
 ) -> io::Result<Reply> {
+    status_reporting(root, StatusQuery { known, parent_open, closed, include_untracked, changed, revalidate },
+        None, cancel, |_| Ok(()))
+}
+
+pub(crate) fn status_reporting(
+    root: &Path, query: StatusQuery, progress: Option<StatusProgressOptions>,
+    cancel: &crate::background::CancellationToken,
+    mut report: impl FnMut(StatusProgress) -> io::Result<()>,
+) -> io::Result<Reply> {
+    let StatusQuery { known, parent_open, closed, include_untracked, changed, revalidate } = query;
     if cancel.is_cancelled() {
         return Err(io::Error::from(io::ErrorKind::Interrupted));
     }
     let scoped = known.is_some();
+    let closed = closed.iter().map(|path| path.resolve(root)).collect::<io::Result<Vec<_>>>()?;
+    let preferred = progress.as_ref().and_then(|options| options.preferred.as_ref())
+        .map(|path| path.resolve(root)).transpose()?;
+    let mut announced = false;
+    let mut published = None;
+    let mut failure = None;
+    let mut early_errors = Vec::new();
+    let mut found = |workspace: &Path, repository: &Path, repo: &git2::Repository, fallback: bool| {
+        if progress.is_none() || announced || cancel.is_cancelled() || closed.iter().any(|path| path == repository)
+            || (!repository.starts_with(workspace) && !parent_open)
+            || !fallback && preferred.as_deref().is_some_and(|preferred| preferred != repository)
+        { return; }
+        announced = true;
+        let publish = (|| -> io::Result<()> {
+            report(StatusProgress::Repository {
+                root: from_native(repository, root)?,
+                branch: crate::git_repositories::branch_name(repo).map_err(io::Error::other)?,
+            })?;
+            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            let snapshot = crate::app_git::read_source_control_status(repo, repository, cancel,
+                Path::to_path_buf, &mut None, include_untracked, false);
+            if let Some(error) = snapshot.error { early_errors.push(error); return Ok(()); }
+            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            if snapshot.workdir.as_deref() != Some(repository) { return Ok(()); }
+            let scan = encode_scan(crate::git_repositories::Scan {
+                root: repository.to_owned(), files: snapshot.files, branch: snapshot.branch,
+                operation: snapshot.operation, worktree_paths: None, include_untracked,
+            }, root)?;
+            let discovery = encode_discovery(crate::git_repositories::Discovery {
+                workspace: workspace.to_owned(),
+                roots: if repository.starts_with(workspace) { vec![repository.to_owned()] } else { Vec::new() },
+                parent: (!repository.starts_with(workspace)).then(|| repository.to_owned()), errors: Vec::new(),
+            }, root)?;
+            report(StatusProgress::Snapshot { discovery, scan: Box::new(scan) })?;
+            published = Some(repository.to_owned());
+            Ok(())
+        })();
+        if let Err(error) = publish { failure = Some(error); cancel.cancel(); }
+    };
     let mut discovery = match known {
         Some(known) => crate::git_repositories::Discovery {
             errors: Vec::new(),
@@ -304,22 +379,39 @@ pub(crate) fn status(
                 .transpose()?,
             workspace: root.to_path_buf(),
         },
-        None => crate::git_repositories::discover(root, cancel),
+        None => crate::git_repositories::discover_reporting(root, cancel, |workspace, repository, repo| found(workspace, repository, repo, false)),
     };
     let mut roots = discovery.roots.clone();
     if parent_open && let Some(parent) = &discovery.parent { roots.push(parent.clone()); }
-    let closed = closed.iter().map(|path| path.resolve(root)).collect::<io::Result<Vec<_>>>()?;
     roots.retain(|path| !closed.contains(path));
+    // Known roots or a missing restored selection need the same fast initial
+    // snapshot. A primary already scanned during discovery is never reread.
+    if progress.is_some()
+        && let Some(repository) = preferred.as_ref().filter(|path| roots.contains(path)).or_else(|| roots.first())
+        && let Ok(repo) = git2::Repository::open(repository)
+    { found(&discovery.workspace, repository, &repo, true); }
+    if let Some(error) = failure { return Err(error); }
+    discovery.errors.extend(early_errors);
+    roots.retain(|path| published.as_ref() != Some(path));
     let changed = if scoped {
         changed.map(|paths| paths.iter().map(|path| path.resolve(root)).collect::<io::Result<_>>()).transpose()?
     } else { None };
     let changed = changed.map(|paths| crate::app_git::refresh::WorktreeEvents { paths, revalidate });
     let scans = crate::app_git::refresh::collect_with_paths(&mut discovery, roots, changed, root,
         cancel, include_untracked, Path::to_path_buf);
+    let discovery = encode_discovery(discovery, root)?;
+    let scans = scans.into_iter().map(|scan| encode_scan(scan, root)).collect::<io::Result<_>>()?;
+    if cancel.is_cancelled() {
+        return Err(io::Error::from(io::ErrorKind::Interrupted));
+    }
+    Ok(Reply::GitStatus { discovery, scans })
+}
+
+fn encode_discovery(discovery: crate::git_repositories::Discovery, root: &Path) -> io::Result<Discovery> {
     let errors = discovery.errors.into_iter().map(|error| {
         error.try_map(|path| from_native(&path, root))
     }).collect::<io::Result<_>>()?;
-    let discovery = Discovery {
+    Ok(Discovery {
         errors,
         roots: discovery
             .roots
@@ -331,26 +423,23 @@ pub(crate) fn status(
             .as_ref()
             .map(|path| from_native(path, root))
             .transpose()?,
-    };
-    let scans = scans.into_iter().map(|scan| {
-        let worktree_paths = scan.worktree_paths.map(|scope| {
-            Ok::<_, io::Error>(WorktreeScope {
-                ignore_case: scope.ignore_case(),
-                paths: scope.paths.into_iter().map(relative_native_path).collect::<io::Result<_>>()?,
-            })
-        }).transpose()?;
-        Ok(Scan {
-            operation: scan.operation,
-            root: from_native(&scan.root, root)?,
-            files: scan.files.into_iter().map(|file| file.try_map_paths(relative_native_path)).collect::<io::Result<_>>()?,
-            branch: scan.branch,
-            worktree_paths,
+    })
+}
+
+fn encode_scan(scan: crate::git_repositories::Scan<PathBuf>, root: &Path) -> io::Result<Scan> {
+    let worktree_paths = scan.worktree_paths.map(|scope| {
+        Ok::<_, io::Error>(WorktreeScope {
+            ignore_case: scope.ignore_case(),
+            paths: scope.paths.into_iter().map(relative_native_path).collect::<io::Result<_>>()?,
         })
-    }).collect::<io::Result<_>>()?;
-    if cancel.is_cancelled() {
-        return Err(io::Error::from(io::ErrorKind::Interrupted));
-    }
-    Ok(Reply::GitStatus { discovery, scans })
+    }).transpose()?;
+    Ok(Scan {
+        operation: scan.operation,
+        root: from_native(&scan.root, root)?,
+        files: scan.files.into_iter().map(|file| file.try_map_paths(relative_native_path)).collect::<io::Result<_>>()?,
+        branch: scan.branch,
+        worktree_paths,
+    })
 }
 
 impl workspace::Workspace {
@@ -541,6 +630,7 @@ impl workspace::Workspace {
             .insert(file, bytes, (epoch, sources.clone()));
         Ok(Some(sources))
     }
+    #[cfg(test)]
     pub(crate) fn git_snapshot(
         &self,
         include_untracked: bool,
@@ -553,6 +643,16 @@ impl workspace::Workspace {
         crate::git_repositories::Discovery,
         Vec<crate::git_repositories::Scan>,
     )> {
+        self.git_snapshot_progress(StatusQuery { include_untracked, known, parent_open, closed, changed, revalidate: false },
+            None, cancel, |_| Ok(()))
+    }
+
+    pub(crate) fn git_snapshot_progress(
+        &self, query: StatusQuery, progress: Option<StatusProgressOptions>,
+        cancel: &crate::background::CancellationToken,
+        mut consume: impl FnMut(StatusUpdate) -> io::Result<()>,
+    ) -> io::Result<(crate::git_repositories::Discovery, Vec<crate::git_repositories::Scan>)> {
+        let StatusQuery { include_untracked, known, parent_open, closed, changed, .. } = query;
         if cancel.is_cancelled() {
             return Err(io::ErrorKind::Interrupted.into());
         }
@@ -609,12 +709,14 @@ impl workspace::Workspace {
         for root in &selected {
             if let Some(cached) = snapshots.take(root) { previous.insert(root.clone(), cached); }
         }
+        let mut early_scans = Vec::new();
+        let mut published = std::collections::HashSet::new();
         let (discovery, scans) = if partial.is_some() && selected.is_empty() {
             (known.unwrap(), Vec::new())
         } else {
             let mut excluded = closed.clone();
             excluded.extend(skipped);
-            let Reply::GitStatus { discovery, scans } = self.client.call_cancellable(
+            let Reply::GitStatus { discovery, scans } = self.client.git_status(
                 Command::GitStatus {
                     known,
                     parent_open,
@@ -622,8 +724,21 @@ impl workspace::Workspace {
                     include_untracked,
                     changed: if delta_safe { partial.cloned() } else { None },
                     revalidate: delta_safe && revalidate,
+                    progress,
                 },
                 cancel,
+                |progress| {
+                    match progress {
+                        StatusProgress::Repository { root, branch } => consume(StatusUpdate::Repository { root: self.view_key(&root), branch }),
+                        StatusProgress::Snapshot { discovery, scan } => {
+                            let discovery = self.decode_status_discovery(discovery)?;
+                            let scan = self.decode_status_scan(*scan, include_untracked)?;
+                            published.insert(scan.root.clone());
+                            early_scans.push((scan.clone(), std::time::Instant::now()));
+                            consume(StatusUpdate::Snapshot { discovery, scan: Box::new(scan) })
+                        }
+                    }
+                },
             )?
             else {
                 return Err(io::Error::other("Invalid remote Git status reply"));
@@ -637,46 +752,13 @@ impl workspace::Workspace {
                 .is_some_and(|paths| paths.iter().any(|path| path.name() == ".gitignore"));
         self.refresh_git_source_cache(refresh_sources);
         let active = open_roots(&discovery, parent_open, &closed);
-        let errors = discovery.errors.iter().cloned().map(|error| {
-            error.try_map(|path| Ok::<_, io::Error>(self.view_key(&path)))
-        }).collect::<io::Result<_>>()?;
-        let result_discovery = crate::git_repositories::Discovery {
-            errors,
-            roots: discovery
-                .roots
-                .iter()
-                .map(|path| self.view_key(path))
-                .collect(),
-            parent: discovery.parent.as_ref().map(|path| self.view_key(path)),
-            workspace: self.view_root.clone(),
-        };
-        for scan in scans {
-            let remote_root = scan.root.clone();
-            let key = self.view_key(&scan.root);
-            let local_path = |path: RemotePath| -> io::Result<PathBuf> {
-                if path.is_absolute() { return Err(io::Error::other("Git status path must be repository-relative")); }
-                let remote = remote_root.join_relative(&path.0)?;
-                Ok(self.view_key(&remote).strip_prefix(&key).map_err(io::Error::other)?.to_owned())
-            };
-            let mut files = scan.files.into_iter().map(|file| {
-                file.try_map_paths(|path| local_path(path).map(|path| path.to_string_lossy().into_owned()))
-            }).collect::<io::Result<Vec<_>>>()?;
-            // The node's raw path ordering may change when view keys escape
-            // names that the client OS cannot represent directly.
-            files.sort_unstable_by(|a, b| crate::source_control_rows::Group::of(a)
-                .cmp(&crate::source_control_rows::Group::of(b)).then(a.path.cmp(&b.path)));
-            let mut merged = crate::git_repositories::Scan {
-                operation: scan.operation,
-                root: key.clone(),
-                files,
-                branch: scan.branch,
-                worktree_paths: None,
-                include_untracked,
-            };
-            let checked = if let Some(scope) = scan.worktree_paths {
-                let mut paths = crate::app_git::refresh::WorktreePaths::new(
-                    scope.paths.into_iter().map(local_path).collect::<io::Result<_>>()?);
-                paths.set_ignore_case(scope.ignore_case);
+        let result_discovery = self.decode_status_discovery(discovery)?;
+        let scans = scans.into_iter().map(|scan| self.decode_status_scan(scan, include_untracked));
+        let scans = scans.map(|scan| scan.map(|scan| (scan, std::time::Instant::now())));
+        for scan in early_scans.into_iter().map(Ok).chain(scans) {
+            let (mut merged, received) = scan?;
+            let remote_root = self.remote_path(&merged.root)?;
+            let checked = if let Some(paths) = merged.worktree_paths.take() {
                 let mut cached = previous.remove(&remote_root)
                     .ok_or_else(|| io::Error::other("Git status delta has no cached baseline"))?;
                 crate::app_git::refresh::merge_worktree(&mut cached.scan.files, merged.files, &paths);
@@ -684,7 +766,7 @@ impl workspace::Workspace {
                 // A path delta does not revalidate unrelated files. Retain the
                 // full-snapshot deadline so missed shared-disk events expire.
                 cached.checked
-            } else { std::time::Instant::now() };
+            } else { received };
             let bytes = merged
                 .files
                 .iter()
@@ -694,18 +776,20 @@ impl workspace::Workspace {
                         + file.original_path.as_ref().map_or(0, |path| path.len())
                 })
                 .sum();
+            let already_published = published.contains(&merged.root);
+            if !already_published { refreshed.insert(remote_root.clone(), merged.clone()); }
             snapshots.insert(
                 remote_root.clone(),
                 bytes,
                 CachedStatus {
-                    scan: merged.clone(),
+                    scan: merged,
                     checked,
                 },
             );
-            refreshed.insert(remote_root, merged);
         }
         let scans = active
             .into_iter()
+            .filter(|root| !published.contains(&self.view_key(root)))
             .filter_map(|root| {
                 refreshed
                     .remove(&root)
@@ -715,5 +799,37 @@ impl workspace::Workspace {
             })
             .collect();
         Ok((result_discovery, scans))
+    }
+
+    fn decode_status_discovery(&self, discovery: Discovery) -> io::Result<crate::git_repositories::Discovery> {
+        Ok(crate::git_repositories::Discovery {
+            errors: discovery.errors.into_iter().map(|error| error.try_map(|path| Ok::<_, io::Error>(self.view_key(&path))))
+                .collect::<io::Result<_>>()?,
+            roots: discovery.roots.iter().map(|path| self.view_key(path)).collect(),
+            parent: discovery.parent.as_ref().map(|path| self.view_key(path)),
+            workspace: self.view_root.clone(),
+        })
+    }
+
+    fn decode_status_scan(&self, scan: Scan, include_untracked: bool) -> io::Result<crate::git_repositories::Scan> {
+        let key = self.view_key(&scan.root);
+        let local_path = |path: RemotePath| -> io::Result<PathBuf> {
+            if path.is_absolute() { return Err(io::Error::other("Git status path must be repository-relative")); }
+            let remote = scan.root.join_relative(&path.0)?;
+            Ok(self.view_key(&remote).strip_prefix(&key).map_err(io::Error::other)?.to_owned())
+        };
+        let mut files = scan.files.into_iter().map(|file| {
+            file.try_map_paths(|path| local_path(path).map(|path| path.to_string_lossy().into_owned()))
+        }).collect::<io::Result<Vec<_>>>()?;
+        files.sort_unstable_by(|a, b| crate::source_control_rows::Group::of(a)
+            .cmp(&crate::source_control_rows::Group::of(b)).then(a.path.cmp(&b.path)));
+        let worktree_paths = scan.worktree_paths.map(|scope| {
+            let mut paths = crate::app_git::refresh::WorktreePaths::new(
+                scope.paths.into_iter().map(local_path).collect::<io::Result<_>>()?);
+            paths.set_ignore_case(scope.ignore_case);
+            Ok::<_, io::Error>(paths)
+        }).transpose()?;
+        Ok(crate::git_repositories::Scan { root: key, files, operation: scan.operation, branch: scan.branch,
+            worktree_paths, include_untracked })
     }
 }

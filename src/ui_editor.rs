@@ -48,6 +48,12 @@ mod render_performance_tests;
 #[path = "ui_editor_responsiveness_tests.rs"]
 mod responsiveness_tests;
 #[cfg(test)]
+#[path = "word_highlight_settings_tests.rs"]
+mod word_highlight_settings_tests;
+#[cfg(test)]
+#[path = "cross_tab_word_highlight_tests.rs"]
+mod cross_tab_word_highlight_tests;
+#[cfg(test)]
 #[path = "ui_editor_viewport_tests.rs"]
 mod viewport_tests;
 #[cfg(test)]
@@ -453,6 +459,60 @@ fn cached_selection_occurrence_text(
         });
     }
     text
+}
+
+pub(crate) struct SharedWordHighlight {
+    word: std::sync::Arc<str>,
+    char_len: usize,
+    selected: bool,
+}
+
+/// Resolve one query from the focused tab before any inactive-pane rendering.
+/// The source caches share the word allocation even when the caret moves inside
+/// it. Other tabs only match their rendered lines through RenderLineCache;
+/// neither hidden tabs nor whole documents are scanned for this feature.
+pub(crate) fn prepare_shared_word_highlight(app: &mut App) {
+    if !app.highlight_words_across_tabs {
+        app.shared_word_highlight = None;
+        return;
+    }
+    let source = (|| {
+        let tab = app.tabs.get(app.active_tab)?;
+        let editor = &tab.editor;
+        if !matches!(
+            tab.kind,
+            crate::app::TabKind::File | crate::app::TabKind::GitRevision | crate::app::TabKind::Diff(_)
+        ) || editor.large_file_mode
+        {
+            return None;
+        }
+        let selected = editor.has_selection();
+        let word = if selected {
+            let (start, end, _, _) = editor.clamped_selection_indices()?;
+            if end.saturating_sub(start) > MAX_RICH_RENDER_LINE_CHARS {
+                return None;
+            }
+            cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache)
+        } else if tab.file_search.search_active
+            || editor.line_len(editor.cursor_line) > MAX_RICH_RENDER_LINE_CHARS
+        {
+            None
+        } else {
+            cached_cursor_word(editor, app.editor_cursor_word_cache.get_mut())
+        }?;
+        Some((word, selected))
+    })();
+    let Some((word, selected)) = source else {
+        app.shared_word_highlight = None;
+        return;
+    };
+    if app.shared_word_highlight.as_ref().is_some_and(|current| {
+        std::sync::Arc::ptr_eq(&current.word, &word) && current.selected == selected
+    }) {
+        return;
+    }
+    let char_len = if word.is_ascii() { word.len() } else { word.chars().count() };
+    app.shared_word_highlight = Some(SharedWordHighlight { word, char_len, selected });
 }
 
 /// Render a large document without ever materializing or scanning an entire
@@ -1740,8 +1800,15 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let matching_tag = matching_tag_cached;
         let search_matches = &file_search.search_matches;
         let search_current = file_search.search_current;
+        let occurrence_is_selection = if app.highlight_words_across_tabs {
+            app.shared_word_highlight.as_ref().is_some_and(|query| query.selected)
+        } else {
+            has_selection
+        };
         let cursor_word_owned: Option<std::sync::Arc<str>>;
-        let cursor_word: Option<&str> = if has_selection {
+        let cursor_word: Option<&str> = if app.highlight_words_across_tabs {
+            app.shared_word_highlight.as_ref().map(|query| query.word.as_ref())
+        } else if has_selection {
             cursor_word_owned = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
             cursor_word_owned.as_deref()
         } else if file_search.search_active {
@@ -1761,13 +1828,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let wrap_spaces_pool: &str = &crate::helpers::spaces(wrap_width);
         let mut line_text_buf = RenderLineText::Borrowed("");
         let mut word_occurrences = None;
-        let cursor_word_char_len = cursor_word.map_or(0, |w| {
-            if w.is_ascii() {
-                w.len()
-            } else {
-                w.chars().count()
-            }
-        });
+        let cursor_word_char_len = if app.highlight_words_across_tabs {
+            app.shared_word_highlight.as_ref().map_or(0, |query| query.char_len)
+        } else {
+            cursor_word.map_or(0, |w| {
+                if w.is_ascii() { w.len() } else { w.chars().count() }
+            })
+        };
         if let Some(word) = cursor_word {
             editor.render_line_cache.borrow_mut().prepare_occurrences(
                 (
@@ -1778,7 +1845,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 &editor.rope,
                 word,
                 cursor_word_char_len,
-                !has_selection,
+                app.search_case_sensitive,
+                app.search_whole_word,
             );
         }
         let first_line = wrapped_rows.first().map_or(0, |row| row.line_idx);
@@ -2171,12 +2239,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if occurrences
                         .as_mut()
                         .is_some_and(|cursor| cursor.contains(abs_col))
-                        && (!has_selection || search_match.is_none())
+                        && (!occurrence_is_selection || search_match.is_none())
                     {
                         s = app.colors.ui.occurrence_style(
                             s,
                             app.colors.bg_word_highlight,
-                            has_selection,
+                            occurrence_is_selection,
                         );
                     }
                     let cell_selected = main_sel_cols
@@ -2607,8 +2675,15 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let search_matches = &app.tabs[app.active_tab].file_search.search_matches;
     let search_current = app.tabs[app.active_tab].file_search.search_current;
     // Word/selection occurrence highlighting
+    let occurrence_is_selection = if app.highlight_words_across_tabs {
+        app.shared_word_highlight.as_ref().is_some_and(|query| query.selected)
+    } else {
+        has_selection
+    };
     let cursor_word_owned_nw: Option<std::sync::Arc<str>>;
-    let cursor_word: Option<&str> = if has_selection {
+    let cursor_word: Option<&str> = if app.highlight_words_across_tabs {
+        app.shared_word_highlight.as_ref().map(|query| query.word.as_ref())
+    } else if has_selection {
         cursor_word_owned_nw = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
         cursor_word_owned_nw.as_deref()
     } else if app.tabs[app.active_tab].file_search.search_active {
@@ -2657,13 +2732,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let mut inline_candidate = None;
     let diag_indices_by_line = std::sync::Arc::clone(&app.cached_diag_indices_by_line);
     let wide_diag_indices = std::sync::Arc::clone(&app.cached_wide_diag_indices);
-    let cursor_word_char_len = cursor_word.map_or(0, |w| {
-        if w.is_ascii() {
-            w.len()
-        } else {
-            w.chars().count()
-        }
-    });
+    let cursor_word_char_len = if app.highlight_words_across_tabs {
+        app.shared_word_highlight.as_ref().map_or(0, |query| query.char_len)
+    } else {
+        cursor_word.map_or(0, |w| {
+            if w.is_ascii() { w.len() } else { w.chars().count() }
+        })
+    };
     if let Some(word) = cursor_word {
         editor.render_line_cache.borrow_mut().prepare_occurrences(
             (
@@ -2674,7 +2749,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             &editor.rope,
             word,
             cursor_word_char_len,
-            !has_selection,
+            app.search_case_sensitive,
+            app.search_whole_word,
         );
     }
     let mut trailing_selection_ranges: Vec<(usize, usize)> = Vec::with_capacity(8);
@@ -2984,8 +3060,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if let Some(occurrences) = &mut occurrences {
                         let (word, boundary) = occurrences.run(col);
                         end = end.min(boundary);
-                        if word && (!has_selection || search.is_none()) {
-                            style = app.colors.ui.occurrence_style(style, app.colors.bg_word_highlight, has_selection);
+                        if word && (!occurrence_is_selection || search.is_none()) {
+                            style = app.colors.ui.occurrence_style(style, app.colors.bg_word_highlight, occurrence_is_selection);
                         }
                     }
                     let (diagnostic, boundary) = diagnostic_runs.run(col);
@@ -3085,12 +3161,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if occurrences
                         .as_mut()
                         .is_some_and(|cursor| cursor.contains(col))
-                        && (!has_selection || search_match.is_none())
+                        && (!occurrence_is_selection || search_match.is_none())
                     {
                         s = app.colors.ui.occurrence_style(
                             s,
                             app.colors.bg_word_highlight,
-                            has_selection,
+                            occurrence_is_selection,
                         );
                     }
                     let cell_selected = main_sel_cols
@@ -4617,7 +4693,7 @@ mod tests {
                 (bar.y..bar.bottom()).any(|y| {
                     (bar.x..bar.right()).any(|x| {
                         let cell = &terminal.backend().buffer()[(x, y)];
-                        cell.fg == color && matches!(cell.symbol(), "▀" | "▄")
+                        cell.fg == color && matches!(cell.symbol(), "▀" | "▄" | "▝" | "▗")
                     })
                 }),
                 "layout={}, unsaved={unsaved}, minimap={show_minimap}",

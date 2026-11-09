@@ -474,7 +474,7 @@ pub(crate) struct RenderLineCache {
     dirty: Option<RenderLineDirty>,
     decorations: rustc_hash::FxHashMap<usize, LineDecorations>,
     decoration_bytes: usize,
-    occurrence_query: Option<(String, usize, bool)>,
+    occurrence_query: Option<(String, usize, bool, bool)>,
     occurrence_generation: u64,
     visible_width: viewport_widths::VisibleWidths,
     #[cfg(test)]
@@ -1032,23 +1032,27 @@ impl RenderLineCache {
         rope: &ropey::Rope,
         query: &str,
         query_chars: usize,
+        case_sensitive: bool,
         whole_word: bool,
     ) {
         self.synchronize(revision, rope);
         // A selection or cursor word can come from a huge hidden line while
         // the viewport still uses rich rendering. It cannot match any rich
         // line; represent that state without retaining its raw text.
-        let (query, query_chars, whole_word) =
+        let (query, query_chars, case_sensitive, whole_word) =
             if query_chars > crate::highlight::MAX_SYNTAX_LINE_CHARS {
-                ("", 0, false)
+                ("", 0, true, false)
             } else {
-                (query, query_chars, whole_word)
+                (query, query_chars, case_sensitive, whole_word)
             };
         if self
             .occurrence_query
             .as_ref()
-            .is_none_or(|(word, chars, whole)| {
-                word != query || *chars != query_chars || *whole != whole_word
+            .is_none_or(|(word, chars, sensitive, whole)| {
+                word != query
+                    || *chars != query_chars
+                    || *sensitive != case_sensitive
+                    || *whole != whole_word
             })
         {
             // A caret crossing a word boundary must not walk/drop every
@@ -1067,10 +1071,10 @@ impl RenderLineCache {
                 }
             }
             self.decoration_bytes -= self.occurrence_query.as_ref()
-                .map_or(0, |(word, _, _)| word.capacity());
+                .map_or(0, |(word, _, _, _)| word.capacity());
             let word = query.to_owned();
             self.decoration_bytes += word.capacity();
-            self.occurrence_query = Some((word, query_chars, whole_word));
+            self.occurrence_query = Some((word, query_chars, case_sensitive, whole_word));
             while !self.entries.is_empty()
                 && self.storage_bytes + self.decoration_bytes > Self::MAX_BYTES
             {
@@ -1096,21 +1100,24 @@ impl RenderLineCache {
         {
             self.occurrence_builds += 1;
         }
-        let (query, query_chars, whole_word) = self
+        let (query, query_chars, case_sensitive, whole_word) = self
             .occurrence_query
             .as_ref()
             .expect("occurrence query must be prepared before drawing");
-        let (query_chars, whole_word) = (*query_chars, *whole_word);
+        let (query_chars, case_sensitive, whole_word) = (*query_chars, *case_sensitive, *whole_word);
         #[cfg(test)]
         if reference {
             return std::rc::Rc::new(LineOccurrences::reference(
                 text,
                 query,
                 query_chars,
+                case_sensitive,
                 whole_word,
             ));
         }
-        let result = std::rc::Rc::new(LineOccurrences::build(text, query, query_chars, whole_word));
+        let result = std::rc::Rc::new(LineOccurrences::build(
+            text, query, query_chars, case_sensitive, whole_word,
+        ));
         let mut entry = self.remove_decorations(line);
         entry.occurrences = Some((self.occurrence_generation, std::rc::Rc::clone(&result)));
         self.store_decorations(line, entry);
@@ -1187,7 +1194,7 @@ impl RenderLineCache {
             self.storage_bytes + self.decoration_bytes,
             self.occurrence_query
                 .as_ref()
-                .map_or(0, |(word, _, _)| word.capacity()),
+                .map_or(0, |(word, _, _, _)| word.capacity()),
         )
     }
 
@@ -1594,6 +1601,7 @@ fn visit_word_occurrences(
     text: &str,
     word: &str,
     word_char_len: usize,
+    case_sensitive: bool,
     whole_word: bool,
     mut found: impl FnMut(usize, usize),
 ) {
@@ -1603,8 +1611,7 @@ fn visit_word_occurrences(
     let ascii = text.is_ascii();
     let mut previous_byte = 0;
     let mut previous_col = 0;
-    for (start, _) in text.match_indices(word) {
-        let end = start + word.len();
+    let mut visit = |start: usize, end: usize| {
         let col = if ascii {
             start
         } else {
@@ -1612,12 +1619,19 @@ fn visit_word_occurrences(
         };
         previous_byte = end;
         previous_col = col + word_char_len;
-        if !whole_word
-            || ((start == 0 || !text[..start].ends_with(|c: char| c.is_alphanumeric() || c == '_'))
-                && (end == text.len()
-                    || !text[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_')))
-        {
+        if !whole_word || crate::search_regex::is_whole_word_match(text, start, end) {
             found(col, col + word_char_len);
+        }
+    };
+    if case_sensitive {
+        for (start, _) in text.match_indices(word) {
+            visit(start, start + word.len());
+        }
+    } else if let Ok(regex) =
+        crate::search_regex::SearchRegex::cached_editor(word, false, whole_word, false)
+    {
+        for found in regex.editor_matches(text) {
+            visit(found.start, found.end);
         }
     }
 }
@@ -1627,11 +1641,12 @@ pub(crate) fn word_occurrences_for_line(
     text: &str,
     word: &str,
     word_char_len: usize,
+    case_sensitive: bool,
     whole_word: bool,
     output: &mut Vec<(usize, usize)>,
 ) {
     output.clear();
-    visit_word_occurrences(text, word, word_char_len, whole_word, |start, end| {
+    visit_word_occurrences(text, word, word_char_len, case_sensitive, whole_word, |start, end| {
         output.push((start, end))
     });
 }
@@ -1649,12 +1664,13 @@ pub(crate) struct LineOccurrences {
 }
 
 impl LineOccurrences {
-    fn build(text: &str, query: &str, word_len: usize, whole_word: bool) -> Self {
+    fn build(text: &str, query: &str, word_len: usize, case_sensitive: bool, whole_word: bool) -> Self {
         let mut starts = OccurrenceStarts::Compact(Vec::new());
         visit_word_occurrences(
             text,
             query,
             word_len,
+            case_sensitive,
             whole_word,
             |start, _| match &mut starts {
                 OccurrenceStarts::Compact(values) => {
@@ -1676,9 +1692,9 @@ impl LineOccurrences {
     }
 
     #[cfg(test)]
-    fn reference(text: &str, query: &str, word_len: usize, whole_word: bool) -> Self {
+    fn reference(text: &str, query: &str, word_len: usize, case_sensitive: bool, whole_word: bool) -> Self {
         let mut ranges = Vec::new();
-        word_occurrences_for_line(text, query, word_len, whole_word, &mut ranges);
+        word_occurrences_for_line(text, query, word_len, case_sensitive, whole_word, &mut ranges);
         Self {
             starts: OccurrenceStarts::Reference(ranges),
             word_len,

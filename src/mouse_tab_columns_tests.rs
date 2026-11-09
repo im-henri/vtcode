@@ -128,16 +128,83 @@ fn rectangular_selection_matches_visual_columns_with_mixed_indentation() {
             let (button, modifiers) = if middle { (MouseButton::Middle, KeyModifiers::NONE) }
                 else { (MouseButton::Left, KeyModifiers::ALT | KeyModifiers::SHIFT) };
             mouse(&mut app, at, MouseEventKind::Down(button), modifiers);
-            for last_row in [1, 2, 1, 2] {
-                mouse(&mut app, (at.0 + 3, at.1 + last_row), MouseEventKind::Drag(button), modifiers);
+            for (delta, last_row) in [(3i16, 1), (3, 2), (3, 1), (3, 2),
+                (-1, 2), (-1, 1), (-1, 2), (0, 2), (3, 2)] {
+                mouse(&mut app, (at.0.checked_add_signed(delta).unwrap(), at.1 + last_row), MouseEventKind::Drag(button), modifiers);
                 let editor = app.editor().unwrap();
                 let positions: Vec<_> = std::iter::once(((editor.cursor_line, editor.cursor_col), editor.selection_anchor))
                     .chain(editor.extra_cursors.iter().copied().zip(editor.extra_cursor_anchors.iter().copied()))
                     .collect();
                 assert_eq!(positions.len(), usize::from(last_row) + 1);
                 for ((line, column), anchor) in positions {
-                    let prefix = [2, 7, 8][line];
-                    assert_eq!((column, anchor), (prefix, Some((line, prefix + 3))));
+                    let prefix = [2usize, 7, 8][line];
+                    assert_eq!((column, anchor), (prefix.checked_add_signed(isize::from(delta)).unwrap(),
+                        (delta != 0).then_some((line, prefix))));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn rectangular_character_selections_match_ordinary_caret_and_paint() {
+    for wrapped in [false, true] {
+        for middle in [false, true] {
+            // Ordinary characters, a tab, a wide glyph, and the final character.
+            for (source, left, right) in [("abcdef\n", 1, 2), ("a\tbc\n", 1, 4),
+                ("a界bc\n", 1, 3), ("ab\n", 1, 2)] {
+                for backward in [false, true] {
+                    let text = source.repeat(6);
+                    let mut ordinary = fixture(&text, 4, wrapped);
+                    let mut block = fixture(&text, 4, wrapped);
+                    for app in [&mut ordinary, &mut block] {
+                        // Compare caret/selection paint independently of the active line.
+                        app.colors.bg_line_highlight = app.colors.bg_editor;
+                        app.colors.gradients.bg_line_highlight = app.colors.gradients.bg_editor;
+                        for effect in crate::animation_config::AnimationEffect::ALL {
+                            app.animation_settings.set(effect, false);
+                        }
+                        draw(app, 80);
+                    }
+                    let area = ordinary.code_area.unwrap();
+                    assert_eq!(area, block.code_area.unwrap());
+                    let (start, end) = if backward { (right, left) } else { (left, right) };
+                    mouse(&mut ordinary, (area.x + start, area.y),
+                        MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
+                    mouse(&mut ordinary, (area.x + end, area.y),
+                        MouseEventKind::Drag(MouseButton::Left), KeyModifiers::NONE);
+                    let expected_paint = draw(&mut ordinary, 80);
+                    let expected = ordinary.editor().unwrap();
+                    let column = expected.cursor_col;
+                    let anchor = expected.selection_anchor.unwrap().1;
+                    assert_ne!(column, anchor);
+                    if !backward {
+                        assert_ne!(expected_paint[(area.x + left, area.y)].bg,
+                            expected_paint[(area.x + right, area.y)].bg,
+                            "the one-character selection must remain visible beside the caret");
+                    }
+                    let (button, modifiers) = if middle { (MouseButton::Middle, KeyModifiers::NONE) }
+                        else { (MouseButton::Left, KeyModifiers::ALT | KeyModifiers::SHIFT) };
+                    mouse(&mut block, (area.x + start, area.y), MouseEventKind::Down(button), modifiers);
+                    // Exercise cold projection, cached extension/shrink, and the indexed
+                    // renderer used when more than four secondary cursors are visible.
+                    for last_row in [1, 5, 2, 5] {
+                        mouse(&mut block, (area.x + end, area.y + last_row), MouseEventKind::Drag(button), modifiers);
+                        let actual_paint = draw(&mut block, 80);
+                        let editor = block.editor().unwrap();
+                        let positions = std::iter::once(((editor.cursor_line, editor.cursor_col), editor.selection_anchor))
+                            .chain(editor.extra_cursors.iter().copied().zip(editor.extra_cursor_anchors.iter().copied()));
+                        assert_eq!(editor.extra_cursors.len(), usize::from(last_row));
+                        for (row, ((line, col), selection_anchor)) in positions.enumerate() {
+                            assert_eq!((line, col, selection_anchor), (row, column, Some((row, anchor))),
+                                "source={source:?}, wrap={wrapped}, middle={middle}, backward={backward}");
+                            for x in left..=right {
+                                assert_eq!(actual_paint[(area.x + x, area.y + row as u16)],
+                                    expected_paint[(area.x + x, area.y)],
+                                    "selection/caret paint at column {x}, row {row}, source={source:?}");
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -166,13 +233,13 @@ fn changing_tab_size_during_column_drag_reprojects_every_selected_line() {
     let area = app.code_area.unwrap();
     mouse(&mut app, (area.x, area.y), MouseEventKind::Down(MouseButton::Middle), KeyModifiers::NONE);
     mouse(&mut app, (area.x + 4, area.y + 1), MouseEventKind::Drag(MouseButton::Middle), KeyModifiers::NONE);
-    assert_eq!(app.editor().unwrap().selection_anchor, Some((0, 1)));
+    assert_eq!((app.editor().unwrap().cursor_col, app.editor().unwrap().selection_anchor), (1, Some((0, 0))));
     app.editor_mut().unwrap().tab_size = 2;
     mouse(&mut app, (area.x + 4, area.y + 2), MouseEventKind::Drag(MouseButton::Middle), KeyModifiers::NONE);
     let editor = app.editor().unwrap();
-    assert_eq!((editor.cursor_line, editor.cursor_col, editor.selection_anchor), (0, 0, Some((0, 2))));
-    assert_eq!(editor.extra_cursors, [(1, 0), (2, 0)]);
-    assert_eq!(editor.extra_cursor_anchors, [Some((1, 2)), Some((2, 2))]);
+    assert_eq!((editor.cursor_line, editor.cursor_col, editor.selection_anchor), (0, 2, Some((0, 0))));
+    assert_eq!(editor.extra_cursors, [(1, 2), (2, 2)]);
+    assert_eq!(editor.extra_cursor_anchors, [Some((1, 0)), Some((2, 0))]);
 }
 
 #[test]

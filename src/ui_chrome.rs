@@ -1267,6 +1267,9 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
         app.close_empty_groups();
     }
 
+    // Capture the real active editor before split rendering swaps tab storage.
+    crate::ui_editor::prepare_shared_word_highlight(app);
+
     app.desks.host = app.split_tree.as_ref().and_then(|tree| tree.leaves().first().copied()).unwrap_or(app.active_group);
     let show_chrome = !app.zen_mode;
     let is_split = app.split_active();

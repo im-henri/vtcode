@@ -508,6 +508,7 @@ fn draw_docked_terminal(f: &mut Frame, app: &mut App, index: usize, area: Rect) 
         );
         crate::terminal_scrollbar::draw(f, app, surface, area);
         crate::app_terminal_find::draw(f, app, index, content);
+        crate::app_terminal_links::draw(f, app, surface);
         return;
     }
 

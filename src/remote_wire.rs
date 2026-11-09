@@ -273,11 +273,11 @@ impl OutputQueue {
         if self.available_slots() == 0 {
             return Err(io::Error::other("Remote output queue limit exceeded"));
         }
-        // Search progress and its terminal reply share an ordering barrier.
+        // Progress and its terminal reply share an ordering barrier.
         // A small final reply must not overtake a partially written batch.
         let order = if response.id != 0 { Some(Order::Request(response.id)) } else {
             match &response.result {
-                Ok(Reply::SearchProgress { request, .. }) => Some(Order::Request(*request)),
+                Ok(Reply::SearchProgress { request, .. } | Reply::GitStatusProgress { request, .. }) => Some(Order::Request(*request)),
                 // Larger process chunks can span frames. A short final chunk
                 // or EOF must never overtake older output from the same PTY.
                 Ok(Reply::ProcessData { process, .. } | Reply::ProcessEnd { process, .. }) => Some(Order::Process(*process)),

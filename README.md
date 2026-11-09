@@ -26,9 +26,9 @@ Built in Rust for Windows and Linux. Under active development.
 
 Filesystem-driven Git updates wait for 600 ms of quiet, with updates about every two seconds during sustained builds. Batches containing only ignored files or hidden untracked files skip worktree status scans. Open files reload promptly, and saves, Git actions, and manual refreshes bypass this delay.
 
-Large-repository status refreshes automatically use the installed Git executable for faster scans, with bundled libgit2 as a fallback when Git is unavailable. Startup shows the initially selected repository's changes while remaining repositories are discovered. The same optimizations run on the SSH host for remote folders.
+Large-repository status refreshes automatically use the installed Git executable for faster scans, with bundled libgit2 as a fallback when Git is unavailable. Startup shows the repository and current branch first, then its changes while remaining repositories are discovered, including over SSH. Remote status scans use a separate queue so discovery cannot hold up staging or diff requests.
 
-Navigating back to Source Control reuses watched status, with complete revalidation after 30 seconds. Index-only changes update staged files without reloading commit history or branch counts. Repository discovery caches inherited ignore rules using Explorer's matcher.
+Navigating back to Source Control reuses watched status, with complete revalidation after 30 seconds. Index-only changes update staged files without reloading commit history or branch counts. Repository discovery caches inherited ignore rules using Explorer's matcher and reuses directory listings to avoid redundant Git metadata probes.
 
 ## Screenshots
 
@@ -205,6 +205,12 @@ card explains any remaining blockers and enables **Continue Rebase** or
 In terminal output, right-click a selection to copy it and clear the selection;
 right-click without a selection to paste. Mouse-aware terminal applications receive
 their own mouse events; hold **Shift** to use local selection and clipboard actions.
+
+Hold **Ctrl** over a file path in terminal output to underline it, then
+**Ctrl+click** to open the file. Compiler locations such as `src/main.c:12:7`
+and `"src/main.c", line 12, column 7` also jump to the reported line and column.
+This works in local and SSH terminals. Relative paths follow directory changes
+reported by Bash, Zsh, Fish, and PowerShell shell integration.
 
 **View → Auto-hide Sidebar** hides the sidebar until you move the pointer to
 its edge or the Activity Bar. It stays open while you use sidebar fields or menus.

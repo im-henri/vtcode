@@ -108,7 +108,7 @@ pub(crate) fn handle_editor_area_left_click(
                 };
                 let diff_status = clicked_row
                     .as_ref()
-                    .map_or(' ', |&(line, _)| ed.line_diff_status(line));
+                    .map_or(' ', |&(line, _)| ed.line_hunk_status(line));
                 (clicked_row, ed.file_path.clone(), diff_status)
             };
             if let Some((clicked_line, is_first)) = clicked_row {
@@ -466,6 +466,12 @@ pub(crate) fn handle_middle_button_down(app: &mut App, col: u16, row: u16) {
             && row >= code_area.y
             && row < code_area.y + code_area.height
         {
+            app.active_pane = ActivePane::Editor;
+            app.terminal_panel_focused = false;
+            if app.search_active {
+                app.search_input_focused = false;
+                app.search_pre_cursor = None;
+            }
             if let Some(ed) = app.editor_mut() {
                 let (line, actual_col) =
                     crate::mouse_drag::code_area_to_buffer_pos(ed, code_area, col, row);

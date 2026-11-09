@@ -136,7 +136,6 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
         "Go to Last Edit Location",
         "Ctrl+K, Ctrl+Q",
     ),
-    ("transpose_chars", "Edit: Transpose Characters", "Ctrl+T"),
     ("insert_line_above", "Edit: Insert Line Above", "Alt+Enter"),
     ("insert_line_below", "Edit: Insert Line Below", "Ctrl+Enter"),
     ("join_lines", "Edit: Join Lines", "Ctrl+J"),

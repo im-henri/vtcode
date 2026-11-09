@@ -46,6 +46,12 @@ pub(crate) struct UnsavedHunkSnapshot {
     pub current: ropey::Rope,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum PeekTarget {
+    Line(usize),
+    Hunk(usize),
+}
+
 #[derive(Clone, Copy, Default)]
 struct PeekLayout {
     panel: Rect,
@@ -81,6 +87,7 @@ pub(crate) struct HunkPeek {
     pub source: GitFilePatch,
     pub unsaved: Option<UnsavedHunkSnapshot>,
     pub remote: Option<crate::remote::hunk::Snapshot>,
+    pub staged: bool,
     pub hunks: Vec<PeekHunk>,
     pub rows: Vec<PeekRow>,
     pub selected: usize,
@@ -122,20 +129,26 @@ fn line_ending(text: &str) -> &'static str {
 }
 
 impl HunkPeek {
-    pub(crate) fn for_line(
-        patch: &GitFilePatch,
-        target: &str,
-        line: usize,
-        tab_size: usize,
-    ) -> Result<Self, String> {
-        let selected = patch.hunks.iter().position(|hunk| {
-            crate::app_git_display::line_number_in_hunk(
-                line.saturating_add(1), hunk.new_start, hunk.new_count,
-            )
-        }).ok_or("No change found at this line")?;
+    pub(crate) fn for_target(
+        patch: &GitFilePatch, target: &str, selection: PeekTarget, tab_size: usize,
+    ) -> Result<Option<Self>, String> {
+        if patch.hunks.is_empty() { return Ok(None); }
+        let selected = match selection {
+            PeekTarget::Line(line) => {
+                let Some(index) = patch.hunks.iter().position(|hunk| {
+                    crate::app_git_display::line_number_in_hunk(
+                        line.saturating_add(1), hunk.new_start, hunk.new_count,
+                    )
+                }) else { return Ok(None); };
+                index
+            }
+            // Removing one hunk leaves its successor at the same index.
+            // After the last hunk, wrap to the first remaining change.
+            PeekTarget::Hunk(index) => if index < patch.hunks.len() { index } else { 0 },
+        };
         let mut peek = Self::with_tab_size(patch, target, selected, tab_size);
-        peek.hunks[selected].action_line = Some(line);
-        Ok(peek)
+        if let PeekTarget::Line(line) = selection { peek.hunks[selected].action_line = Some(line); }
+        Ok(Some(peek))
     }
 
     pub(crate) fn from_texts(
@@ -144,6 +157,13 @@ impl HunkPeek {
         line: usize,
         tab_size: usize,
     ) -> Result<Self, String> {
+        Self::from_texts_at(saved, current, PeekTarget::Line(line), tab_size)?
+            .ok_or_else(|| if saved == current { "No changes found" } else { "No change found at this line" }.into())
+    }
+
+    pub(crate) fn from_texts_at(
+        saved: &str, current: &str, target: PeekTarget, tab_size: usize,
+    ) -> Result<Option<Self>, String> {
         let diff = similar::TextDiff::configure()
             .timeout(std::time::Duration::from_millis(50))
             .diff_lines(saved, current);
@@ -168,9 +188,8 @@ impl HunkPeek {
                 old_start, old_count: old.len(), new_start, new_count: new.len(), text,
             }
         }).collect::<Vec<_>>();
-        if hunks.is_empty() { return Err("No changes found".into()); }
         let patch = GitFilePatch { header: String::new(), hunks };
-        let mut peek = Self::for_line(&patch, current, line, tab_size)?;
+        let Some(mut peek) = Self::for_target(&patch, current, target, tab_size)? else { return Ok(None); };
         // The display patch normalizes its row separators. Retain the actual
         // source endings for clipboard operations, including lone CR and EOF.
         let saved = saved.tokenize_lines();
@@ -186,7 +205,7 @@ impl HunkPeek {
                 row.text = text.strip_suffix(row.line_ending).unwrap_or(text).to_string();
             }
         }
-        Ok(peek)
+        Ok(Some(peek))
     }
 
     #[cfg(test)]
@@ -271,6 +290,7 @@ impl HunkPeek {
             source: patch.clone(),
             unsaved: None,
             remote: None,
+            staged: false,
             hunks,
             rows,
             selected,
@@ -593,7 +613,11 @@ fn button_rect(area: Rect, index: usize, actions: &[(&'static str, &str)]) -> Re
 }
 
 fn button_enabled(app: &App, index: usize) -> bool {
-    buttons(app)[index].1 != "Copy Old Lines"
+    let label = buttons(app)[index].1;
+    if app.hunk_preview_action_pending() && !matches!(label, "Copy Old Lines" | "Close Preview") {
+        return false;
+    }
+    label != "Copy Old Lines"
         || app.hunk_peek.as_ref().is_some_and(HunkPeek::has_old_lines)
 }
 
@@ -949,7 +973,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     selection::draw(f, peek, layout, &colors);
     for action in quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S')) {
         let stage = !matches!(app.hunk_popup_status, 'N' | 'S') && action.button == 0;
-        let fg = if peek.hunks[action.hunk].action_line.is_none() {
+        let fg = if peek.hunks[action.hunk].action_line.is_none() || !button_enabled(app, action.button) {
             colors.fg_dim
         } else if stage {
             colors.ui.fg_gutter_added
@@ -1071,24 +1095,7 @@ fn activate(app: &mut App, button: usize) {
                 (peek.selected + peek.hunks.len() - 1) % peek.hunks.len()
             };
             peek.reveal_selected();
-            if let Some(line) = peek.hunks[peek.selected].action_line {
-                app.hunk_popup_line = line;
-                let gutter_y = app.gutter_area.map_or(0, |a| a.y);
-                if let Some(editor) = app.editor_mut() {
-                    let line = line.min(editor.line_count().saturating_sub(1));
-                    editor.cursor_line = line;
-                    editor.cursor_col = 0;
-                    editor.scroll_offset = line.saturating_sub(2);
-                    if editor.word_wrap {
-                        let row =
-                            editor.wrapped_row_for_position(line, 0, editor.effective_wrap_width());
-                        editor.set_wrap_scroll_offset(row.saturating_sub(2));
-                        app.hunk_popup_pos.1 = gutter_y.saturating_add(row.min(2) as u16);
-                    } else {
-                        app.hunk_popup_pos.1 = gutter_y.saturating_add(line.min(2) as u16);
-                    }
-                }
-            }
+            reveal_current_change(app);
         }
         "Close Preview" => app.close_hunk_popup(),
         "Retry Preview" => app.retry_hunk_preview(),
@@ -1109,6 +1116,25 @@ fn activate(app: &mut App, button: usize) {
                 app.execute_hunk_popup_action(index);
             }
         }
+    }
+}
+
+pub(crate) fn reveal_current_change(app: &mut App) {
+    let Some(line) = app.hunk_peek.as_ref()
+        .and_then(|peek| peek.hunks.get(peek.selected)?.action_line) else { return; };
+    app.hunk_popup_line = line;
+    let gutter_y = app.gutter_area.map_or(0, |area| area.y);
+    if let Some(editor) = app.editor_mut() {
+        let line = line.min(editor.line_count().saturating_sub(1));
+        editor.cursor_line = line;
+        editor.cursor_col = 0;
+        editor.scroll_offset = line.saturating_sub(2);
+        let row = if editor.word_wrap {
+            let row = editor.wrapped_row_for_position(line, 0, editor.effective_wrap_width());
+            editor.set_wrap_scroll_offset(row.saturating_sub(2));
+            row
+        } else { line };
+        app.hunk_popup_pos.1 = gutter_y.saturating_add(row.min(2) as u16);
     }
 }
 
@@ -1210,6 +1236,7 @@ fn click_with_modifiers(app: &mut App, col: u16, row: u16, width: u16, height: u
         return;
     }
     if let Some(action) = quick_action_at(app, layout, col, row) {
+        if !button_enabled(app, action.button) { return; }
         if let Some(peek) = app.hunk_peek.as_mut() {
             peek.selected = action.hunk;
             if let Some(line) = peek.hunks[action.hunk].action_line {

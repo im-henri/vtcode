@@ -75,6 +75,7 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
     if matches!(key.code, KeyCode::Modifier(_)) || key.kind == crossterm::event::KeyEventKind::Release {
         return false;
     }
+    app.cancel_remote_terminal_location();
     if app.custom_exit_remaining > 0 { return false; }
     if key.code == KeyCode::Esc && app.paste_in_progress() {
         app.cancel_pending_paste(); return false;
@@ -799,12 +800,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                 KeyCode::Char('j') => {
                     if let Some(ed) = app.editor_mut_writable() {
                         ed.join_lines();
-                    }
-                    return false;
-                }
-                KeyCode::Char('t' | 'T') => {
-                    if let Some(ed) = app.editor_mut_writable() {
-                        ed.transpose_chars();
                     }
                     return false;
                 }

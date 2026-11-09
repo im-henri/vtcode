@@ -1,5 +1,11 @@
 use crate::app::{ActivePane, App, Tab, TabKind};
 
+pub(crate) struct CloseTabs {
+    views: Vec<u64>,
+    deferred: Option<u64>,
+    notify: bool,
+}
+
 struct ClosedTab {
     navigation_id: u64,
     kind: TabKind,
@@ -63,7 +69,7 @@ impl App {
             self.confirm_close_active = true;
             self.confirm_close_tab = idx;
         } else {
-            self.force_close_tab(idx);
+            self.request_tab_close(vec![(self.active_group, vec![idx])], None, false);
         }
     }
 
@@ -90,11 +96,8 @@ impl App {
 
     pub(crate) fn close_tabs_matching(&mut self, matches: impl Fn(usize) -> bool) {
         let (close, blocked) = self.plan_tab_closes(matches);
-        let blocked = blocked.map(|idx| idx - close.iter().filter(|&&i| i < idx).count());
-        self.close_tab_batch(vec![(self.active_group, close)]);
-        if let Some(idx) = blocked {
-            self.close_tab(idx);
-        }
+        let deferred = blocked.map(|idx| self.tabs[idx].editor.navigation_id);
+        self.request_tab_close(vec![(self.active_group, close)], deferred, false);
     }
 
     pub(crate) fn force_close_tab(&mut self, idx: usize) {
@@ -117,7 +120,7 @@ impl App {
                 .then_some(index)
             })
             .collect();
-        self.close_tab_batch(vec![(self.active_group, close)]);
+        self.request_tab_close(vec![(self.active_group, close)], None, false);
     }
 
     fn saved_tab_closes(&self, include_active: bool) -> Vec<(usize, Vec<usize>)> {
@@ -154,20 +157,76 @@ impl App {
     }
 
     pub(crate) fn close_saved_tabs(&mut self) {
-        let count = self.close_tab_batch(self.saved_tab_closes(true));
-        self.notify(format!("Closed {count} saved tabs"));
+        self.request_tab_close(self.saved_tab_closes(true), None, true);
     }
 
     pub(crate) fn close_all_tabs(&mut self) {
         // Preserve the existing command's policy: keep unsaved inactive views,
         // and prompt for unsaved tabs in the current pane.
         let (close, blocked) = self.plan_tab_closes(|_| true);
-        let blocked = blocked.map(|idx| idx - close.iter().filter(|&&i| i < idx).count());
+        let deferred = blocked.map(|idx| self.tabs[idx].editor.navigation_id);
         let mut plan = self.saved_tab_closes(false);
         plan.push((self.active_group, close));
-        self.close_tab_batch(plan);
-        if let Some(idx) = blocked {
-            self.close_tab(idx);
+        self.request_tab_close(plan, deferred, false);
+    }
+
+    fn request_tab_close(&mut self, plan: Vec<(usize, Vec<usize>)>, deferred: Option<u64>, notify: bool) {
+        let mut terminals = Vec::new();
+        let mut views = Vec::new();
+        for (group, indices) in &plan {
+            let tabs = if *group == self.active_group { &self.tabs } else { &self.groups[*group].tabs };
+            for &index in indices {
+                let tab = &tabs[index];
+                views.push(tab.editor.navigation_id);
+                if tab.kind == TabKind::Terminal {
+                    terminals.extend(tab.terminal_idx);
+                }
+            }
+        }
+        let names = self.live_terminal_names(terminals);
+        if !names.is_empty() {
+            self.request_terminal_close(names, crate::app_terminal::TerminalCloseAction::Tabs(
+                CloseTabs { views, deferred, notify }));
+            return;
+        }
+        self.finish_tab_close(plan, deferred, notify);
+    }
+
+    pub(crate) fn resume_terminal_tab_close(&mut self, request: CloseTabs) {
+        // Background exits can remove tabs and collapse panes while the dialog
+        // is open. Resolve view identities again instead of reusing old indices.
+        let views: rustc_hash::FxHashSet<_> = request.views.into_iter().collect();
+        let mut deferred = request.deferred;
+        let mut plan = Vec::new();
+        for group in std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group)) {
+            let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
+            let mut indices = Vec::new();
+            for (index, tab) in tabs.iter().enumerate().rev() {
+                if !views.contains(&tab.editor.navigation_id) || tab.pinned { continue; }
+                if tab.has_unsaved_changes() || self.tab_operation_pending(tab) {
+                    deferred.get_or_insert(tab.editor.navigation_id);
+                } else {
+                    indices.push(index);
+                }
+            }
+            plan.push((group, indices));
+        }
+        self.finish_tab_close(plan, deferred, request.notify);
+    }
+
+    fn finish_tab_close(&mut self, plan: Vec<(usize, Vec<usize>)>, deferred: Option<u64>, notify: bool) {
+        let count = self.close_tab_batch(plan);
+        if notify { self.notify(format!("Closed {count} saved tabs")); }
+        if let Some(id) = deferred {
+            let target = std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group))
+                .find_map(|group| {
+                    let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
+                    tabs.iter().position(|tab| tab.editor.navigation_id == id).map(|index| (group, index))
+                });
+            if let Some((group, index)) = target {
+                if group != self.active_group { self.switch_group(group); }
+                self.close_tab(index);
+            }
         }
     }
 
@@ -295,7 +354,7 @@ impl App {
         terminals.sort_unstable();
         terminals.dedup();
         for index in terminals.into_iter().rev() {
-            self.close_terminal_tab_at(index);
+            self.force_close_terminal_tab_at(index);
         }
         if !self.desks.groups.is_empty() {
             let used: rustc_hash::FxHashSet<_> = self.desks.membership.values().copied().collect();

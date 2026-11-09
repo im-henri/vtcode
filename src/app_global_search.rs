@@ -110,6 +110,15 @@ fn next_global_match(
 }
 
 impl App {
+    pub(crate) fn can_replace_global_search_result(&self, index: usize) -> bool {
+        self.global_search_replace_visible
+            && !self.bg_global_search_running
+            && !self.bg_global_replace_running
+            && self.global_search_error.is_none()
+            && self.global_search_results.get(index).is_some_and(|result|
+                !self.global_search_model_updates.pending.contains_key(&result.file_path))
+    }
+
     pub(crate) fn submit_global_search(&mut self, run: impl FnOnce(crate::background::CancellationToken) + Send + 'static) -> crate::background::CancellationToken {
         let background = &mut self.background;
         let service = self.global_search_service.get_or_init(|| {
@@ -708,10 +717,11 @@ impl App {
             if preview.as_ref().is_none_or(|&(line, last, length, _)| line != row || last != end_row || col_end > length) {
                 let end = rope.line_to_char((end_row + 1).min(rope.len_lines()));
                 let text = rope.slice(first..end).to_string();
-                // Retain matched EOL characters in the single-row preview.
+                // Retain raw matched EOLs for replacement captures. Renderers
+                // turn them into single-row markers without losing the source.
                 let matched_end_byte = rope.char_to_byte(matched_end) - rope.char_to_byte(first);
                 let keep = text.trim_end_matches(['\r', '\n']).len().max(matched_end_byte).min(text.len());
-                let text = text[..keep].replace('\r', " ").replace('\n', "↵");
+                let text = &text[..keep];
                 preview = Some((row, end_row, text.chars().count(), std::sync::Arc::from(text)));
             }
             results.push(GlobalSearchResult {

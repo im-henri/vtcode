@@ -553,43 +553,6 @@ impl Editor {
             })
     }
 
-    /// Transpose the two characters around the cursor
-    pub(crate) fn transpose_chars(&mut self) {
-        crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        let line_len = self.line_len(self.cursor_line);
-        if self.cursor_col == 0 || line_len < 2 {
-            return;
-        }
-        self.save_undo();
-
-        let col = self.cursor_col.min(line_len);
-        let (a_col, b_col) = if col >= line_len {
-            (col - 2, col - 1)
-        } else {
-            (col - 1, col)
-        };
-
-        let line_start = self.rope.line_to_char(self.cursor_line);
-        let a_idx = line_start + a_col;
-        let b_idx = line_start + b_col;
-
-        if b_idx >= self.rope.len_chars() {
-            return;
-        }
-
-        let a = self.rope.char(a_idx);
-        let b = self.rope.char(b_idx);
-
-        self.rope.remove(a_idx..=b_idx);
-        let swapped = format!("{b}{a}");
-        self.rope.insert(a_idx, &swapped);
-        self.cursor_col = b_col + 1;
-        self.clamp_cursor_col();
-        self.modified = true;
-            })
-    }
-
     /// Delete prefixes/suffixes for every cursor through the same overlap-safe
     /// mapping used by typing and word deletion.
     pub(crate) fn multi_cursor_delete_to_line_boundary(&mut self, to_end: bool) {
@@ -904,27 +867,6 @@ mod tests {
         let t = text_of(&ed);
         // delete_word_right eats the word + trailing whitespace
         assert!(t.starts_with("world"), "got: {t}");
-    }
-
-    // ── transpose_chars ──────────────────────────────────────────────
-
-    #[test]
-    fn transpose_chars_middle() {
-        let mut ed = Editor::test_with_text("abc\n");
-        ed.cursor_line = 0;
-        ed.cursor_col = 1;
-        ed.transpose_chars();
-        assert_eq!(text_of(&ed), "bac\n");
-        assert_eq!(ed.cursor_col, 2);
-    }
-
-    #[test]
-    fn transpose_chars_at_start_does_nothing() {
-        let mut ed = Editor::test_with_text("abc\n");
-        ed.cursor_line = 0;
-        ed.cursor_col = 0;
-        ed.transpose_chars();
-        assert_eq!(text_of(&ed), "abc\n");
     }
 
     // ── transpose_words ──────────────────────────────────────────────

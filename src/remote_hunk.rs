@@ -133,13 +133,11 @@ fn read_sources(
     })
 }
 
-pub(crate) fn prepare(
-    sources: Sources,
-    staged: bool,
-    live: Option<&ropey::Rope>,
-    line: usize,
-    tab_size: usize,
-) -> Result<crate::ui_hunk_peek::HunkPeek, String> {
+pub(crate) fn prepare_target(
+    sources: Sources, staged: bool, live: Option<&ropey::Rope>,
+    target: crate::ui_hunk_peek::PeekTarget, tab_size: usize,
+) -> Result<Option<crate::ui_hunk_peek::HunkPeek>, String> {
+    use crate::ui_hunk_peek::{HunkPeek, PeekTarget};
     let normalize = |text: String| {
         if text.contains("\r\n") {
             text.replace("\r\n", "\n")
@@ -151,9 +149,10 @@ pub(crate) fn prepare(
     let worktree = normalize(live.map_or(sources.worktree, ropey::Rope::to_string));
     let mut peek =
         if !staged && (live.is_some() || (sources.patch.is_empty() && !sources.trackable)) {
-            crate::ui_hunk_peek::HunkPeek::from_texts(&index, &worktree, line, tab_size)?
+            let Some(peek) = HunkPeek::from_texts_at(&index, &worktree, target, tab_size)? else { return Ok(None); };
+            peek
         } else {
-            let patch = parse_git_file_patch(&sources.patch).ok_or("No changes found")?;
+            let Some(patch) = parse_git_file_patch(&sources.patch) else { return Ok(None); };
             let equal: Vec<_> = if staged {
                 similar::TextDiff::from_lines(&index, &worktree)
                     .ops()
@@ -170,18 +169,21 @@ pub(crate) fn prepare(
             } else {
                 Vec::new()
             };
-            let mapped = equal
-                .iter()
-                .find_map(|&(old, new, len)| {
-                    (line >= new && line < new + len).then(|| old + line - new)
-                })
-                .unwrap_or(line);
-            let mut peek = crate::ui_hunk_peek::HunkPeek::for_line(
-                &patch,
-                if staged { &index } else { &worktree },
-                mapped,
-                tab_size,
-            )?;
+            let text = if staged { &index } else { &worktree };
+            let mut peek = match target {
+                PeekTarget::Line(line) => {
+                    let mapped = equal.iter().find_map(|&(old, new, len)| {
+                        (line >= new && line < new + len).then(|| old + line - new)
+                    });
+                    let mapped = if staged {
+                        let Some(mapped) = mapped.or_else(|| (index == worktree).then_some(line)) else { return Ok(None); };
+                        mapped
+                    } else { line };
+                    let Some(peek) = HunkPeek::for_target(&patch, text, PeekTarget::Line(mapped), tab_size)? else { return Ok(None); };
+                    peek
+                }
+                PeekTarget::Hunk(_) => HunkPeek::for_target(&patch, text, target, tab_size)?.unwrap(),
+            };
             if staged {
                 for hunk in &mut peek.hunks {
                     hunk.action_line = hunk.action_line.and_then(|line| {
@@ -190,7 +192,7 @@ pub(crate) fn prepare(
                     });
                 }
             }
-            peek.hunks[peek.selected].action_line = Some(line);
+            if let PeekTarget::Line(line) = target { peek.hunks[peek.selected].action_line = Some(line); }
             peek
         };
     peek.remote = Some(Snapshot {
@@ -198,7 +200,8 @@ pub(crate) fn prepare(
         revision: sources.revision,
         trackable: sources.trackable,
     });
-    Ok(peek)
+    peek.staged = staged;
+    Ok(Some(peek))
 }
 
 pub(crate) fn execute(

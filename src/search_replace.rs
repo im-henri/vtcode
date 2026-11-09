@@ -230,6 +230,23 @@ impl WorkspaceReplacement {
     pub(crate) fn needs_captures(&self) -> bool {
         self.parameters
     }
+
+    /// Match replacement tries the matched text first, then its preview context.
+    /// Rendering and applying a workspace replacement share this capture order.
+    pub(crate) fn expand_match(&self, regex: &crate::search_regex::SearchRegex,
+        matched: &str, context: &str, start: usize, preserve: bool) -> String
+    {
+        if let Some(captures) = regex.captures_at(matched, 0) {
+            self.expand(matched, &captures, preserve)
+        } else if let Some(captures) = regex.captures_at(context, start)
+            .filter(|captures| captures.range.start == start)
+        {
+            self.expand(context, &captures, preserve)
+        } else {
+            self.fallback().to_owned()
+        }
+    }
+
     pub(crate) fn expand(&self, text: &str, captures: &SearchCaptures, preserve: bool) -> String {
         let mut parsed = if preserve {
             preserve_case(&text[captures.range.clone()], &self.parsed)

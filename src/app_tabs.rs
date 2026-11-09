@@ -495,9 +495,12 @@ impl App {
             // Project the other pane's editor and request state without changing
             // focus. Reuse the same bounded worker path for normal and diff views.
             self.swap_group_highlight_context(index);
+            // Diff target checks must use the projected view, as rendering does.
+            let saved_inactive = std::mem::replace(&mut self.rendering_inactive_editor, true);
             let saved_diff = self.begin_inactive_diff_view();
             self.refresh_current_editor_highlights_async();
             self.end_inactive_diff_view(saved_diff);
+            self.rendering_inactive_editor = saved_inactive;
             self.swap_group_highlight_context(index);
         });
         self.split_tree = Some(tree);
@@ -540,11 +543,14 @@ impl App {
     }
 
     pub(crate) fn refresh_current_editor_highlights_async(&mut self) {
-        // Rendered views own their highlighting. In particular, a Markdown
-        // preview shares its source path but has a different language override;
-        // scheduling it here would replace the source editor's document cache.
+        let diff_active = self.should_render_diff_for_active_editor();
+        // Rendered views own their highlighting. Previews and diff snapshots
+        // share a working file's path but not its document version/context.
+        // Pending diffs must wait for their fragment jobs below: preparing a
+        // document job while loading would replace the working editor's cache.
         let Some(editor) = self.tabs.get(self.active_tab)
-            .filter(|tab| matches!(tab.kind, TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails))
+            .filter(|tab| matches!(tab.kind, TabKind::File | TabKind::GitRevision)
+                || diff_active && matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails))
             .map(|tab| &tab.editor)
         else {
             self.visible_highlight_key = None;
@@ -577,7 +583,6 @@ impl App {
             .syntax_dirty_from
             .map(|start| (start, editor.syntax_dirty_through.unwrap_or(start)));
         let theme_key = self.syntax_theme.as_str();
-        let diff_active = self.should_render_diff_for_active_editor();
         let inline_diff = diff_active && self.diff_mode == crate::app::DiffMode::Inline;
         let (start, end, source_generation) = if diff_active {
             let display_start = self.diff_inline_scroll.wrap.row_at(self.diff_inline_scroll.row).logical;
@@ -1558,6 +1563,7 @@ impl App {
         self.binary_open_prompt_commands.clear();
         self.binary_open_prompt_skip_once = None;
         self.confirm_close_active = false;
+        self.terminal_close = None;
         self.save_as_active = false;
         self.settings_editor_active = false;
         crate::ui_lsp_settings::activate(self, crate::ui_lsp_settings::Action::Close);

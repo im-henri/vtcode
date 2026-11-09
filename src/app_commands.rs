@@ -161,7 +161,7 @@ impl App {
         if crate::ui_desks::command(self, id) { return true; }
         if self.diff_selection_owns_cursor()
             && matches!(id, "undo" | "redo" | "toggle_comment" | "toggle_block_comment"
-                | "move_line_up" | "move_line_down" | "transpose_chars" | "transpose_words"
+                | "move_line_up" | "move_line_down" | "transpose_words"
                 | "eol_lf" | "eol_crlf")
         {
             return true;

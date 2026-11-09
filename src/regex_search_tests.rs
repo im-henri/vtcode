@@ -108,10 +108,10 @@ fn regex_search_invalid_patterns_fail_instead_of_becoming_literals() {
 }
 
 #[test]
-fn regex_search_workspace_preview_shows_matched_line_breaks() {
+fn regex_search_workspace_preview_retains_matched_line_breaks_for_replacement() {
     for (text, query, expected) in [
-        ("foo\nbar", r"foo\n", "foo↵"),
-        ("foo\r\nbar", r"foo\r?\nbar", "foo ↵bar"),
+        ("foo\nbar", r"foo\n", "foo\n"),
+        ("foo\r\nbar", r"foo\r?\nbar", "foo\r\nbar"),
     ] {
         let regex = SearchRegex::workspace(query, true, false, true).unwrap();
         let spec = GlobalSearchSpec {

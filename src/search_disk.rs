@@ -229,7 +229,7 @@ impl<M: Matcher> grep_searcher::Sink for MatchSink<'_, M> {
                 row,
                 start: 0,
                 end: width,
-                preview: Arc::from(line[..keep].replace('\r', " ").replace('\n', "↵")),
+                preview: Arc::from(&line[..keep]),
             });
         }
         Ok(keep_going)

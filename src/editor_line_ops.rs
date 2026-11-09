@@ -28,6 +28,15 @@ fn rope_line_ending_len(rope: ropey::RopeSlice<'_>) -> usize {
     }
 }
 
+fn selected_line_range(cursor: (usize, usize), anchor: Option<(usize, usize)>,
+    max_line: usize) -> (usize, usize)
+{
+    let anchor = anchor.unwrap_or(cursor);
+    let (start, end) = (cursor.min(anchor), cursor.max(anchor));
+    let last = if end.1 == 0 && end.0 > start.0 { end.0 - 1 } else { end.0 };
+    (start.0.min(max_line), last.min(max_line))
+}
+
 /// Borrow ordinary lines directly from the source. Only lines crossing Rope
 /// chunks need a copy; retained records stay compact for large line counts.
 pub(crate) fn split_line_text(line: ropey::RopeSlice<'_>)
@@ -83,76 +92,68 @@ impl Editor {
     }
 
     pub(crate) fn duplicate_line(&mut self) {
-        crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        self.save_undo();
-        // Always copy complete cursor lines, regardless of text selections.
-        let mut lines: Vec<usize> = vec![self.cursor_line];
-        for &(l, _) in &self.extra_cursors {
-            lines.push(l);
-        }
-        lines.sort_unstable();
-        lines.dedup();
-
-        // Duplicate lines bottom-to-top to keep indices stable for earlier inserts
-        for &line_idx in lines.iter().rev() {
-            let line = self.rope.line(line_idx);
-            let start = self.rope.line_to_char(line_idx);
-            let end = start + line.len_chars();
-            let prefix = if rope_line_ending_len(line) > 0 { "" }
-                else if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" };
-            let text = CopiedText::new(line, prefix, "");
-            self.insert_copied_text(end, text);
-        }
-        // Move all cursors down by the number of duplicated lines
-        self.cursor_line += lines.partition_point(|&line| line <= self.cursor_line);
-        if let Some((ref mut al, _)) = self.selection_anchor {
-            *al += lines.partition_point(|&line| line <= *al);
-        }
-        for ec in &mut self.extra_cursors {
-            ec.0 += lines.partition_point(|&line| line <= ec.0);
-        }
-        for (al, _) in self.extra_cursor_anchors.iter_mut().flatten() {
-            *al += lines.partition_point(|&line| line <= *al);
-        }
-        self.modified = true;
-        self.clamp_cursor();
-        self.clear_stale_folds();
-        self.ensure_visible();
-            })
+        self.duplicate_lines(false);
     }
 
     pub(crate) fn duplicate_line_up(&mut self) {
+        self.duplicate_lines(true);
+    }
+
+    fn duplicate_lines(&mut self, up: bool) {
         crate::editor_document::edit!(self, {
         self.desired_col = None;
         self.save_undo();
-        // Always copy complete cursor lines, regardless of text selections.
-        let mut lines: Vec<usize> = vec![self.cursor_line];
-        for &(l, _) in &self.extra_cursors {
-            lines.push(l);
+        let max_line = self.line_count().saturating_sub(1);
+        let mut blocks = Vec::with_capacity(self.extra_cursors.len() + 1);
+        blocks.push(selected_line_range((self.cursor_line, self.cursor_col), self.selection_anchor, max_line));
+        for (index, &cursor) in self.extra_cursors.iter().enumerate() {
+            blocks.push(selected_line_range(cursor, self.extra_cursor_anchors.get(index).copied().flatten(), max_line));
         }
-        lines.sort_unstable();
-        lines.dedup();
-
-        // Duplicate lines top-to-bottom, each insert shifts lines below
-        for (i, &line_idx) in lines.iter().enumerate() {
-            let shifted_idx = line_idx + i;
-            let line = self.rope.line(shifted_idx);
-            let start = self.rope.line_to_char(shifted_idx);
-            let suffix = if rope_line_ending_len(line) > 0 { "" }
+        blocks.sort_unstable();
+        // Copy overlapping selections once. Adjacent independent cursor lines
+        // remain separate blocks so ordinary multicursor duplication is unchanged.
+        let mut count = 0;
+        for index in 0..blocks.len() {
+            let (first, last) = blocks[index];
+            if count > 0 && first <= blocks[count - 1].1 {
+                blocks[count - 1].1 = blocks[count - 1].1.max(last);
+            } else {
+                blocks[count] = (first, last);
+                count += 1;
+            }
+        }
+        blocks.truncate(count);
+        let mut preceding_lines = Vec::with_capacity(blocks.len());
+        let mut inserted = 0;
+        for &(first, last) in &blocks {
+            preceding_lines.push(inserted);
+            inserted += last - first + 1;
+        }
+        // Insert whole blocks bottom-to-top, retaining Rope sharing for large
+        // selections instead of rebuilding or inserting each selected line.
+        for &(first, last) in blocks.iter().rev() {
+            let start = self.rope.line_to_char(first);
+            let last_line = self.rope.line(last);
+            let end = self.rope.line_to_char(last) + last_line.len_chars();
+            let ending = if rope_line_ending_len(last_line) > 0 { "" }
                 else if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" };
-            let text = CopiedText::new(line, "", suffix);
-            self.insert_copied_text(start, text);
+            let (prefix, suffix) = if up { ("", ending) } else { (ending, "") };
+            let text = CopiedText::new(self.rope.slice(start..end), prefix, suffix);
+            self.insert_copied_text(if up { start } else { end }, text);
         }
-        self.cursor_line += lines.partition_point(|&line| line < self.cursor_line);
-        for cursor in &mut self.extra_cursors {
-            cursor.0 += lines.partition_point(|&line| line < cursor.0);
-        }
-        for (line, _) in self.extra_cursor_anchors.iter_mut().flatten() {
-            *line += lines.partition_point(|&edited| edited < *line);
-        }
-        if let Some((line, _)) = self.selection_anchor.as_mut() {
-            *line += lines.partition_point(|&edited| edited < *line);
+        let remap = |cursor: &mut (usize, usize), anchor: Option<&mut (usize, usize)>| {
+            let first = selected_line_range(*cursor, anchor.as_deref().copied(), max_line).0;
+            let block = blocks.partition_point(|&(_, last)| last < first);
+            let (start, end) = blocks[block];
+            let offset = preceding_lines[block] + if up { 0 } else { end - start + 1 };
+            cursor.0 = cursor.0.min(max_line) + offset;
+            if let Some((line, _)) = anchor { *line = (*line).min(max_line) + offset; }
+        };
+        let mut primary = (self.cursor_line, self.cursor_col);
+        remap(&mut primary, self.selection_anchor.as_mut());
+        (self.cursor_line, self.cursor_col) = primary;
+        for (index, cursor) in self.extra_cursors.iter_mut().enumerate() {
+            remap(cursor, self.extra_cursor_anchors.get_mut(index).and_then(Option::as_mut));
         }
         self.modified = true;
         self.clamp_cursor();
@@ -168,10 +169,7 @@ impl Editor {
         let max_line = self.line_count().saturating_sub(1);
         let mut ranges = Vec::with_capacity(self.extra_cursors.len() + 1);
         let mut add = |cursor: (usize, usize), anchor: Option<(usize, usize)>| {
-            let anchor = anchor.unwrap_or(cursor);
-            let (start, end) = (cursor.min(anchor), cursor.max(anchor));
-            let last = if end.1 == 0 && end.0 > start.0 { end.0 - 1 } else { end.0 };
-            ranges.push((start.0.min(max_line), last.min(max_line)));
+            ranges.push(selected_line_range(cursor, anchor, max_line));
         };
         add((self.cursor_line, self.cursor_col), self.selection_anchor);
         for (index, &cursor) in self.extra_cursors.iter().enumerate() {
@@ -572,3 +570,7 @@ impl Editor {
 #[cfg(test)]
 #[path = "editor_bulk_edit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "editor_duplicate_tests.rs"]
+mod duplicate_tests;

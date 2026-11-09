@@ -222,12 +222,11 @@ pub(super) fn draw_scrollbar_reference(
         .min(total_lines.saturating_sub(1))
         .saturating_mul(height)
         / total_lines;
-    let thumb_size =
-        ((visible_lines as f64 / total_lines as f64) * height as f64).max(1.0) as usize;
-    let thumb_size = thumb_size.min(height);
+    let thumb_size = ((visible_lines as u128 * height as u128 / total_lines as u128) as usize)
+        .max(1).min(height);
     let max_scroll = total_lines.saturating_sub(visible_lines);
     let thumb_pos = if max_scroll > 0 {
-        ((scroll as f64 / max_scroll as f64) * (height - thumb_size) as f64) as usize
+        (scroll.min(max_scroll) as u128 * (height - thumb_size) as u128 / max_scroll as u128) as usize
     } else {
         0
     };
@@ -282,30 +281,30 @@ pub(super) fn draw_scrollbar_reference(
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        let (symbol, style) = if is_cursor {
-            let c = colors.bg_cursor;
-            ('█', Style::default().fg(c).bg(c))
-        } else if let Some(sev) = diag_sev {
+        let marker = if let Some(sev) = diag_sev {
             let c = match sev {
                 1 => colors.ui.fg_overview_error,
                 2 => colors.ui.fg_overview_warning,
                 3 => colors.ui.fg_overview_info,
                 _ => colors.fg_dim,
             };
-            ('█', Style::default().fg(c).bg(c))
+            Some(('█', '▐', c))
         } else if has_match {
             let c = colors.ui.fg_overview_find;
-            ('█', Style::default().fg(c).bg(c))
+            Some(('█', '▐', c))
         } else if let Some(c) = change.status().and_then(|status| crate::ui_colors::overview_marker_color(status, &colors)) {
-            (change.symbol(), Style::default().fg(c).bg(if in_thumb { thumb } else { track }))
-        } else if in_thumb {
-            let c = thumb;
-            ('█', Style::default().fg(c).bg(c))
+            Some((change.symbol(), change.narrow_symbol(), c))
         } else {
-            (' ', Style::default().bg(track))
+            None
         };
-        let fill: String = std::iter::repeat_n(symbol, width).collect();
-        lines.push(Line::from(Span::styled(fill, style)));
+        // Share the visual rules while retaining Paragraph allocation and
+        // painting as the independent direct-cell performance reference.
+        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, &colors, track, thumb);
+        let spans: Vec<_> = cells.into_iter().zip([width / 2, width - width / 2])
+            .filter(|&(_, length)| length > 0)
+            .map(|((symbol, style), length)| Span::styled(std::iter::repeat_n(symbol, length).collect::<String>(), style))
+            .collect();
+        lines.push(Line::from(spans));
     }
     let p = Paragraph::new(lines);
     f.render_widget(p, area);

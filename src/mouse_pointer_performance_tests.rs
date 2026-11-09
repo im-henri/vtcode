@@ -96,7 +96,8 @@ fn state(editor: &Editor) -> Vec<CursorPlacement> {
     .collect()
 }
 
-// Original block projection: materialize rows, then filter into placements.
+// Materialize normalized rows as the original projection did, then follow the
+// pointer's direction when producing placements.
 fn reference_block(
     editor: &mut Editor,
     area: Rect,
@@ -105,6 +106,9 @@ fn reference_block(
     row: u16,
 ) -> Vec<CursorPlacement> {
     let end = reference_hit(editor, area, col, row);
+    let screen_col = col.saturating_sub(area.x) as usize;
+    let end_column = if editor.word_wrap { screen_col }
+        else { editor.horizontal_scroll.saturating_add(screen_col) };
     let mut rows = Vec::new();
     if editor.word_wrap {
         let width = editor.viewport_width.max(1);
@@ -142,6 +146,13 @@ fn reference_block(
     let any_span = rows.iter().any(|row| row.2.is_some());
     rows.into_iter()
         .filter(|row| !any_span || row.2.is_some())
+        .map(|(line, col, anchor)| {
+            if end_column > start.2 && let Some((_, end)) = anchor {
+                (line, end, Some((line, col)))
+            } else {
+                (line, col, anchor)
+            }
+        })
         .collect()
 }
 
@@ -508,7 +519,7 @@ fn block_drag_clamps_top_and_horizontal_edges_and_ignores_empty_viewports() {
         assert_eq!(state(editor), (19..=22).map(|line| (line, 0, Some((line, 2)))).collect::<Vec<_>>());
 
         handle_block_drag(&mut app, u16::MAX, area.y + 2);
-        assert_eq!(state(app.editor().unwrap()), (21..=22).map(|line| (line, 2, Some((line, 5)))).collect::<Vec<_>>());
+        assert_eq!(state(app.editor().unwrap()), (21..=22).map(|line| (line, 5, Some((line, 2)))).collect::<Vec<_>>());
         let expected = state(app.editor().unwrap());
         for empty in [Rect::new(5, 2, 0, 10), Rect::new(5, 2, 6, 0)] {
             app.code_area = Some(empty);

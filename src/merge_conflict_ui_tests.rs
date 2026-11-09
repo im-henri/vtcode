@@ -833,7 +833,7 @@ fn merge_conflict_remote_status_and_staging_use_the_same_safety_checks() {
     let (directory, repo) = conflicted_repo();
     let client = crate::remote::tests::connection(directory.path(), Arc::default(), Arc::default());
     let Reply::GitStatus { scans, .. } = client
-        .call(Command::GitStatus { revalidate: false,
+        .call(Command::GitStatus { progress: None, revalidate: false,
             changed: None,
             include_untracked: false,
             known: None,

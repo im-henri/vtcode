@@ -20,6 +20,9 @@ pub(crate) mod find;
 #[path = "terminal_mouse.rs"]
 mod mouse;
 
+#[path = "terminal_links.rs"]
+pub(crate) mod links;
+
 #[path = "terminal_row.rs"]
 mod row;
 pub(crate) use row::TermRow;
@@ -126,6 +129,8 @@ pub struct TermGrid {
 
     // Title set by OSC
     pub title: Option<String>,
+    /// OSC 7 is a shell-provided directory hint, resolved only on navigation.
+    pub(crate) cwd_uri: Option<String>,
     // The latest OSC 52 write is applied by the workbench, not by log parsers.
     pub(crate) clipboard_update: Option<String>,
     pub(crate) commands: crate::terminal_completion::Commands,
@@ -171,6 +176,7 @@ impl TermGrid {
             saved_cursor: None,
             alt_saved: None,
             title: None,
+            cwd_uri: None,
             clipboard_update: None,
             commands: Default::default(),
         }
@@ -883,6 +889,20 @@ impl vte::Perform for TermGrid {
         if params.len() >= 2 && (params[0] == b"0" || params[0] == b"2") {
             if let Ok(title) = std::str::from_utf8(params[1]) {
                 self.title = Some(title.to_string());
+            }
+        }
+        if params.len() >= 2 && params[0] == b"7"
+            && params[1..].iter().fold(params.len() - 2, |size, part| size.saturating_add(part.len())) <= 4096
+        {
+            let mut value = String::new();
+            let mut valid = true;
+            for (index, part) in params[1..].iter().enumerate() {
+                let Ok(part) = std::str::from_utf8(part) else { valid = false; break; };
+                if index > 0 { value.push(';'); }
+                value.push_str(part);
+            }
+            if valid && url::Url::parse(&value).is_ok_and(|url| url.scheme() == "file" && url.query().is_none() && url.fragment().is_none()) {
+                self.cwd_uri = Some(value);
             }
         }
         // OSC 1: icon title (treat same as window title)

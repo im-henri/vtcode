@@ -174,6 +174,7 @@ pub(crate) fn snapshot(buffer: &Buffer, name: &str) {
             serde_json::json!({
                 "text":cell.symbol(), "fg":format!("{:?}",cell.fg), "bg":format!("{:?}",cell.bg),
                 "bold":cell.modifier.contains(ratatui::style::Modifier::BOLD),
+                "strikethrough":cell.modifier.contains(ratatui::style::Modifier::CROSSED_OUT),
                 "underline":cell.modifier.contains(ratatui::style::Modifier::UNDERLINED),
                 "underlineColor":format!("{:?}",cell.underline_color)
             })

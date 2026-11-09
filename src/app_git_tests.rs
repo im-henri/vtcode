@@ -26,6 +26,12 @@ mod external_save_tests;
 #[path = "diff_language_tests.rs"]
 mod diff_language_tests;
 
+#[path = "hunk_continuation_tests.rs"]
+mod hunk_continuation_tests;
+
+#[path = "hunk_refresh_tests.rs"]
+mod hunk_refresh_tests;
+
 #[test]
 fn a_second_save_with_unchanged_text_still_queues_changed_encoding_and_save_options() {
     let mut app = App::test_new();
@@ -1966,7 +1972,12 @@ fn hunk_peek_gutter_buttons_act_on_the_clicked_hunk_and_preserve_other_changes()
             kind: MouseEventKind::Down(MouseButton::Left), column, row, modifiers: KeyModifiers::NONE,
         });
         app.wait_for_git_action();
-        assert!(!app.hunk_popup_active, "{action}: clicked action was handled");
+        app.wait_for_hunk_preview();
+        assert!(app.hunk_popup_active, "{action}: retain the preview for the remaining changes");
+        if !dirty {
+            assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 1);
+            assert_eq!(app.hunk_popup_line, 1);
+        }
         assert_eq!(git_stdout(&repo_dir, &["show", ":file.txt"]), expected_index, "{action}");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), expected_worktree, "{action}");
         if dirty {

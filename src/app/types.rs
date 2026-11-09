@@ -1929,7 +1929,7 @@ pub struct SymbolItem {
 pub struct GlobalSearchResult {
     pub file_path: PathBuf,
     pub line_num: usize,
-    /// Matches share their preview; embedded line breaks are displayed as ↵.
+    /// Matches share their raw source preview; renderers display line breaks as ↵.
     pub line_text: std::sync::Arc<str>,
     pub col_start: usize,
     /// Character offset from the start line, possibly extending into later lines.

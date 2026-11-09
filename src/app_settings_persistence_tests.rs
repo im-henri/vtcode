@@ -23,6 +23,37 @@ fn saved(app: &App, scope: SettingsScope) -> Settings {
 }
 
 #[test]
+fn highlighting_words_across_tabs_is_opt_in_scoped_and_persisted() {
+    let (_dir, mut app) = fixture();
+    let id = "highlight_words_across_tabs";
+    assert!(!app.highlight_words_across_tabs);
+    assert_eq!(App::setting_field_kind(id), "checkbox");
+    assert_eq!(App::settings_category_for_id(id), 3);
+    assert_eq!(App::settings_section_for_id(id), Some("Code Decorations"));
+    assert_eq!(App::setting_json_key(id), Some("highlightWordsAcrossTabs"));
+    assert!(app.settings_items().iter().any(|(label, value, key)|
+        label == "Highlight Words Across Tabs" && value == "Off" && key == id));
+    app.settings_scope = SettingsScope::Global;
+    app.toggle_setting(id);
+    assert!(app.highlight_words_across_tabs);
+    assert_eq!(saved(&app, SettingsScope::Global).highlight_words_across_tabs, Some(true));
+    app.settings_scope = SettingsScope::Workspace;
+    app.toggle_setting(id);
+    assert!(!app.highlight_words_across_tabs);
+    assert_eq!(saved(&app, SettingsScope::Workspace).highlight_words_across_tabs, Some(false));
+    let mut restarted = App::test_new();
+    restarted.settings_global = saved(&app, SettingsScope::Global);
+    restarted.settings_workspace = saved(&app, SettingsScope::Workspace);
+    restarted.apply_effective_settings();
+    assert!(!restarted.highlight_words_across_tabs);
+    assert!(app.reset_setting_in_selected_scope(id));
+    assert!(app.highlight_words_across_tabs);
+    app.settings_scope = SettingsScope::Global;
+    assert!(app.reset_setting_in_selected_scope(id));
+    assert!(!app.highlight_words_across_tabs);
+}
+
+#[test]
 fn minimap_width_updates_the_effective_settings_layer_and_survives_reload() {
     for workspace_override in [false, true] {
         let (_dir, mut app) = fixture();

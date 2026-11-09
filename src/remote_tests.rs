@@ -13,6 +13,9 @@ use std::{
 #[path = "remote_terminal_transport_tests.rs"]
 mod terminal_transport;
 
+#[path = "remote_git_loading_tests.rs"]
+mod git_loading;
+
 #[path = "remote_rename_tests.rs"]
 mod rename_tests;
 
@@ -615,6 +618,8 @@ fn remote_terminal_uses_local_grid_resizes_and_closes_without_blocking_editor() 
     terminal.resize(110, 20);
     assert_eq!((terminal.grid.width, terminal.grid.height), (110, 20));
     app.close_terminal_tab_at(index);
+    assert!(app.terminal_close.is_some());
+    app.confirm_terminal_close();
     assert!(app.terminals[0].terminal_pty.is_none());
     assert!(matches!(
         workspace.client.call(Command::Ping).unwrap(),
@@ -1360,7 +1365,7 @@ fn remote_git_repositories_stage_and_unstage_use_native_shared_tasks() {
     std::fs::write(dir.path().join("file[1].rs"), "one\n").unwrap();
     let client = connection(dir.path(), Arc::default(), Arc::default());
     let Reply::GitStatus { discovery, scans } = client
-        .call(Command::GitStatus { revalidate: false,
+        .call(Command::GitStatus { progress: None, revalidate: false,
             changed: None,
             include_untracked: true,
             known: None,
@@ -1682,11 +1687,17 @@ fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
     app.wait_for_background(Duration::from_secs(10), |app| app.hunk_peek.is_some());
     app.execute_hunk_popup_action(0);
     app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_action_running);
+    app.wait_for_hunk_preview();
+    assert!(app.hunk_popup_active);
+    assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 1);
+    assert_eq!(app.hunk_popup_line, 5);
     assert_eq!(index_text(), "a\nchanged\nc\nd\ne\nbase2\ng\n");
     app.open_hunk_popup(0, 0, key.clone(), 1, 'S');
     app.wait_for_background(Duration::from_secs(10), |app| app.hunk_peek.is_some());
     app.execute_hunk_popup_action(0);
     app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_action_running);
+    app.wait_for_hunk_preview();
+    assert!(!app.hunk_popup_active);
     assert_eq!(index_text(), original);
     app.open_hunk_popup(0, 0, key.clone(), 1, 'U');
     app.wait_for_background(Duration::from_secs(10), |app| app.hunk_peek.is_some());
@@ -1713,6 +1724,10 @@ fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
     });
     assert_eq!(std::fs::read_to_string(&native).unwrap(), after);
     assert_eq!(app.editor().unwrap().rope.to_string(), after);
+    app.wait_for_hunk_preview();
+    assert!(app.hunk_popup_active);
+    assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 1);
+    assert_eq!(app.hunk_popup_line, 5);
     app.editor_mut().unwrap().undo();
     assert_eq!(app.editor().unwrap().rope.to_string(), changed);
     assert!(app.editor().unwrap().modified);

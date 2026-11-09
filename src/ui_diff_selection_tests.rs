@@ -1300,7 +1300,7 @@ fn original_focus_does_not_edit_an_editable_target_through_alt_history_or_palett
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT,
             ),
         );
-        for code in ['z', 'y', '/', ']', '[', 'j', 't'] {
+        for code in ['z', 'y', '/', ']', '[', 'j'] {
             crate::input_keyboard::handle_keyboard_event(
                 &mut app,
                 KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL),
@@ -1311,7 +1311,6 @@ fn original_focus_does_not_edit_an_editable_target_through_alt_history_or_palett
             "redo",
             "toggle_comment",
             "move_line_up",
-            "transpose_chars",
             "eol_crlf",
             "format_selection",
         ] {

@@ -16,6 +16,19 @@ __vtcode_precmd() {
         __vtcode_history_ready=1
     fi
     printf '\033]633;D;%s\007' "$result"
+    if [[ ${__vtcode_directory-} != "$PWD" ]]; then
+        __vtcode_directory=$PWD
+        local directory=${PWD//%/%25}
+        directory=${directory// /%20}
+        directory=${directory//\#/%23}
+        directory=${directory//\?/%3F}
+        directory=${directory//;/%3B}
+        directory=${directory//$'\a'/%07}
+        directory=${directory//$'\e'/%1B}
+        directory=${directory//$'\n'/%0A}
+        directory=${directory//$'\r'/%0D}
+        printf '\033]7;file://%s\007' "$directory"
+    fi
     # Existing prompt hooks must still receive the command's exit status.
     return "$result"
 }

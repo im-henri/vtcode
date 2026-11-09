@@ -329,6 +329,7 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
         );
         crate::terminal_scrollbar::draw(f, app, surface, area);
         crate::app_terminal_find::draw(f, app, idx, content);
+        crate::app_terminal_links::draw(f, app, surface);
     } else {
         draw_terminal_launch_error(
             f,

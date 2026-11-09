@@ -148,6 +148,52 @@ fn search_progress_batches_finish_before_their_terminal_reply_without_blocking_o
 }
 
 #[test]
+fn large_git_startup_progress_finishes_before_completion_without_blocking_other_replies() {
+    let mut entropy = 13u64;
+    let files = (0..128).map(|_| {
+        let path = (0..192).map(|_| {
+            entropy ^= entropy << 13; entropy ^= entropy >> 7; entropy ^= entropy << 17;
+            b'a' + (entropy % 26) as u8
+        }).collect();
+        crate::app::GitFileChange { path: RemotePath::new(path).unwrap(), original_path: None,
+            status: 'M', staged: false, directory: false }
+    }).collect();
+    let discovery = || git::Discovery { roots: vec![RemotePath::default()], parent: None, errors: Vec::new() };
+    let mut queue = OutputQueue::default();
+    queue.push(Response { id: 0, result: Ok(Reply::GitStatusProgress { request: 7,
+        progress: git::StatusProgress::Repository { root: RemotePath::default(), branch: "main".into() } }) }).unwrap();
+    let mut bytes = Vec::new();
+    queue.step(&mut bytes, 42).unwrap();
+    queue.push(Response { id: 0, result: Ok(Reply::GitStatusProgress { request: 7,
+        progress: git::StatusProgress::Snapshot { discovery: discovery(), scan: Box::new(git::Scan {
+            root: RemotePath::default(), branch: "main".into(), files, operation: None, worktree_paths: None,
+        }) } }) }).unwrap();
+    queue.step(&mut bytes, 42).unwrap();
+    assert!(!queue.is_empty(), "the primary snapshot must span multiple frames");
+    queue.push(Response { id: 7, result: Ok(Reply::GitStatus { discovery: discovery(), scans: Vec::new() }) }).unwrap();
+    queue.push(Response { id: 8, result: Ok(Reply::Done) }).unwrap();
+    while !queue.is_empty() { queue.step(&mut bytes, 42).unwrap(); }
+    let mut decoder = Decoder::new('S', 42);
+    let mut received = Vec::new();
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        if let Some((_, data)) = decoder.line(line).unwrap() {
+            let response: Response = serde_json::from_slice(&data).unwrap();
+            received.push(match response.result.unwrap() {
+                Reply::GitStatusProgress { progress: git::StatusProgress::Repository { .. }, .. } => "branch",
+                Reply::GitStatusProgress { progress: git::StatusProgress::Snapshot { scan, .. }, .. } => {
+                    assert_eq!(scan.files.len(), 128);
+                    "snapshot"
+                }
+                Reply::GitStatus { .. } => "complete",
+                Reply::Done => "other request",
+                _ => panic!("unexpected reply"),
+            });
+        }
+    }
+    assert_eq!(received, ["branch", "other request", "snapshot", "complete"]);
+}
+
+#[test]
 fn terminal_output_keeps_order_and_eof_while_another_terminal_can_echo() {
     let mut entropy = 23u64;
     let output: Vec<u8> = (0..32 * 1024).map(|_| {

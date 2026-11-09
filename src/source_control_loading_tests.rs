@@ -343,6 +343,7 @@ fn progress_changes_the_loading_phase_without_publishing_a_zero_count() {
     app.bg_git_status_running = true;
     let found = |root: std::path::PathBuf, workspace_generation| BackgroundResult::GitRepositoryFound {
         repository: root.clone(),
+        branch: String::new(),
         root,
         workspace_generation,
         repository_generation: 0,

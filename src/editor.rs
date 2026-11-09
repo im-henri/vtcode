@@ -42,6 +42,7 @@ pub(crate) struct LoadedTextFile {
 pub(crate) struct PreparedGitLineStatus {
     markers: Arc<[char]>,
     changes: Arc<[(usize, char)]>,
+    staged_deletions: Arc<[usize]>,
     signature: u64,
     pub(crate) untracked: bool,
 }
@@ -50,6 +51,7 @@ impl PreparedGitLineStatus {
     pub(crate) fn from_diffs(line_count: usize, staged: &[char], unstaged: &[char]) -> Self {
         let mut markers = Vec::with_capacity(line_count);
         let mut changes = Vec::new();
+        let mut staged_deletions = Vec::new();
         let mut signature = 0xcbf29ce484222325u64;
         for line in 0..line_count {
             let unstaged = unstaged.get(line).copied().unwrap_or(' ');
@@ -66,13 +68,17 @@ impl PreparedGitLineStatus {
             if marker != ' ' {
                 changes.push((line, marker));
             }
-            signature = (signature ^ u64::from(marker as u32)).wrapping_mul(0x100000001b3);
+            let staged_deletion = marker == 'D' && unstaged == ' ' && staged == 'D';
+            if staged_deletion { staged_deletions.push(line); }
+            let source = u64::from(marker as u32) | (u64::from(staged_deletion) << 32);
+            signature = (signature ^ source).wrapping_mul(0x100000001b3);
             markers.push(marker);
         }
         signature ^= line_count as u64;
         Self {
             markers: markers.into(),
             changes: changes.into(),
+            staged_deletions: staged_deletions.into(),
             signature,
             untracked: false,
         }
@@ -92,6 +98,7 @@ impl PreparedGitLineStatus {
         Self {
             markers: markers.into(),
             changes: changes.into(),
+            staged_deletions: Arc::from([]),
             signature,
             untracked: false,
         }
@@ -548,6 +555,9 @@ pub(crate) struct Editor {
     /// Per-line change status:
     /// 'N' = unsaved buffer change, 'U' = unstaged git change, 'S' = staged git change, ' ' = unchanged.
     git_line_status: Arc<[char]>,
+    // Deletions share their visual marker; retain the index/worktree source
+    // separately so gutter clicks choose the correct preview and actions.
+    git_staged_deletions: Arc<[usize]>,
     /// Provenance of automatic Git markers, used when untracked files are hidden.
     pub(crate) git_line_status_untracked: bool,
     /// Large file mode: disables expensive parsing and whole-document features.
@@ -709,6 +719,7 @@ impl Editor {
             overview_change_revision: 0,
             desired_col: None,
             git_line_status: Arc::from([]),
+            git_staged_deletions: Arc::from([]),
             git_line_status_untracked: false,
             large_file_mode: false,
             rich_features_timed_out: false,
@@ -1383,6 +1394,7 @@ impl Editor {
         }
         self.git_line_status = status.markers;
         self.git_change_lines = status.changes;
+        self.git_staged_deletions = status.staged_deletions;
         self.git_line_status_signature = status.signature;
         self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
         true
@@ -1395,6 +1407,7 @@ impl Editor {
         }
         self.git_line_status = Arc::from([]);
         self.git_change_lines = Arc::from([]);
+        self.git_staged_deletions = Arc::from([]);
         self.git_line_status_signature = 0;
         self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
     }
@@ -1419,6 +1432,7 @@ impl Editor {
         PreparedGitLineStatus {
             markers: Arc::clone(&self.git_line_status),
             changes: Arc::clone(&self.git_change_lines),
+            staged_deletions: Arc::clone(&self.git_staged_deletions),
             signature: self.git_line_status_signature,
             untracked: self.git_line_status_untracked,
         }
@@ -1435,6 +1449,12 @@ impl Editor {
             return self.git_line_status.get(line).copied().unwrap_or(' ');
         };
         ' '
+    }
+
+    pub(crate) fn line_hunk_status(&self, line: usize) -> char {
+        let status = self.line_diff_status(line);
+        if status == 'D' && self.git_staged_deletions.binary_search(&line).is_ok() { 'S' }
+        else { status }
     }
 
     pub(crate) fn current_line_len(&self) -> usize {

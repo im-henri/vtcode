@@ -27,6 +27,7 @@ pub(crate) enum Kind {
     ExclusionSettings,
     ScopeBubbleSettings,
     CloseAgent,
+    CloseTerminal,
     ThemeInstall,
     ThemeVsixLink,
     ThemeDelete,
@@ -89,6 +90,8 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::About)
     } else if app.chat.confirm_close_agent.is_some() {
         Some(Kind::CloseAgent)
+    } else if app.terminal_close.is_some() {
+        Some(Kind::CloseTerminal)
     } else if app.theme_management.pending.is_some() {
         Some(Kind::ThemeDelete)
     } else if app.confirm_close_active {
@@ -154,7 +157,7 @@ fn sync(app: &mut App, kind: Kind) {
                 Kind::About => 1,
                 Kind::SaveError if app.save_conflict.is_some() => 1,
                 Kind::FormattingError => 1,
-                Kind::CloseAgent | Kind::ThemeDelete => 1,
+                Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete => 1,
                 Kind::ExitBackup => 1,
                 Kind::Discard => 1,
                 Kind::GitOperationConfirm => 1,
@@ -203,6 +206,9 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         Kind::AgentSettings => vec!["Done"],
         Kind::LspSettings => vec!["Done"],
         Kind::CloseAgent => vec!["Close agent", "Cancel"],
+        Kind::CloseTerminal => vec![if app.terminal_close.as_ref().is_some_and(|request| request.names.len() > 1) {
+            "Close terminals"
+        } else { "Close terminal" }, "Cancel"],
         Kind::ThemeDelete => vec!["Delete theme", "Cancel"],
         Kind::ThemeInstall => {
             let mut buttons = vec![if app.install_prompt_running() {
@@ -270,6 +276,7 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::AgentSettings => crate::ui_agent_settings::activate(app, crate::ui_agent_settings::Action::Close),
         Kind::LspSettings => crate::ui_lsp_settings::activate(app, crate::ui_lsp_settings::Action::Close),
         Kind::CloseAgent => app.chat.confirm_close_agent = None,
+        Kind::CloseTerminal => app.terminal_close = None,
         Kind::ThemeDelete => app.cancel_theme_removal(),
         Kind::ThemeInstall => app.close_palette(),
         Kind::ThemeVsixLink => app.palette.theme_vsix_url = None,
@@ -340,6 +347,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
         Kind::AgentSettings => {},
         Kind::LspSettings => {},
         Kind::CloseAgent => app.confirm_close_chat_agent(),
+        Kind::CloseTerminal => app.confirm_terminal_close(),
         Kind::ThemeDelete => app.confirm_theme_removal(),
         Kind::SaveAs if index == 1 => {
             let parent = if let Some(remote) = &app.remote_workspace {
@@ -436,6 +444,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
         return Some(false);
     }
     sync(app, kind);
+    if kind == Kind::CloseTerminal && key.kind != crossterm::event::KeyEventKind::Press {
+        return Some(false);
+    }
     let offset = usize::from(kind.input().is_some());
     match key.code {
         KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End if kind == Kind::ExitBackup => {
@@ -743,6 +754,22 @@ fn copy(app: &App, kind: Kind) -> Copy {
         Kind::RemoteTargets => Copy {
             title: "Remote Target", message: String::new(), context: Vec::new(), help: String::new(), field: "",
         },
+        Kind::CloseTerminal => {
+            let names = app.terminal_close.as_ref().map(|request| &request.names);
+            let count = names.map_or(0, Vec::len);
+            Copy {
+                title: "Close Running Terminal",
+                message: if count == 1 {
+                    "This terminal is still running. Are you sure you want to close it?".into()
+                } else {
+                    format!("{count} terminals are still running. Are you sure you want to close them?")
+                },
+                context: names.into_iter().flatten().map(|name|
+                    name.chars().filter(|c| !c.is_control()).collect()).collect(),
+                help: "Closing will stop the terminal processes and any running jobs. Cancel keeps them running.".into(),
+                field: "",
+            }
+        }
         Kind::CloseAgent => {
             let agent = app.chat.confirm_close_agent.unwrap_or(app.chat.active_agent);
             let state = app.chat.agent_state(agent);
@@ -1096,6 +1123,7 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::FormatterSettings) => crate::ui_formatter_settings::draw(f, app),
         Some(Kind::RemoteTargets) => crate::ui_remote_targets::draw_dialog(f, app),
         Some(Kind::CloseAgent) => draw(f, app, Kind::CloseAgent),
+        Some(Kind::CloseTerminal) => draw(f, app, Kind::CloseTerminal),
         Some(Kind::ThemeInstall) => draw(f, app, Kind::ThemeInstall),
         Some(Kind::ThemeVsixLink) => draw(f, app, Kind::ThemeVsixLink),
         Some(Kind::ThemeDelete) => draw(f, app, Kind::ThemeDelete),
@@ -1389,7 +1417,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             app.register_text_input(id, hit);
         }
     }
-    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::ThemeDelete | Kind::GitOperationConfirm) || app.modal.overwrite.is_some();
+    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) || app.modal.overwrite.is_some();
     text(
         f,
         rows[4],
@@ -1420,7 +1448,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             1,
         );
         let selected = app.modal.focus == i + usize::from(has_input);
-        let destructive = (matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::ThemeDelete | Kind::GitOperationConfirm) && i == 0)
+        let destructive = (matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) && i == 0)
             || (kind == Kind::SaveError && app.save_conflict.is_some() && i == 0)
             || (matches!(kind, Kind::Close | Kind::Exit) && i == 1 && i + 1 < labels.len());
         let disabled = (kind == Kind::ThemeInstall && app.install_prompt_running() && i == 0)
@@ -1599,6 +1627,8 @@ mod tests {
             Kind::FormatterSettings => app.open_formatter_settings(None),
             Kind::RemoteTargets => { app.remote_targets.path = Some(std::env::temp_dir().join("vtcode-modal-remote-test.json")); app.edit_remote_target(None, false); }
             Kind::CloseAgent => app.chat.confirm_close_agent = Some(app.chat.active_agent),
+            Kind::CloseTerminal => app.request_terminal_close(
+                vec!["Build: cargo test".into()], crate::app_terminal::TerminalCloseAction::Session(0)),
             Kind::ThemeInstall => app.open_theme_install_prompt(),
             Kind::ThemeDelete => {
                 let mut theme = crate::app_theme_loader::builtin_theme("dark").unwrap().clone();
@@ -1886,6 +1916,7 @@ mod tests {
             Kind::About,
             Kind::SaveError,
             Kind::CloseAgent,
+            Kind::CloseTerminal,
             Kind::ThemeInstall,
             Kind::ThemeVsixLink,
             Kind::ThemeDelete,
@@ -1971,6 +2002,7 @@ mod tests {
     fn polished_dialog_close_and_cancel_hit_regions_are_real() {
         for kind in [
             Kind::ThemeInstall,
+            Kind::CloseTerminal,
             Kind::ThemeDelete,
             Kind::SaveAs,
             Kind::Rename,

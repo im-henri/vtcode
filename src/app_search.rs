@@ -15,6 +15,10 @@ mod correctness_tests;
 #[path = "app_workspace_replace_tests.rs"]
 mod workspace_replace_tests;
 
+#[cfg(test)]
+#[path = "workspace_search_replace_tests.rs"]
+mod single_replace_tests;
+
 const QUICK_OPEN_RESULT_LIMIT: usize = 20;
 const QUICK_OPEN_MATCH_CACHE_LIMIT: usize = 65_536;
 const QUICK_OPEN_NAME_SCORE_CACHE_LIMIT: usize = 4_096;
@@ -897,16 +901,7 @@ impl<'a> SnapshotReplacer<'a> {
                         // Match.replaceString tries the match text first, then its preview
                         // context, and finally falls back to the parsed static template.
                         let matched = SearchText::from_rope(source.slice(start..end), true);
-                        if let Some(captures) = regex.captures_at(&matched.text, 0) {
-                            pattern.expand(&matched.text, &captures, options.preserve)
-                        } else if let Some(captures) = regex
-                            .captures_at(&input.text, start_byte)
-                            .filter(|captures| captures.range.start == start_byte)
-                        {
-                            pattern.expand(&input.text, &captures, options.preserve)
-                        } else {
-                            pattern.fallback().to_owned()
-                        }
+                        pattern.expand_match(regex, &matched.text, &input.text, start_byte, options.preserve)
                     }
                 }
             } else {
@@ -1428,12 +1423,27 @@ impl App {
 
     /// Replace all occurrences across all files found by global search.
     pub(crate) fn replace_all_in_files(&mut self) {
+        self.replace_in_files(None);
+    }
+
+    pub(crate) fn replace_global_search_result(&mut self, index: usize, revision: u64) {
+        if revision != self.global_search_results.revision() || !self.can_replace_global_search_result(index) {
+            return;
+        }
+        self.global_search_selected = index;
+        self.global_search_selected_header = None;
+        self.global_search_result_click = None;
+        self.focus_global_search_results();
+        self.replace_in_files(Some(index));
+    }
+
+    fn replace_in_files(&mut self, selected: Option<usize>) {
         if self.global_search_results.is_empty() {
             self.notify("No matches to replace");
             return;
         }
         if self.bg_global_search_running {
-            self.notify("Wait for the search to finish before replacing all matches");
+            self.notify("Wait for the search to finish before replacing matches");
             return;
         }
         if self.bg_global_replace_running {
@@ -1446,7 +1456,8 @@ impl App {
             PathBuf,
             (Vec<(usize, usize, usize)>, Option<Snapshot>),
         > = rustc_hash::FxHashMap::default();
-        for found in &self.global_search_results {
+        let range = selected.map_or(0..self.global_search_results.len(), |index| index..index + 1);
+        for found in &self.global_search_results[range] {
             by_file.entry(found.file_path.clone()).or_default().0.push((
                 found.line_num,
                 found.col_start,
@@ -1497,6 +1508,8 @@ impl App {
         self.global_replace_generation = self.global_replace_generation.wrapping_add(1);
         self.bg_global_replace_running = true;
         self.workspace_replace.open = Default::default();
+        self.workspace_replace.selection = selected.map(|index|
+            (self.search_generation, index, self.global_search_scroll));
         self.status_message = format!("Replacing matches in {} files...", targets.len());
         let job = Job {
             workspace_generation: self.workspace_generation,
@@ -1628,9 +1641,23 @@ impl App {
             self.refresh_explorer_async();
             self.refresh_source_control_async();
         }
+        let selection = self.workspace_replace.selection.take()
+            .filter(|(generation, _, _)| *generation == self.search_generation);
         self.global_search_results.clear();
         self.update_global_search();
+        self.workspace_replace.selection = selection.map(|(_, index, scroll)|
+            (self.search_generation, index, scroll));
+        if !self.bg_global_search_running { self.restore_workspace_replace_selection(); }
         true
+    }
+
+    pub(crate) fn restore_workspace_replace_selection(&mut self) {
+        let Some((generation, index, scroll)) = self.workspace_replace.selection.take() else { return; };
+        if generation != self.search_generation { return; }
+        self.global_search_selected = index.min(self.global_search_results.len().saturating_sub(1));
+        self.global_search_selected_header = None;
+        self.global_search_scroll = scroll;
+        self.ensure_global_search_selection_visible();
     }
 
     pub(crate) fn update_quick_open(&mut self) {

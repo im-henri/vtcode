@@ -11,6 +11,7 @@ pub(crate) enum Source {
     Chat,
     Markdown,
     FileCommand,
+    Terminal,
 }
 
 type Caret = (u64, usize, usize, Option<(usize, usize)>, usize);
@@ -31,6 +32,7 @@ struct Origin {
         Option<usize>,
     )>,
     overlays: [bool; 5],
+    terminal: Option<u64>,
 }
 impl Origin {
     fn capture(app: &App, source: Source) -> Self {
@@ -62,6 +64,8 @@ impl Origin {
                 )
             }),
             overlays: Self::overlays(app),
+            terminal: (source == Source::Terminal).then(|| app.focused_terminal_index()
+                .map(|index| app.terminals[index].find.id)).flatten(),
         }
     }
     fn caret(app: &App) -> Option<Caret> {
@@ -97,6 +101,8 @@ impl Origin {
                     .get(app.active_tab)
                     .map(|tab| tab.editor.navigation_id)
             && self.caret == Self::caret(app)
+            && self.terminal.is_none_or(|id| app.focused_terminal_index()
+                .is_some_and(|index| app.terminals[index].find.id == id))
             && Self::overlays(app)
                 .iter()
                 .zip(self.overlays)
@@ -128,6 +134,7 @@ struct Request {
     workspace: Workspace,
     path: PathBuf,
     line: Option<u32>,
+    column: u32,
     source: Source,
     origin: Origin,
     status: String,
@@ -153,6 +160,12 @@ impl Drop for State {
 }
 
 impl App {
+    pub(crate) fn cancel_remote_terminal_location(&mut self) {
+        if self.remote_navigation.pending.as_ref().is_some_and(|request| request.source == Source::Terminal) {
+            self.cancel_remote_location();
+        }
+    }
+
     pub(crate) fn cancel_remote_location(&mut self) {
         if let Some((_, cancel)) = &self.remote_navigation.running {
             cancel.cancel();
@@ -186,6 +199,12 @@ impl App {
         line: Option<u32>,
         source: Source,
     ) {
+        self.open_remote_location_at(path, line, 0, source);
+    }
+
+    pub(crate) fn open_remote_location_at(
+        &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source,
+    ) {
         self.cancel_remote_location();
         let Some(workspace) = self.remote_workspace.clone() else {
             return;
@@ -198,7 +217,7 @@ impl App {
             return;
         }
         if path == self.explorer.root {
-            if source == Source::FileCommand {
+            if matches!(source, Source::FileCommand | Source::Terminal) {
                 self.remote_location_error(
                     source,
                     "Choose a file, not the workspace folder".into(),
@@ -225,10 +244,16 @@ impl App {
             });
         if live {
             self.open_file(&path);
+            if source == Source::Terminal { self.terminal_panel_focused = false; }
             if let Some(line) = line
                 && let Some(editor) = self.editor_mut()
             {
-                editor.set_cursor(line as usize, 0);
+                if source == Source::Terminal {
+                    if editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, &path)) {
+                        editor.set_centered_cursor(line as usize, column as usize);
+                    }
+                }
+                else { editor.set_cursor(line as usize, column as usize); }
             }
             self.hide_chat_after_remote_location(source);
             return;
@@ -241,6 +266,7 @@ impl App {
             workspace,
             path,
             line,
+            column,
             source,
             origin: Origin::capture(self, source),
             status: status.clone(),
@@ -342,7 +368,7 @@ impl App {
         }
         match result {
             Ok(Location::Directory(path)) => {
-                if request.source == Source::FileCommand {
+                if matches!(request.source, Source::FileCommand | Source::Terminal) {
                     self.remote_location_error(
                         request.source,
                         format!("{} is a folder, not a file", self.display_path(&path)),
@@ -354,10 +380,16 @@ impl App {
             Ok(Location::File(loaded)) => {
                 self.push_nav_history();
                 self.open_file_with_preloaded(&request.path, loaded);
+                if request.source == Source::Terminal { self.terminal_panel_focused = false; }
                 if let Some(line) = request.line
                     && let Some(editor) = self.editor_mut()
                 {
-                    editor.set_cursor(line as usize, 0);
+                    if request.source == Source::Terminal {
+                        if editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, &request.path)) {
+                            editor.set_centered_cursor(line as usize, request.column as usize);
+                        }
+                    }
+                    else { editor.set_cursor(line as usize, request.column as usize); }
                 }
             }
             Err(error) => self.remote_location_error(request.source, error),
@@ -427,7 +459,7 @@ impl App {
     fn remote_location_error(&mut self, source: Source, error: String) {
         match source {
             Source::Chat => self.chat.error = Some(error),
-            Source::Markdown | Source::FileCommand => self.notify_warn(error),
+            Source::Markdown | Source::FileCommand | Source::Terminal => self.notify_warn(error),
         }
     }
     fn hide_chat_after_remote_location(&mut self, source: Source) {

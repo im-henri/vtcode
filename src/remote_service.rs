@@ -476,6 +476,7 @@ impl Service {
                 include_untracked,
                 changed,
                 revalidate,
+                progress: _,
             } => {
                 let excluded = closed.clone();
                 let reply = git::status(
@@ -1125,6 +1126,7 @@ fn serve_service(
     let mut git = new_service();
     git.histories = Some(history::Manager::new(output.clone()));
     let mut git = LazyActor::new("headless-git", git, output.clone(), cancels.clone());
+    let mut git_status = LazyActor::new("headless-git-status", new_service(), output.clone(), cancels.clone());
     let mut network = LazyActor::new(
         "headless-git-network",
         new_service(),
@@ -1478,7 +1480,7 @@ fn serve_service(
             | Command::BlameLineSnapshot { .. }
             | Command::HistoryStart { .. }
             | Command::HistoryNext { .. }
-            | Command::HistoryClose { .. } => git.get()?,
+            | Command::HistoryClose { .. } => git_actor_for(&request.command, &mut git, &mut git_status)?,
             Command::GitNetwork { .. } => network.get()?,
             Command::Files { .. } => index.get()?,
             Command::Explorer(_) => explorer.get()?,
@@ -1511,6 +1513,12 @@ fn serve_service(
 
 type Cancellations =
     std::sync::Arc<std::sync::Mutex<HashMap<u64, crate::background::CancellationToken>>>;
+
+// Status/discovery is read-only and may traverse a large workspace. It must
+// not hold up the serial queue that validates and applies Git mutations.
+fn git_actor_for<'a>(command: &Command, git: &'a mut LazyActor, status: &'a mut LazyActor) -> io::Result<&'a Actor> {
+    if matches!(command, Command::GitStatus { .. }) { status.get() } else { git.get() }
+}
 
 /// Optional services consume no thread or worker stack until their first use.
 /// Once started they retain the same isolated queue and teardown guarantees.
@@ -1847,10 +1855,14 @@ fn actor_with_inbox(
                             include_untracked,
                             changed,
                             revalidate,
+                            progress,
                         } => {
                             let excluded = closed.clone();
-                            git::status(&service.root, known, parent_open, closed, include_untracked,
-                                (changed, revalidate), cancel.as_ref().unwrap()).inspect(|reply| {
+                            git::status_reporting(&service.root, git::StatusQuery { known, parent_open, closed, include_untracked,
+                                changed, revalidate }, progress, cancel.as_ref().unwrap(), |progress| {
+                                    output.send(Response { id: 0, result: Ok(Reply::GitStatusProgress { request: request.id, progress }) })
+                                        .map_err(io::Error::other)
+                                }).inspect(|reply| {
                                     // The cancellable transport path must publish
                                     // dependencies just like direct execution.
                                     service.observe_git_status(reply, parent_open, &excluded);

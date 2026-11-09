@@ -217,26 +217,6 @@
         assert!(ed.rope.to_string().contains("d\n"));
     }
 
-    // --- transpose_chars test ---
-
-    #[test]
-    fn transpose_chars_basic() {
-        let mut ed = Editor::test_with_text("ab\n");
-        ed.cursor_line = 0;
-        ed.cursor_col = 1;
-        ed.transpose_chars();
-        assert_eq!(ed.rope.line(0).to_string(), "ba\n");
-    }
-
-    #[test]
-    fn transpose_chars_at_start() {
-        let mut ed = Editor::test_with_text("ab\n");
-        ed.cursor_line = 0;
-        ed.cursor_col = 0;
-        ed.transpose_chars(); // should be no-op
-        assert_eq!(ed.rope.line(0).to_string(), "ab\n");
-    }
-
     // --- multi_cursor_delete test ---
 
     #[test]

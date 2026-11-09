@@ -1,7 +1,7 @@
 use crate::app::{App, AutoSaveMode, GitFileChange};
 use crate::app_ui_state::BINARY_DIFF_MESSAGE;
 use crate::app_git_display::{
-    compute_line_diff, map_worktree_line_to_index_line, parse_git_file_patch, select_patch_hunk,
+    compute_line_diff, compute_worktree_line_diffs, map_worktree_line_to_index_line, parse_git_file_patch, select_patch_hunk,
 };
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -360,7 +360,7 @@ fn collect_source_control_status_impl<P: Ord>(
     read_source_control_status(&repo, &root, cancel, format_path, changed, include_untracked, revalidate)
 }
 
-fn read_source_control_status<P: Ord>(
+pub(crate) fn read_source_control_status<P: Ord>(
     repo: &git2::Repository,
     root: &Path,
     cancel: &crate::background::CancellationToken,
@@ -381,9 +381,8 @@ fn read_source_control_status<P: Ord>(
         if cancel.is_cancelled() {
             return SourceControlStatusSnapshot { operation, files, workdir, repository_found, branch, error };
         }
-        match repo.head() {
-            Ok(head) => branch = head.shorthand().unwrap_or_default().to_owned(),
-            Err(cause) if matches!(cause.code(), git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch) => {}
+        match crate::git_repositories::branch_name(repo) {
+            Ok(name) => branch = name,
             Err(cause) => return SourceControlStatusSnapshot {
                 operation, files, workdir, repository_found, branch,
                 error: Some(crate::git_trust::Failure::reading(root, cause)),
@@ -704,7 +703,7 @@ impl App {
         let sender = self.source_control_sender();
         let log = self.git_output();
         if let Some(remote) = self.remote_workspace.clone() {
-            let fallback = crate::git_repositories::Discovery {
+            let mut fallback = crate::git_repositories::Discovery {
                 roots: self.repositories.entries.iter()
                     .filter(|repo| Some(&repo.root) != self.repositories.parent.as_ref())
                     .map(|repo| repo.root.clone()).collect(),
@@ -721,8 +720,29 @@ impl App {
                 })
             });
             let closed = closed.iter().filter_map(|path| remote.remote_path(path).ok()).collect();
+            let progress = publish_primary.then(|| crate::remote::git::StatusProgressOptions {
+                preferred: preferred.as_ref().and_then(|path| remote.remote_path(path).ok()),
+            });
             self.background.read_for_file("remote-git-status", &root.clone(), false, move || {
-                match remote.git_snapshot(include_untracked, known, parent_open, closed, paths, sender.cancellation()) {
+                let result = remote.git_snapshot_progress(crate::remote::git::StatusQuery {
+                    include_untracked, known, parent_open, closed, changed: paths, revalidate: false,
+                }, progress, sender.cancellation(), |progress| {
+                    use crate::{background::BackgroundResult, remote::git::StatusUpdate};
+                    let update = match progress {
+                        StatusUpdate::Repository { root: repository, branch } => BackgroundResult::GitRepositoryFound {
+                            root: root.clone(), workspace_generation, repository_generation, repository, branch,
+                        },
+                        StatusUpdate::Snapshot { discovery, scan } => {
+                            fallback = discovery.clone();
+                            BackgroundResult::GitRepositories {
+                                root: root.clone(), workspace_generation, repository_generation,
+                                complete: false, include_untracked, discovery, scans: vec![*scan],
+                            }
+                        }
+                    };
+                    sender.send(update).map_err(|_| std::io::Error::from(std::io::ErrorKind::Interrupted))
+                });
+                match result {
                     Ok((discovery, scans)) => { let _ = sender.send(crate::background::BackgroundResult::GitRepositories {
                         root, workspace_generation, repository_generation, complete: true, include_untracked, discovery, scans,
                     }); }
@@ -746,11 +766,12 @@ impl App {
 
             if sender.is_cancelled() { return; }
             let operation = crate::git_output::native(&log, "Refresh status", &root);
-            let announce = |repository: &Path| {
+            let announce = |repository: &Path, branch: String| {
                 if report_discovery {
                     let _ = sender.send(BackgroundResult::GitRepositoryFound {
                         root: root.clone(), workspace_generation, repository_generation,
                         repository: repository.to_owned(),
+                        branch,
                     });
                 }
             };
@@ -775,7 +796,7 @@ impl App {
                         return;
                     }
                     if !announced {
-                        announce(repository);
+                        announce(repository, crate::git_repositories::branch_name(repo).unwrap_or_default());
                         announced = true;
                     }
                     if !publish_primary || published.is_some()
@@ -816,7 +837,9 @@ impl App {
                     .filter(|repository| roots.contains(repository))
                     .or_else(|| roots.first())
             {
-                announce(repository);
+                let branch = git2::Repository::open(repository).ok()
+                    .and_then(|repo| crate::git_repositories::branch_name(&repo).ok()).unwrap_or_default();
+                announce(repository, branch);
             }
             if let Some((root, _)) = &published { roots.retain(|path| path != root); }
             if !roots.is_empty() { operation.stage("Scanning Git changes"); }
@@ -973,6 +996,7 @@ impl App {
                     )
                 });
         operation.result(&result, |_| "Hunk discarded".into());
+        let discarded = result.is_ok();
         match result {
             Ok(()) => {
                 // Install the result and its undo step before another input
@@ -990,6 +1014,7 @@ impl App {
             }
             Err(err) => self.notify_error(format!("Discard hunk failed: {err}")),
         }
+        self.finish_hunk_preview_action("discard hunk", discarded);
     }
 
     pub(crate) fn git_discard_changes(&mut self, mut changes: Vec<GitFileChange>) {
@@ -1891,15 +1916,14 @@ impl App {
                 .ok()
                 .and_then(|repo| {
                     if sender.is_cancelled() { return None; }
-                    let head = repo.head().ok()?;
-                    let branch_name = head.shorthand().map(String::from)?;
-                    let local_oid = head.target()?;
-                    let ahead_behind = repo
+                    let branch_name = crate::git_repositories::branch_name(&repo).ok()?;
+                    let local_oid = repo.head().ok().and_then(|head| head.target());
+                    let ahead_behind = local_oid.and_then(|local_oid| repo
                         .find_branch(&branch_name, git2::BranchType::Local)
                         .ok()
                         .and_then(|branch| branch.upstream().ok())
                         .and_then(|upstream| upstream.get().target())
-                        .and_then(|remote_oid| repo.graph_ahead_behind(local_oid, remote_oid).ok());
+                        .and_then(|remote_oid| repo.graph_ahead_behind(local_oid, remote_oid).ok()));
                     let sync_info = match ahead_behind {
                         Some((ahead, behind)) if ahead > 0 && behind > 0 => {
                             format!(" ↑{ahead} ↓{behind}")
@@ -1956,7 +1980,7 @@ impl App {
                     let saved = saved_snapshot.to_string();
                     let working = saved.lines().collect::<Vec<_>>();
                     let staged = if sources.conflicted { Vec::new() } else { compute_line_diff(&head, &index) };
-                    Some((staged, compute_line_diff(&index, &working)))
+                    Some(compute_worktree_line_diffs(&staged, &index, &working))
                 });
                 let (staged, unstaged) = result.unwrap_or_default();
                 let mut status = crate::editor::PreparedGitLineStatus::from_diffs(
@@ -2006,8 +2030,7 @@ impl App {
                 let worktree_lines: Vec<&str> = worktree_content.lines().collect();
 
                 let staged = if conflicted { Vec::new() } else { compute_line_diff(&head_lines, &index_lines) };
-                let unstaged = compute_line_diff(&index_lines, &worktree_lines);
-                Some((staged, unstaged))
+                Some(compute_worktree_line_diffs(&staged, &index_lines, &worktree_lines))
             })();
 
             if !sender.is_cancelled() && let Some(operation) = operation {

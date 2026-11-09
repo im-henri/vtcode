@@ -34,6 +34,7 @@ pub(crate) enum SearchControl {
     Clear,
     CollapseResults,
     DismissResult(crate::search_results::SearchRow, u64),
+    ReplaceResult(usize, u64),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -131,6 +132,7 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
         SearchControl::Previous => "Previous Match (Shift+Enter)",
         SearchControl::Next => "Next Match (Enter)",
         SearchControl::Replace => "Replace (Enter)",
+        SearchControl::ReplaceResult(_, _) => "Replace This Match",
         SearchControl::ReplaceAll => "Replace All (Ctrl+Alt+Enter)",
         SearchControl::Close => "Close (Escape)",
         SearchControl::Refresh => "Refresh Search",
@@ -166,7 +168,7 @@ pub(crate) fn handle_click(app: &mut App, scope: SearchScope, col: u16, row: u16
     if button.disabled {
         return true;
     }
-    if matches!(button.control, SearchControl::DismissResult(_, _)) {
+    if matches!(button.control, SearchControl::DismissResult(_, _) | SearchControl::ReplaceResult(_, _)) {
         app.global_search_active = false;
         activate(app, scope, button.control);
         return true;
@@ -265,6 +267,11 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
         SearchControl::DismissResult(row, revision) => {
             if scope == SearchScope::Workspace && revision == app.global_search_results.revision() {
                 app.dismiss_global_search_result(row);
+            }
+        }
+        SearchControl::ReplaceResult(index, revision) => {
+            if scope == SearchScope::Workspace {
+                app.replace_global_search_result(index, revision);
             }
         }
     }

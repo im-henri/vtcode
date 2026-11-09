@@ -39,6 +39,17 @@ impl ChangeRow {
             (true, true) => '█',
         }
     }
+
+    /// Keep the left half free for navigation in a one-column scrollbar,
+    /// retaining the same half-row precision as the full-width markers.
+    pub(crate) fn narrow_symbol(self) -> char {
+        match self.symbol() {
+            '▀' => '▝',
+            '▄' => '▗',
+            '█' => '▐',
+            _ => ' ',
+        }
+    }
 }
 
 impl ChangeRows {
@@ -128,11 +139,14 @@ mod tests {
 
     #[test]
     fn all_coverage_patterns_use_single_cell_glyphs() {
-        for (coverage, symbol) in [([0, 0], ' '), ([3, 0], '▀'), ([0, 2], '▄'), ([3, 2], '█')]
+        for (coverage, symbol, narrow) in [([0, 0], ' ', ' '), ([3, 0], '▀', '▝'),
+            ([0, 2], '▄', '▗'), ([3, 2], '█', '▐')]
         {
             let row = ChangeRow(coverage);
             assert_eq!(row.symbol(), symbol);
+            assert_eq!(row.narrow_symbol(), narrow);
             assert_eq!(unicode_width::UnicodeWidthChar::width(symbol), Some(1));
+            assert_eq!(unicode_width::UnicodeWidthChar::width(narrow), Some(1));
         }
     }
 
@@ -214,9 +228,17 @@ mod tests {
                                 (5, "▄", colors.ui.fg_overview_deleted),
                             ] {
                                 let cell = &terminal.backend().buffer()[(x, y)];
-                                assert_eq!(cell.symbol(), symbol);
+                                let surface = if scroll == 0 { track } else { thumb };
+                                if width == 2 && x == 0 {
+                                    assert_eq!(cell.fg, surface);
+                                    assert_eq!(cell.bg, surface);
+                                    continue;
+                                }
+                                assert_eq!(cell.symbol(), if width == 1 {
+                                    if symbol == "▀" { "▝" } else { "▗" }
+                                } else { symbol });
                                 assert_eq!(cell.fg, color);
-                                assert_eq!(cell.bg, if scroll == 0 { track } else { thumb });
+                                assert_eq!(cell.bg, if width == 1 { surface } else { track });
                             }
                         }
                     }

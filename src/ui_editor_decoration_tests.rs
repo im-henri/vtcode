@@ -96,11 +96,11 @@ fn cached_inline_colors_survive_cursor_queries_and_invalidate_changed_source_or_
     let mut cache = RenderLineCache::default();
     prime(&mut cache, &rope, 0, usize::MAX);
     prime(&mut cache, &rope, 1, usize::MAX);
-    cache.prepare_occurrences((0, 0, 4), &rope, "tomato", 6, true);
+    cache.prepare_occurrences((0, 0, 4), &rope, "tomato", 6, true, true);
     let first = cache.inline_colors(0, "界 tomato #f00 rgb(1,2,3)", true);
     let untouched = cache.inline_colors(1, "other #333", true);
     for query in ["界", "rgb", "other"] {
-        cache.prepare_occurrences((0, 0, 4), &rope, query, query.chars().count(), true);
+        cache.prepare_occurrences((0, 0, 4), &rope, query, query.chars().count(), true, true);
         assert!(Rc::ptr_eq(
             &first,
             &cache.inline_colors(0, "界 tomato #f00 rgb(1,2,3)", true)
@@ -168,7 +168,7 @@ fn compact_occurrences_preserve_selection_phase_unicode_boundaries_and_viewport_
     ] {
         let rope = ropey::Rope::from_str(text);
         let mut cache = RenderLineCache::default();
-        cache.prepare_occurrences((0, 0, 4), &rope, word, word.chars().count(), whole);
+        cache.prepare_occurrences((0, 0, 4), &rope, word, word.chars().count(), true, whole);
         prime(&mut cache, &rope, 0, usize::MAX);
         let cached = cache.occurrences(0, text);
         let mut expected = Vec::new();
@@ -176,6 +176,7 @@ fn compact_occurrences_preserve_selection_phase_unicode_boundaries_and_viewport_
             text,
             word,
             word.chars().count(),
+            true,
             whole,
             &mut expected,
         );
@@ -309,13 +310,13 @@ fn oversized_hidden_selection_keeps_the_combined_cache_bounded_and_query_growth_
     let text = "a".repeat(8_192);
     let rope = ropey::Rope::from_str(&(text.clone() + "\n").repeat(128));
     let mut cache = RenderLineCache::default();
-    cache.prepare_occurrences((0, 0, 4), &rope, "a", 1, false);
+    cache.prepare_occurrences((0, 0, 4), &rope, "a", 1, true, false);
     for line in 0..128 {
         prime(&mut cache, &rope, line, usize::MAX);
     }
     let old_lines = cache.decoration_storage().0;
     let near_cap_query = "🦀".repeat(16_000);
-    cache.prepare_occurrences((0, 0, 4), &rope, &near_cap_query, 16_000, false);
+    cache.prepare_occurrences((0, 0, 4), &rope, &near_cap_query, 16_000, true, false);
     assert!(
         cache.decoration_storage().0 < old_lines,
         "query growth did not reconcile retained bytes immediately"
@@ -327,6 +328,7 @@ fn oversized_hidden_selection_keeps_the_combined_cache_bounded_and_query_growth_
         &rope,
         &raw_query,
         raw_query.chars().count(),
+        true,
         false,
     );
     assert_eq!(

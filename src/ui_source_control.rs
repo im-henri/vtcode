@@ -538,6 +538,8 @@ fn draw_sc_repository_state(f: &mut Frame, app: &mut App, area: Rect, missing: b
         {
             let name = root.file_name().map(std::path::Path::new).unwrap_or(root.as_path());
             let name = app.display_path(name);
+            let name = if app.cached_git_branch.is_empty() { name }
+                else { format!("{name} · {}", app.cached_git_branch) };
             let header = Rect::new(area.x.saturating_add(1), area.y + 1, area.width.saturating_sub(1), 1);
             f.render_widget(
                 Paragraph::new(truncate_to_width(&name, header.width as usize)).style(Style::default()
@@ -1113,24 +1115,20 @@ pub(crate) fn draw_file_tooltip(f: &mut Frame, app: &App) {
     use crate::{app_source_control_hover::ChangeStats, ui_widgets::Tooltip};
 
     let Some((file, area, stats)) = crate::app_source_control_hover::summary(app) else { return; };
-    let path = match &file.original_path {
-        Some(old) => Line::raw(format!("{old} → {}", file.path)),
-        None => Line::raw(file.path.as_str()),
-    };
     let tooltip = match stats {
         ChangeStats::Text { added, deleted } => Tooltip::hover(
-            vec![path, Line::from(vec![
+            vec![Line::from(vec![
                 Span::raw(format!("+{added} added")),
                 Span::raw("   "),
                 Span::raw(format!("-{deleted} removed")),
             ])],
             &app.colors,
         )
-        .span_foreground(1, 0, app.colors.ui.git_decoration('A'))
-        .span_foreground(1, 2, app.colors.ui.git_decoration('D')),
-        ChangeStats::Binary => Tooltip::hover(vec![path, Line::raw("Binary file")], &app.colors),
+        .span_foreground(0, 0, app.colors.ui.git_decoration('A'))
+        .span_foreground(0, 2, app.colors.ui.git_decoration('D')),
+        ChangeStats::Binary => Tooltip::hover(vec![Line::raw("Binary file")], &app.colors),
         ChangeStats::Unavailable => Tooltip::hover(
-            vec![path, Line::raw(if file.status == '!' { "Merge conflict" } else { "Line counts unavailable" })],
+            vec![Line::raw(if file.status == '!' { "Merge conflict" } else { "Line counts unavailable" })],
             &app.colors,
         ),
     };

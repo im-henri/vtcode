@@ -146,7 +146,10 @@ mod tests {
             let script = args.last_mut().unwrap();
             script.insert_str(0, "function global:prompt { \"VTCode_Ready_$($global:?)> \" }; ");
             let directory = tempfile::tempdir().unwrap();
-            let mut terminal = TerminalEmulator::spawn_command_in_dir(program, &args, 120, 24, directory.path()).unwrap();
+            let cwd = directory.path().join("my dir #1;100%");
+            let nested = cwd.join("child");
+            std::fs::create_dir_all(&nested).unwrap();
+            let mut terminal = TerminalEmulator::spawn_command_in_dir(program, &args, 120, 24, &cwd).unwrap();
             wait_for(&mut terminal, |terminal| {
                 terminal.grid.cells.iter().any(|row| row.iter().map(|cell| cell.ch).collect::<String>().contains("VTCode_Ready_True>"))
             });
@@ -171,6 +174,10 @@ mod tests {
             enter(&mut terminal, "");
             wait_for(&mut terminal, |terminal| terminal.grid.commands.finished_count() >= 4);
             assert_eq!(terminal.grid.commands.finished_count(), 4, "empty lines and continuation prompts are not completed commands");
+            enter(&mut terminal, "cd child");
+            wait_for(&mut terminal, |terminal| terminal.grid.cwd_uri.as_deref()
+                .and_then(|uri| url::Url::parse(uri).ok()).and_then(|uri| uri.to_file_path().ok())
+                .is_some_and(|path| crate::app::App::same_open_path(&path, &nested)));
         }
     }
 
@@ -187,6 +194,8 @@ mod tests {
         for array in [false, true] {
             for legacy in [false, true] {
                 let home = tempfile::tempdir().unwrap();
+                let cwd = home.path().join("my dir #1;100%");
+                std::fs::create_dir_all(cwd.join("child")).unwrap();
                 let prompt = if array {
                     "PROMPT_COMMAND=('printf \"VTCode_Status:%s\\n\" \"$?\"')"
                 } else {
@@ -207,7 +216,7 @@ mod tests {
                 }
                 let mut args = vec![format!("HOME={}", home.path().to_string_lossy().replace('\\', "/")), bash.to_string_lossy().into_owned()];
                 args.extend(launch.args.iter().map(|arg| arg.to_string_lossy().into_owned()));
-                let mut terminal = TerminalEmulator::spawn_command_in_dir(env.to_str().unwrap(), &args, 100, 24, home.path()).unwrap();
+                let mut terminal = TerminalEmulator::spawn_command_in_dir(env.to_str().unwrap(), &args, 100, 24, &cwd).unwrap();
                 terminal.profile_name = format!("Bash array={array}, legacy={legacy}");
                 wait_for(&mut terminal, |terminal| terminal.grid.cells.iter().any(|row| row.iter().map(|cell| cell.ch).collect::<String>().contains("VTCode_Ready>")));
                 assert_eq!(terminal.grid.commands.finished_count(), 0);
@@ -228,6 +237,9 @@ mod tests {
                 enter(&mut terminal, "fi");
                 wait_for(&mut terminal, |terminal| terminal.grid.commands.finished_count() >= 3);
                 assert_eq!(terminal.grid.commands.finished_count(), 3, "continuation prompts must not finish commands");
+                enter(&mut terminal, "cd child");
+                wait_for(&mut terminal, |terminal| terminal.grid.cwd_uri.as_ref()
+                    .is_some_and(|uri| uri.ends_with("/my%20dir%20%231%3B100%25/child")));
             }
         }
     }

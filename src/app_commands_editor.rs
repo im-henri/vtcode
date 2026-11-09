@@ -427,9 +427,6 @@ impl App {
                     self.notify(format!("{chars} characters, {bytes} bytes"));
                 }
             }
-            "transpose_chars" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.transpose_chars(); }
-            }
             "transpose_words" => {
                 if let Some(ed) = self.editor_mut_writable() { ed.transpose_words(); }
             }
@@ -651,7 +648,7 @@ mod tests {
     fn edge_case_read_only_palette_commands_preserve_content_and_history() {
         for command in [
             "undo", "redo", "toggle_comment", "toggle_block_comment",
-            "move_line_up", "move_line_down", "transpose_chars", "transpose_words",
+            "move_line_up", "move_line_down", "transpose_words",
             "eol_lf", "eol_crlf", "encoding_utf8bom", "encoding_utf16le",
             "encoding_ascii", "duplicate_line", "delete_line", "indent_line",
             "format_json", "minify_json", "sort_json_keys",
@@ -676,7 +673,7 @@ mod tests {
     #[test]
     fn edge_case_read_only_keyboard_shortcuts_preserve_content_and_history() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        for (code, shift) in [('z', false), ('y', false), ('z', true), ('d', true), ('/', false), ('/', true), (']', false), ('[', false), ('j', false), ('t', false), ('k', true)] {
+        for (code, shift) in [('z', false), ('y', false), ('z', true), ('d', true), ('/', false), ('/', true), (']', false), ('[', false), ('j', false), ('k', true)] {
             let mut app = app_with_content("alpha beta\n    gamma delta\nepsilon\n");
             let editor = app.editor_mut().unwrap();
             editor.language_override = Some("C".into());
@@ -782,6 +779,45 @@ mod tests {
                 assert_eq!(editor.rope.to_string(), "head\nalpha beta\nalpha beta\nend");
                 assert_eq!((editor.cursor_line, editor.cursor_col), (line, 5));
                 assert_eq!(editor.selected_text(), selected);
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_line_shortcuts_copy_all_selected_rows_as_one_block() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        for ending in ["\n", "\r\n"] {
+            let source = ["head", "alpha beta", "gamma delta", "end"].join(ending);
+            let expected = ["head", "alpha beta", "gamma delta", "alpha beta", "gamma delta", "end"].join(ending);
+            for end in [(2, 5), (3, 0)] {
+                for backward in [false, true] {
+                    for (code, offset) in [(KeyCode::Up, 0), (KeyCode::Down, 2)] {
+                        let mut app = app_with_content(&source);
+                        app.active_pane = crate::app::ActivePane::Editor;
+                        let (anchor, cursor) = if backward { (end, (1, 2)) } else { ((1, 2), end) };
+                        let editor = app.editor_mut().unwrap();
+                        editor.detect_line_ending();
+                        editor.selection_anchor = Some(anchor);
+                        (editor.cursor_line, editor.cursor_col) = cursor;
+                        let selected = editor.selected_text();
+                        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(
+                            code, KeyModifiers::ALT | KeyModifiers::SHIFT,
+                        ));
+                        let editor = app.editor_mut().unwrap();
+                        assert_eq!(editor.rope.to_string(), expected, "ending={ending:?}, end={end:?}, backward={backward}, key={code:?}");
+                        assert_eq!((editor.cursor_line, editor.cursor_col), (cursor.0 + offset, cursor.1));
+                        assert_eq!(editor.selection_anchor, Some((anchor.0 + offset, anchor.1)));
+                        assert_eq!(editor.selected_text(), selected);
+                        editor.undo();
+                        assert_eq!(editor.rope.to_string(), source);
+                        assert_eq!((editor.cursor_line, editor.cursor_col), cursor);
+                        assert_eq!(editor.selection_anchor, Some(anchor));
+                        editor.redo();
+                        assert_eq!(editor.rope.to_string(), expected);
+                        assert_eq!(editor.selected_text(), selected);
+                    }
+                }
             }
         }
     }

@@ -5,9 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, List, ListItem, Paragraph},
 };
-use unicode_width::UnicodeWidthStr;
-
-use crate::app::{ActivePane, App, GlobalSearchResult, SidebarView};
+use crate::app::{ActivePane, App, SidebarView};
 use crate::text_input::TextInputId;
 use crate::theme_workbench::ColorLayer;
 use crate::ui_widgets::{InputField, VerticalScrollbar};
@@ -271,7 +269,8 @@ fn draw_field(f: &mut Frame, app: &mut App, area: Rect, field: u8, placeholder: 
 }
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
-    app.search_control_regions.retain(|button| !matches!(button.control, SearchControl::DismissResult(_, _)));
+    app.search_control_regions.retain(|button| !matches!(button.control,
+        SearchControl::DismissResult(_, _) | SearchControl::ReplaceResult(_, _)));
     if area.height == 0 || app.global_search_results.is_empty() {
         return;
     }
@@ -304,9 +303,14 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Vec::with_capacity(visible);
     let mut actions = Vec::with_capacity(visible);
     let action_width = result_area.width.min(3);
-    let text_area = Rect::new(result_area.x, result_area.y, result_area.width.saturating_sub(action_width), result_area.height);
+    let replace_width = if app.global_search_replace_visible {
+        result_area.width.saturating_sub(action_width).min(3)
+    } else { 0 };
+    let text_area = Rect::new(result_area.x, result_area.y,
+        result_area.width.saturating_sub(action_width + replace_width), result_area.height);
     let revision = app.global_search_results.revision();
     let selected_row = app.global_search_selected_row();
+    let preview = crate::ui_search_preview::Preview::new(app);
     for (visual_row, hit) in app.global_search_results.visible_rows(viewport) {
         let (index, header) = match hit {
             crate::search_results::SearchRow::Header(index) => (index, true),
@@ -368,23 +372,23 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
             bg, selected, active, hovered);
         actions.push((hit, row_area, row_style, hovered || (selected && active && !app.global_search_active)));
-        let (before, matched, after) = preview_parts(result, text_area.width.saturating_sub(3) as usize);
+        let mut spans = vec![Span::raw("   ")];
+        spans.extend(preview.spans(result, text_area.width.saturating_sub(3) as usize, row_style, &app.colors));
         items.push(
-            ListItem::new(Line::from(vec![
-                Span::raw("   "),
-                Span::styled(before, row_style),
-                Span::styled(
-                    matched,
-                    app.colors.ui.search_match_style(row_style),
-                ),
-                Span::styled(after, row_style),
-            ]))
+            ListItem::new(Line::from(spans))
             .style(row_style),
         );
     }
     f.render_widget(List::new(items).style(Style::default().bg(bg)), text_area);
     for (hit, row, style, visible) in actions {
         let area = Rect::new(row.right().saturating_sub(action_width), row.y, action_width, 1);
+        let replace_area = Rect::new(area.x.saturating_sub(replace_width), row.y, replace_width, 1);
+        f.render_widget(Block::default().style(style), replace_area);
+        if replace_width > 0 && let crate::search_results::SearchRow::Result(index) = hit {
+            let disabled = !app.can_replace_global_search_result(index);
+            draw_button(f, app, SearchScope::Workspace, SearchControl::ReplaceResult(index, revision),
+                replace_area, "↵", false, disabled);
+        }
         f.render_widget(Block::default().style(style), area);
         if visible {
             draw_button(f, app, SearchScope::Workspace, SearchControl::DismissResult(hit, revision), area, "×", false, false);
@@ -400,42 +404,10 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn preview_parts(result: &GlobalSearchResult, max_width: usize) -> (String, String, String) {
-    let leading = result
-        .line_text
-        .chars()
-        .take_while(|ch| ch.is_whitespace())
-        .count();
-    let chars: Vec<char> = result.line_text.chars().skip(leading).collect();
-    if max_width == 0 {
-        return (String::new(), String::new(), String::new());
-    }
-    let start = result.col_start.saturating_sub(leading).min(chars.len());
-    let end = result
-        .col_end
-        .saturating_sub(leading)
-        .max(start)
-        .min(chars.len());
-    let before_budget = max_width.saturating_sub(end - start).min(max_width / 3);
-    let window_start = start.saturating_sub(before_budget);
-    let prefix = window_start > 0;
-    let used = end - window_start + usize::from(prefix) + usize::from(start == end);
-    let window_end = (end + max_width.saturating_sub(used)).min(chars.len());
-    let mut before: String = chars[window_start..start].iter().collect();
-    if prefix {
-        before.insert(0, '…');
-    }
-    let matched = if start == end { "│".into() } else { chars[start..end].iter().collect() };
-    let mut after: String = chars[end..window_end].iter().collect();
-    if window_end < chars.len() && UnicodeWidthStr::width(after.as_str()) + used < max_width {
-        after.push('…');
-    }
-    (before, matched, after)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::GlobalSearchResult;
     use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
 
@@ -505,8 +477,11 @@ mod tests {
                 .draw(|f| draw_results(f, &mut app, Rect::new(0, 0, 60, 8)))
                 .unwrap();
             assert_eq!(app.global_search_scroll, requested_scroll.min(15));
+            // A scrollbar shifts the row actions left by one cell. Compare
+            // the shared text area; action placement has separate hit tests.
+            let text_width = 60 - 1 - 1 - 3 - if app.global_search_replace_visible { 3 } else { 0 };
             for y in 0..8 {
-                for x in 0..57 {
+                for x in 0..text_width {
                     assert_eq!(
                         cropped.backend().buffer().cell((x, y)),
                         full.backend()

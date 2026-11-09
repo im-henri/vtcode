@@ -99,7 +99,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
     let discovery_start = Instant::now();
     let Reply::GitStatus { discovery, scans } = workspace
         .client
-        .call(Command::GitStatus { revalidate: false,
+        .call(Command::GitStatus { progress: None, revalidate: false,
             changed: None,
             include_untracked: true,
             known: None,
@@ -276,7 +276,7 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
             assert!(tree.iter().any(|entry| entry.name == "cache.rs"));
             background_workspace
                 .client
-                .call(Command::GitStatus { revalidate: false,
+                .call(Command::GitStatus { progress: None, revalidate: false,
                     changed: None,
                     include_untracked: true,
                     known: Some(discovery.clone()),

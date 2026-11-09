@@ -138,13 +138,42 @@ fn unsaved_minus_click_reverts_the_clicked_hunk_and_preserves_the_other() {
             modifiers: KeyModifiers::NONE,
         },
     );
-    assert!(!app.hunk_popup_active);
+    app.wait_for_hunk_preview();
+    assert!(app.hunk_popup_active);
+    assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), 1);
+    assert_eq!(app.hunk_popup_line, 1);
     assert_eq!(app.editor().unwrap().rope, "a\nB\nc\nd\ne\nf\ng\nh\ni\n");
     assert!(app.editor().unwrap().modified);
+    keyboard(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     keyboard(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
     assert_eq!(app.editor().unwrap().rope, current);
     keyboard(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL);
     assert_eq!(app.editor().unwrap().rope, "a\nB\nc\nd\ne\nf\ng\nh\ni\n");
+}
+
+#[test]
+fn unsaved_reverts_advance_after_line_shifts_and_close_after_the_last_change() {
+    for ending in ["\n", "\r\n", "\r"] {
+        let saved = ["header", "first α", "keep 1", "keep 2", "middle β", "keep 3", "keep 4", "last 界", "tail", ""].join(ending);
+        let changed = ["header", "FIRST α", "keep 1", "keep 2", "INSERTED", "MIDDLE β", "keep 3", "keep 4", "tail", ""].join(ending);
+        let mut app = unsaved_app(&saved, &changed);
+        open(&mut app, 4);
+        assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
+        for remaining in [2, 1, 0] {
+            app.execute_hunk_popup_action(0);
+            app.wait_for_hunk_preview();
+            assert_eq!(app.hunk_popup_active, remaining > 0);
+            if remaining > 0 {
+                let peek = app.hunk_peek.as_ref().unwrap();
+                assert_eq!(peek.hunks.len(), remaining);
+                assert_eq!(peek.selected, usize::from(remaining == 2));
+            }
+        }
+        assert_eq!(app.editor().unwrap().rope.to_string(), saved);
+        assert!(!app.editor().unwrap().modified);
+        for _ in 0..3 { app.editor_mut().unwrap().undo(); }
+        assert_eq!(app.editor().unwrap().rope.to_string(), changed);
+    }
 }
 
 #[test]
@@ -240,6 +269,7 @@ fn unsaved_hunk_revert_works_for_untitled_documents_from_the_keyboard() {
             .unwrap();
         keyboard(&mut app, KeyCode::Tab, KeyModifiers::NONE);
         keyboard(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        app.wait_for_hunk_preview();
         assert!(!app.hunk_popup_active);
         assert_eq!(app.editor().unwrap().rope, "");
         assert!(!app.save_as_active);

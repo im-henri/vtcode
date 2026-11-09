@@ -707,6 +707,39 @@ pub(crate) fn draw_mapped_scrollbar(
     draw_scrollbar_with_mapping(f, p, Some((source_to_display, &logical_boundary)), None);
 }
 
+/// Navigation and overview markers share the existing scrollbar width. Wide
+/// bars use separate lanes; narrow bars use the two halves of a terminal cell.
+fn scrollbar_row_cells(
+    width: usize,
+    in_thumb: bool,
+    is_cursor: bool,
+    marker: Option<(char, char, Color)>,
+    colors: &crate::app_theme::ThemeColors,
+    track: Color,
+    thumb: Color,
+) -> [(char, Style); 2] {
+    let surface = if in_thumb { thumb } else { track };
+    let navigation = if is_cursor {
+        ('━', Style::default().bg(surface)
+            .fg(colors.ui.readable_foreground(colors.bg_cursor, surface, 3.0)))
+    } else {
+        (if in_thumb { '█' } else { ' ' }, Style::default().fg(surface).bg(surface))
+    };
+    if width == 1 {
+        let cell = if let Some((_, symbol, color)) = marker {
+            let background = if is_cursor {
+                navigation.1.fg.unwrap_or(colors.bg_cursor)
+            } else { surface };
+            (symbol, Style::default().fg(color).bg(background))
+        } else { navigation };
+        return [cell; 2];
+    }
+    let overview = marker.map_or((' ', Style::default().fg(track).bg(track)), |(symbol, _, color)| {
+        (symbol, Style::default().fg(color).bg(track))
+    });
+    [navigation, overview]
+}
+
 fn draw_scrollbar_with_mapping(
     f: &mut Frame,
     p: ScrollbarParams,
@@ -742,12 +775,11 @@ fn draw_scrollbar_with_mapping(
         .min(total_lines.saturating_sub(1))
         .saturating_mul(height)
         / total_lines;
-    let thumb_size =
-        ((visible_lines as f64 / total_lines as f64) * height as f64).max(1.0) as usize;
-    let thumb_size = thumb_size.min(height);
+    let thumb_size = ((visible_lines as u128 * height as u128 / total_lines as u128) as usize)
+        .max(1).min(height);
     let max_scroll = total_lines.saturating_sub(visible_lines);
     let thumb_pos = if max_scroll > 0 {
-        ((scroll.min(max_scroll) as f64 / max_scroll as f64) * (height - thumb_size) as f64) as usize
+        (scroll.min(max_scroll) as u128 * (height - thumb_size) as u128 / max_scroll as u128) as usize
     } else {
         0
     };
@@ -806,29 +838,25 @@ fn draw_scrollbar_with_mapping(
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        let (symbol, style) = if is_cursor {
-            let c = colors.bg_cursor;
-            ('█', Style::default().fg(c).bg(c))
-        } else if let Some(sev) = diag_sev {
+        let marker = if let Some(sev) = diag_sev {
             let c = match sev {
                 1 => colors.ui.fg_overview_error,
                 2 => colors.ui.fg_overview_warning,
                 3 => colors.ui.fg_overview_info,
                 _ => colors.fg_dim,
             };
-            ('█', Style::default().fg(c).bg(c))
+            Some(('█', '▐', c))
         } else if has_match {
             let c = colors.ui.fg_overview_find;
-            ('█', Style::default().fg(c).bg(c))
+            Some(('█', '▐', c))
         } else if let Some(c) = change.status().and_then(|status| crate::ui_colors::overview_marker_color(status, &colors)) {
-            (change.symbol(), Style::default().fg(c).bg(if in_thumb { thumb } else { track }))
-        } else if in_thumb {
-            let c = thumb;
-            ('█', Style::default().fg(c).bg(c))
+            Some((change.symbol(), change.narrow_symbol(), c))
         } else {
-            (' ', Style::default().bg(track))
+            None
         };
+        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, &colors, track, thumb);
         for column in 0..width {
+            let (symbol, style) = cells[usize::from(column >= width / 2)];
             if let Some(cell) = buffer.cell_mut((area.x + column as u16, area.y + i as u16)) {
                 cell.set_char(symbol).set_style(style);
             }
@@ -838,6 +866,10 @@ fn draw_scrollbar_with_mapping(
 #[cfg(test)]
 #[path = "ui_editor_mapped_scrollbar_tests.rs"]
 mod mapped_scrollbar_tests;
+
+#[cfg(test)]
+#[path = "ui_scrollbar_visibility_tests.rs"]
+mod scrollbar_visibility_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1148,7 +1180,7 @@ mod tests {
             })
             .expect("draw scrollbar");
 
-        assert!((0..2).all(|x| {
+        assert!((0..2).any(|x| {
             terminal
                 .backend()
                 .buffer()
@@ -1228,7 +1260,7 @@ mod tests {
                 "minimap {status}"
             );
             assert_eq!(
-                buffer.cell((12, 4)).unwrap().fg,
+                buffer.cell((13, 4)).unwrap().fg,
                 overview_expected,
                 "scrollbar {status}"
             );

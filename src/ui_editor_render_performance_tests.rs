@@ -73,9 +73,9 @@ fn occurrence_positions_preserve_unicode_boundaries_and_nonoverlapping_selection
     use crate::ui_editor_highlight::{OccurrenceCursor, word_occurrences_for_line};
     let text = "ä ää _ä ä_ ä xä ä界 Ä ä";
     let mut ranges = Vec::new();
-    word_occurrences_for_line(text, "ä", 1, true, &mut ranges);
+    word_occurrences_for_line(text, "ä", 1, true, true, &mut ranges);
     assert_eq!(ranges, [(0, 1), (11, 12), (21, 22)]);
-    word_occurrences_for_line(text, "ä", 1, false, &mut ranges);
+    word_occurrences_for_line(text, "ä", 1, true, false, &mut ranges);
     assert_eq!(
         ranges,
         [
@@ -99,11 +99,11 @@ fn occurrence_positions_preserve_unicode_boundaries_and_nonoverlapping_selection
             );
         }
     }
-    word_occurrences_for_line("😀ä界 ä界x ä界", "ä界", 2, true, &mut ranges);
-    assert_eq!(ranges, [(1, 3), (8, 10)]);
-    word_occurrences_for_line("banana banana", "ana", 3, false, &mut ranges);
+    word_occurrences_for_line("😀ä界 ä界x ä界", "ä界", 2, true, true, &mut ranges);
+    assert_eq!(ranges, [(8, 10)]);
+    word_occurrences_for_line("banana banana", "ana", 3, true, false, &mut ranges);
     assert_eq!(ranges, [(1, 4), (8, 11)]);
-    word_occurrences_for_line("text", "", 0, false, &mut ranges);
+    word_occurrences_for_line("text", "", 0, true, false, &mut ranges);
     assert!(ranges.is_empty());
 }
 

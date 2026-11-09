@@ -361,6 +361,7 @@ impl App {
 
     pub(crate) fn close_hunk_popup(&mut self) {
         self.hunk_popup_generation = self.hunk_popup_generation.wrapping_add(1);
+        self.hunk_preview_continuation = None;
         if let Some(feedback) = self.hunk_preview_feedback.take() {
             feedback.cancel();
         }
@@ -420,12 +421,20 @@ impl App {
             self.retry_hunk_preview();
             return;
         }
+        if self.hunk_preview_action_pending() { return; }
         if action == "Revert Unsaved Hunk" {
+            let next = self.hunk_peek.as_ref().map_or(0, |peek| peek.selected);
             match self.revert_unsaved_hunk() {
-                Ok(()) => self.notify("Reverted unsaved hunk"),
+                Ok(()) => {
+                    self.notify("Reverted unsaved hunk");
+                    if self.editor().is_some_and(|editor| !editor.modified) {
+                        self.close_hunk_popup();
+                    } else {
+                        self.advance_hunk_preview(next);
+                    }
+                }
                 Err(error) => self.notify_error(error),
             }
-            self.close_hunk_popup();
             return;
         }
         let file = self.hunk_popup_file.clone();
@@ -434,6 +443,18 @@ impl App {
             self.close_hunk_popup();
             return;
         };
+        if self.bg_git_action_running || self.bg_git_remote_running {
+            self.notify_error("Another git operation is already running");
+            return;
+        }
+        let operation = if self.remote_workspace.is_some() { "apply hunk" } else {
+            match action {
+                "Stage Hunk" => "stage hunk",
+                "Revert Hunk" => "unstage hunk",
+                _ => "discard hunk",
+            }
+        };
+        self.begin_hunk_preview_action(operation);
         // Keep the preview alive until the action validates the exact hunk
         // shown to the user against the current Git patch.
         match action {
@@ -442,7 +463,11 @@ impl App {
             "Discard Hunk" => self.git_discard_hunk(&file, line),
             _ => {}
         }
-        self.close_hunk_popup();
+        // A synchronous discard completes its continuation itself. Validation
+        // failures and rejected jobs leave the current preview available.
+        if !self.bg_git_action_running && self.hunk_preview_action_pending() {
+            self.hunk_preview_continuation = None;
+        }
     }
 
     fn source_control_index_for_target(&self, target: &GitFileChange) -> Option<usize> {

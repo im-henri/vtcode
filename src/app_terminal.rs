@@ -16,6 +16,16 @@ pub(crate) struct RenameTerminal {
     previous_focus: Option<(ActivePane, bool)>,
 }
 
+pub(crate) struct CloseTerminal {
+    pub names: Vec<String>,
+    pub action: TerminalCloseAction,
+}
+
+pub(crate) enum TerminalCloseAction {
+    Session(usize),
+    Tabs(crate::app_tab_close::CloseTabs),
+}
+
 #[cfg(test)]
 const TERMINAL_PROCESS_BUDGET: Duration = Duration::from_millis(4);
 
@@ -196,9 +206,61 @@ impl App {
     }
 
     pub(crate) fn close_terminal_tab_at(&mut self, index: usize) {
+        let names = self.live_terminal_names([index]);
+        if !names.is_empty() {
+            self.request_terminal_close(names, TerminalCloseAction::Session(index));
+            return;
+        }
+        self.force_close_terminal_tab_at(index);
+    }
+
+    /// A live shell can own foreground or background work, even when it is
+    /// quiet or does not support shell integration. Only a confirmed exit is
+    /// safe to close without asking.
+    pub(crate) fn live_terminal_names(&mut self, indices: impl IntoIterator<Item = usize>) -> Vec<String> {
+        let mut indices: Vec<_> = indices.into_iter().collect();
+        indices.sort_unstable();
+        indices.dedup();
+        indices.into_iter().filter_map(|index| {
+            let terminal = self.terminals.get_mut(index)?;
+            let pty = terminal.terminal_pty.as_mut()?;
+            (!pty.take_exit_event()).then(|| terminal.name.clone())
+        }).collect()
+    }
+
+    pub(crate) fn request_terminal_close(&mut self, names: Vec<String>, action: TerminalCloseAction) {
+        self.terminal_close = Some(CloseTerminal { names, action });
+        self.modal = Default::default();
+    }
+
+    pub(crate) fn confirm_terminal_close(&mut self) {
+        let Some(request) = self.terminal_close.take() else { return; };
+        self.modal = Default::default();
+        match request.action {
+            TerminalCloseAction::Session(index) => self.force_close_terminal_tab_at(index),
+            TerminalCloseAction::Tabs(plan) => self.resume_terminal_tab_close(plan),
+        }
+    }
+
+    pub(crate) fn force_close_terminal_tab_at(&mut self, index: usize) {
         self.forget_terminal_find(index);
         if index >= self.terminals.len() {
             return;
+        }
+        // An unrelated shell may exit while confirmation is open. Follow the
+        // original session through compaction, and cancel if that session exits.
+        let cancel_close = self.terminal_close.as_mut().is_some_and(|request| {
+            if let TerminalCloseAction::Session(target) = &mut request.action {
+                if *target == index { return true; }
+                *target -= usize::from(*target > index);
+            }
+            false
+        });
+        if cancel_close {
+            self.terminal_close = None;
+            if self.modal.kind == Some(crate::ui_modal::Kind::CloseTerminal) {
+                self.modal = Default::default();
+            }
         }
         // Terminal processes can exit while a menu or rename form is open.
         // Rebase both targets so a different session is never renamed.
@@ -349,7 +411,7 @@ impl App {
         }
         for index in exited.into_iter().rev() {
             self.record_workspace_event(format!("{}: terminal exited", self.terminals[index].name), crate::app_workspaces::Level::Done);
-            self.close_terminal_tab_at(index);
+            self.force_close_terminal_tab_at(index);
         }
         needs_redraw
     }

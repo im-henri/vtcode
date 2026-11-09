@@ -16,6 +16,57 @@ fn fixture() -> App {
 }
 
 #[test]
+fn ctrl_shift_t_reopens_closed_tabs_without_editing_the_current_file() {
+    for code in ['t', 'T'] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("closed.txt");
+        std::fs::write(&path, "closed file\n").unwrap();
+        let mut app = App::new_deferred(root.path().to_owned());
+        app.source_control_enabled = false;
+        let mut current = Editor::test_with_text("abcd\n");
+        current.set_cursor(0, 1);
+        let mut closed = Editor::test_with_text("closed file\n");
+        closed.file_path = Some(path.clone());
+        app.tabs = vec![Tab::new_file(current), Tab::new_file(closed)];
+        app.active_tab = 0;
+        app.active_pane = ActivePane::Editor;
+        app.force_close_tab(1);
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.closed_tab_paths.len(), 1);
+
+        handle_keyboard_event(&mut app, KeyEvent::new(
+            KeyCode::Char(code), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+
+        assert_eq!(app.tabs.len(), 2, "Ctrl+Shift+{code} must reopen the closed tab");
+        assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&path));
+        assert!(app.closed_tab_paths.is_empty());
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            app.editor().is_some_and(|editor| !editor.bg_loading)
+        });
+        assert_eq!(app.editor().unwrap().rope.to_string(), "closed file\n");
+        let current = &app.tabs[0].editor;
+        assert_eq!(current.rope.to_string(), "abcd\n");
+        assert_eq!((current.cursor_line, current.cursor_col), (0, 1));
+        assert!(!current.modified && !current.can_undo());
+    }
+}
+
+#[test]
+fn ctrl_t_preserves_text_cursor_and_undo_history() {
+    for code in ['t', 'T'] {
+        let mut app = fixture();
+        app.editor_mut().unwrap().set_cursor(0, 1);
+
+        handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL));
+
+        let editor = app.editor().unwrap();
+        assert_eq!(editor.rope.to_string(), "first");
+        assert_eq!((editor.cursor_line, editor.cursor_col), (0, 1));
+        assert!(!editor.modified && !editor.can_undo());
+    }
+}
+
+#[test]
 fn tab_navigation_follows_strip_order_and_wraps_for_all_key_encodings() {
     let ctrl = KeyModifiers::CONTROL;
     let shift = KeyModifiers::SHIFT;

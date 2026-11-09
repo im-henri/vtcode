@@ -112,6 +112,7 @@ struct CachedEditorPattern {
     case_sensitive: bool,
     whole_word: bool,
     is_regex: bool,
+    workspace: bool,
     regex: Result<std::sync::Arc<SearchRegex>, String>,
 }
 
@@ -194,6 +195,21 @@ impl SearchRegex {
         whole_word: bool,
         is_regex: bool,
     ) -> Result<std::sync::Arc<Self>, String> {
+        Self::cached(query, case_sensitive, whole_word, is_regex, false)
+    }
+
+    pub(crate) fn cached_workspace(
+        query: &str,
+        case_sensitive: bool,
+        whole_word: bool,
+        is_regex: bool,
+    ) -> Result<std::sync::Arc<Self>, String> {
+        Self::cached(query, case_sensitive, whole_word, is_regex, true)
+    }
+
+    fn cached(query: &str, case_sensitive: bool, whole_word: bool, is_regex: bool, workspace: bool)
+        -> Result<std::sync::Arc<Self>, String>
+    {
         EDITOR_PATTERNS.with(|patterns| {
             let mut patterns = patterns.borrow_mut();
             if let Some(index) = patterns.iter().position(|pattern| {
@@ -201,14 +217,18 @@ impl SearchRegex {
                     && pattern.case_sensitive == case_sensitive
                     && pattern.whole_word == whole_word
                     && pattern.is_regex == is_regex
+                    && pattern.workspace == workspace
             }) {
                 let pattern = patterns.remove(index).unwrap();
                 let regex = pattern.regex.clone();
                 patterns.push_back(pattern);
                 return regex;
             }
-            let regex =
-                Self::editor(query, case_sensitive, whole_word, is_regex).map(std::sync::Arc::new);
+            let regex = if workspace {
+                Self::workspace(query, case_sensitive, whole_word, is_regex)
+            } else {
+                Self::editor(query, case_sensitive, whole_word, is_regex)
+            }.map(std::sync::Arc::new);
             if patterns.len() == 8 {
                 patterns.pop_front();
             }
@@ -217,6 +237,7 @@ impl SearchRegex {
                 case_sensitive,
                 whole_word,
                 is_regex,
+                workspace,
                 regex: regex.clone(),
             });
             regex
@@ -426,6 +447,20 @@ impl SearchRegex {
                     .collect(),
             })
     }
+
+    /// Borrow a line and reuse Find's executor across all its matches.
+    pub(crate) fn editor_matches<'r, 't>(&'r self, text: &'t str)
+        -> impl Iterator<Item = Range<usize>> + use<'r, 't>
+    {
+        let Engine::JavaScript(regex) = &self.engine else { unreachable!() };
+        let literal = self.ascii_literal.as_ref().filter(|_| text.is_ascii())
+            .and_then(|literal| literal.matcher(text.len()));
+        if let Some(literal) = literal {
+            EditorMatches::Ascii(literal.find_iter(text.as_bytes()))
+        } else {
+            EditorMatches::JavaScript(regex.find_iter(text))
+        }
+    }
     pub(crate) fn scan(
         &self,
         rope: &ropey::Rope,
@@ -464,9 +499,6 @@ impl SearchRegex {
             let start = position(sl, sc);
             (start, position(el, ec).max(start))
         });
-        let Engine::JavaScript(regex) = &self.engine else {
-            unreachable!()
-        };
         let mut scan = |text: &str, byte_offset: usize, line_context: Option<(usize, usize)>| {
             // Most lines are already LF text. Borrow them instead of making
             // another complete copy after assembling a chunked rope line.
@@ -475,11 +507,7 @@ impl SearchRegex {
                 .as_ref()
                 .map_or(text, |input| input.text.as_str());
             let ascii = input.is_ascii();
-            let literal = self.ascii_literal.as_ref().filter(|_| ascii)
-                .and_then(|literal| literal.matcher(input.len()));
-            let found = if let Some(literal) = literal {
-                EditorMatches::Ascii(literal.find_iter(input.as_bytes()))
-            } else { EditorMatches::JavaScript(regex.find_iter(input)) };
+            let found = self.editor_matches(input);
             let mut column_byte = 0;
             let mut column_char = line_context.map_or(0, |(_, col)| col);
             // Reuse the regex executor across matches. Recreating find_from

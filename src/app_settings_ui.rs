@@ -65,7 +65,7 @@ impl App {
             | "quick_suggestions" | "hover_enabled" | "format_on_type" | "format_on_save" | "formatters"
             | "cursor_style" | "cursor_blinking" | "cursor_surrounding_lines" | "minimap" | "minimap_width" => 1,
             "heading_features" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens"
-            | "inlay_hints" | "code_lens" | "semantic_highlighting" | "sticky_scroll" | "sticky_scroll_max"
+            | "inlay_hints" | "code_lens" | "semantic_highlighting" | "highlight_words_across_tabs" | "sticky_scroll" | "sticky_scroll_max"
             | "scroll_past_end" | "focus_mode" | "word_count" | "screencast_mode" | "rulers"
             | "heading_search" | "search_case_sensitive" | "search_whole_word" | "search_regex"
             | "global_search_case_sensitive" | "global_search_whole_word" | "global_search_regex" | "global_search_preserve_case"
@@ -121,7 +121,7 @@ impl App {
             | "zen" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens" | "sticky_scroll" | "focus_mode"
             | "word_count" | "trim_trailing" | "format_on_save" | "final_newline" | "scroll_past_end"
             | "indent_guides" | "activity_bar" | "breadcrumbs" | "status_bar" | "tab_bar" | "preview_tabs" | "mouse_back_forward" | "menu_bar"
-            | "inlay_hints" | "code_lens" | "semantic_highlighting" | "screencast_mode"
+            | "inlay_hints" | "code_lens" | "semantic_highlighting" | "highlight_words_across_tabs" | "screencast_mode"
             | "search_case_sensitive" | "search_whole_word" | "search_regex" | "search_preserve_case"
             | "global_search_case_sensitive" | "global_search_whole_word" | "global_search_regex" | "global_search_preserve_case"
             | "cursor_blinking" => "checkbox",
@@ -196,6 +196,7 @@ impl App {
             "indent_rainbow" => "indentRainbow",
             "color_preview" => "colorPreview",
             "bracket_pair_colorization" => "bracketPairColorization",
+            "highlight_words_across_tabs" => "highlightWordsAcrossTabs",
             "error_lens" => "errorLens",
             "inlay_hints" => "inlayHints",
             "code_lens" => "codeLens",
@@ -454,6 +455,7 @@ impl App {
             "indent_rainbow" => "Color indentation levels for easier nesting visibility.",
             "color_preview" => "Show inline color swatches for hex, rgb(), and rgba() color values.",
             "bracket_pair_colorization" => "Color matching bracket pairs by nesting depth.",
+            "highlight_words_across_tabs" => "Highlight the active editor's selected text or cursor word in other visible tabs and split panes. Uses Match Case and Whole Word from Find. Off by default.",
             "error_lens" => "Show extra messages at the end of lines containing TODO, FIXME, HACK, BUG, or NOTE markers, plus inline language-server diagnostics. Off by default.",
             "inlay_hints" => "Show type, parameter, and other inline hints supplied by the language server.",
             "code_lens" => "Show actionable reference and implementation information supplied by the language server.",
@@ -789,6 +791,7 @@ impl App {
             ("Indent Rainbow".into(), on_off(self.indent_rainbow), "indent_rainbow".into()),
             ("Color Preview".into(), on_off(self.show_color_preview), "color_preview".into()),
             ("Bracket Pair Colorization".into(), on_off(self.bracket_pair_colorization), "bracket_pair_colorization".into()),
+            ("Highlight Words Across Tabs".into(), on_off(self.highlight_words_across_tabs), "highlight_words_across_tabs".into()),
             ("Error Lens".into(), on_off(self.error_lens), "error_lens".into()),
             ("Inlay Hints".into(), on_off(self.show_inlay_hints), "inlay_hints".into()),
             ("Code Lens".into(), on_off(self.show_code_lenses), "code_lens".into()),

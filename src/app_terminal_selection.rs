@@ -240,6 +240,7 @@ impl App {
         if surface.index >= self.terminals.len() {
             return false;
         }
+        if matches!(mouse.kind, MouseEventKind::Down(_)) { self.cancel_remote_terminal_location(); }
         let selected = self.terminals[surface.index].terminal_pty.as_ref()
             .is_some_and(|pty| pty.grid.has_selection());
         // A local selection owns Copy even when the child requests mouse input.
@@ -332,6 +333,7 @@ impl App {
     }
 
     pub(crate) fn paste_terminal_text(&mut self, index: usize, text: &str) {
+        self.cancel_remote_terminal_location();
         if index >= self.terminals.len() || text.is_empty() {
             return;
         }

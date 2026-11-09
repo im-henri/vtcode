@@ -22,13 +22,13 @@ use std::{
 
 enum Completion {
     Single(mpsc::SyncSender<Delivery>),
-    Search(mpsc::Sender<Delivery>),
+    Stream(mpsc::Sender<Delivery>),
 }
 impl Completion {
     fn try_send(&self, delivery: Delivery) -> Result<(), ()> {
         match self {
             Self::Single(sender) => sender.try_send(delivery).map_err(|_| ()),
-            Self::Search(sender) => sender.send(delivery).map_err(|_| ()),
+            Self::Stream(sender) => sender.send(delivery).map_err(|_| ()),
         }
     }
 }
@@ -37,6 +37,7 @@ struct Pending {
     retained: usize,
     operation: Option<diagnostics::Operation>,
     search_budget: Option<(usize, usize)>,
+    git_progress_budget: Option<usize>,
 }
 
 /// Own a newly allocated server handle until a worker actually accepts it.
@@ -494,6 +495,21 @@ impl Client {
                             }
                             Reply::DeletionProgress { request, progress } => {
                                 if let Some(current) = input_shared.deletion_progress.lock().unwrap().get_mut(&request) { *current = progress; }
+                            }
+                            Reply::GitStatusProgress { request, progress } => {
+                                let mut requests = input_shared.pending.lock().unwrap();
+                                if let Some(pending) = requests.get_mut(&request) {
+                                    let Some(remaining) = pending.git_progress_budget.as_mut() else {
+                                        return Err(io::Error::other("Unexpected remote Git status progress"));
+                                    };
+                                    // Exactly one header and one primary snapshot.
+                                    // Together with the final reply, this bounds
+                                    // the streaming queue to three framed messages.
+                                    if *remaining == 0 { return Err(io::Error::other("Remote Git progress exceeds its update limit")); }
+                                    *remaining -= 1;
+                                    let delivery = Delivery::new(Ok(Reply::GitStatusProgress { request, progress }), &input_shared, &input_wake);
+                                    let _ = pending.completed.try_send(delivery);
+                                }
                             }
                             Reply::SearchProgress { request, hits } => {
                                 let mut requests = input_shared.pending.lock().unwrap();
@@ -1181,6 +1197,32 @@ impl Client {
         }
         result
     }
+    pub(crate) fn git_status(
+        &self, command: Command, cancel: &crate::background::CancellationToken,
+        mut consume: impl FnMut(git::StatusProgress) -> io::Result<()>,
+    ) -> io::Result<Reply> {
+        let (id, replies) = self.submit_inner(command, Some((Duration::from_secs(120), Some(cancel))))?;
+        let result = (|| loop {
+            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            let reply = match replies.recv_timeout(Duration::from_millis(20)) {
+                Ok(reply) => reply.take().map_err(Failure::into_io)?,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(error) => return Err(io::Error::other(error)),
+            };
+            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            match reply {
+                Reply::GitStatusProgress { request, progress } if request == id => consume(progress)?,
+                reply @ Reply::GitStatus { .. } => return Ok(reply),
+                _ => return Err(io::Error::other("Invalid remote Git status reply")),
+            }
+        })();
+        if let Err(error) = &result {
+            self.0.shared.stop(id, error);
+            let _ = self.notify(Command::Cancel { request: id });
+        }
+        result
+    }
+
     pub(crate) fn call_progress(
         &self,
         command: Command,
@@ -1325,9 +1367,10 @@ impl Client {
                 Command::Search(query) if query.stream => Some((query.limit.min(100_000), MAX_PAYLOAD_BYTES)),
                 _ => None,
             };
-            let (completed, result) = if search_budget.is_some() {
+            let git_progress_budget = matches!(&command, Command::GitStatus { progress: Some(_), .. }).then_some(2);
+            let (completed, result) = if search_budget.is_some() || git_progress_budget.is_some() {
                 let (sender, receiver) = mpsc::channel();
-                (Completion::Search(sender), receiver)
+                (Completion::Stream(sender), receiver)
             } else {
                 let (sender, receiver) = mpsc::sync_channel(1);
                 (Completion::Single(sender), receiver)
@@ -1441,6 +1484,7 @@ impl Client {
                         retained,
                         operation: operation.clone(),
                         search_budget,
+                        git_progress_budget,
                     },
                 );
             }

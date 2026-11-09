@@ -125,14 +125,12 @@ impl BlockDragProjection {
             self.anchors.truncate(keep);
         } else if last > old_last {
             let end_col = target.horizontal_scroll.saturating_add(target.screen_col);
-            let min_col = target.start.2.min(end_col);
-            let max_col = target.start.2.max(end_col);
             for line in old_last + 1..=last {
                 let len = editor.line_len(line);
                 let origin = target.horizontal_scroll;
-                let col = editor.source_column_at_cell(line, origin, len, min_col.saturating_sub(origin)).0;
-                let anchor = editor.source_column_at_cell(line, origin, len, max_col.saturating_sub(origin)).0;
-                self.push(line, col, (anchor > col).then_some((line, anchor)));
+                let col = editor.source_column_at_cell(line, origin, len, end_col.saturating_sub(origin)).0;
+                let anchor = editor.source_column_at_cell(line, origin, len, target.start.2.saturating_sub(origin)).0;
+                self.push(line, col, (anchor != col).then_some((line, anchor)));
             }
         }
         true
@@ -380,30 +378,29 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
         .map(|cache| std::mem::take(&mut cache.projection))
         .unwrap_or_default();
     projection.clear();
+    // Keep the press column as the anchor and the pointer column as the caret,
+    // just like ordinary selection. Normalizing these endpoints puts a forward
+    // selection's block caret over its first selected character.
     if ed.word_wrap {
         let start_wrap = ed.wrapped_row_for_position(start.0, start.1, width);
         let end_wrap = ed.wrapped_row_for_position(end.0, end.1, width);
         let min_wrap = start_wrap.min(end_wrap);
         let max_wrap = start_wrap.max(end_wrap);
-        let min_col = start.2.min(screen_col);
-        let max_col = start.2.max(screen_col);
         ed.visit_wrapped_rows(min_wrap, max_wrap.saturating_sub(min_wrap) + 1, width, |ed, row| {
-            let col = ed.source_column_at_cell(row.line_idx, row.start_col, row.end_col, min_col).0;
-            let anchor = ed.source_column_at_cell(row.line_idx, row.start_col, row.end_col, max_col).0;
-            projection.push(row.line_idx, col, (anchor > col).then_some((row.line_idx, anchor)));
+            let col = ed.source_column_at_cell(row.line_idx, row.start_col, row.end_col, screen_col).0;
+            let anchor = ed.source_column_at_cell(row.line_idx, row.start_col, row.end_col, start.2).0;
+            projection.push(row.line_idx, col, (anchor != col).then_some((row.line_idx, anchor)));
         });
     } else {
         let min_line = start.0.min(end.0);
         let max_line = start.0.max(end.0).min(ed.line_count().saturating_sub(1));
         let end_col = ed.horizontal_scroll.saturating_add(screen_col);
-        let min_col = start.2.min(end_col);
-        let max_col = start.2.max(end_col);
         for line in min_line..=max_line {
             let len = ed.line_len(line);
             let origin = ed.horizontal_scroll;
-            let col = ed.source_column_at_cell(line, origin, len, min_col.saturating_sub(origin)).0;
-            let anchor = ed.source_column_at_cell(line, origin, len, max_col.saturating_sub(origin)).0;
-            projection.push(line, col, (anchor > col).then_some((line, anchor)));
+            let col = ed.source_column_at_cell(line, origin, len, end_col.saturating_sub(origin)).0;
+            let anchor = ed.source_column_at_cell(line, origin, len, start.2.saturating_sub(origin)).0;
+            projection.push(line, col, (anchor != col).then_some((line, anchor)));
         }
     }
     if projection.cursors.len() >= MAX_CACHED_BLOCK_ROWS {

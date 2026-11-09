@@ -269,6 +269,9 @@ impl App {
             "bracket_pair_colorization" => {
                 self.bracket_pair_colorization = !self.bracket_pair_colorization;
             }
+            "highlight_words_across_tabs" => {
+                self.highlight_words_across_tabs = !self.highlight_words_across_tabs;
+            }
             "error_lens" => {
                 self.error_lens = !self.error_lens;
             }

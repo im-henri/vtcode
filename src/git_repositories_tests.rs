@@ -204,21 +204,66 @@ fn cached_discovery_preserves_nested_and_global_ignore_scopes_and_case_policy() 
 fn benchmark_repository_discovery() {
     let root = PathBuf::from(std::env::var_os("VTCODE_GIT_BENCH_REPO").expect("VTCODE_GIT_BENCH_REPO"));
     let cancel = CancellationToken::new();
-    let mut times = [Vec::new(), Vec::new()];
+    let mut times = [Vec::new(), Vec::new(), Vec::new()];
     let mut expected = None;
     for sample in 0..5 {
-        for cached in [sample % 2 == 0, sample % 2 != 0] {
+        for mode in [sample % 3, (sample + 1) % 3, (sample + 2) % 3] {
             let start = std::time::Instant::now();
-            let discovery = discover_impl(&root, &cancel, |_, _, _| {}, cached);
+            let discovery = discover_scan(&root, &cancel, |_, _, _| {}, mode > 0, mode == 2);
             let elapsed = start.elapsed();
             assert!(discovery.errors.is_empty(), "{:?}", discovery.errors);
             if let Some(expected) = &expected { assert_eq!(&discovery.roots, expected); }
             else { expected = Some(discovery.roots); }
-            if sample > 0 { times[usize::from(cached)].push(elapsed); }
+            if sample > 0 { times[mode].push(elapsed); }
         }
     }
     for times in &mut times { times.sort(); }
-    eprintln!("repository discovery: before={:?} cached={:?}; roots={}", times[0][times[0].len()/2], times[1][times[1].len()/2], expected.unwrap().len());
+    eprintln!("repository discovery: before={:?} cached={:?} listings={:?}; roots={}",
+        times[0][times[0].len()/2], times[1][times[1].len()/2], times[2][times[2].len()/2], expected.unwrap().len());
+}
+
+#[test]
+fn directory_listings_avoid_per_directory_git_probes_and_keep_ignored_repositories() {
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), "root\n");
+    let root = canonical(dir.path());
+    for index in 0..64 {
+        let directory = root.join(format!("source/{index}/inner"));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("file.c"), "source\n").unwrap();
+    }
+    init(&root.join("source/3/project"), "nested\n");
+    init(&root.join("ignored"), "ignored project\n");
+    std::fs::write(root.join(".git/info/exclude"), "ignored/\n").unwrap();
+    let cancel = CancellationToken::new();
+    MARKER_PROBES.set(0);
+    let before = discover_scan(&root, &cancel, |_, _, _| {}, true, false);
+    let probes_before = MARKER_PROBES.get();
+    MARKER_PROBES.set(0);
+    let after = discover_scan(&root, &cancel, |_, _, _| {}, true, true);
+    let probes_after = MARKER_PROBES.get();
+    eprintln!("repository marker probes: {probes_before} -> {probes_after}");
+    assert_eq!(after.roots, before.roots);
+    assert_eq!(after.errors, before.errors);
+    assert!(after.roots.contains(&root.join("ignored")));
+    assert!(probes_before > 128);
+    assert!(probes_after < 4, "existing listings replace metadata probes: {probes_before} -> {probes_after}");
+}
+
+#[cfg(windows)]
+#[test]
+fn directory_listing_discovery_keeps_case_variants_of_git_markers() {
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), "root\n");
+    let nested = dir.path().join("nested");
+    init(&nested, "nested\n");
+    std::fs::rename(nested.join(".git"), nested.join("metadata")).unwrap();
+    std::fs::rename(nested.join("metadata"), nested.join(".GIT")).unwrap();
+    let cancel = CancellationToken::new();
+    let before = discover_scan(dir.path(), &cancel, |_, _, _| {}, true, false);
+    let after = discover_scan(dir.path(), &cancel, |_, _, _| {}, true, true);
+    assert_eq!(after.roots, before.roots);
+    assert!(after.roots.contains(&canonical(&nested)));
 }
 
 struct Fixture {
@@ -778,6 +823,7 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
             workspace_generation: app.workspace_generation,
             repository_generation: generation,
             repository: fixture.root.clone(),
+            branch: String::new(),
         })
         .unwrap();
     app.background

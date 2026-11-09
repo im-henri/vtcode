@@ -294,6 +294,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if crate::ui_inline_blame::handle_mouse(app, mouse) { return; }
     if crate::terminal_sidebar::begin_resize(app, mouse) { return; }
     if crate::terminal_scrollbar::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
+    if crate::app_terminal_links::mouse(app, mouse) { return; }
     if app.handle_terminal_selection_mouse(mouse) { return; }
     if app.handle_chat_mouse(mouse) { return; }
     if mouse.kind == MouseEventKind::Moved
@@ -955,9 +956,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         .map(|&(_, index)| index);
                     if let Some(index) = close_target {
                         app.close_terminal_tab_at(index);
-                        app.terminal_panel_focused = app
-                            .active_terminal_in_dock(TerminalDock::Right)
-                            .is_some();
+                        if app.terminal_close.is_none() {
+                            app.terminal_panel_focused = app
+                                .active_terminal_in_dock(TerminalDock::Right)
+                                .is_some();
+                        }
                     } else if let Some(index) = tab_target {
                         app.active_terminal = index;
                         app.active_pane = ActivePane::Editor;
@@ -1780,8 +1783,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                         Some(ClickAction::SelectAndDiff(i))
                                             if ctrl || shift => { app.select_source_control_file(i, ctrl, shift); }
                                         Some(ClickAction::SelectAndDiff(i)) => {
-                                            app.select_source_control_file(i, false, false);
-                                            app.open_source_control_diff(i);
+                                            app.click_source_control_file(i, col, row);
                                         }
                                         None => {}
                                     }

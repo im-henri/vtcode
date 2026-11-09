@@ -201,7 +201,7 @@ fn shared_line_swaps_match_text_reference_at_every_boundary() {
 }
 
 #[test]
-fn shared_duplication_copies_cursor_line_regardless_of_multiline_selection() {
+fn shared_duplication_copies_multiline_selections_as_whole_blocks() {
     for repeats in [1, 2048] {
         for ending in ["\n", "\r\n"] {
             let middle = format!("α{}Z", "界café".repeat(repeats));
@@ -212,11 +212,7 @@ fn shared_duplication_copies_cursor_line_regardless_of_multiline_selection() {
                 } else {
                     ((1, 1), (2, 2))
                 };
-                let expected = if backwards {
-                    format!("head{ending}{middle}{ending}{middle}{ending}tail")
-                } else {
-                    format!("head{ending}{middle}{ending}tail{ending}tail")
-                };
+                let expected = format!("head{ending}{middle}{ending}tail{ending}{middle}{ending}tail");
                 for duplicate_up in [false, true] {
                     let mut editor = Editor::test_with_text(&source);
                     editor.detect_line_ending();
@@ -225,7 +221,7 @@ fn shared_duplication_copies_cursor_line_regardless_of_multiline_selection() {
                     if duplicate_up { editor.duplicate_line_up(); }
                     else { editor.duplicate_line(); }
                     assert_eq!(editor.rope.to_string(), expected);
-                    let copied_cursor = (cursor.0 + usize::from(!duplicate_up), cursor.1);
+                    let copied_cursor = (cursor.0 + 2 * usize::from(!duplicate_up), cursor.1);
                     assert_eq!((editor.cursor_line, editor.cursor_col), copied_cursor);
                     let copied_anchor = editor.selection_anchor;
                     editor.undo();
@@ -288,7 +284,8 @@ fn benchmark_grouped_and_shared_editor_edits() {
         for sample in 0..7 {
             for optimized in [sample % 2 == 0, sample % 2 != 0] {
                 let mut ed = Editor::test_with_text(&text);
-                ed.selection_anchor = Some((1, 0));
+                // The legacy duplication reference only copies the caret line.
+                ed.selection_anchor = (operation != "duplicate").then_some((1, 0));
                 ed.cursor_line = 3998;
                 if operation == "delete" {
                     ed.bookmarks.extend((0..4000).step_by(4));

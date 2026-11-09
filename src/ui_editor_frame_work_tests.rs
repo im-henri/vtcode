@@ -5,7 +5,7 @@ fn prepare_query_cache() -> (ropey::Rope, RenderLineCache) {
     let text = "alpha beta TODO alpha beta";
     let rope = ropey::Rope::from_str(&(text.to_owned() + "\n").repeat(240));
     let mut cache = RenderLineCache::default();
-    cache.prepare_occurrences((0, 0, 4), &rope, "alpha", 5, true);
+    cache.prepare_occurrences((0, 0, 4), &rope, "alpha", 5, true, true);
     for line in 0..240 {
         let highlighted = HighlightedLine::new(None, text, text.len(), PLAIN_STYLE);
         cache.line(line, (0, 0, 4), &rope, &highlighted, None, 80, false);
@@ -23,12 +23,12 @@ fn cursor_word_changes_invalidate_lazily_without_dropping_offscreen_rows() {
     drop(old);
     let count = cache.occurrence_builds;
     for query in ["beta", "TODO", "a", "界", "", "alpha"] {
-        cache.prepare_occurrences((0, 0, 4), &rope, query, query.chars().count(), true);
+        cache.prepare_occurrences((0, 0, 4), &rope, query, query.chars().count(), true, true);
         assert!(retained.upgrade().is_some(), "changing the caret word swept offscreen rows");
         assert!(cache.cached_occurrences(200).is_none(), "a stale query must never match");
         let occurrences = cache.occurrences(0, "alpha beta TODO alpha beta");
         let mut expected = Vec::new();
-        word_occurrences_for_line("alpha beta TODO alpha beta", query, query.chars().count(), true, &mut expected);
+        word_occurrences_for_line("alpha beta TODO alpha beta", query, query.chars().count(), true, true, &mut expected);
         let mut cursor = WordOccurrenceCursor::new(&occurrences, 0);
         for col in 0..30 {
             assert_eq!(cursor.contains(col), expected.iter().any(|&(a, b)| a <= col && col < b));
@@ -39,7 +39,7 @@ fn cursor_word_changes_invalidate_lazily_without_dropping_offscreen_rows() {
     }
     assert_eq!(cache.occurrence_builds, count + 6);
     cache.occurrence_generation = u64::MAX;
-    cache.prepare_occurrences((0, 0, 4), &rope, "beta", 4, true);
+    cache.prepare_occurrences((0, 0, 4), &rope, "beta", 4, true, true);
     assert!(cache.cached_occurrences(200).is_none());
     assert!(retained.upgrade().is_none(), "epoch wrap must retire old query stamps");
     assert_eq!(cache.decoration_bytes, cache.decorations.values().map(LineDecorations::bytes).sum::<usize>() + 4);
@@ -57,7 +57,7 @@ fn benchmark_cursor_word_query_invalidation() {
             let started = Instant::now();
             for index in 0..10_000 {
                 let query = if index % 2 == 0 { "beta" } else { "alpha" };
-                cache.prepare_occurrences((0, 0, 4), &rope, black_box(query), query.len(), true);
+                cache.prepare_occurrences((0, 0, 4), &rope, black_box(query), query.len(), true, true);
             }
             samples[usize::from(reference)].push(started.elapsed() / 10_000);
         }

@@ -127,6 +127,224 @@ fn extensionless_source_control_diff_inherits_language_in_both_layouts_and_panes
     }
 }
 
+#[test]
+fn loading_a_source_control_diff_keeps_the_visible_working_files_syntax_cache() {
+    use crate::app::SplitDirection;
+    use std::rc::Rc;
+
+    for staged in [false, true] {
+        let (_dir, path, mut app) = fixture();
+        app.syntax_theme = "dark-plus".into();
+        app.cursor_visible = false;
+        app.show_minimap = false;
+        app.sticky_scroll = false;
+        app.show_breadcrumbs = false;
+        app.colors.ui.preserve_theme_colors = true;
+        // A saved working file can have a newer edit counter than the newly
+        // opened diff snapshot, even when both currently contain the same text.
+        app.editor_mut().unwrap().content_version = 7;
+        let rope = app.editor().unwrap().rope.clone();
+        let job = app
+            .highlighter
+            .prepare_job(
+                &rope,
+                &path,
+                7,
+                None,
+                0..rope.len_lines(),
+                Some("Rust"),
+                &app.syntax_theme,
+            )
+            .unwrap();
+        let (syntaxes, themes) = app.highlighter.shared_sets();
+        assert!(
+            app.highlighter
+                .apply_batch(job.run(&rope, &syntaxes, &themes, || false))
+        );
+        app.editor_mut().unwrap().syntax_dirty_from = None;
+        app.editor_mut().unwrap().syntax_dirty_through = None;
+        let source_spans = app
+            .highlighter
+            .highlighted_line_by_index_if_cached(0, Some(&path), Some("Rust"), &app.syntax_theme, 7)
+            .unwrap()
+            .0;
+        app.refresh_visible_highlights_async();
+        app.tabs.push(Tab::new_file(Editor::new()));
+        app.create_split_group_dir(1, SplitDirection::Horizontal);
+
+        // Hold comparison dispatch to expose the interval between the disk
+        // read and the diff being ready. An event-loop visit happens here too.
+        app.workspace_visible = false;
+        app.open_source_control_diff_tab(&path, false, staged);
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            !app.editor().unwrap().bg_loading
+        });
+        assert!(app.pending_git_compare_path.is_some());
+        assert!(!app.should_render_diff_for_active_editor());
+        app.refresh_visible_highlights_async();
+        let pending = app
+            .highlighter
+            .highlighted_line_by_index_if_cached(0, Some(&path), Some("Rust"), &app.syntax_theme, 7)
+            .expect("a loading diff must not replace the regular editor's syntax cache")
+            .0;
+        assert!(Rc::ptr_eq(&source_spans, &pending));
+        assert!(
+            app.visible_highlight_key.is_none(),
+            "pending diff snapshots need no document job"
+        );
+
+        app.workspace_visible = true;
+        app.start_pending_git_compare_for_path(&path);
+        settle_diff(&mut app);
+        assert_syntax_in_both_layouts(&mut app);
+        let mut terminal = Terminal::new(TestBackend::new(180, 24)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        let area = app.groups[0].code_area.unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(area.x + 1, area.y)].symbol(), "n");
+        assert_eq!(buffer[(area.x + 3, area.y)].symbol(), "d");
+        assert_ne!(
+            buffer[(area.x + 1, area.y)].fg,
+            buffer[(area.x + 3, area.y)].fg,
+            "the untouched regular file pane must retain syntax colors"
+        );
+        let completed = app
+            .highlighter
+            .highlighted_line_by_index_if_cached(0, Some(&path), Some("Rust"), &app.syntax_theme, 7)
+            .unwrap()
+            .0;
+        assert!(Rc::ptr_eq(&source_spans, &completed));
+        for group in [0, 1, 0, 1] {
+            app.switch_group(group);
+            app.refresh_visible_highlights_async();
+            app.poll_background_results();
+            let after = app
+                .highlighter
+                .highlighted_line_by_index_if_cached(
+                    0,
+                    Some(&path),
+                    Some("Rust"),
+                    &app.syntax_theme,
+                    7,
+                )
+                .expect("focusing either pane must preserve the working file's cached colors")
+                .0;
+            assert!(Rc::ptr_eq(&source_spans, &after));
+        }
+    }
+}
+
+#[test]
+fn scrolling_an_inactive_diff_highlights_fragments_without_replacing_working_file_colors() {
+    use crate::app::SplitDirection;
+    use std::{rc::Rc, sync::Arc};
+
+    let suffix = "fn unchanged() {}\n".repeat(200);
+    for mode in [DiffMode::Inline, DiffMode::SideBySide] {
+        let (_dir, path, mut app) = fixture_with_source(
+            &(BASE.to_owned() + &suffix),
+            &(INDEX.to_owned() + &suffix),
+            &(WORKING.to_owned() + &suffix),
+        );
+        app.execute_editor_command(&crate::app_menu::language_command_id("Rust"));
+        app.editor_mut().unwrap().content_version = 7;
+        app.preferred_diff_mode = mode;
+        app.refresh_visible_highlights_async();
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.highlighter.document_state_converged(&path, 7)
+                && !app.background.has_active_jobs()
+                && !app.background.has_pending_results()
+        });
+        let source_spans = app
+            .highlighter
+            .highlighted_line_by_index_if_cached(0, Some(&path), Some("Rust"), &app.syntax_theme, 7)
+            .unwrap()
+            .0;
+        app.tabs.push(Tab::new_file(Editor::new()));
+        app.create_split_group_dir(1, SplitDirection::Horizontal);
+        app.open_source_control_diff_tab(&path, false, false);
+        settle_diff(&mut app);
+        let cache = Arc::clone(&app.diff_render_cache);
+        let row = &cache.rows[0];
+        let first_line = row.right_line.unwrap();
+        let first_hash = row.right_highlight_hash();
+        app.refresh_visible_highlights_async();
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.highlighter
+                .highlighted_fragment_by_hash_if_cached(
+                    first_hash,
+                    first_line,
+                    Some(&path),
+                    Some("Rust"),
+                    &app.syntax_theme,
+                )
+                .is_some()
+        });
+        let row = &cache.rows[150];
+        let cold_line = row.right_line.unwrap();
+        let cold_hash = row.right_highlight_hash();
+        assert!(
+            app.highlighter
+                .highlighted_fragment_by_hash_if_cached(
+                    cold_hash,
+                    cold_line,
+                    Some(&path),
+                    Some("Rust"),
+                    &app.syntax_theme,
+                )
+                .is_none(),
+            "the next viewport must need new highlight work"
+        );
+        app.switch_group(0);
+        let diff_tab = app.groups[1].active_tab;
+        app.groups[1].tabs[diff_tab].editor.scroll_offset = cold_line;
+        app.refresh_visible_highlights_async();
+        assert!(
+            !app.rendering_inactive_editor,
+            "projecting a pane must restore the active context"
+        );
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.highlighter
+                .highlighted_fragment_by_hash_if_cached(
+                    cold_hash,
+                    cold_line,
+                    Some(&path),
+                    Some("Rust"),
+                    &app.syntax_theme,
+                )
+                .is_some()
+        });
+        let colored = app
+            .highlighter
+            .highlighted_fragment_by_hash_if_cached(
+                cold_hash,
+                cold_line,
+                Some(&path),
+                Some("Rust"),
+                &app.syntax_theme,
+            )
+            .unwrap();
+        assert!(
+            colored
+                .iter()
+                .any(|(style, _)| style.foreground != colored[0].0.foreground)
+        );
+        let after = app
+            .highlighter
+            .highlighted_line_by_index_if_cached(0, Some(&path), Some("Rust"), &app.syntax_theme, 7)
+            .expect("inactive diff highlighting must preserve the working document's cache")
+            .0;
+        assert!(Rc::ptr_eq(&source_spans, &after));
+        assert_ne!(
+            app.groups[1].visible_highlight_key.as_ref().unwrap().6,
+            0,
+            "the inactive diff must use display-row fragment work, not a document job"
+        );
+    }
+}
+
 fn assert_python_diff_colors(app: &mut App, source_line: usize, colored: [bool; 2]) {
     app.show_minimap = false;
     app.sticky_scroll = false;

@@ -517,9 +517,11 @@ pub(crate) struct App {
     pub terminals: Vec<TerminalTab>,
     pub active_terminal: usize,
     pub(crate) terminal_rename: crate::app_terminal::RenameTerminal,
+    pub(crate) terminal_close: Option<crate::app_terminal::CloseTerminal>,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_find: crate::app_terminal_find::Controller,
+    pub(crate) terminal_links: crate::app_terminal_links::Controller,
     pub(crate) terminal_scrollbar: crate::terminal_scrollbar::State,
     pub(crate) terminal_clicks: crate::app_terminal_selection::TerminalClicks,
     pub(crate) terminal_selection_drag: Option<crate::app_terminal_selection::TerminalSurface>,
@@ -642,6 +644,7 @@ pub(crate) struct App {
     pub show_color_preview: bool,
     pub indent_rainbow: bool,
     pub bracket_pair_colorization: bool,
+    pub highlight_words_across_tabs: bool,
     pub error_lens: bool,
     pub sticky_scroll: bool,
     pub sticky_scroll_max: usize,
@@ -719,6 +722,7 @@ pub(crate) struct App {
     /// Git status ordered merge, staged, unstaged, untracked, then path within each group.
     pub source_control_files: Vec<GitFileChange>,
     pub(crate) source_control_selection: crate::app_source_control::SourceControlSelection,
+    pub(crate) source_control_file_click: Option<crate::app_source_control::FileClick>,
     pub source_control_selected: usize,
     pub sc_context_active: bool,
     pub sc_context_pos: (u16, u16),
@@ -735,6 +739,7 @@ pub(crate) struct App {
     pub(crate) hunk_peek: Option<crate::ui_hunk_peek::HunkPeek>,
     pub(crate) hunk_preview_feedback: Option<crate::hunk_preview::Feedback>,
     pub(crate) hunk_popup_generation: u64,
+    pub(crate) hunk_preview_continuation: Option<crate::hunk_preview::Continuation>,
     pub sc_discard_confirm_active: bool,
     pub(crate) sc_discard_request: Option<crate::app_source_control::DiscardRequest>,
     pub sc_discard_confirm_btn_areas: Vec<(u16, u16, u16)>,
@@ -845,6 +850,7 @@ pub(crate) struct App {
         std::cell::RefCell<std::collections::VecDeque<crate::ui_editor::CursorWordEntry>>,
     pub(crate) editor_selection_word_cache:
         std::collections::VecDeque<crate::ui_editor::SelectionWordEntry>,
+    pub(crate) shared_word_highlight: Option<crate::ui_editor::SharedWordHighlight>,
     // Shutdown animation
     pub shutdown_anim_active: bool,
     pub shutdown_anim_start: std::time::Instant,
@@ -1541,9 +1547,11 @@ impl App {
             )],
             active_terminal: 0,
             terminal_rename: Default::default(),
+            terminal_close: None,
             next_terminal_to_process: 0,
             terminal_surfaces: Vec::new(),
             terminal_find: Default::default(),
+            terminal_links: Default::default(),
             terminal_scrollbar: Default::default(),
             terminal_clicks: Default::default(),
             terminal_selection_drag: None,
@@ -1643,6 +1651,7 @@ impl App {
             show_color_preview: false,
             indent_rainbow: false,
             bracket_pair_colorization: true,
+            highlight_words_across_tabs: false,
             error_lens: false,
             sticky_scroll: true,
             sticky_scroll_max: 3,
@@ -1713,6 +1722,7 @@ impl App {
             source_control_file_hover: Default::default(),
             source_control_files: Vec::new(),
             source_control_selection: Default::default(),
+            source_control_file_click: None,
             source_control_selected: 0,
             sc_context_active: false,
             sc_context_pos: (0, 0),
@@ -1729,6 +1739,7 @@ impl App {
             hunk_peek: None,
             hunk_preview_feedback: None,
             hunk_popup_generation: 0,
+            hunk_preview_continuation: None,
             sc_discard_confirm_active: false,
             sc_discard_request: None,
             sc_discard_confirm_btn_areas: Vec::new(),
@@ -1812,6 +1823,7 @@ impl App {
             cached_matching_tag: None,
             cached_cursor_word: None,
             cached_cursor_word_key: (u64::MAX, 0, 0, 0),
+            shared_word_highlight: None,
             editor_cursor_word_cache: Default::default(),
             editor_selection_word_cache: std::collections::VecDeque::new(),
             shutdown_anim_active: false,
@@ -2199,7 +2211,7 @@ impl App {
                         self.refresh_git_branch_async();
                     }
                 }
-                crate::background::BackgroundResult::GitRepositoryFound { root, workspace_generation, repository_generation, repository } => {
+                crate::background::BackgroundResult::GitRepositoryFound { root, workspace_generation, repository_generation, repository, branch } => {
                     if self.explorer.root == root
                         && self.workspace_generation == workspace_generation
                         && self.repositories.membership_generation == repository_generation
@@ -2207,6 +2219,7 @@ impl App {
                             SourceControlRepositoryState::Checking | SourceControlRepositoryState::Missing | SourceControlRepositoryState::Loading)
                     {
                         self.repositories.loading_root = Some(repository);
+                        self.cached_git_branch = branch;
                         self.source_control_repository_state = SourceControlRepositoryState::Loading;
                         has_visual_changes = true;
                     }
@@ -2350,6 +2363,7 @@ impl App {
                 }
                 crate::background::BackgroundResult::GitActionDone { action, result } => {
                     self.bg_git_action_running = false;
+                    let hunk_succeeded = result.is_ok();
                     if matches!(action, "rebase" | "cherry-pick") && self.git_operation_ui.pending {
                         self.git_operation_ui.pending = false;
                         match &result {
@@ -2419,6 +2433,7 @@ impl App {
                             self.notify_error(format!("Git {action} failed: {error}"));
                         }
                     }
+                    self.finish_hunk_preview_action(action, hunk_succeeded);
                 }
                 crate::background::BackgroundResult::GitBranchesLoaded(result) => {
                     self.bg_git_branch_picker_running = false;
@@ -2593,6 +2608,9 @@ impl App {
                         }
                         if done {
                             self.bg_global_search_running = false;
+                        }
+                        if !self.bg_global_search_running {
+                            self.restore_workspace_replace_selection();
                         }
                     }
                 }

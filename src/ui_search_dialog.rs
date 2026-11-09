@@ -10,7 +10,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::app::App;
 use crate::helpers::len_as_u16;
 use crate::text_input::TextInputId;
-use crate::ui_pickers::{DIALOG_MIN_HEIGHT, truncate_to_width};
+use crate::ui_pickers::DIALOG_MIN_HEIGHT;
 use crate::ui_widgets::{InputField, PopupDialog, PopupPosition};
 
 /// Maximum number of items shown in the vtcomplete popup.
@@ -678,6 +678,7 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
     let scroll_offset = app
         .global_search_selected
         .saturating_sub(results_area_height.saturating_sub(1));
+    let preview = crate::ui_search_preview::Preview::new(app);
 
     for (idx, result) in app
         .global_search_results
@@ -702,39 +703,13 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("?");
-        let trimmed = result.line_text.trim();
-        let trim_offset =
-            result.line_text.chars().count() - result.line_text.trim_start().chars().count();
         let line_prefix = format!("{file_name}:{} ", result.line_num);
 
         let entry_area = Rect::new(inner.x, y, inner.width, 1);
         let max_preview = (inner.width as usize)
             .saturating_sub(unicode_width::UnicodeWidthStr::width(line_prefix.as_str()));
-        let preview: String = truncate_to_width(trimmed, max_preview);
-
-        // Highlight matching text within preview
-        let match_start = result.col_start.saturating_sub(trim_offset);
-        let match_end = result.col_end.saturating_sub(trim_offset);
-        let match_style = app.colors.ui.search_match_style(row_style);
-        let dim_style = Style::default().fg(app.colors.ui.readable_foreground(fg, bg, 4.5)).bg(bg);
-
         let mut spans = vec![Span::styled(line_prefix, Style::default().fg(fg).bg(bg))];
-        let preview_char_count = preview.chars().count();
-        if match_start < preview_char_count && match_end <= preview_char_count {
-            let byte_start = preview
-                .char_indices()
-                .nth(match_start)
-                .map_or(preview.len(), |(b, _)| b);
-            let byte_end = preview
-                .char_indices()
-                .nth(match_end)
-                .map_or(preview.len(), |(b, _)| b);
-            spans.push(Span::styled(&preview[..byte_start], dim_style));
-            spans.push(Span::styled(&preview[byte_start..byte_end], match_style));
-            spans.push(Span::styled(&preview[byte_end..], dim_style));
-        } else {
-            spans.push(Span::styled(preview, dim_style));
-        }
+        spans.extend(preview.spans(result, max_preview, row_style, &app.colors));
 
         let entry = Paragraph::new(Line::from(spans)).style(row_style);
         f.render_widget(entry, entry_area);

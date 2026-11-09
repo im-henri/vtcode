@@ -245,6 +245,40 @@ fn transfer_cleanup_survives_a_full_file_worker_queue() {
 }
 
 #[test]
+fn a_git_status_scan_waiting_for_progress_delivery_cannot_block_staging() {
+    use std::sync::mpsc;
+    let root = tempfile::tempdir().unwrap();
+    git2::Repository::init(root.path()).unwrap();
+    std::fs::write(root.path().join("file.txt"), "stage this\n").unwrap();
+    // A rendezvous output keeps status in flight after its first metadata
+    // reply. No timing assumption about filesystem speed is needed.
+    let (output, responses) = mpsc::sync_channel(0);
+    let mut git = LazyActor::new("test-git", Service::new(root.path()).unwrap(), output.clone(), Arc::default());
+    let mut status = LazyActor::new("test-git-status", Service::new(root.path()).unwrap(), output, Arc::default());
+    let cancel = crate::background::CancellationToken::new();
+    let command = Command::GitStatus { known: None, parent_open: false, closed: Vec::new(), include_untracked: true,
+        changed: None, revalidate: false, progress: Some(git::StatusProgressOptions { preferred: None }) };
+    git_actor_for(&command, &mut git, &mut status).unwrap()
+        .enqueue(Request { id: 1, workspace: None, command }, Some(cancel.clone())).unwrap();
+    let first = responses.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(first.result, Ok(Reply::GitStatusProgress { progress: git::StatusProgress::Repository { .. }, .. })));
+    let command = Command::GitAction { repo: RemotePath::default(), task: crate::git_tasks::Task::StageAll };
+    git_actor_for(&command, &mut git, &mut status).unwrap()
+        .enqueue(Request { id: 2, workspace: None, command }, None).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let staged = loop {
+        if git2::Repository::open(root.path()).unwrap().index().unwrap().get_path(Path::new("file.txt"), 0).is_some() { break true; }
+        if Instant::now() >= deadline { break false; }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    cancel.cancel();
+    drop(responses);
+    drop(git.drain_on_disconnect());
+    drop(status.drain_on_disconnect());
+    assert!(staged, "Source Control must stage files while repository discovery is still in flight");
+}
+
+#[test]
 fn resource_cleanup_preserves_queued_acquisitions_and_later_work_under_saturation() {
     use std::sync::mpsc;
     let root = tempfile::tempdir().unwrap();
@@ -1728,13 +1762,13 @@ fn headless_git_status_sends_only_literal_worktree_deltas_and_full_rule_updates(
     git2::Repository::init(root.path()).unwrap();
     for name in ["literal[1].txt", "literal1.txt"] { std::fs::write(root.path().join(name), "original\n").unwrap(); }
     let mut service = Service::new(root.path()).unwrap();
-    let Reply::GitStatus { discovery: known, scans } = service.execute(Command::GitStatus { revalidate: false,
+    let Reply::GitStatus { discovery: known, scans } = service.execute(Command::GitStatus { progress: None, revalidate: false,
         known: None, parent_open: false, closed: Vec::new(), include_untracked: true,
         changed: Some(vec![path("literal[1].txt")]),
     }).unwrap() else { panic!(); };
     assert_eq!(scans[0].files.len(), 2, "Discovery must return a complete initial snapshot");
     assert!(scans[0].worktree_paths.is_none());
-    let mut query = |changed: Vec<RemotePath>| match service.execute(Command::GitStatus { revalidate: false,
+    let mut query = |changed: Vec<RemotePath>| match service.execute(Command::GitStatus { progress: None, revalidate: false,
         known: Some(known.clone()), parent_open: false, closed: Vec::new(), include_untracked: true,
         changed: Some(changed),
     }).unwrap() { Reply::GitStatus { scans, .. } => scans, _ => panic!() };
@@ -1972,10 +2006,10 @@ fn headless_git_status_keeps_non_unicode_paths_lossless_when_a_delta_falls_back(
         std::fs::write(root.path().join(std::ffi::OsString::from_vec(bytes.to_vec())), "source\n").unwrap();
     }
     let mut service = Service::new(root.path()).unwrap();
-    let Reply::GitStatus { discovery: known, .. } = service.execute(Command::GitStatus { revalidate: false,
+    let Reply::GitStatus { discovery: known, .. } = service.execute(Command::GitStatus { progress: None, revalidate: false,
         known: None, parent_open: false, closed: Vec::new(), include_untracked: true, changed: None,
     }).unwrap() else { panic!(); };
-    let Reply::GitStatus { scans, .. } = service.execute(Command::GitStatus { revalidate: false,
+    let Reply::GitStatus { scans, .. } = service.execute(Command::GitStatus { progress: None, revalidate: false,
         known: Some(known), parent_open: false, closed: Vec::new(), include_untracked: true,
         changed: Some(vec![RemotePath::new(b"name-\xfe.txt".to_vec()).unwrap()]),
     }).unwrap() else { panic!(); };

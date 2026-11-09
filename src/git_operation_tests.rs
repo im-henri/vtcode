@@ -583,7 +583,7 @@ fn remote_status_and_actions_can_continue_terminal_started_conflicts() {
         let client =
             crate::remote::tests::connection(fixture.root(), Arc::default(), Arc::default());
         let Reply::GitStatus { scans, .. } = client
-            .call(Command::GitStatus { revalidate: false,
+            .call(Command::GitStatus { progress: None, revalidate: false,
                 changed: None,
                 include_untracked: false,
                 known: None,
