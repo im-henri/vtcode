@@ -1359,23 +1359,3 @@ fn tab_bar_indicator_when_tabs_overflow() {
     let area = ratatui::layout::Rect::new(0, 0, 80, 1);
     assert!(tab_bar_right_indicator_start(&app, area).is_some());
 }
-
-// --- ensure_group_active_tab_visible tests ---
-
-#[test]
-fn ensure_group_visible_empty() {
-    let mut group = crate::app::EditorGroup::default();
-    ensure_group_active_tab_visible(&mut group);
-    assert_eq!(group.tab_scroll_offset, 0);
-}
-
-#[test]
-fn ensure_group_visible_resets_scroll_for_active() {
-    let mut group = crate::app::EditorGroup::default();
-    group.tabs.push(make_tab("a.rs"));
-    group.tabs.push(make_tab("b.rs"));
-    group.active_tab = 0;
-    group.tab_scroll_offset = 5;
-    ensure_group_active_tab_visible(&mut group);
-    assert_eq!(group.tab_scroll_offset, 0);
-}

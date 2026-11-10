@@ -1,4 +1,4 @@
-//! File links are discovered only in the hovered logical line. Neither output
+//! Path links are discovered only in the hovered logical line. Neither output
 //! ingestion nor idle terminal frames scan history or access the filesystem.
 use super::{TermGrid, TermRow};
 use crate::terminal::find::Point;
@@ -47,11 +47,11 @@ fn location_suffix(text: &str) -> Option<(u32, u32, usize)> {
     Some((line, column, capture.get(0)?.end()))
 }
 
-fn file_shape(path: &str) -> bool {
+fn path_shape(path: &str) -> bool {
     if path.is_empty() || path.len() > MAX_PATH_BYTES || path.contains("://")
-        || path.chars().any(char::is_control) || path.ends_with(['/', '\\'])
-        || matches!(path, "." | ".." | "/" | "\\")
+        || path.chars().any(char::is_control)
     { return false; }
+    if matches!(path, "." | "..") { return true; }
     if path.contains(['/', '\\']) { return true; }
     if matches!(path, "Makefile" | "Dockerfile" | "CMakeLists.txt" | "BUILD" | "WORKSPACE") { return true; }
     path.rsplit_once('.').is_some_and(|(name, extension)| (!name.is_empty() || path.starts_with('.'))
@@ -65,7 +65,7 @@ fn parse_candidate(text: &str, path: Range<usize>, range: Range<usize>) -> Optio
     if raw.contains("://") { return None; }
     // A location can be inside the quotes/token, including Windows drive paths.
     for (offset, ch) in raw.char_indices() {
-        if matches!(ch, ':' | '(') && file_shape(&raw[..offset])
+        if matches!(ch, ':' | '(') && path_shape(&raw[..offset])
             && let Some((line, column, length)) = location_suffix(&text[path.start + offset..])
         {
             let end = path.start + offset + length;
@@ -74,7 +74,7 @@ fn parse_candidate(text: &str, path: Range<usize>, range: Range<usize>) -> Optio
                 location: Location { path: raw[..offset].into(), line: Some(line), column } });
         }
     }
-    if !file_shape(raw) { return None; }
+    if !path_shape(raw) { return None; }
     let location = location_suffix(&text[range.end..]);
     Some(Parsed { range: range.start..range.end + location.map_or(0, |(_, _, length)| length),
         location: Location { path: raw.into(), line: location.map(|(line, _, _)| line),
@@ -102,7 +102,8 @@ fn parse(text: &str) -> Vec<Parsed> {
         let raw = token.as_str();
         let left = raw.trim_start_matches(['(', '[', '{', '<']);
         let start = token.start() + raw.len() - left.len();
-        let value = left.trim_end_matches([':', ',', ';', '.', ']', '}', '>']);
+        let value = left.trim_end_matches([':', ',', ';', ']', '}', '>']);
+        let value = if matches!(value, "." | "..") { value } else { value.trim_end_matches('.') };
         let end = start + value.len();
         if let Some(link) = parse_candidate(text, start..end, start..end) { links.push(link); }
         else {

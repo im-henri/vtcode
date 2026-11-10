@@ -31,19 +31,20 @@ fn untitled_names_update_rendering_and_mouse_targets_in_plain_and_grouped_tab_ba
                 3 => app.tabs[0].editor.redo(),
                 _ => {}
             }
+            app.mouse_position_known = false;
             terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
             assert!(contents(terminal.backend().buffer()).contains(expected));
             assert!(!contents(terminal.backend().buffer()).contains('·'));
             let hits = TabBarHits::new(&app, area);
             assert_eq!(hits.tabs.len(), 2);
             let modified_width = if app.tabs[0].has_unsaved_changes() { 2 } else { 0 };
-            assert_eq!(usize::from(hits.tabs[0].1.width), 1 + modified_width + expected.width() + 3);
+            assert_eq!(usize::from(hits.tabs[0].1.width), 1 + modified_width + expected.width() + 1);
             for &(index, rect, close) in &hits.tabs {
                 assert_eq!(hits.tab_at(rect.x + 3).unwrap().0, index);
                 assert_eq!(rect.width, tab_render_width(&app, index, &app.tabs[index]));
-                // The active tab's close button must track the changing name.
-                if index == app.active_tab {
-                    assert_eq!(terminal.backend().buffer()[(close.x + 1, close.y)].symbol(), "×");
+                // Only hovered tabs show close, without shifting the hit map.
+                if app.mouse_position_known && rect.contains((app.mouse_col, app.mouse_row).into()) {
+                    assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
                 }
             }
             let (_, neighbor, _) = hits.tabs[1];

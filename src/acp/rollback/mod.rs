@@ -678,9 +678,17 @@ impl Journal {
         let capture = |repo: &git2::Repository, paths: &[PathBuf]| -> Result<Snapshot> {
             let mut files = BTreeMap::new();
             for path in paths {
-                if let Some(state) =
-                    storage::capture_with_repo(repo, &storage::checked_path(&self.root, path)?)?
-                {
+                // The walker excludes links, but tracked paths also come from
+                // the index. Skip pre-existing boundaries without following them.
+                // If a captured file becomes a link, retain the strict failure
+                // rather than recording a false deletion or losing its baseline.
+                let actual = if previous.is_some_and(|files| files.contains_key(path)) {
+                    Some(storage::checked_path(&self.root, path)?)
+                } else {
+                    storage::capture_path(&self.root, path)?
+                };
+                let Some(actual) = actual else { continue; };
+                if let Some(state) = storage::capture_with_repo(repo, &actual)? {
                     files.insert(path.clone(), state);
                 }
             }

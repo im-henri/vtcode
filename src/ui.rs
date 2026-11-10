@@ -377,7 +377,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.animations.begin_frame();
     let animation_view = crate::diff_scope_source::animation_view_id(app);
     app.animations.set_active_view(animation_view);
-    app.chat.activity.begin_frame();
+    // Cosmetic frames can replay cached tab strips. Preserve their visible
+    // indicators until the next normal frame recomputes tab visibility.
+    if !app.rendering_animation_frame {
+        app.chat.activity.begin_frame();
+        for terminal in &app.terminals { terminal.input_activity.begin_frame(); }
+    }
     app.acknowledge_visible_chat_activity();
     crate::ui_quick_picker::begin_frame(app);
     // Input geometry must never outlive the frame that produced it.  Widgets

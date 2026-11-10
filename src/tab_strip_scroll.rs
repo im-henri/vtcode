@@ -1,7 +1,6 @@
-//! Horizontal cell scrolling. Keep the existing tab-index reveal path for
-//! explicit navigation, and let wheel input inspect every cell independently.
+//! Horizontal cell scrolling shared by active-tab reveal and manual panning.
 use super::{
-    App, Rect, TabBarHits, TabNameDuplicates, tab_display_name_with_duplicates, tab_label_width,
+    App, CloseOverlay, Rect, TabBarHits, TabNameDuplicates, tab_label_name, tab_label_width,
 };
 use crate::app::Tab;
 use unicode_width::UnicodeWidthStr;
@@ -10,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 pub(crate) struct StripScroll {
     pub(crate) anchor: u64,
     pub(crate) columns: usize,
+    pub(crate) manual: bool,
 }
 
 fn group_state(app: &App, group: usize) -> Option<(&[Tab], usize, usize, Option<StripScroll>)> {
@@ -18,8 +18,7 @@ fn group_state(app: &App, group: usize) -> Option<(&[Tab], usize, usize, Option<
             &app.tabs,
             app.active_tab,
             app.tab_scroll_offset,
-            app.tab_strip_scroll
-                .filter(|_| app.tab_scroll_manual_anchor == Some(app.active_tab)),
+            app.tab_strip_scroll,
         ))
     } else {
         app.groups.get(group).map(|g| {
@@ -52,6 +51,7 @@ struct Item {
     kind: Kind,
     start: usize,
     width: usize,
+    close: Option<CloseOverlay>,
 }
 
 struct Strip {
@@ -95,24 +95,31 @@ impl Strip {
                 strip.push(
                     Kind::Group(named.id),
                     (named.name.width() + count.to_string().len() + 6).min(25),
+                    None,
                 );
             }
             last_group = named.map(|g| g.id);
             if named.is_some_and(|g| g.collapsed) && index != active && !tab.pinned {
                 continue;
             }
-            let name = tab_display_name_with_duplicates(app, index, tab, names);
-            strip.push(Kind::Tab(index), tab_label_width(app, tab, &name));
+            let name = tab_label_name(app, area, group, index, tab, names);
+            let width = tab_label_width(app, tab, &name);
+            strip.push(
+                Kind::Tab(index),
+                width,
+                CloseOverlay::for_tab(tab, &name, width),
+            );
         }
-        strip.push(Kind::New, 3);
+        strip.push(Kind::New, 3, None);
         strip
     }
 
-    fn push(&mut self, kind: Kind, width: usize) {
+    fn push(&mut self, kind: Kind, width: usize, close: Option<CloseOverlay>) {
         self.items.push(Item {
             kind,
             start: self.width,
             width,
+            close,
         });
         self.width = self.width.saturating_add(width);
     }
@@ -139,6 +146,113 @@ impl Strip {
             .find(|item| matches!(item.kind, Kind::Tab(index) if index >= tab_offset))
             .map_or(0, |item| item.start)
     }
+
+    fn viewport(&self, area: Rect, columns: usize) -> (Rect, usize, usize) {
+        let available = self.available(area);
+        let left = if columns > 0 {
+            2.min(available.saturating_sub(1))
+        } else {
+            0
+        };
+        let right = if columns.saturating_add(available.saturating_sub(left)) < self.width {
+            2.min(available.saturating_sub(left + 1))
+        } else {
+            0
+        };
+        (
+            Rect::new(
+                area.x
+                    .saturating_add(self.prefix)
+                    .saturating_add(left as u16),
+                area.y,
+                available.saturating_sub(left + right) as u16,
+                area.height,
+            ),
+            left,
+            right,
+        )
+    }
+}
+
+/// Move only the cells necessary to reveal the active label. In particular,
+/// opening on the right keeps the tail of the previous tab at the left edge.
+pub(crate) fn reveal(app: &mut App, area: Rect, group: usize) {
+    let Some((tabs, active, tab_offset, previous)) = group_state(app, group) else {
+        return;
+    };
+    let Some(tab) = tabs.get(active) else {
+        return;
+    };
+    let anchor = tab.editor.navigation_id;
+    let manual = if group == app.active_group {
+        app.tab_scroll_manual_anchor == Some(active)
+    } else {
+        previous.is_some_and(|scroll| scroll.manual && scroll.anchor == anchor)
+    };
+    if manual {
+        return;
+    }
+    let strip = Strip::new(app, area, group, None);
+    if strip.available(area) == 0 {
+        return;
+    }
+    let Some(target) = strip
+        .items
+        .iter()
+        .find(|item| matches!(item.kind, Kind::Tab(index) if index == active))
+    else {
+        return;
+    };
+    let max = strip.max_scroll(area);
+    let mut columns = previous
+        .map_or_else(|| strip.initial_scroll(tab_offset), |scroll| scroll.columns)
+        .min(max);
+    if target.start < columns
+        || target.width > usize::from(strip.viewport(area, target.start).0.width)
+    {
+        columns = target.start.min(max);
+    } else if target.start + target.width
+        > columns + usize::from(strip.viewport(area, columns).0.width)
+    {
+        // From column one onward the right edge is monotonic, even when the
+        // right arrow disappears. Find the first viewport containing the end.
+        let mut first = columns.max(1);
+        let mut last = max;
+        while first < last {
+            let middle = first + (last - first) / 2;
+            if middle + usize::from(strip.viewport(area, middle).0.width)
+                >= target.start + target.width
+            {
+                last = middle;
+            } else {
+                first = middle + 1;
+            }
+        }
+        columns = first.min(max);
+    }
+    let offset = strip
+        .items
+        .iter()
+        .find_map(|item| match item.kind {
+            Kind::Tab(index) if item.start + item.width > columns => Some(index),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let scroll = Some(StripScroll {
+        anchor,
+        columns,
+        manual: false,
+    });
+    if group == app.active_group {
+        app.tab_strip_scroll = scroll;
+        app.tab_scroll_offset = offset;
+    } else if let Some(group) = app.groups.get_mut(group) {
+        if group.tab_strip_scroll != scroll {
+            group.inactive_chrome_cache = None;
+        }
+        group.tab_strip_scroll = scroll;
+        group.tab_scroll_offset = offset;
+    }
 }
 
 pub(crate) fn scroll_by(app: &mut App, area: Rect, group: usize, columns: isize) {
@@ -157,6 +271,7 @@ pub(crate) fn scroll_by(app: &mut App, area: Rect, group: usize, columns: isize)
     let scroll = StripScroll {
         anchor,
         columns: current.saturating_add_signed(columns).min(max),
+        manual: true,
     };
     if group == app.active_group {
         app.tab_strip_scroll = Some(scroll);
@@ -177,24 +292,7 @@ pub(super) fn hits(
     let strip = Strip::new(app, area, group, names);
     let available = strip.available(area);
     let columns = scroll.columns.min(strip.max_scroll(area));
-    let left = if columns > 0 {
-        2.min(available.saturating_sub(1))
-    } else {
-        0
-    };
-    let right = if columns.saturating_add(available.saturating_sub(left)) < strip.width {
-        2.min(available.saturating_sub(left + 1))
-    } else {
-        0
-    };
-    let viewport = Rect::new(
-        area.x
-            .saturating_add(strip.prefix)
-            .saturating_add(left as u16),
-        area.y,
-        (available.saturating_sub(left + right)) as u16,
-        area.height,
-    );
+    let (viewport, left, right) = strip.viewport(area, columns);
     let empty = Rect::default();
     let mut hits = TabBarHits {
         tabs: Vec::new(),
@@ -243,12 +341,7 @@ pub(super) fn hits(
         }
         match item.kind {
             Kind::Tab(index) => {
-                let (tabs, _, _, _) = group_state(app, group).unwrap();
-                let close = if tabs[index].pinned {
-                    empty
-                } else {
-                    clip(item.start + item.width - 3, 3).0
-                };
+                let close = item.close.map_or(empty, |close| close.rect(rect, inset));
                 hits.tabs.push((index, rect, close));
                 hits.tab_clips.push(inset);
                 hits.tab_widths.push(item.width);

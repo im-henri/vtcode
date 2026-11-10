@@ -5,7 +5,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) use vtcode::file_source::{open_document_source, rename_no_replace};
+pub(crate) use vtcode::file_source::open_document_source;
+#[path = "fs_rename.rs"]
+mod rename;
+pub(crate) use rename::rename_no_replace;
 
 /// Open an advisory lock file without following links or truncating it.
 pub(crate) fn open_lock_file(path: &Path) -> io::Result<fs::File> {
@@ -58,6 +61,15 @@ pub(crate) fn copy_no_replace(
     source: &Path,
     destination: &Path,
     cancelled: impl Fn() -> bool,
+) -> io::Result<()> {
+    copy_with_publish(source, destination, cancelled, rename_no_replace)
+}
+
+fn copy_with_publish(
+    source: &Path,
+    destination: &Path,
+    cancelled: impl Fn() -> bool,
+    publish: impl FnOnce(&Path, &Path) -> io::Result<()>,
 ) -> io::Result<()> {
     let check = || {
         if cancelled() {
@@ -131,7 +143,7 @@ pub(crate) fn copy_no_replace(
             copy_leaf(source, &item, metadata.file_type(), &check)?;
         }
         check()?;
-        rename_no_replace(&item, destination)
+        publish(&item, destination)
     })();
     #[cfg(unix)]
     if result.is_err() {
@@ -327,6 +339,43 @@ fn paste_destination(
 mod copy_tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn staged_file_and_tree_copies_publish_when_native_no_replace_is_unsupported() {
+        for directory in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source.tcl");
+            let destination = root.path().join("destination.tcl");
+            let contents = if directory {
+                fs::create_dir(&source).unwrap();
+                source.join("child.tcl")
+            } else { source.clone() };
+            fs::write(&contents, "original\n").unwrap();
+            copy_with_publish(&source, &destination, || false, |item, destination| {
+                super::rename::with_primary(item, destination, || Err(io::ErrorKind::Unsupported.into()))
+            }).unwrap();
+            assert_eq!(fs::read_to_string(contents).unwrap(), "original\n");
+            let copied = if directory { destination.join("child.tcl") } else { destination };
+            assert_eq!(fs::read_to_string(copied).unwrap(), "original\n");
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2, "staging must be cleaned up");
+        }
+    }
+
+    #[test]
+    fn unsupported_copy_publication_still_preserves_a_racing_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        fs::write(&source, "original").unwrap();
+        let result = copy_with_publish(&source, &destination, || false, |item, destination| {
+            fs::write(destination, "concurrent").unwrap();
+            super::rename::with_primary(item, destination, || Err(io::ErrorKind::Unsupported.into()))
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(source).unwrap(), "original");
+        assert_eq!(fs::read_to_string(destination).unwrap(), "concurrent");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    }
 
     #[cfg(unix)]
     #[test]

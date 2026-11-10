@@ -2462,6 +2462,7 @@ pub(crate) struct TerminalTab {
     pub terminal_launch_error: Option<String>,
     pub terminal_pty: Option<crate::terminal::TerminalEmulator>,
     pub completion: crate::terminal_completion::Notice,
+    pub input_activity: crate::terminal_input_activity::Activity,
     pub find: crate::app_terminal_find::Find,
 }
 
@@ -2479,6 +2480,7 @@ impl TerminalTab {
             terminal_launch_error: None,
             terminal_pty: None,
             completion: Default::default(),
+            input_activity: Default::default(),
             find: Default::default(),
         }
     }

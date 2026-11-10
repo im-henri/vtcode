@@ -242,6 +242,7 @@ impl App {
     }
 
     pub(crate) fn reset_hover_states(&mut self) {
+        self.mouse_position_known = false;
         self.clear_tab_tooltip();
         self.chrome_hover = crate::ui_status::HoverState::default();
         self.hovered_tab = None;

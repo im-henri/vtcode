@@ -1565,6 +1565,7 @@ impl App {
         self.confirm_close_active = false;
         self.terminal_close = None;
         self.save_as_active = false;
+        self.file_open = Default::default();
         self.settings_editor_active = false;
         crate::ui_lsp_settings::activate(self, crate::ui_lsp_settings::Action::Close);
         self.tab_context_active = false;
@@ -1760,7 +1761,7 @@ impl App {
             tab.editor.file_display_name().width()
         };
         let mod_len: usize = if tab.has_unsaved_changes() { 2 } else { 0 };
-        let pin_len: usize = if tab.pinned { 4 } else { 0 };
+        let pin_len: usize = if tab.pinned { "📌".width() } else { 0 };
         let icon_len = match tab.kind {
             TabKind::File | TabKind::GitRevision if crate::ui_chrome_tabs::tab_icon(tab).is_empty() => 0,
             TabKind::File | TabKind::GitRevision | TabKind::CommitDetails => 2,
@@ -1772,8 +1773,7 @@ impl App {
         } else {
             0
         };
-        let close_len: usize = 3;
-        1 + pin_len + mod_len + icon_len + deleted_prefix_len + display_width + close_len
+        1 + pin_len + mod_len + icon_len + deleted_prefix_len + display_width + 1
     }
 
     fn placed_tab_width(&self, tab: &Tab) -> usize {
@@ -1781,146 +1781,49 @@ impl App {
             crate::ui_chrome_tabs::diff_tab_width(self, tab)
         } else if let TabKind::Chat(key) = tab.kind {
             let title = self.chat.editor_tab_title(key);
-            title.width() + 6 + if tab.pinned { 4 } else { 0 }
+            title.width() + 4 + if tab.pinned { "📌".width() } else { 0 }
         } else if let TabKind::RemoteConnection(id) = tab.kind {
             let width = if id == 0 { "SSH: Reconnect".width() } else {
                 "SSH: ".width() + self.remote_targets.attempt.as_ref().filter(|attempt| attempt.id == id)
                     .map_or("Connection".width(), |attempt| attempt.target.name.width())
             };
-            width + 7 + if tab.pinned { 4 } else { 0 }
+            width + 5 + if tab.pinned { "📌".width() } else { 0 }
         } else { Self::tab_ui_width(tab) }
     }
 
-    fn visible_last_tab_index(
-        &self,
-        tabs: &[Tab],
-        scroll_offset: usize,
-        area_width: usize,
-    ) -> Option<usize> {
-        if tabs.is_empty() || scroll_offset >= tabs.len() || area_width == 0 {
-            return None;
-        }
-
-        let mut used = if scroll_offset > 0 { 2 } else { 0 }; // "◂ "
-        let mut last = scroll_offset;
-        for (idx, tab) in tabs.iter().enumerate().skip(scroll_offset) {
-            let w = self.placed_tab_width(tab);
-            if idx > scroll_offset && used + w > area_width {
-                break;
-            }
-            used += w;
-            last = idx;
-        }
-
-        if last + 1 < tabs.len() {
-            while last > scroll_offset && used + 2 > area_width {
-                used = used.saturating_sub(self.placed_tab_width(&tabs[last]));
-                last -= 1;
-            }
-        }
-
-        Some(last)
-    }
-
-    /// Tab widths are at least four cells, so removing the leftmost tab can
-    /// only advance the last visible index, even when the two-cell scroll
-    /// arrow appears. Search offsets instead of revisiting every intervening
-    /// viewport when switching between distant tabs.
-    fn first_tab_offset_showing(
-        &self,
-        mut first: usize,
-        mut last: usize,
-        active: usize,
-        width: usize,
-    ) -> usize {
-        while first < last {
-            let middle = first + (last - first) / 2;
-            if self
-                .visible_last_tab_index(&self.tabs, middle, width)
-                .is_some_and(|end| end >= active)
-            {
-                last = middle;
-            } else {
-                first = middle + 1;
-            }
-        }
-        first
-    }
-
-    /// Ensure active tab is visible by adjusting tab_scroll_offset.
+    /// Reveal the active tab with the smallest horizontal cell movement.
     pub(crate) fn ensure_active_tab_visible(&mut self) {
-        if self.tab_strip_scroll.is_some() {
-            if crate::ui_chrome_tabs::strip_scroll_position(self, self.active_group).is_some() {
-                return;
-            }
-            self.tab_strip_scroll = None;
-        }
         if self.tabs.is_empty() {
             self.tab_scroll_offset = 0;
             self.tab_scroll_manual_anchor = None;
+            self.tab_strip_scroll = None;
             return;
         }
 
         if let Some(anchor_tab) = self.tab_scroll_manual_anchor {
             if self.active_tab == anchor_tab {
-                self.tab_scroll_offset = self.tab_scroll_offset.min(self.max_tab_scroll_offset());
-                return;
+                if self.tab_strip_scroll.is_none() {
+                    self.tab_scroll_offset = self.tab_scroll_offset.min(self.max_tab_scroll_offset());
+                    return;
+                }
+                if crate::ui_chrome_tabs::strip_scroll_position(self, self.active_group).is_some() {
+                    return;
+                }
             }
             self.tab_scroll_manual_anchor = None;
         }
 
-        if let Some(area) = self.tab_bar_area.filter(|_| !self.desks.membership.is_empty()) {
-            let hits=crate::ui_chrome_tabs::TabBarHits::new(self,area);
-            if !hits.tabs.iter().any(|(index,_,_)| *index == self.active_tab) {
-                self.tab_scroll_offset=self.active_tab;
-            }
+        if let Some(area) = self.tab_bar_area.filter(|area| area.width > 0) {
+            crate::ui_chrome_tabs::reveal_strip_tab(self, area, self.active_group);
             return;
         }
 
+        // Before the first measured layout, retain the bounded index fallback.
         if self.active_tab < self.tab_scroll_offset {
             self.tab_scroll_offset = self.active_tab;
         }
-
-        let area_width = self.tab_bar_area.map_or(0, |a| usize::from(a.width.saturating_sub(crate::ui_desks::controls(self,a,self.active_group).2)));
-        if area_width == 0 {
-            let max_visible = 8;
-            if self.active_tab >= self.tab_scroll_offset + max_visible {
-                self.tab_scroll_offset = self.active_tab.saturating_sub(max_visible - 1);
-            }
-            return;
-        }
-
-        if self
-            .visible_last_tab_index(&self.tabs, self.tab_scroll_offset, area_width)
-            .is_some_and(|last| self.active_tab > last)
-        {
-            self.tab_scroll_offset = self.first_tab_offset_showing(
-                self.tab_scroll_offset + 1,
-                self.active_tab.min(self.tabs.len()),
-                self.active_tab,
-                area_width,
-            );
-        }
-
-        // When we're already showing the last tab, shift left as far as possible
-        // while keeping the active tab visible so the strip doesn't leave trailing gaps.
-        if let Some(last_visible) =
-            self.visible_last_tab_index(&self.tabs, self.tab_scroll_offset, area_width)
-        {
-            if last_visible + 1 >= self.tabs.len() {
-                if self.tab_scroll_offset > 0
-                    && self
-                        .visible_last_tab_index(&self.tabs, self.tab_scroll_offset - 1, area_width)
-                        .is_some_and(|last| last >= self.active_tab)
-                {
-                    self.tab_scroll_offset = self.first_tab_offset_showing(
-                        0,
-                        self.tab_scroll_offset - 1,
-                        self.active_tab,
-                        area_width,
-                    );
-                }
-            }
+        if self.active_tab >= self.tab_scroll_offset + 8 {
+            self.tab_scroll_offset = self.active_tab.saturating_sub(7);
         }
     }
 
@@ -2453,38 +2356,25 @@ mod tests {
     fn tab_ui_width_basic() {
         let tab = make_tab("main.rs", false, false);
         let w = App::tab_ui_width(&tab);
-        // 1 + 0(pin) + 0(mod) + 2(icon) + 0(deleted) + 7(name) + 3(close) = 13
-        assert_eq!(w, 13);
+        // One cell of padding on each side; close overlays the label.
+        assert_eq!(w, 11);
         let unknown = make_tab("notes.unknown", false, false);
-        assert_eq!(App::tab_ui_width(&unknown), 17);
+        assert_eq!(App::tab_ui_width(&unknown), 15);
     }
 
     #[test]
     fn tab_ui_width_pinned_modified() {
         let tab = make_tab("a.rs", true, true);
         let w = App::tab_ui_width(&tab);
-        // 1 + 4(pin) + 2(mod) + 2(icon) + 0(deleted) + 4(name) + 3(close) = 16
-        assert_eq!(w, 16);
+        // Padding + pin + modified marker + file icon + name.
+        assert_eq!(w, 12);
     }
 
     #[test]
     fn tab_ui_width_reserves_cached_deleted_marker() {
         let mut tab = make_tab("main.rs", false, false);
         tab.editor.disk_unavailable = true;
-        assert_eq!(App::tab_ui_width(&tab), 14);
-    }
-
-    #[test]
-    fn visible_last_tab_empty() {
-        let result = App::test_new().visible_last_tab_index(&[], 0, 100);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn visible_last_tab_single() {
-        let tabs = vec![make_tab("x.rs", false, false)];
-        let result = App::test_new().visible_last_tab_index(&tabs, 0, 100);
-        assert_eq!(result, Some(0));
+        assert_eq!(App::tab_ui_width(&tab), 12);
     }
 
     #[test]

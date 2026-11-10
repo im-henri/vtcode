@@ -274,14 +274,16 @@ fn drag_targets_stay_logical_and_clicks_and_close_buttons_follow_the_presented_l
         .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving)
         .unwrap()
         .2;
-    assert_eq!(
-        terminal.backend().buffer()[(close.x + 1, close.y)].symbol(),
-        "×"
-    );
+    assert_ne!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
+    app.mouse_position_known = true;
+    app.mouse_col = close.x;
+    app.mouse_row = close.y;
+    draw(&mut app, &mut terminal, area, start + Duration::from_millis(25));
+    assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
     mouse(
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
-        close.x + 1,
+        close.x,
         area.y,
     );
     assert!(
@@ -360,7 +362,7 @@ fn clipped_unicode_labels_and_named_groups_keep_fixed_controls_and_pins_intact()
             "DELTA.rs",
             "ECHO.rs",
         ],
-        95,
+        80,
     );
     app.tabs[1].pinned = true;
     app.desks
@@ -398,6 +400,34 @@ fn clipped_unicode_labels_and_named_groups_keep_fixed_controls_and_pins_intact()
             );
         }
         assert_eq!(strip_scroll_position(&app, 0).unwrap().columns, 9);
+    }
+}
+
+#[test]
+fn hover_close_tracks_moving_labels_and_leaves_no_cross_in_cached_frames() {
+    let (mut app, mut terminal, area) = fixture(&["a", "BRAVO.rs", "CHARLIE.rs"], 80);
+    let started = Instant::now();
+    draw(&mut app, &mut terminal, area, started);
+    let moving = app.tabs[0].editor.navigation_id;
+    app.move_tab(0, 2);
+    draw(&mut app, &mut terminal, area, started);
+    app.rendering_animation_frame = true;
+    for elapsed in [25, 70, 130] {
+        let now = started + Duration::from_millis(elapsed);
+        app.mouse_position_known = false;
+        draw(&mut app, &mut terminal, area, now);
+        let (_, rect, close) = TabBarHits::new(&app, area).tabs.into_iter()
+            .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving).unwrap();
+        assert_eq!(close.width, 1);
+        app.mouse_position_known = true;
+        app.mouse_col = close.x;
+        app.mouse_row = close.y;
+        draw(&mut app, &mut terminal, area, now);
+        assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
+        assert!(text(&terminal, rect).contains('a'));
+        app.mouse_row = area.bottom() + 1;
+        draw(&mut app, &mut terminal, area, now);
+        assert!(!text(&terminal, area).contains('×'), "cached labels must restore their text after hover");
     }
 }
 

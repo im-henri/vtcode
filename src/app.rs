@@ -66,6 +66,7 @@ pub(crate) struct App {
     pub(crate) remote_explorer_error: Option<String>,
     pub(crate) explorer_expanding: rustc_hash::FxHashSet<PathBuf>,
     pub(crate) remote_navigation: crate::app_remote_navigation::State,
+    pub(crate) file_open: crate::app_open_file_path::State,
     pub(crate) global_search_service: std::sync::OnceLock<crate::app_search::LatestQueryService>,
     pub(crate) global_search_model_updates: crate::app_global_search::ModelUpdates,
     pub(crate) desks: crate::app_desks::Desks,
@@ -562,6 +563,7 @@ pub(crate) struct App {
     pub saving_flash: Option<std::time::Instant>,
     pub mouse_row: u16,
     pub mouse_col: u16,
+    pub(crate) mouse_position_known: bool,
     pub mouse_hover_changed: bool,
     /// Cached diagnostics for the current file. Rendering reuses both the
     /// detailed list and its compact minimap projection until either provider
@@ -1155,6 +1157,7 @@ impl App {
             explorer_expanding: Default::default(),
             loading: Default::default(),
             remote_navigation: crate::app_remote_navigation::State::default(),
+            file_open: Default::default(),
             global_search_service: Default::default(),
             global_search_model_updates: Default::default(),
             desks: crate::app_desks::Desks::default(),
@@ -1591,6 +1594,7 @@ impl App {
             saving_flash: None,
             mouse_row: 0,
             mouse_col: 0,
+            mouse_position_known: false,
             mouse_hover_changed: false,
             cached_diag_lines: std::sync::Arc::new(Vec::new()),
             cached_diag_key: (None, 0, 0),
@@ -2234,6 +2238,7 @@ impl App {
                         self.remote_explorer_error = None;
                         self.explorer_expanding.clear();
                         let select_find_match = self.explorer.find.select_first;
+                        self.cancel_stale_terminal_directory_reveal();
                         self.explorer
                             .apply_refresh_entries(canonical_root, entries, matches);
                         if self.remote_workspace.is_some() && self.rename.active && self.rename.placeholder_active
@@ -2247,6 +2252,7 @@ impl App {
                             self.set_explorer_single_selection(self.explorer.selected);
                         }
                         self.finish_explorer_paste_reveal();
+                        self.finish_terminal_directory_reveal(None);
                         has_visual_changes = true;
                     }
                 }
@@ -2258,6 +2264,7 @@ impl App {
                         self.explorer.cancel_unloaded_expansions(std::mem::take(&mut self.explorer_expanding));
                         self.explorer.find.loading = false;
                         self.explorer.find.select_first = false;
+                        self.finish_terminal_directory_reveal(Some(&error));
                         if self.explorer.find.open { self.explorer.find.results.error = Some(error.clone()); }
                         if let Some(log) = self.remote_workspace.as_ref().and_then(|remote| remote.diagnostics()) {
                             log.event("Explorer", &format!("Refresh failed; retaining cached files: {error}"));
@@ -4398,6 +4405,7 @@ impl App {
         if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
             self.remote_explorer_error = Some("Connection lost. Showing cached files.".into());
             self.explorer.find.loading = false;
+            self.finish_terminal_directory_reveal(Some("Connection lost; cannot reveal folder"));
             return;
         }
         self.explorer_refresh_generation = self.explorer_refresh_generation.wrapping_add(1);

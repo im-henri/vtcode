@@ -551,15 +551,16 @@ fn dragging_on_scroll_indicators_reaches_hidden_tabs_without_revealing_the_sourc
 }
 
 #[test]
-fn dragging_a_tab_wider_than_the_bar_can_reach_its_hidden_neighbors() {
+fn dragging_an_ellipsized_long_tab_can_reach_its_hidden_neighbors() {
     let wide = format!("{}.rs", "wide".repeat(40));
     let mut app = fixture(&[&wide, "middle.rs", "last.rs"], 60);
     let area = app.tab_bar_area.unwrap();
     let hits = TabBarHits::new(&app, area);
     assert!(
-        hits.right.is_empty(),
-        "the wide first label fills the legacy viewport"
+        !hits.right.is_empty(),
+        "overflow remains reachable beside the ellipsized title"
     );
+    assert!(hits.tabs.len() > 1, "the long title leaves its neighbour visible");
     let moving = app.tabs[0].editor.navigation_id;
     mouse(
         &mut app,

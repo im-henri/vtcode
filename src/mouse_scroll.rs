@@ -36,14 +36,12 @@ fn scroll_tabs_at(app: &mut App, col: u16, row: u16, down: bool, switch: bool) -
                 else if app.active_tab == 0 { app.tabs.len() - 1 } else { app.active_tab - 1 };
             app.validate_diff_state_for_active_tab();
             app.tab_scroll_manual_anchor = None;
-            app.tab_strip_scroll = None;
             app.ensure_active_tab_visible();
         }
     } else if let Some(group) = app.groups.get_mut(index) && !group.tabs.is_empty() {
         group.active_tab = if down { (group.active_tab + 1) % group.tabs.len() }
             else if group.active_tab == 0 { group.tabs.len() - 1 } else { group.active_tab - 1 };
-        group.tab_strip_scroll = None;
-        crate::mouse::ensure_group_active_tab_visible(group);
+        crate::ui_chrome_tabs::reveal_strip_tab(app, area, index);
     }
     true
 }

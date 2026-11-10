@@ -429,12 +429,14 @@ pub(super) struct StreamState {
     pub input_credit: usize,
     /// UI-queued bytes, including input not yet sent by the writer worker.
     input_pending: usize,
+    input_pending_since: Option<std::time::Instant>,
     input_acknowledged: Option<std::time::Instant>,
 }
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct InputProgress {
     pub pending: bool,
+    pub pending_since: Option<std::time::Instant>,
     pub acknowledged: Option<std::time::Instant>,
 }
 impl Stream {
@@ -449,6 +451,7 @@ impl Stream {
                 started: false,
                 input_credit: WINDOW,
                 input_pending: 0,
+                input_pending_since: None,
                 input_acknowledged: None,
             }),
             ready: Condvar::new(),
@@ -471,6 +474,7 @@ impl Stream {
         let mut state = self.state.lock().unwrap();
         state.end = true;
         state.input_pending = 0;
+        state.input_pending_since = None;
         state.error = error;
         drop(state);
         self.ready.notify_all();
@@ -489,6 +493,7 @@ impl Stream {
             state.input_acknowledged = Some(std::time::Instant::now());
         }
         let completed = was_pending && state.input_pending == 0;
+        if completed { state.input_pending_since = None; }
         drop(state);
         self.ready.notify_all();
         // A password prompt or a quiet program need not echo anything. Its
@@ -507,6 +512,7 @@ impl Reader {
         let state = self.stream.state.lock().unwrap();
         InputProgress {
             pending: !state.end && state.input_pending != 0,
+            pending_since: state.input_pending_since,
             acknowledged: state.input_acknowledged,
         }
     }
@@ -695,6 +701,9 @@ impl Write for QueuedWriter {
         queue.push(bytes.to_vec(), 4 * 1024 * 1024)?;
         // Publish before releasing the queue: a fast acknowledgement cannot
         // overtake this accounting, and rejected writes never become pending.
+        if state.input_pending == 0 && !bytes.is_empty() {
+            state.input_pending_since = Some(std::time::Instant::now());
+        }
         state.input_pending += bytes.len();
         drop(state);
         drop(queue);

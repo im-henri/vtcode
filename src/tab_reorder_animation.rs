@@ -1,6 +1,6 @@
 //! Whole-label tab motion. Layout and drag thresholds remain immediate; only
 //! the visible labels move, and pointer clicks use the last presented frame.
-use super::{App, TabBarHits, strip_scroll_position};
+use super::{App, TabBarHits, CloseOverlay, close_overlay, strip_scroll_position};
 use crate::animation_config::AnimationEffect;
 use ratatui::{Frame, buffer::Buffer, layout::Rect, style::Style, text::Line, widgets::Paragraph};
 use std::{
@@ -14,7 +14,7 @@ pub(super) struct Label {
     pub index: usize,
     pub x: i32,
     pub width: usize,
-    pub pinned: bool,
+    pub close: Option<CloseOverlay>,
     pub line: Line<'static>,
     pub style: Style,
     pub icon: Option<Range<usize>>,
@@ -187,11 +187,7 @@ impl State {
                 if rect.is_empty() {
                     continue;
                 }
-                let close = if label.pinned {
-                    Rect::default()
-                } else {
-                    clip(label.x + label.width as i32 - 3, 3, scene.viewport).0
-                };
+                let close = label.close.map_or_else(Rect::default, |close| close.rect(rect, inset));
                 self.presented.push(Presented {
                     id: label.id,
                     rect,
@@ -465,11 +461,9 @@ impl State {
                     icon.as_slice(),
                 );
             }
-            let close = if label.pinned {
-                Rect::default()
-            } else {
-                clip(x + label.width as i32 - 3, 3, scene.viewport).0
-            };
+            let close = label.close.map_or_else(Rect::default, |close| close.rect(rect, inset));
+            let gap = label.close.map_or_else(Rect::default, |close| close.gap_rect(rect, inset));
+            close_overlay::paint(frame, app, rect, close, gap, label.style);
             self.presented.push(Presented {
                 id: label.id,
                 rect,

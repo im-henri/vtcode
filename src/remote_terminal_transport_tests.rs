@@ -112,25 +112,29 @@ fn gated_connection(root: &Path) -> (client::Client, ReturnGate) {
     (client::Client::connect(reader, client_output).unwrap(), gate)
 }
 
-#[test]
-fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_without_echo() {
-    use crate::{app::{ActivePane, App, Tab, TabKind}, app_terminal_selection::TerminalSurface,
-        editor::Editor, terminal::TerminalEmulator};
-    use ratatui::{Terminal, backend::{Backend, TestBackend}, layout::{Position, Rect}};
-    let directory = tempfile::tempdir().unwrap();
-    let (client, gate) = gated_connection(directory.path());
+fn quiet_terminal(client: &client::Client, wake: crate::background::UiWake) -> crate::terminal::TerminalEmulator {
     let (program, args) = fixture_args("terminal_transport::quiet_input_child");
-    let wake = crate::background::UiWake::default();
     let process = client.spawn(program, args, RemotePath::default(), None, wake.clone()).unwrap();
-    let mut pty = TerminalEmulator::from_remote(process, 80, 24, wake.clone()).unwrap();
+    let mut pty = crate::terminal::TerminalEmulator::from_remote(process, 80, 24, wake).unwrap();
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         pty.process();
         let text: String = pty.grid.cells.iter().flat_map(|row| row.iter().map(|cell| cell.ch)).collect();
-        if text.contains("VT-QUIET-READY") && !pty.has_pending_output() { break; }
+        if text.contains("VT-QUIET-READY") && !pty.has_pending_output() { return pty; }
         assert!(Instant::now() < deadline, "quiet terminal did not start");
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_without_echo() {
+    use crate::{app::{ActivePane, App, Tab, TabKind}, app_terminal_selection::TerminalSurface,
+        editor::Editor};
+    use ratatui::{Terminal, backend::{Backend, TestBackend}, layout::{Position, Rect}};
+    let directory = tempfile::tempdir().unwrap();
+    let (client, gate) = gated_connection(directory.path());
+    let wake = crate::background::UiWake::default();
+    let pty = quiet_terminal(&client, wake.clone());
     let mut app = App::test_new();
     let mut tab = Tab::new_file(Editor::new());
     tab.kind = TabKind::Terminal;
@@ -205,6 +209,115 @@ fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_wit
 }
 
 #[test]
+fn remote_terminal_input_spinner_renders_in_docks_and_tabs_and_clears_without_echo() {
+    use crate::{app::{ActivePane, App, Tab}, editor::Editor};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
+
+    fn draw(app: &mut App) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(180, 42)).unwrap();
+        terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+    fn text(buffer: &Buffer, rect: Rect) -> String {
+        (rect.x..rect.right()).map(|x| buffer[(x, rect.y)].symbol()).collect()
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let (client, gate) = gated_connection(directory.path());
+    let mut app = App::test_new();
+    app.tabs = vec![Tab::new_file(Editor::test_with_text("document"))];
+    app.active_tab = 0;
+    app.active_pane = ActivePane::Editor;
+    app.show_explorer = false;
+    app.show_terminal_sidebar = true;
+    app.terminal_sidebar_revealed = true;
+    app.terminals[0].name = "Shell".into();
+    app.terminals[0].terminal_pty = Some(quiet_terminal(&client, app.background.wake_handle()));
+    for effect in crate::animation_config::AnimationEffect::ALL { app.animation_settings.set(effect, false); }
+    draw(&mut app);
+    let tab_areas = app.terminal_sidebar_tab_areas.clone();
+    let close_areas = app.terminal_sidebar_close_areas.clone();
+
+    gate.pause();
+    app.terminals[0].terminal_pty.as_ref().unwrap().write(b"x");
+    let progress = app.terminals[0].terminal_pty.as_ref().unwrap().remote_input_progress();
+    let started = progress.pending_since.unwrap();
+    draw(&mut app);
+    assert!(app.next_terminal_input_wait(Instant::now()).is_some(), "pending input needs its own timer even with effects disabled");
+    std::thread::sleep((started + Duration::from_millis(210)).saturating_duration_since(Instant::now()));
+    let buffer = draw(&mut app);
+    let area = tab_areas.iter().find(|(_, index)| *index == 0).unwrap().0;
+    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(buffer[(area.x, area.y)].symbol()));
+    assert!(text(&buffer, area).ends_with(" Shell "));
+    assert_eq!(app.terminal_sidebar_tab_areas, tab_areas);
+    assert_eq!(app.terminal_sidebar_close_areas, close_areas);
+    app.mouse_col = area.x + 2;
+    app.mouse_row = area.y;
+    let hovered = draw(&mut app);
+    let screen: String = hovered.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(screen.contains(crate::terminal_input_activity::HINT));
+    app.mouse_col = 0;
+    app.mouse_row = 0;
+    app.terminal_has_focus = false;
+    assert_eq!(app.next_terminal_input_wait(Instant::now()), None);
+    app.terminal_has_focus = true;
+    app.show_terminal_sidebar = false;
+    draw(&mut app);
+    assert_eq!(app.next_terminal_input_wait(Instant::now()), None, "hidden indicators must not poll");
+
+    assert!(app.detach_terminal_to_group(0, app.active_group));
+    app.active_tab = 0; // Keep only the terminal's tab visible, without its console.
+    app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, true);
+    let buffer = draw(&mut app);
+    let bar = app.tab_bar_area.unwrap();
+    assert!(text(&buffer, bar).contains("  Shell"));
+    let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, bar).tabs;
+    let terminal_index = app.tabs.iter().position(|tab| tab.terminal_idx == Some(0)).unwrap();
+    let terminal_area = hits.iter().find(|(index, _, _)| *index == terminal_index).unwrap().1;
+    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(buffer[(terminal_area.x + 1, terminal_area.y)].symbol()));
+    assert!(app.terminal_surfaces.is_empty());
+    app.rendering_animation_frame = true;
+    draw(&mut app);
+    app.rendering_animation_frame = false;
+    assert!(app.next_terminal_input_wait(Instant::now()).is_some(), "cached tab strips must preserve the spinner's timer");
+    app.mouse_col = terminal_area.x + 2;
+    app.mouse_row = terminal_area.y;
+    let screen: String = draw(&mut app).content.iter().map(|cell| cell.symbol()).collect();
+    assert!(screen.contains(crate::terminal_input_activity::HINT));
+    app.mouse_col = 0;
+    app.mouse_row = 0;
+
+    let mut grouped = Terminal::new(TestBackend::new(180, 42)).unwrap();
+    app.terminals[0].input_activity.begin_frame();
+    grouped.draw(|frame| crate::ui_chrome_tabs::draw_tab_bar_for_group(
+        frame, &app, bar, app.active_group, Instant::now())).unwrap();
+    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(grouped.backend().buffer()[(terminal_area.x + 1, bar.y)].symbol()));
+    assert!(app.next_terminal_input_wait(Instant::now()).is_some());
+    app.terminals[0].input_activity.begin_frame();
+    grouped.draw(|frame| crate::ui_chrome_tabs::draw_tab_bar(
+        frame, &app, Rect::new(0, 0, 4, 1))).unwrap();
+    assert_eq!(app.next_terminal_input_wait(Instant::now()), None, "tabs clipped out of the strip must not animate");
+    draw(&mut app);
+
+    // Do not process terminals while the input is pending: even an ack that
+    // overtakes the first service turn must clear the visible, inactive tab.
+    gate.release();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.terminals[0].terminal_pty.as_ref().unwrap().remote_input_progress().pending {
+        assert!(Instant::now() < deadline, "input was never acknowledged");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(app.process_terminals(), "a silent ack must clear the inactive tab's spinner");
+    let buffer = draw(&mut app);
+    assert_eq!(app.next_terminal_input_wait(Instant::now()), None);
+    assert!(text(&buffer, bar).contains(">_ Shell"));
+    assert_eq!(crate::ui_chrome_tabs::TabBarHits::new(&app, bar).tabs, hits);
+    assert_eq!(app.terminals[0].name, "Shell");
+    assert!(!app.terminals[0].terminal_pty.as_ref().unwrap().has_pending_output());
+    drop(app);
+    client.call(Command::Shutdown).unwrap();
+}
+
+#[test]
 fn rejected_remote_input_never_becomes_pending() {
     let directory = tempfile::tempdir().unwrap();
     let (client, gate) = gated_connection(directory.path());
@@ -216,8 +329,12 @@ fn rejected_remote_input_never_becomes_pending() {
     gate.pause();
     assert_eq!(writer.write(&vec![b'x'; 4 * 1024 * 1024 + 1]).unwrap_err().kind(), io::ErrorKind::WouldBlock);
     assert!(!reader.get_ref().input_progress().pending);
+    assert!(reader.get_ref().input_progress().pending_since.is_none());
+    assert_eq!(writer.write(b"").unwrap(), 0);
+    assert!(reader.get_ref().input_progress().pending_since.is_none());
     writer.write_all(b"x").unwrap();
     assert!(reader.get_ref().input_progress().pending);
+    assert!(reader.get_ref().input_progress().pending_since.is_some());
     gate.release();
     let deadline = Instant::now() + Duration::from_secs(5);
     while reader.get_ref().input_progress().pending {
@@ -225,6 +342,7 @@ fn rejected_remote_input_never_becomes_pending() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(reader.get_ref().input_progress().acknowledged.is_some());
+    assert!(reader.get_ref().input_progress().pending_since.is_none());
     killer.kill();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !killer.ended() {
@@ -233,6 +351,7 @@ fn rejected_remote_input_never_becomes_pending() {
     }
     assert_eq!(writer.write(b"after close").unwrap_err().kind(), io::ErrorKind::BrokenPipe);
     assert!(!reader.get_ref().input_progress().pending);
+    assert!(reader.get_ref().input_progress().pending_since.is_none());
     client.call(Command::Shutdown).unwrap();
 }
 

@@ -69,6 +69,54 @@ fn send_agent(app: &mut App, text: &str) {
 
 #[test]
 #[ignore = "headless App/ACP integration; requires Python 3 (VTCODE_TEST_PYTHON)"]
+fn remote_first_prompt_and_file_edits_work_with_a_tracked_linked_agent_config() {
+    let (root, workspace, mut app) = remote();
+    let outside = tempfile::tempdir().unwrap();
+    let config = root.path().join(".claude");
+    std::fs::write(outside.path().join("settings.json"), "external config\n").unwrap();
+    std::fs::write(&config, "link target").unwrap();
+    let repository = git2::Repository::open(root.path()).unwrap();
+    let mut index = repository.index().unwrap();
+    index.add_path(Path::new(".claude")).unwrap();
+    let mut entry = index.get_path(Path::new(".claude"), 0).unwrap();
+    entry.mode = 0o120000;
+    index.add(&entry).unwrap();
+    index.write().unwrap();
+    std::fs::remove_file(&config).unwrap();
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&config).arg(outside.path()).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &config).unwrap();
+    std::fs::write(root.path().join("agent.txt"), "original\n").unwrap();
+
+    connect_agent(&mut app);
+    send_agent(&mut app, "hello");
+    assert!(app.chat.session().unwrap().entries.iter().any(|entry|
+        matches!(entry, ChatEntry::Agent(text) if text.contains("echo:5:hello"))));
+    send_agent(&mut app, "write");
+    assert!(app.chat.session().unwrap().entries.iter().any(|entry|
+        matches!(entry, ChatEntry::Agent(text) if text.contains("write-ok"))));
+    assert_eq!(std::fs::read_to_string(root.path().join("agent.txt")).unwrap(), "node edit λ\nsecond\n");
+    let session = app.chat.session().unwrap();
+    assert_eq!(session.checkpoints.len(), 2);
+    assert!(session.rollback.edits.iter().any(|edit| edit.path == Path::new("agent.txt")));
+    assert!(!session.rollback.edits.iter().any(|edit| edit.path.starts_with(".claude")));
+    assert_eq!(std::fs::read_to_string(outside.path().join("settings.json")).unwrap(), "external config\n");
+    drop(app);
+    workspace.client.call(remote::Command::Shutdown).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(&config).unwrap();
+    #[cfg(unix)]
+    std::fs::remove_file(&config).unwrap();
+}
+
+#[test]
+#[ignore = "headless App/ACP integration; requires Python 3 (VTCODE_TEST_PYTHON)"]
 fn remote_agent_uses_unsaved_buffers_in_hidden_desks_and_writes_reload_with_undo() {
     let (root, workspace, mut app) = remote();
     std::fs::write(root.path().join("agent.txt"), "disk one\ndisk two\n").unwrap();

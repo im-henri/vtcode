@@ -42,6 +42,7 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    app.mouse_position_known = true;
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.mouse_press_serial = app.mouse_press_serial.wrapping_add(1);
     }
@@ -2053,31 +2054,6 @@ fn tab_bar_right_indicator_start(app: &App, tab_area: ratatui::layout::Rect) -> 
     (!right.is_empty()).then_some(right.x)
 }
 
-pub(crate) fn ensure_group_active_tab_visible(group: &mut crate::app::EditorGroup) {
-    if let Some(scroll) = group.tab_strip_scroll {
-        if group.tabs.get(group.active_tab).is_some_and(|tab| tab.editor.navigation_id == scroll.anchor) { return; }
-        group.tab_strip_scroll = None;
-    }
-    if group.tabs.is_empty() {
-        group.tab_scroll_offset = 0;
-        return;
-    }
-    if group.active_tab < group.tab_scroll_offset {
-        group.tab_scroll_offset = group.active_tab;
-    }
-    let area_width = group.tab_bar_area.map_or(0, |a| a.width as usize);
-    let approx_tab_width = 14usize;
-    let visible_tabs = if area_width > 0 {
-        (area_width.saturating_sub(if group.tab_scroll_offset > 0 { 2 } else { 0 }) / approx_tab_width)
-            .max(1)
-    } else {
-        8
-    };
-    if group.active_tab >= group.tab_scroll_offset + visible_tabs {
-        group.tab_scroll_offset = group.active_tab.saturating_sub(visible_tabs - 1);
-    }
-}
-
 fn reconcile_dragging_tab_after_close(app: &mut App, closed_idx: usize) {
     if let Some(drag_idx) = app.dragging_tab {
         if drag_idx == closed_idx {
@@ -2119,7 +2095,6 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
     let Some((index, rect, close)) = hits.tab_at(col) else { return false; };
     if TabBarHits::contains(close, col) {
         app.tab_scroll_manual_anchor = None;
-        app.tab_strip_scroll = None;
         reconcile_dragging_tab_after_close(app, index);
         app.close_tab(index);
         app.ensure_active_tab_visible();
@@ -2145,6 +2120,7 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
         app.tab_scroll_manual_anchor = Some(index);
         app.tab_strip_scroll = scroll.map(|scroll| crate::ui_chrome_tabs::StripScroll {
             anchor: app.tabs[index].editor.navigation_id,
+            manual: true,
             ..scroll
         });
         app.ensure_active_tab_visible();

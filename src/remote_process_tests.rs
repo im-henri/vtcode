@@ -5,22 +5,27 @@ use std::time::Duration;
 fn input_acknowledgements_keep_unsent_and_partially_consumed_bytes_pending() {
     let wake = crate::background::UiWake::default();
     let stream = Stream::new(wake.clone());
+    let started = std::time::Instant::now();
     {
         let mut state = stream.state.lock().unwrap();
         state.input_credit = WINDOW - 9;
         state.input_pending = 12; // Nine in flight, three still in the UI queue.
+        state.input_pending_since = Some(started);
     }
     stream.push(b"unrelated output".to_vec()).unwrap();
     assert_eq!(stream.state.lock().unwrap().input_pending, 12);
     stream.input_consumed(3).unwrap();
     assert_eq!(stream.state.lock().unwrap().input_pending, 9);
+    assert_eq!(stream.state.lock().unwrap().input_pending_since, Some(started));
     stream.input_consumed(6).unwrap();
     assert_eq!(stream.state.lock().unwrap().input_pending, 3);
+    assert_eq!(stream.state.lock().unwrap().input_pending_since, Some(started));
     assert_eq!(stream.state.lock().unwrap().input_credit, WINDOW);
     stream.state.lock().unwrap().input_credit -= 3;
     let generation = wake.generation();
     stream.input_consumed(3).unwrap();
     assert_eq!(stream.state.lock().unwrap().input_pending, 0);
+    assert_eq!(stream.state.lock().unwrap().input_pending_since, None);
     assert!(stream.state.lock().unwrap().input_acknowledged.is_some());
     assert_ne!(wake.generation(), generation, "an acknowledgement without output must wake the UI");
 }
@@ -28,20 +33,24 @@ fn input_acknowledgements_keep_unsent_and_partially_consumed_bytes_pending() {
 #[test]
 fn invalid_input_credit_does_not_clear_pending_input_and_exit_clears_it() {
     let stream = Stream::new(Default::default());
+    let started = std::time::Instant::now();
     {
         let mut state = stream.state.lock().unwrap();
         state.input_credit = WINDOW - 2;
         state.input_pending = 2;
+        state.input_pending_since = Some(started);
     }
     for bytes in [3, WINDOW + 1] {
         assert!(stream.input_consumed(bytes).is_err());
         let state = stream.state.lock().unwrap();
         assert_eq!(state.input_pending, 2);
+        assert_eq!(state.input_pending_since, Some(started));
         assert_eq!(state.input_credit, WINDOW - 2);
         assert!(state.input_acknowledged.is_none());
     }
     stream.end(Some("connection closed".into()));
     assert_eq!(stream.state.lock().unwrap().input_pending, 0);
+    assert_eq!(stream.state.lock().unwrap().input_pending_since, None);
 }
 
 #[test]

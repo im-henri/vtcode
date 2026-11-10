@@ -47,7 +47,8 @@ fn ctrl_click_opens_a_local_diagnostic_at_the_exact_line_and_column_in_docks_and
         assert!(app.terminal_selection_drag.is_none());
         assert!(app.terminal_mouse_capture.is_none());
         assert!(input.lock().unwrap().is_empty(), "link presses/releases must not reach the child");
-        app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor| !editor.bg_loading));
+        app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor|
+            !editor.bg_loading && editor.file_path.as_deref().is_some_and(|other| App::same_open_path(other, &path))));
         assert_eq!(app.tabs[app.active_tab].kind, TabKind::File);
         assert!(App::same_open_path(app.editor().unwrap().file_path.as_ref().unwrap(), &path));
         assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (4754, 48));
@@ -114,4 +115,120 @@ fn windows_bash_directory_hints_map_drives_and_preserve_escaped_names() {
     for uri in ["file:///c/work/my%20dir%20%231", "file:///cygdrive/c/work/my%20dir%20%231"] {
         assert_eq!(local_directory(uri), Some(PathBuf::from(r"c:\work\my dir #1")));
     }
+}
+
+#[test]
+fn directory_links_expand_select_and_scroll_the_workspace_explorer_from_docks_and_tabs() {
+    for detached in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let shell = root.path().join("shell");
+        let target = root.path().join("z-last/資料 folder");
+        std::fs::create_dir(&shell).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("child.rs"), "child\n").unwrap();
+        for index in 0..30 {
+            std::fs::create_dir(root.path().join(format!("a-{index:02}"))).unwrap();
+        }
+        let mut app = fixture("See \"../z-last/資料 folder/\"");
+        app.terminals[0].terminal_cwd = shell;
+        app.explorer = crate::explorer::FileExplorer::new_deferred(root.path().into());
+        app.explorer.visible_height = 5;
+        app.explorer.find.open = true;
+        app.explorer.find.query = "unrelated".into();
+        app.explorer.find.filter = true;
+        app.explorer.prepare_find();
+        app.show_explorer = false;
+        app.sidebar_view = crate::app::SidebarView::SourceControl;
+        if detached {
+            assert!(app.detach_terminal_to_group(0, app.active_group));
+            app.terminal_surfaces[0].group = Some(app.active_group);
+        }
+        let tabs = app.tabs.len();
+        click(&mut app, 8, KeyModifiers::CONTROL);
+        app.wait_for_background(Duration::from_secs(10), |app| app.explorer.entries.get(app.explorer.selected)
+            .is_some_and(|entry| entry.path == target && entry.expanded));
+        assert_eq!(app.explorer.root, root.path());
+        assert_eq!(app.tabs.len(), tabs);
+        assert!(app.show_explorer);
+        assert_eq!(app.sidebar_view, crate::app::SidebarView::Explorer);
+        assert_eq!(app.active_pane, ActivePane::Explorer);
+        assert!(!app.terminal_panel_focused);
+        assert!(!app.explorer.find.filter);
+        assert_eq!(app.explorer.find.query, "unrelated");
+        assert!(app.explorer.scroll_offset > 0);
+        assert!(app.explorer.viewport_indices(5).contains(&app.explorer.selected));
+        assert!(!app.side_notice.visible());
+    }
+}
+
+fn failure(app: &mut App) {
+    app.wait_for_background(Duration::from_secs(10), |app| app.side_notice.visible());
+    assert!(app.side_notice.visible());
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.editor().unwrap().rope.to_string(), "origin\n");
+    assert!(app.terminal_panel_focused);
+    assert_eq!(app.active_pane, ActivePane::Editor);
+}
+
+#[test]
+fn outside_directory_is_rejected_with_a_small_explanatory_notice_and_success_clears_it() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(root.path().join("workspace-other")).unwrap();
+    let mut app = fixture("workspace-other/");
+    app.terminals[0].terminal_cwd = root.path().into();
+    app.explorer = crate::explorer::FileExplorer::new_deferred(workspace.clone());
+    app.show_explorer = false;
+    click(&mut app, 4, KeyModifiers::CONTROL);
+    failure(&mut app);
+    assert!(!app.show_explorer);
+    assert_eq!(app.explorer.root, workspace);
+    assert!(app.notification_history.last().unwrap().0.contains("outside the current workspace"));
+    let mut output = Terminal::new(TestBackend::new(90, 14)).unwrap();
+    app.status_bar_area = Some(Rect::new(0, 13, 90, 1));
+    output.draw(|frame| crate::ui_side_notice::draw(frame, &mut app)).unwrap();
+    let text: String = output.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+    assert!(text.contains("Cannot open terminal path"));
+    assert!(text.contains("outside the current workspace"));
+    assert!(text.contains("Details"));
+    assert_eq!(app.side_notice.area.unwrap().height, 5);
+    app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(200, 8, "workspace/"));
+    click(&mut app, 4, KeyModifiers::CONTROL);
+    app.wait_for_background(Duration::from_secs(10), |app| app.active_pane == ActivePane::Explorer);
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    assert!(!app.side_notice.visible());
+    assert_eq!(app.explorer.root, workspace);
+}
+
+#[test]
+fn missing_terminal_paths_report_the_reason_without_creating_empty_file_tabs() {
+    for path in ["missing.rs", "missing/folder/"] {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = fixture(path);
+        app.terminals[0].terminal_cwd = root.path().into();
+        app.explorer = crate::explorer::FileExplorer::new_deferred(root.path().into());
+        click(&mut app, 3, KeyModifiers::CONTROL);
+        failure(&mut app);
+        let message = &app.notification_history.last().unwrap().0;
+        assert!(message.contains("Path does not exist"), "{message}");
+        assert!(message.contains(path.trim_end_matches('/')), "{message}");
+    }
+}
+
+#[test]
+fn a_folder_excluded_from_the_explorer_has_visible_failure_feedback() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    let mut app = fixture("./.git/");
+    app.terminals[0].terminal_cwd = root.path().into();
+    app.explorer = crate::explorer::FileExplorer::new_deferred(root.path().into());
+    click(&mut app, 4, KeyModifiers::CONTROL);
+    app.wait_for_background(Duration::from_secs(10), |app| app.side_notice.visible());
+    assert!(app.side_notice.visible());
+    assert!(app.notification_history.last().unwrap().0.contains("excluded"));
+    assert!(app.terminal_panel_focused);
+    assert_eq!(app.active_pane, ActivePane::Editor);
+    assert_eq!(app.explorer.root, root.path());
+    assert_eq!(app.tabs.len(), 1);
 }

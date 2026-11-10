@@ -16,3 +16,6 @@ tests/fixtures/waveform-viewer/third-party/** -text whitespace=cr-at-eol,-blank-
 
 # Replay fixtures are verified with byte-level SHA-256.
 tests/fixtures/completion-replay/** -text whitespace=cr-at-eol,-blank-at-eof
+
+# The TextMate reference hashes this corpus with LF line endings.
+src/testdata/theme_scope_corpus.txt text eol=lf

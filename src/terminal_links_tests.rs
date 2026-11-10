@@ -4,6 +4,19 @@ use crate::terminal::TerminalEmulator;
 const ERROR: &str = "Error in \"/my/work/path/workplace/directory/file.c\", line 4755, column 49: Undeclared variable L2I_FATAL_ERROR_EVSOCK_DMA_INT_ERR.";
 
 #[test]
+fn directory_paths_include_trailing_separators_roots_and_parent_directory_spelling() {
+    for path in ["src/", "./src", "../src/", "/tmp/project/", "資料/", r"C:\work\", r"C:\", "/", ".", ".."] {
+        let parsed = parse(path);
+        assert_eq!(parsed.len(), 1, "{path}");
+        assert_eq!(parsed[0].location.path, path);
+        assert_eq!(parsed[0].location.line, None);
+    }
+    let parsed = parse("Directory \"my project/src/\"");
+    assert_eq!(parsed[0].location.path, "my project/src/");
+    assert!(parse("ordinary terminal output").is_empty());
+}
+
+#[test]
 fn compiler_locations_support_quotes_colons_parentheses_and_plain_paths() {
     for (message, path, line, column) in [
         (ERROR, "/my/work/path/workplace/directory/file.c", Some(4754), 48),

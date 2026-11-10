@@ -103,6 +103,13 @@ the current directory explicitly, or choose **Open folder…** in the empty wind
 Loose files and tools can remain open while folders are added; their window state
 is stored separately from folder sessions.
 
+Use **File → Open File by Path…** (also available in the command palette) to open
+an individual file anywhere without changing the workspace. Enter an absolute
+path, a path relative to the folder shown in the dialog, or a `file://` URL.
+In a headless SSH session, the dialog defaults to **Remote**; choose **Use This
+Device** to open a local file instead. Files stay at their original location,
+and Save writes back to the device they were opened from.
+
 Click the directory name at the top and use **Open folders** to switch folders,
 or the adjacent **+** to add a folder. **File → Open Folder…** also adds a folder
 and selects it; adding an already open folder returns to its live session. Each folder keeps
@@ -119,6 +126,10 @@ picker to see each folder's latest event and whether it is working or needs
 attention. Visiting a folder clears its folder badge; terminal and chat
 views retain their own unread indicators until viewed. Terminal command completion
 uses shell integration (OSC 133/633); terminal process exits are also reported.
+
+Remote terminal tabs show a spinner when input has waited over 200 ms for the
+remote console to accept it. Hover over the tab for an explanation. The spinner
+clears on acknowledgement, including at password prompts that do not echo input.
 
 Use **Folders: Close Current Folder…** in the Command Palette or **Close current
 folder…** in the directory picker to close a folder. This action appears only when
@@ -189,6 +200,10 @@ Some terminals send the same byte for `Ctrl+H` and `Ctrl+Backspace`. VTCode
 prioritizes deletion when they cannot be distinguished; use **Edit → Replace**
 or the command palette instead. Extended key reporting keeps both shortcuts distinct.
 
+Tab labels use compact spacing. Hover a tab to reveal its **×** close control
+over the label. Very short names stay visible, with **×** in their existing edge
+padding. Hovering never shifts neighboring tabs.
+
 Rename terminal tabs by right-clicking a tab and choosing **Rename Terminal…**,
 or use **Terminal → Rename Terminal…** or the command palette. Names stay with
 the session when moving between the side panel and an editor tab.
@@ -201,6 +216,11 @@ SSH. Resolve each conflict, save the file, and stage its resolution. The operati
 card explains any remaining blockers and enables **Continue Rebase** or
 **Continue Cherry-pick** when the repository is ready. **Skip Commit…** and
 **Abort…** ask for confirmation before discarding resolution changes.
+
+Click a colored gutter marker to preview a change. The copy icon beside each
+block's **+ / −** controls copies its old lines. Right-click the preview for
+copy, select-all, and change actions, including copying a single old line.
+**Shift+F10** opens this menu from the keyboard; **Esc** dismisses the menu first.
 
 In terminal output, right-click a selection to copy it and clear the selection;
 right-click without a selection to paste. Mouse-aware terminal applications receive

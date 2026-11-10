@@ -256,7 +256,7 @@ impl TabNameDuplicates {
         scroll: usize,
         width: u16,
     ) -> Option<Self> {
-        Self::for_candidates(app, tabs, active, scroll, if width == 0 { 0 } else { usize::from(width) / 4 + 2 })
+        Self::for_candidates(app, tabs, active, scroll, if width == 0 { 0 } else { usize::from(width) / 2 + 2 })
     }
 
     /// Continuous scrolling needs widths across the whole strip. Share the

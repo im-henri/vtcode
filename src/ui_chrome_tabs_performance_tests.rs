@@ -85,7 +85,7 @@ fn viewport_duplicate_names_match_individual_labels_and_exact_frames_after_mutat
                 assert!(
                     duplicates
                         .as_ref()
-                        .is_none_or(|cache| cache.name_count() <= usize::from(width) / 4 + 2)
+                        .is_none_or(|cache| cache.name_count() <= usize::from(width) / 2 + 2)
                 );
             }
         }
@@ -128,8 +128,8 @@ fn tab_hits_match_drawn_buttons_and_stay_inside_the_bar() {
                 assert_eq!(hits.tab_at(rect.x).map(|hit| hit.0), Some(index));
                 if app.tabs[index].pinned {
                     assert!(close.is_empty());
-                } else if index == app.active_tab && close.width == 3 {
-                    assert_eq!(buffer[(close.x + 1, area.y)].symbol(), "×");
+                } else if !close.is_empty() {
+                    assert_ne!(buffer[(close.x, area.y)].symbol(), "×", "active tabs do not show close until hovered");
                 }
             }
             assert!(hits.tab_at(area.right()).is_none());
@@ -159,10 +159,11 @@ fn tab_hits_follow_renames_reorders_dirty_state_and_unicode_without_stale_geomet
             x = x.saturating_add(width);
         }
     }
+    app.tabs[0].pinned = false;
     app.tabs[0].editor.file_path = Some(format!("{}.rs", "界".repeat(40_000)).into());
     let hits = TabBarHits::new(&app, Rect::new(65_500, 0, 20, 1));
-    assert_eq!(hits.tabs[0].1.width, 16);
-    assert!(hits.tabs[0].2.is_empty(), "off-screen close must not wrap into the pane");
+    assert!(hits.tabs[0].1.width <= 12);
+    assert!(!hits.tabs[0].2.is_empty(), "ellipsized titles keep the close control on screen");
     assert!(hits.tab_at(65_520).is_none());
 }
 
@@ -181,14 +182,19 @@ fn split_tab_bars_share_path_hints_and_matching_hit_geometry() {
         draw_tab_bar_for_group(frame, &app, Rect::new(0, 0, 100, 1), 0, std::time::Instant::now());
         draw_tab_bar_for_group(frame, &app, Rect::new(0, 2, 100, 1), 1, std::time::Instant::now());
     }).unwrap();
-    let buffer = terminal.backend().buffer();
+    let buffer = terminal.backend().buffer().clone();
     for (group, row, branch) in [(0, 0, "arm_cache"), (1, 2, "axi_rv32")] {
         let text: String = (0..100).map(|x| buffer[(x, row)].symbol()).collect();
         assert!(text.contains(branch), "{text}");
         let hits = TabBarHits::for_group(&app, Rect::new(0, row, 100, 1), group);
         let (_, rect, close) = hits.tabs[0];
         assert_eq!(hits.tab_at(rect.x).unwrap().0, 0);
-        assert_eq!(buffer[(close.x + 1, row)].symbol(), "×");
+        assert_ne!(buffer[(close.x, row)].symbol(), "×");
+        app.mouse_position_known = true;
+        app.mouse_col = rect.x + 1;
+        app.mouse_row = row;
+        terminal.draw(|frame| draw_tab_bar_for_group(frame, &app, Rect::new(0, row, 100, 1), group, std::time::Instant::now())).unwrap();
+        assert_eq!(terminal.backend().buffer()[(close.x, row)].symbol(), "×");
     }
 }
 

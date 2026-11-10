@@ -1018,7 +1018,6 @@ impl App {
 
     fn reveal_opened_diff_tab(&mut self) {
         self.tab_scroll_manual_anchor = None;
-        self.tab_strip_scroll = None;
         self.ensure_active_tab_visible();
     }
 

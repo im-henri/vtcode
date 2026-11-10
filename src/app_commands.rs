@@ -280,7 +280,7 @@ impl App {
                         },
                         |p| p.to_string_lossy().into_owned(),
                     );
-                if let Some(remote) = &self.remote_workspace {
+                if let Some(remote) = self.remote_workspace.as_ref().filter(|_| self.editor_uses_remote_files()) {
                     self.save_as_query = self.editor().and_then(|editor| editor.file_path.as_deref())
                         .and_then(|key| remote.display_path(key).ok())
                         .unwrap_or_else(|| remote.initial_save_path(self.editor().and_then(|editor| editor.suggested_file_name.as_deref())));
@@ -288,6 +288,7 @@ impl App {
                 self.save_as_cursor = self.save_as_query.len();
                 self.save_as_selection_anchor = None;
             }
+            "open_file_path" => self.begin_open_file_path(),
             "new_file" => self.new_file(),
             "close_tab" | "close_tab_menu" => self.close_tab(self.active_tab),
             "close_saved" => self.close_saved_tabs(),

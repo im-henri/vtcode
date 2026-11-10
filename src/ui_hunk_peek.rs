@@ -17,9 +17,14 @@ use crate::{app::App, app_git_display::GitFilePatch};
 
 #[path = "ui_hunk_peek_selection.rs"]
 mod selection;
+#[path = "ui_hunk_peek_context.rs"]
+mod context;
 #[cfg(test)]
 #[path = "ui_hunk_peek_selection_tests.rs"]
 mod selection_tests;
+#[cfg(test)]
+#[path = "ui_hunk_peek_context_tests.rs"]
+mod context_tests;
 
 pub(crate) struct PeekRow {
     pub kind: char,
@@ -101,6 +106,7 @@ pub(crate) struct HunkPeek {
     drag: Option<ScrollDrag>,
     hovered: Option<HoverTarget>,
     selection: selection::Selection,
+    context_menu: Option<context::Menu>,
 }
 
 fn range_start(start: usize, count: usize) -> usize {
@@ -304,6 +310,7 @@ impl HunkPeek {
             drag: None,
             hovered: None,
             selection: selection::Selection::default(),
+            context_menu: None,
         }
     }
 
@@ -354,6 +361,7 @@ impl HunkPeek {
         self.horizontal_scroll = 0;
         self.drag = None;
         self.selection = selection::Selection::default();
+        self.context_menu = None;
         self.layout = None;
     }
 }
@@ -399,7 +407,7 @@ fn make_layout(app: &App, panel: Rect) -> PeekLayout {
     let numbers = (peek.digits * 2 + 3).min(panel.width as usize) as u16;
     // Reserve the buttons on one row, including for one-line additions and
     // deletions. Tiny panes retain the existing toolbar instead of hiding code.
-    let action_width = if matches!(app.hunk_popup_status, 'N' | 'S') { 3 } else { 6 };
+    let action_width = if matches!(app.hunk_popup_status, 'N' | 'S') { 6 } else { 9 };
     let quick_width = if panel.width >= numbers + action_width + 2 { action_width } else { 0 };
     let gutter = numbers + quick_width;
     let code_width = panel.width.saturating_sub(gutter + 1);
@@ -605,20 +613,30 @@ fn button_label(area: Rect, index: usize, actions: &[(&'static str, &str)]) -> &
     else { actions[index].0 }
 }
 
-fn button_rect(area: Rect, index: usize, actions: &[(&'static str, &str)]) -> Rect {
-    let trailing: usize = (index + 1..actions.len()).map(|i| button_label(area, i, actions).width() + 2).sum();
+fn button_rect(app: &App, area: Rect, index: usize, actions: &[(&'static str, &str)]) -> Rect {
+    // Copy lives beside each hunk's +/- buttons. Keep the toolbar fallback
+    // only when the pane is too narrow to show that complete control group.
+    let local_copy = !make_layout(app, area).quick_actions.is_empty();
+    let visible = |i: usize| !local_copy || actions[i].1 != "Copy Old Lines";
+    if !visible(index) { return Rect::default(); }
+    let trailing: usize = (index + 1..actions.len()).filter(|&i| visible(i))
+        .map(|i| button_label(area, i, actions).width() + 2).sum();
     let right = area.right().saturating_sub(trailing as u16).max(area.x);
     let x = right.saturating_sub((button_label(area, index, actions).width() + 2) as u16).max(area.x);
     Rect::new(x, area.y.saturating_add(1), right - x, u16::from(area.height > 1))
 }
 
 fn button_enabled(app: &App, index: usize) -> bool {
+    button_enabled_for_hunk(app, index, app.hunk_peek.as_ref().map_or(0, |peek| peek.selected))
+}
+
+fn button_enabled_for_hunk(app: &App, index: usize, hunk: usize) -> bool {
     let label = buttons(app)[index].1;
     if app.hunk_preview_action_pending() && !matches!(label, "Copy Old Lines" | "Close Preview") {
         return false;
     }
     label != "Copy Old Lines"
-        || app.hunk_peek.as_ref().is_some_and(HunkPeek::has_old_lines)
+        || app.hunk_peek.as_ref().is_some_and(|peek| peek.has_old_lines_in(hunk))
 }
 
 fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
@@ -627,7 +645,7 @@ fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
         let button = if app.hunk_preview_feedback.is_some() {
             feedback_button_rect(area, index, actions)
         } else {
-            button_rect(area, index, actions)
+            button_rect(app, area, index, actions)
         };
         button.contains((col, row).into())
     })
@@ -648,9 +666,9 @@ fn quick_actions(
     let count = if layout.quick_actions.is_empty() {
         0
     } else if revert_only {
-        1
-    } else {
         2
+    } else {
+        3
     };
     let end = peek.scroll.saturating_add(layout.body.height as usize).min(peek.rows.len());
     let first = peek.hunks.partition_point(|hunk| hunk.end_row <= peek.scroll);
@@ -664,10 +682,10 @@ fn quick_actions(
                 .position(|row| row.kind != ' ')?;
             Some((index, layout.body.y + (start + offset - peek.scroll) as u16))
         })
-        .flat_map(move |(hunk, y)| (0..count).map(move |button| QuickAction {
-            area: Rect::new(layout.quick_actions.x + button as u16 * 3, y, 3, 1),
+        .flat_map(move |(hunk, y)| (0..count).map(move |slot| QuickAction {
+            area: Rect::new(layout.quick_actions.x + slot as u16 * 3, y, 3, 1),
             hunk,
-            button,
+            button: if slot + 1 == count { if revert_only { 3 } else { 4 } } else { slot },
         }))
 }
 
@@ -784,6 +802,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         feedback.area = Some(area);
     }
     if area.is_empty() {
+        if let Some(peek) = app.hunk_peek.as_mut() { peek.context_menu = None; }
         return;
     }
     if app.hunk_preview_feedback.is_some() {
@@ -848,10 +867,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let pointer_x = app.code_area.map_or(area.x, |code| code.x);
     draw_frame(f, area, normal, border, pointer_x);
     if area.height < 3 {
+        context::draw(f, app);
         return;
     }
     let actions = buttons(app);
-    let first = button_rect(area, 0, actions);
+    let first = button_rect(app, area, 0, actions);
     let title_area = Rect::new(area.x, area.y + 1, first.x.saturating_sub(area.x), 1);
     let filename = preview_filename(app.hunk_popup_file.as_deref());
     let source = if app.hunk_popup_status == 'S' {
@@ -865,7 +885,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let quick_hovered = quick_action_at(app, layout, app.mouse_col, app.mouse_row);
     let focus = hovered.or(peek.focused_button);
     let mut detail = if let Some(action) = quick_hovered {
-        let label = if app.hunk_popup_status == 'S' {
+        let label = if actions[action.button].1 == "Copy Old Lines" {
+            "Copy Old Lines"
+        } else if app.hunk_popup_status == 'S' {
             "Unstage Hunk"
         } else {
             actions[action.button].1
@@ -918,7 +940,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             peek.focused_button == Some(index), false).remove_modifier(Modifier::DIM);
         f.render_widget(
             Paragraph::new(format!(" {} ", button_label(area, index, actions))).style(style),
-            button_rect(area, index, actions),
+            button_rect(app, area, index, actions),
         );
     }
     let body = layout.body;
@@ -972,9 +994,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
     selection::draw(f, peek, layout, &colors);
     for action in quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S')) {
+        let copy = actions[action.button].1 == "Copy Old Lines";
         let stage = !matches!(app.hunk_popup_status, 'N' | 'S') && action.button == 0;
-        let fg = if peek.hunks[action.hunk].action_line.is_none() || !button_enabled(app, action.button) {
+        let fg = if (!copy && peek.hunks[action.hunk].action_line.is_none())
+            || !button_enabled_for_hunk(app, action.button, action.hunk) {
             colors.fg_dim
+        } else if copy {
+            colors.fg_accent_blue
         } else if stage {
             colors.ui.fg_gutter_added
         } else {
@@ -984,7 +1010,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             fg, bg, quick_hovered == Some(action),
             peek.selected == action.hunk && peek.focused_button == Some(action.button), false,
         ).add_modifier(Modifier::BOLD).remove_modifier(Modifier::DIM);
-        f.render_widget(Paragraph::new(if stage { " + " } else { " − " }).style(style), action.area);
+        f.render_widget(Paragraph::new(if copy { " ⧉ " } else if stage { " + " } else { " − " }).style(style), action.area);
     }
     let vertical_hovered = layout.vertical.contains((app.mouse_col, app.mouse_row).into());
     let (vertical_track, vertical_thumb) = colors.ui.scrollbar_colors(bg, vertical_hovered, peek.drag.is_some_and(|drag| !drag.horizontal));
@@ -1020,6 +1046,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             .or(vertical_hovered.then_some(HoverTarget::VerticalScroll))
             .or(horizontal_hovered.then_some(HoverTarget::HorizontalScroll));
     }
+    context::draw(f, app);
 }
 
 fn row_spans(
@@ -1161,6 +1188,15 @@ fn scroll(app: &mut App, down: bool, amount: usize, horizontal: bool) {
 }
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
+    if context::handle_key(app, key) { return; }
+    if key.code == KeyCode::F(10) && key.modifiers.contains(KeyModifiers::SHIFT) {
+        let layout = input_layout(app);
+        let row = app.hunk_peek.as_ref().map_or(layout.body.y, |peek|
+            layout.body.y + peek.hunks[peek.selected].start_row.saturating_sub(peek.scroll)
+                .min(layout.body.height.saturating_sub(1) as usize) as u16);
+        context::open(app, layout.quick_actions.x, row);
+        return;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
         match key.code {
             KeyCode::Char('c' | 'C') | KeyCode::Insert => { selection::copy(app, false); return; }
@@ -1236,7 +1272,7 @@ fn click_with_modifiers(app: &mut App, col: u16, row: u16, width: u16, height: u
         return;
     }
     if let Some(action) = quick_action_at(app, layout, col, row) {
-        if !button_enabled(app, action.button) { return; }
+        if !button_enabled_for_hunk(app, action.button, action.hunk) { return; }
         if let Some(peek) = app.hunk_peek.as_mut() {
             peek.selected = action.hunk;
             if let Some(line) = peek.hunks[action.hunk].action_line {
@@ -1256,6 +1292,7 @@ fn click_with_modifiers(app: &mut App, col: u16, row: u16, width: u16, height: u
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    if context::handle_mouse(app, mouse) { return; }
     let layout = input_layout(app);
     match mouse.kind {
         MouseEventKind::Moved => {
@@ -1272,6 +1309,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                 peek.hovered = hovered;
             }
         }
+        MouseEventKind::Down(MouseButton::Right) => context::open(app, mouse.column, mouse.row),
         MouseEventKind::Down(MouseButton::Left) => {
             click_with_modifiers(
                 app,
@@ -1653,13 +1691,13 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let peek = app.hunk_peek.as_ref().unwrap();
         let actions: Vec<_> = quick_actions(peek, peek.layout.unwrap(), true).collect();
-        assert_eq!(actions.len(), 2, "one revert button per unsaved hunk");
-        for action in &actions {
+        assert_eq!(actions.len(), 4, "revert and copy buttons per unsaved hunk");
+        for action in actions.iter().filter(|action| action.button == 0) {
             assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), "−");
         }
         assert_eq!(buttons(&app).iter().map(|(_, label)| *label).collect::<Vec<_>>(),
             ["Revert Unsaved Hunk", "Next Change", "Previous Change", "Copy Old Lines", "Close Preview"]);
-        let next = button_rect(peek.layout.unwrap().panel, 1, buttons(&app));
+        let next = button_rect(&app, peek.layout.unwrap().panel, 1, buttons(&app));
         click(&mut app, next.x + 1, next.y, 110, 32);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
         assert_eq!(app.hunk_popup_line, 6);
@@ -1677,7 +1715,7 @@ mod tests {
         click(&mut app, area.x + 20, area.y + 3, 110, 32);
         assert!(app.hunk_popup_active);
         assert_eq!(app.hunk_popup_line, 1);
-        let next = button_rect(area, 2, buttons(&app));
+        let next = button_rect(&app, area, 2, buttons(&app));
         click(&mut app, next.x + 1, next.y, 110, 32);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
         assert_eq!(app.hunk_popup_line, 6);
@@ -1724,9 +1762,9 @@ mod tests {
             let peek = app.hunk_peek.as_ref().unwrap();
             let layout = peek.layout.unwrap();
             let actions: Vec<_> = quick_actions(peek, layout, false).collect();
-            assert_eq!(actions.len(), 2);
+            assert_eq!(actions.len(), 3);
             assert_eq!(actions[0].area.y, actions[1].area.y);
-            for (action, symbol) in actions.iter().zip(["+", "−"]) {
+            for (action, symbol) in actions.iter().zip(["+", "−", "⧉"]) {
                 assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), symbol);
                 assert_eq!(action.area.intersection(layout.body), action.area);
                 assert!(action.area.intersection(layout.code).is_empty());
@@ -1749,7 +1787,7 @@ mod tests {
         let peek = app.hunk_peek.as_ref().unwrap();
         let layout = peek.layout.unwrap();
         let actions: Vec<_> = quick_actions(peek, layout, false).collect();
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 3);
         assert_eq!(actions[0].area.y, layout.body.y, "partial hunk retains its actions");
         let stage = actions[0].area;
         let discard = actions[1].area;
@@ -1781,7 +1819,7 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let peek = app.hunk_peek.as_ref().unwrap();
         let actions: Vec<_> = quick_actions(peek, peek.layout.unwrap(), false).collect();
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 3);
         assert!(actions.iter().all(|action| action.hunk == 1));
 
         app.mouse_col = actions[0].area.x + 1;
@@ -1801,8 +1839,8 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let peek = app.hunk_peek.as_ref().unwrap();
         let actions: Vec<_> = quick_actions(peek, peek.layout.unwrap(), true).collect();
-        assert_eq!(actions.len(), 2, "one unstage action per visible staged hunk");
-        let action = actions[1];
+        assert_eq!(actions.len(), 4, "unstage and copy actions per visible staged hunk");
+        let action = *actions.iter().find(|action| action.hunk == 1 && action.button == 0).unwrap();
         assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), "−");
         mouse(&mut app, MouseEventKind::Moved, action.area.x + 1, action.area.y, KeyModifiers::NONE);
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();

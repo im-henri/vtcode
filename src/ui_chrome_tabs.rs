@@ -17,11 +17,19 @@ pub(crate) use tab_path_labels::NameCache;
 
 #[path = "tab_strip_scroll.rs"]
 mod strip_scroll;
-pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, scroll_by as scroll_strip_by};
+pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, scroll_by as scroll_strip_by, reveal as reveal_strip_tab};
 
 #[path = "tab_reorder_animation.rs"]
 mod reorder;
 pub(crate) use reorder::State as ReorderState;
+
+#[path = "tab_close_overlay.rs"]
+mod close_overlay;
+use close_overlay::CloseOverlay;
+
+#[cfg(test)]
+#[path = "tab_close_overlay_tests.rs"]
+mod close_overlay_tests;
 
 /// Width of each tab-bar scroll indicator ("◂ " / " ▸").
 const TAB_SCROLL_INDICATOR_WIDTH: usize = 2;
@@ -160,19 +168,17 @@ impl TabBarHits {
             if named.is_some_and(|g| g.collapsed) && index != active && !tab.pinned {
                 continue;
             }
-            let name = tab_display_name_with_duplicates(app, index, tab, duplicates);
+            let name = tab_label_name(app, area, group, index, tab, duplicates);
             let width = tab_label_width(app, tab, &name);
             if used + width > usize::from(area.width) && !hits.tabs.is_empty() {
                 hits.right = cells(used, TAB_SCROLL_INDICATOR_WIDTH);
                 used += TAB_SCROLL_INDICATOR_WIDTH;
                 break;
             }
-            let close = if tab.pinned {
-                Rect::default()
-            } else {
-                cells(used + width - 3, 3)
-            };
-            hits.tabs.push((index, cells(used, width), close));
+            let rect = cells(used, width);
+            let close = CloseOverlay::for_tab(tab, &name, width)
+                .map_or_else(Rect::default, |close| close.rect(rect, 0));
+            hits.tabs.push((index, rect, close));
             hits.tab_widths.push(width);
             used += width;
         }
@@ -221,7 +227,8 @@ impl TabBarHits {
 }
 
 fn tab_label_width(app: &App, tab: &crate::app::Tab, display_name: &str) -> usize {
-    let icon = tab_marker(app, tab).map_or_else(
+    // Terminal activity and completion markers keep the usual icon's width.
+    let icon = chat_tab_marker(app, tab.kind).map_or_else(
         || tab_icon(tab), |(icon, _)| icon,
     );
     tab_label_width_with_icon(tab, display_name, icon)
@@ -232,7 +239,37 @@ fn tab_label_width_with_icon(tab: &crate::app::Tab, display_name: &str, icon: &s
         + if tab.has_unsaved_changes() { 2 } else { 0 }
         + icon.width()
         + usize::from(tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable)
-        + display_name.width() + 3
+        + display_name.width() + 1
+}
+
+/// Keep long titles readable without letting one tab consume the strip. The
+/// middle ellipsis preserves both the filename's beginning and its view suffix.
+fn tab_label_name<'a>(
+    app: &'a App,
+    area: Rect,
+    group: usize,
+    index: usize,
+    tab: &'a crate::app::Tab,
+    duplicates: Option<&TabNameDuplicates>,
+) -> std::borrow::Cow<'a, str> {
+    let name = tab_display_name_with_duplicates(app, index, tab, duplicates);
+    let available = usize::from(area.width.saturating_sub(crate::ui_desks::controls(app, area, group).2));
+    // Leave at least a third for neighbours on normal panes, and account for
+    // both scroll arrows. Tiny panes still clip safely by terminal cells.
+    let room = available.saturating_sub(4);
+    let limit = (room * 2 / 3).max(12);
+    let decorations = tab_label_width(app, tab, "");
+    let budget = limit.saturating_sub(decorations);
+    let name_width = name.width();
+    // Keep complete staged and unstaged titles when they fit beside the arrows.
+    if name_width <= budget
+        || (matches!(tab.kind, crate::app::TabKind::Diff(_))
+            && name_width <= room.saturating_sub(decorations))
+    {
+        name
+    } else {
+        std::borrow::Cow::Owned(crate::ui_performance::clip_middle(&name, budget))
+    }
 }
 
 pub(crate) fn diff_tab_width(app: &App, tab: &crate::app::Tab) -> usize {
@@ -352,12 +389,29 @@ pub(crate) fn chat_tab_marker(app: &App, kind: crate::app::TabKind) -> Option<(&
     } else { ("◇ ", app.colors.fg_dim) })
 }
 
-fn tab_marker(app: &App, tab: &crate::app::Tab) -> Option<(&'static str, ratatui::style::Color)> {
+pub(crate) fn terminal_input_marker(app: &App, index: usize, now: std::time::Instant) -> Option<&'static str> {
+    let progress = app.terminals.get(index)?.terminal_pty.as_ref()?.remote_input_progress();
+    crate::terminal_input_activity::symbol(progress, now)
+}
+
+pub(crate) fn show_terminal_input(app: &App, index: Option<usize>, now: std::time::Instant) {
+    if let Some(terminal) = index.and_then(|index| app.terminals.get(index))
+        && terminal.terminal_pty.as_ref().is_some_and(|pty| pty.remote_input_progress().pending)
+    {
+        terminal.input_activity.show(now);
+    }
+}
+
+fn tab_marker(app: &App, tab: &crate::app::Tab, now: std::time::Instant) -> Option<(&'static str, ratatui::style::Color)> {
     if tab.kind != crate::app::TabKind::Terminal {
         return chat_tab_marker(app, tab.kind);
     }
-    let notice = &app.terminals.get(tab.terminal_idx?)?.completion;
-    notice.visible(std::time::Instant::now()).then_some((
+    let index = tab.terminal_idx?;
+    if let Some(symbol) = terminal_input_marker(app, index, now) {
+        return Some((symbol, app.colors.fg_accent_blue));
+    }
+    let notice = &app.terminals.get(index)?.completion;
+    notice.visible(now).then_some((
         // Match the usual ">_ " icon width so close targets never move.
         "●  ", if notice.failed() { app.colors.fg_error } else { app.colors.fg_success },
     ))
@@ -383,16 +437,10 @@ pub(crate) fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
 
 pub(crate) fn draw_active_tab_bar(f: &mut Frame, app: &mut App, area: Rect) {
     app.tab_bar_area = Some(area);
-    // The earlier reveal uses the previous pane width and estimates for
-    // neighboring labels. Confirm the diff will fit in this frame's strip.
-    if !app.rendering_animation_frame
-        && app.tab_scroll_offset != app.active_tab
-        && app.tab_scroll_manual_anchor != Some(app.active_tab)
-        && app.tabs.get(app.active_tab).is_some_and(|tab| matches!(tab.kind, crate::app::TabKind::Diff(_)))
-        && !TabBarHits::for_group_with_names(app, area, app.active_group, None)
-            .tabs.iter().any(|(index, _, _)| *index == app.active_tab)
-    {
-        app.tab_scroll_offset = app.active_tab;
+    // Use this frame's measured pane width, including after a resize or an
+    // asynchronously updated diff title.
+    if !app.rendering_animation_frame {
+        app.ensure_active_tab_visible();
     }
     draw_tab_bar(f, app, area);
 }
@@ -542,12 +590,23 @@ pub(crate) fn draw_tab_bar_for_group(
                 .add_modifier(Modifier::UNDERLINED)
                 .underline_color(border);
         }
-        let marker = tab_marker(app, tab);
+        let marker = tab_marker(app, tab, now);
         let icon = marker.map_or_else(
             || tab_icon(tab),
             |(icon, _)| icon,
         );
         let mut spans = vec![Span::styled(if tab.pinned { " 📌" } else { " " }, style)];
+        let icon_start = if tab.pinned { " 📌".width() } else { 1 }
+            + if tab.has_unsaved_changes() { 2 } else { 0 };
+        if icon_start >= clip && icon_start < clip + usize::from(rect.width) {
+            match tab.kind {
+                crate::app::TabKind::Terminal => show_terminal_input(app, tab.terminal_idx, now),
+                crate::app::TabKind::Chat(_) if icon == app.chat.activity.tab_symbol() => {
+                    app.chat.activity.show();
+                }
+                _ => {}
+            }
+        }
         if tab.has_unsaved_changes() {
             spans.push(Span::styled(
                 "● ",
@@ -559,15 +618,14 @@ pub(crate) fn draw_tab_bar_for_group(
             crate::app::TabKind::File | crate::app::TabKind::GitRevision
         ) {
             style.fg(crate::file_icons::for_editor(&tab.editor).1)
-        } else if tab.kind == crate::app::TabKind::Terminal && let Some((_, color)) = marker {
+        } else if let Some((_, color)) = marker {
             style.fg(app.colors.ui.readable_foreground(color, tab_bg, 3.0))
         } else {
             style
         };
         if matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision) {
-            let start = if tab.pinned { " 📌".width() } else { 1 } + if tab.has_unsaved_changes() { 2 } else { 0 };
-            let first = start.max(clip);
-            let end = (start + icon.width()).min(clip + usize::from(rect.width));
+            let first = icon_start.max(clip);
+            let end = (icon_start + icon.width()).min(clip + usize::from(rect.width));
             if end > first {
                 file_icon_areas.push(Rect::new(rect.x + (first - clip) as u16, rect.y, (end - first) as u16, 1));
             }
@@ -576,39 +634,23 @@ pub(crate) fn draw_tab_bar_for_group(
         if tab.editor.disk_unavailable && tab.kind == crate::app::TabKind::File {
             spans.push(Span::styled("~", style));
         }
-        let display_name = tab_display_name_with_duplicates(app, i, tab, duplicates.as_ref());
+        let display_name = tab_label_name(app, area, group, i, tab, duplicates.as_ref());
         let width = tab_label_width(app, tab, &display_name);
+        let close_overlay = CloseOverlay::for_tab(tab, &display_name, width);
         spans.push(Span::styled(display_name, style));
-        spans.push(Span::styled("   ", style));
+        spans.push(Span::styled(" ", style));
         if let Some(labels) = &mut reorder_labels {
-            let mut line = Line::from(spans.iter().cloned().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>());
-            if !tab.pinned && (is_active || hovered) {
-                *line.spans.last_mut().unwrap() = Span::styled(" × ", app.colors.ui.toolbar_style(
-                    fg, tab_bg, close.contains((app.mouse_col, app.mouse_row).into()), false, false,
-                ));
-            }
-            let start = if tab.pinned { " 📌".width() } else { 1 }
-                + if tab.has_unsaved_changes() { 2 } else { 0 };
+            let line = Line::from(spans.iter().cloned().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>());
             labels.push(reorder::Label {
                 id: tab.editor.navigation_id, index: i, x: i32::from(rect.x) - clip as i32,
-                width, pinned: tab.pinned, line, style,
+                width, close: close_overlay, line, style,
                 icon: matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision)
-                    .then_some(start..start + icon.width()),
+                    .then_some(icon_start..icon_start + icon.width()),
             });
         }
         f.render_widget(Paragraph::new(Line::from(spans)).scroll((0, crate::helpers::len_as_u16(clip))).style(style), rect);
-        if !close.is_empty() && (is_active || hovered) {
-            f.render_widget(
-                Paragraph::new(" × ").scroll((0, crate::helpers::len_as_u16(clip.saturating_sub(width - 3)))).style(app.colors.ui.toolbar_style(
-                    fg,
-                    tab_bg,
-                    close.contains((app.mouse_col, app.mouse_row).into()),
-                    false,
-                    false,
-                )),
-                close,
-            );
-        }
+        let gap = close_overlay.map_or_else(Rect::default, |close| close.gap_rect(rect, clip));
+        close_overlay::paint(f, app, rect, close, gap, style);
         if is_active {
             active_rect = Some(rect);
         }
@@ -759,9 +801,10 @@ fn draw_tab_bar_labels(
 ) {
     // Hidden tabs do not produce spans. Keep allocation tied to the viewport,
     // including the one partially visible tab and both scroll indicators.
-    let visible_capacity = app.tabs.len().min(usize::from(area.width) / 4 + 2);
+    let visible_capacity = app.tabs.len().min(usize::from(area.width) / 2 + 2);
     let mut spans = Vec::with_capacity(visible_capacity * 6 + 2);
     let mut file_icon_areas = Vec::new();
+    let mut close_overlays = Vec::new();
     let mut active_tab_area = None;
     let has_gradient = app.colors.gradients.bg_tabbar.start != app.colors.gradients.bg_tabbar.end;
     let tab_active_bg = app.colors.bg_tab_active;
@@ -796,25 +839,16 @@ fn draw_tab_bar_labels(
             } else {
                 ""
             };
-        let chat_marker = tab_marker(app, tab);
+        let chat_marker = tab_marker(app, tab, now);
         let icon = chat_marker.map_or_else(|| tab_icon(tab), |(icon, _)| icon);
         let file_icon_color = chat_marker.map(|(_, color)| color);
-        let show_close = !tab.pinned
-            && (i == app.active_tab || app.hovered_tab == Some(i) || app.dragging_tab == Some(i));
-        let close = if tab.pinned {
-            "   "
-        } else if show_close {
-            " × "
-        } else {
-            "   "
-        };
-
         // Show dedicated name for markdown preview tabs, otherwise normal/diff label.
-        let display_name = tab_display_name_with_duplicates(app, i, tab, duplicates);
+        let display_name = tab_label_name(app, bar, app.active_group, i, tab, duplicates);
 
         let prefix = if tab.pinned { " 📌" } else { " " };
         let modified_width = if tab.has_unsaved_changes() { 2 } else { 0 }; // "● " = 2
         let tab_width = tab_label_width_with_icon(tab, display_name.as_ref(), icon);
+        let close_overlay = CloseOverlay::for_tab(tab, &display_name, tab_width);
         if used_width + tab_width > available_width && visible_count > 0 {
             // Show right scroll indicator
             let right_style = app.colors.ui.toolbar_style(fg_text, tab_bar_bg, app.hovered_tab_scroll_right, false, false);
@@ -836,6 +870,11 @@ fn draw_tab_bar_labels(
             && matches!(tab.kind, crate::app::TabKind::Chat(_))
             && chat_marker.is_some_and(|(icon, _)| icon.trim_end() == app.chat.activity.symbol()) {
             app.chat.activity.show();
+        }
+        if tab.kind == crate::app::TabKind::Terminal
+            && used_width + prefix.width() + modified_width < available_width
+        {
+            show_terminal_input(app, tab.terminal_idx, now);
         }
 
         let is_dragging = app.dragging_tab == Some(i);
@@ -888,20 +927,22 @@ fn draw_tab_bar_labels(
         let label = if deleted_prefix.is_empty() { display_name }
             else { std::borrow::Cow::Owned(format!("{deleted_prefix}{display_name}")) };
         spans.push(Span::styled(label, text_style));
-        let close_style = if show_close {
-            let is_close_hovered = app.hovered_tab == Some(i) && app.hovered_tab_close_btn;
-            app.colors.ui.toolbar_style(fg, bg, is_close_hovered, false, false)
-        } else {
-            Style::default().bg(bg)
-        };
-        if let Some(border) = app.colors.ui.border_tab {
-            spans.push(Span::styled(close, close_style.add_modifier(Modifier::UNDERLINED).underline_color(border)));
-        } else { spans.push(Span::styled(close, close_style)); }
+        let trailing_style = app.colors.ui.border_tab.map_or(text_style, |border|
+            text_style.add_modifier(Modifier::UNDERLINED).underline_color(border));
+        spans.push(Span::styled(" ", trailing_style));
+        let rect = Rect::new(area.x.saturating_add(crate::helpers::len_as_u16(used_width)),
+            area.y, crate::helpers::len_as_u16(tab_width), 1).intersection(area);
+        if let Some(close) = close_overlay
+            && app.mouse_position_known
+            && rect.contains((app.mouse_col, app.mouse_row).into())
+        {
+            close_overlays.push((rect, close.rect(rect, 0), close.gap_rect(rect, 0), text_style));
+        }
         if let Some(labels) = &mut reorder_labels {
             let start = prefix.width() + modified_width;
             labels.push(reorder::Label {
                 id: tab.editor.navigation_id, index: i, x: i32::from(area.x) + used_width as i32,
-                width: tab_width, pinned: tab.pinned, style: text_style,
+                width: tab_width, close: close_overlay, style: text_style,
                 line: Line::from(spans[span_start..].iter().map(|span|
                     Span::styled(span.content.to_string(), span.style)).collect::<Vec<_>>()),
                 icon: is_file_tab.then_some(start..start + icon.width()),
@@ -928,6 +969,7 @@ fn draw_tab_bar_labels(
     let line = Line::from(spans);
     let p = Paragraph::new(line);
     f.render_widget(p, area);
+    for (tab, close, gap, style) in close_overlays { close_overlay::paint(f, app, tab, close, gap, style); }
 
     // Apply gradient to tab bar background (cell by cell)
     let tb_grad = &app.colors.gradients.bg_tabbar;
@@ -1834,6 +1876,9 @@ mod tests {
 
         let area = Rect::new(0, 0, 80, 1);
         app.tab_bar_area = Some(area);
+        app.mouse_position_known = true;
+        app.mouse_col = TabBarHits::new(&app, area).tabs[0].1.x + 1;
+        app.mouse_row = area.y;
         let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
         terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
         let clean = terminal.backend().buffer().clone();

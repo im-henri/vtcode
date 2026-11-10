@@ -1,9 +1,9 @@
 //! Ctrl-hover/click navigation uses the retained terminal grid. Path resolution
 //! stays lexical; remote classification and reads happen only on click.
-use crate::{app::{ActivePane, App}, app_terminal_selection::TerminalSurface, terminal::links::{Cache, Location}};
+use crate::{app::{ActivePane, App, NotifyLevel}, app_terminal_selection::TerminalSurface, terminal::links::{Cache, Location}};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Frame, style::Modifier, text::Line};
-use std::path::PathBuf;
+use std::{io, path::{Path, PathBuf}};
 
 #[derive(Clone, Copy)]
 struct Hover { surface: TerminalSurface, link: usize }
@@ -13,6 +13,7 @@ pub(crate) struct Controller {
     cache: Cache,
     hover: Option<Hover>,
     captured: bool,
+    directory: Option<(u64, PathBuf, crate::app_remote_navigation::Origin)>,
 }
 
 impl Controller {
@@ -76,22 +77,123 @@ pub(crate) fn resolve_path(app: &App, index: usize, value: &str) -> Result<PathB
 }
 
 fn open(app: &mut App, surface: TerminalSurface, location: Location) {
+    app.side_notice.remove("terminal-path-error");
+    app.cancel_terminal_directory_reveal();
     let path = match resolve_path(app, surface.index, &location.path) {
         Ok(path) => path,
-        Err(error) => { app.notify_warn(error); return; }
+        Err(error) => { show_error(app, error); return; }
     };
     app.focus_terminal_surface(surface);
-    if app.remote_workspace.is_some() {
-        app.open_remote_location_at(path, location.line, location.column, crate::app_remote_navigation::Source::Terminal);
-    } else {
-        app.push_nav_history();
-        app.open_file(&path);
-        app.terminal_panel_focused = false;
-        app.active_pane = ActivePane::Editor;
-        if let Some(line) = location.line && let Some(editor) = app.editor_mut()
-            && editor.file_path.as_deref().is_some_and(|other| App::same_open_path(other, &path))
+    app.open_terminal_location_at(path, location.line, location.column);
+}
+
+/// Local filesystem access shares the cancellable link worker used for SSH.
+/// Canonical identities map directory aliases back into the current tree.
+pub(crate) fn open_local_location(path: &Path, root: &Path, cancel: &crate::background::CancellationToken, files_only: bool)
+    -> io::Result<crate::remote::workspace::Location>
+{
+    use crate::remote::workspace::Location;
+    let result = (|| {
+        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+        let metadata = std::fs::metadata(path)?;
+        if metadata.is_dir() {
+            if files_only { return Err(io::Error::new(io::ErrorKind::IsADirectory, "Choose a file, not a folder")); }
+            let canonical = path.canonicalize()?;
+            let canonical_root = root.canonicalize()?;
+            let relative = crate::native_paths::strip_prefix(&canonical, &canonical_root)
+                .ok_or_else(|| io::Error::other("Folder is outside the current workspace"))?;
+            // Opening a directory listing verifies access without walking it.
+            drop(std::fs::read_dir(&canonical)?);
+            return Ok(Location::Directory(root.join(relative)));
+        }
+        let (file, metadata) = crate::fs_ops::open_document_source(path, false)?;
+        crate::editor::decode_text_source(file, metadata, path, Some(cancel)).map(Location::File)
+    })();
+    result.map_err(|error: io::Error| match error.kind() {
+        io::ErrorKind::NotFound => io::Error::new(error.kind(), "Path does not exist"),
+        io::ErrorKind::PermissionDenied => io::Error::new(error.kind(), "Permission denied for this path"),
+        _ => error,
+    })
+}
+
+pub(crate) fn show_error(app: &mut App, error: String) {
+    app.notify_warn(error.clone());
+    show_error_notice(app, error);
+}
+
+pub(crate) fn show_path_error(app: &mut App, path: &Path, error: String) {
+    app.notify_warn(format!("Cannot open {}: {error}", app.display_path(path)));
+    show_error_notice(app, error);
+}
+
+fn show_error_notice(app: &mut App, error: String) {
+    let message = if error.contains("outside the current workspace") {
+        "Folder is outside the current workspace".into()
+    } else { error };
+    app.side_notice.show("terminal-path-error", crate::ui_side_notice::Notice {
+        title: "Cannot open terminal path",
+        message,
+        level: NotifyLevel::Warning,
+        actions: &[crate::ui_side_notice::Action { label: "Details", command: "show_notifications" }],
+    });
+}
+
+impl App {
+    pub(crate) fn cancel_terminal_directory_reveal(&mut self) {
+        if let Some((_, path, _)) = self.terminal_links.directory.take() {
+            self.explorer.cancel_pending_reveal(&path);
+        }
+    }
+
+    pub(crate) fn cancel_stale_terminal_directory_reveal(&mut self) {
+        if self.terminal_links.directory.as_ref().is_some_and(|(generation, _, origin)|
+            *generation != self.workspace_generation || !origin.matches(self))
         {
-            editor.set_centered_cursor(line as usize, location.column as usize);
+            self.cancel_terminal_directory_reveal();
+        }
+    }
+
+    pub(crate) fn reveal_terminal_directory(&mut self, path: &Path) {
+        if crate::native_paths::strip_prefix(path, &self.explorer.root).is_none()
+            || self.remote_workspace.as_ref().is_some_and(|workspace|
+                workspace.remote_path(path).map_or(true, |path| path.is_absolute()))
+        {
+            show_path_error(self, path, "Folder is outside the current workspace".into());
+            return;
+        }
+        let filtering = self.explorer.find.filtering();
+        if filtering {
+            self.explorer.find.filter = false;
+            self.explorer.prepare_find();
+        }
+        self.explorer.find.select_first = false;
+        self.terminal_links.directory = Some((self.workspace_generation, path.to_owned(),
+            crate::app_remote_navigation::Origin::capture(self, crate::app_remote_navigation::Source::Terminal)));
+        let refresh = if path == self.explorer.root {
+            self.explorer.selected = 0;
+            self.explorer.scroll_offset = 0;
+            filtering
+        } else {
+            self.explorer.reveal_directory_deferred(path) || filtering
+        };
+        if refresh { self.refresh_explorer_tree_async(); }
+        else { self.finish_terminal_directory_reveal(None); }
+    }
+
+    pub(crate) fn finish_terminal_directory_reveal(&mut self, error: Option<&str>) {
+        let Some((generation, path, origin)) = self.terminal_links.directory.take() else { return; };
+        if generation != self.workspace_generation || !origin.matches(self) { return; }
+        if let Some(error) = error {
+            show_path_error(self, &path, error.to_owned());
+        } else if path != self.explorer.root && self.explorer.find_path(&path).is_none() {
+            show_path_error(self, &path, "Folder is excluded, inaccessible or removed".into());
+        } else {
+            self.show_explorer = true;
+            self.sidebar_view = crate::app::SidebarView::Explorer;
+            self.terminal_panel_focused = false;
+            self.active_pane = ActivePane::Explorer;
+            self.clear_explorer_selection();
+            self.set_explorer_single_selection(self.explorer.selected);
         }
     }
 }
@@ -145,7 +247,7 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
     let Some(hover) = app.terminal_links.hover else { return; };
     if !app.terminal_surfaces.contains(&hover.surface) { return; }
     let location = &app.terminal_links.cache.links[hover.link].location;
-    let hint = location.line.map_or_else(|| "Ctrl+click to open file".into(), |line| {
+    let hint = location.line.map_or_else(|| "Ctrl+click to open file or reveal folder".into(), |line| {
         format!("Ctrl+click to open file · line {}, column {}", u64::from(line) + 1, u64::from(location.column) + 1)
     });
     crate::ui_widgets::Tooltip::hover(vec![Line::raw(hint)], &app.colors)

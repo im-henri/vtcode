@@ -92,6 +92,14 @@ fn terminal_rename_opens_from_palette_menu_and_both_tab_context_menus() {
         assert_eq!(app.tabs[0].editor.rope.to_string(), "unchanged document");
         assert_eq!(app.terminal_panel_focused, route != 3, "restore focus, route={route}");
         assert!(app.terminals.iter().all(|terminal| terminal.terminal_pty.is_none()));
+        // Move away from the tab strip so the close button stops covering the label.
+        let tab_bar = app.tab_bar_area.unwrap();
+        crate::mouse::handle_mouse(&mut app, MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: tab_bar.x,
+            row: tab_bar.bottom(),
+            modifiers: KeyModifiers::NONE,
+        });
         let terminal = draw(&mut app);
         let screen: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
         assert!(screen.contains("Build – café"), "updated tab label, route={route}");

@@ -42,7 +42,10 @@ impl App {
             tab_mru_order: std::mem::take(&mut self.tab_mru_order),
             active_tab: self.active_tab,
             tab_scroll_offset: self.tab_scroll_offset,
-            tab_strip_scroll: self.tab_strip_scroll.filter(|_| self.tab_scroll_manual_anchor == Some(self.active_tab)),
+            tab_strip_scroll: self.tab_strip_scroll.map(|scroll| crate::ui_chrome_tabs::StripScroll {
+                manual: self.tab_scroll_manual_anchor == Some(self.active_tab),
+                ..scroll
+            }),
             code_area: self.code_area,
             tab_bar_area: self.tab_bar_area,
             editor_area: self.editor_area,
@@ -79,7 +82,7 @@ impl App {
             self.tab_scroll_offset = g.tab_scroll_offset;
             self.tab_strip_scroll = g.tab_strip_scroll;
             self.tab_scroll_manual_anchor = self.tab_strip_scroll
-                .filter(|scroll| self.tabs.get(self.active_tab).is_some_and(|tab| scroll.anchor == tab.editor.navigation_id))
+                .filter(|scroll| scroll.manual && self.tabs.get(self.active_tab).is_some_and(|tab| scroll.anchor == tab.editor.navigation_id))
                 .map(|_| self.active_tab);
             self.code_area = g.code_area;
             self.tab_bar_area = g.tab_bar_area;

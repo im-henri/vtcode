@@ -6,6 +6,8 @@ mod live_tests;
 mod recovery_tests;
 #[path = "safety_tests.rs"]
 mod safety_tests;
+#[path = "link_tests.rs"]
+mod link_tests;
 
 struct Fixture {
     root: tempfile::TempDir,

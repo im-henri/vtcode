@@ -207,6 +207,27 @@ pub(super) fn checked_root(root: &Path) -> Result<()> {
 
 /// Refuse links/junctions and escaping paths, including replaced ancestors.
 pub fn checked_path(root: &Path, relative: &Path) -> Result<PathBuf> {
+    match classify_path(root, relative)? {
+        CheckedPath::Included(path) => Ok(path),
+        CheckedPath::Boundary(path, reason) => Err(format!("{reason}: {}", path.display())),
+    }
+}
+
+/// Pre-existing links and nested repositories are outside snapshot coverage,
+/// even when the Git index contains them or paths underneath them.
+pub(super) fn capture_path(root: &Path, relative: &Path) -> Result<Option<PathBuf>> {
+    match classify_path(root, relative)? {
+        CheckedPath::Included(path) => Ok(Some(path)),
+        CheckedPath::Boundary(_, _) => Ok(None),
+    }
+}
+
+enum CheckedPath {
+    Included(PathBuf),
+    Boundary(PathBuf, &'static str),
+}
+
+fn classify_path(root: &Path, relative: &Path) -> Result<CheckedPath> {
     checked_root(root)?;
     if relative.as_os_str().is_empty()
         || relative.components().any(|part| match part {
@@ -221,22 +242,17 @@ pub fn checked_path(root: &Path, relative: &Path) -> Result<PathBuf> {
         result.push(part);
         match fs::symlink_metadata(&result) {
             Ok(meta) if is_link(&meta) => {
-                return Err(format!(
-                    "Rollback does not follow links: {}",
-                    result.display()
-                ));
+                return Ok(CheckedPath::Boundary(result, "Rollback does not follow links"));
             }
             Ok(meta) if meta.is_dir() && result.join(".git").exists() => {
-                return Err(format!(
-                    "Rollback does not cross nested repositories: {}", result.display()
-                ));
+                return Ok(CheckedPath::Boundary(result, "Rollback does not cross nested repositories"));
             }
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.to_string()),
         }
     }
-    Ok(result)
+    Ok(CheckedPath::Included(result))
 }
 
 fn metadata_name(name: &std::ffi::OsStr) -> bool {

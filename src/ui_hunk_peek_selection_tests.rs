@@ -21,7 +21,13 @@ fn action(app: &mut App, label: &str) {
         .iter()
         .position(|(_, action)| *action == label)
         .unwrap();
-    let area = button_rect(input_layout(app).panel, index, buttons(app));
+    let layout = input_layout(app);
+    let area = button_rect(app, layout.panel, index, buttons(app));
+    let area = if area.is_empty() {
+        let peek = app.hunk_peek.as_ref().unwrap();
+        quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S'))
+            .find(|action| action.hunk == peek.selected && action.button == index).unwrap().area
+    } else { area };
     mouse(
         app,
         MouseEventKind::Down(MouseButton::Left),
@@ -352,7 +358,7 @@ fn selection_scrolls_with_its_rows_and_cancels_drag_on_focus_loss_or_navigation(
 #[test]
 fn copy_button_stays_within_narrow_toolbars_and_is_keyboard_accessible() {
     let _clipboard = crate::clipboard::test_terminal_clipboard();
-    for width in [32, 60, 90] {
+    for width in [14, 32, 60, 90] {
         let mut app = preview("old\n", "new\n");
         app.code_area.as_mut().unwrap().width = width - 6;
         app.gutter_area.as_mut().unwrap().width = 6;
@@ -361,7 +367,8 @@ fn copy_button_stays_within_narrow_toolbars_and_is_keyboard_accessible() {
         let actions = buttons(&app);
         let mut previous_right = layout.panel.x;
         for index in 0..actions.len() {
-            let area = button_rect(layout.panel, index, actions);
+            let area = button_rect(&app, layout.panel, index, actions);
+            if area.is_empty() { continue; }
             assert_eq!(area.intersection(layout.panel), area);
             assert!(area.x >= previous_right);
             previous_right = area.right();
@@ -369,7 +376,7 @@ fn copy_button_stays_within_narrow_toolbars_and_is_keyboard_accessible() {
         let title = (layout.panel.x..layout.panel.right())
             .map(|x| terminal.backend().buffer()[(x, layout.panel.y + 1)].symbol())
             .collect::<String>();
-        assert!(title.contains("Copy"));
+        assert_eq!(title.contains("Copy"), layout.quick_actions.is_empty(), "copy moves beside the hunk when it fits");
         let count = actions.len();
         for _ in 0..count - 1 {
             keyboard(&mut app, KeyCode::Tab, KeyModifiers::NONE);

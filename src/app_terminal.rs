@@ -369,8 +369,12 @@ impl App {
                     processed_output = true;
                     needs_redraw |= self.terminal_surfaces.iter().any(|surface| {
                         surface.index == index && !surface.area.is_empty()
-                    });
+                    }) || terminal.input_activity.visible();
                 }
+                // The acknowledgement may arrive before this processing turn
+                // ever sampled the pending state. Clear a rendered spinner in
+                // that case too, even for an inactive terminal with no output.
+                needs_redraw |= terminal.input_activity.visible() && !pty.remote_input_progress().pending;
                 if pty.take_exit_event() {
                     processed_output = true;
                     exited.push(index);
@@ -440,6 +444,14 @@ impl App {
     pub(crate) fn next_terminal_completion_wait(&self, now: Instant) -> Option<std::time::Duration> {
         self.terminals.iter().filter_map(|terminal|
             terminal.completion.next_wait(now, self.animation_settings.any_enabled())).min()
+    }
+
+    pub(crate) fn next_terminal_input_wait(&self, now: Instant) -> Option<std::time::Duration> {
+        if !self.terminal_has_focus { return None; }
+        self.terminals.iter().filter_map(|terminal| {
+            let progress = terminal.terminal_pty.as_ref()?.remote_input_progress();
+            terminal.input_activity.next_wait(progress, now)
+        }).min()
     }
 
     /// Remove any editor-tab view attached to `index`. This is intentionally

@@ -201,7 +201,7 @@ fn decoded_names_match_rendering_and_mouse_targets_in_plain_and_grouped_strips()
             );
             assert_eq!(hits.tab_at(rect.x + 1).map(|hit| hit.0), Some(index));
             if index == app.active_tab {
-                assert_eq!(buffer[(close.x + 1, close.y)].symbol(), "×");
+                assert_ne!(buffer[(close.x, close.y)].symbol(), "×", "close is only shown on hover");
             }
         }
     }

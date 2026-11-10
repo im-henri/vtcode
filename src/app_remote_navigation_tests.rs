@@ -1,6 +1,8 @@
 use super::*;
 #[path = "app_terminal_links_remote_tests.rs"]
 mod terminal_links;
+#[path = "app_open_file_path_remote_tests.rs"]
+mod file_paths;
 use crate::app::Tab;
 use crate::editor::Editor;
 use crate::remote::{self, RemotePath};

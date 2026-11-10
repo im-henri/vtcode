@@ -36,6 +36,7 @@ pub(crate) enum TextInputId {
     CommandPalette,
     SymbolList,
     SaveAs,
+    OpenFilePath,
     FolderAddress,
     FolderSearch,
     FolderName,
@@ -803,6 +804,11 @@ impl App {
                 &mut self.symbol_list_cursor,
                 &mut self.symbol_list_selection_anchor,
             ),
+            TextInputId::OpenFilePath => (
+                &mut self.file_open.input.query,
+                &mut self.file_open.input.cursor,
+                &mut self.file_open.input.anchor,
+            ),
             TextInputId::SaveAs => (
                 &mut self.save_as_query,
                 &mut self.save_as_cursor,
@@ -850,7 +856,7 @@ impl App {
         self.terminal_find.focused = None;
         if matches!(
             id,
-            TextInputId::SaveAs
+            TextInputId::OpenFilePath | TextInputId::SaveAs
                 | TextInputId::RenameSymbol
                 | TextInputId::TerminalRename
                 | TextInputId::GotoLine
@@ -1113,6 +1119,7 @@ impl App {
                 TextInputId::GitOperationTarget => self.git_operation_ui.request.as_ref().is_some_and(|request| request.choice == crate::ui_git_operation::Choice::Start),
                 TextInputId::CommandPalette => self.palette.active,
                 TextInputId::SymbolList => self.symbol_list_active,
+                TextInputId::OpenFilePath => self.file_open.active,
                 TextInputId::SaveAs => self.save_as_active,
                 TextInputId::RenameSymbol => self.rename.symbol_active,
                 TextInputId::TerminalRename => self.terminal_rename.target.is_some(),
@@ -1212,6 +1219,7 @@ impl App {
                 self.file_associations.error = None;
                 self.file_associations.reveal_focus = true;
             }
+            TextInputId::OpenFilePath => self.open_file_path_changed(),
             TextInputId::SaveAs | TextInputId::RenameSymbol | TextInputId::TerminalRename => crate::ui_modal::field_changed(self),
             TextInputId::FolderSearch => self.filter_folder_browser(),
             TextInputId::FolderAddress | TextInputId::FolderName => self.folder_browser.error = None,
@@ -1366,6 +1374,7 @@ impl App {
             | TextInputId::CommandPalette
             | TextInputId::SymbolList
             | TextInputId::SaveAs
+            | TextInputId::OpenFilePath
             | TextInputId::RenameSymbol
             | TextInputId::TerminalRename => true,
             TextInputId::GlobalSearch(_) => {
@@ -1694,6 +1703,7 @@ mod tests {
         TextInputId::CommandPalette,
         TextInputId::SymbolList,
         TextInputId::SaveAs,
+        TextInputId::OpenFilePath,
         TextInputId::FolderAddress,
         TextInputId::FolderSearch,
         TextInputId::FolderName,
@@ -1784,6 +1794,7 @@ mod tests {
             TextInputId::GitOperationTarget => app.start_git_operation_dialog(crate::git_operation::Kind::CherryPick),
             TextInputId::CommandPalette => app.palette.active = true,
             TextInputId::SymbolList => app.symbol_list_active = true,
+            TextInputId::OpenFilePath => app.begin_open_file_path(),
             TextInputId::SaveAs => app.save_as_active = true,
             TextInputId::RenameSymbol => app.rename.symbol_active = true,
             TextInputId::TerminalRename => {
@@ -1965,6 +1976,7 @@ mod tests {
                 TextInputId::GitOperationTarget => crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::GitOperationTarget),
                 TextInputId::CommandPalette => crate::ui_pickers::draw_command_palette(frame, app),
                 TextInputId::SymbolList => crate::ui_pickers::draw_symbol_list(frame, app),
+                TextInputId::OpenFilePath => crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::OpenFilePath),
                 TextInputId::SaveAs => crate::ui_dialogs::draw_save_as_dialog(frame, app),
                 TextInputId::RenameSymbol => {
                     crate::ui_dialogs::draw_rename_symbol_dialog(frame, app)

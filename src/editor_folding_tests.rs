@@ -14,7 +14,9 @@ fn cpp(source: &str) -> Editor {
 
 #[test]
 fn nested_cpp_folds_span_outdented_directives_and_allman_braces() {
-    for source in [NESTED_CPP.to_owned(), NESTED_CPP.replace('\n', "\r\n")] {
+    let lf = NESTED_CPP.replace("\r\n", "\n");
+    let crlf = lf.replace('\n', "\r\n");
+    for source in [lf, crlf] {
         let editor = cpp(&source);
         for (start, end) in [
             ("namespace sample {", "} // namespace"),

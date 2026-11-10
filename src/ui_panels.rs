@@ -257,11 +257,28 @@ pub(crate) fn close_panel(app: &mut App) {
 pub(crate) fn draw_tooltip(frame: &mut Frame, app: &App) {
     let terminal_resize = !app.terminal_sidebar.dragging() && app.terminal_sidebar.handle
         .is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()));
-    if (!app.show_panel && !terminal_resize) || app.menu_active
+    let point = (app.mouse_col, app.mouse_row).into();
+    let terminal_tab = app.terminal_sidebar_tab_areas.iter()
+        .find(|(area, _)| area.contains(point)).map(|(_, index)| *index)
+        .or_else(|| {
+            let area = app.tab_bar_area.filter(|area| area.contains(point))?;
+            let (index, _, _) = crate::ui_chrome_tabs::TabBarHits::new(app, area).tab_at(app.mouse_col)?;
+            let tab = app.tabs.get(index)?;
+            (tab.kind == crate::app::TabKind::Terminal).then_some(tab.terminal_idx).flatten()
+        }).or_else(|| {
+            let (group, area) = app.groups.iter().enumerate()
+                .find_map(|(group, pane)| pane.tab_bar_area.filter(|area| area.contains(point)).map(|area| (group, area)))?;
+            let (index, _, _) = crate::ui_chrome_tabs::TabBarHits::for_group(app, area, group).tab_at(app.mouse_col)?;
+            let tab = if group == app.active_group { app.tabs.get(index)? } else { app.groups[group].tabs.get(index)? };
+            (tab.kind == crate::app::TabKind::Terminal).then_some(tab.terminal_idx).flatten()
+        });
+    let waiting = terminal_tab.is_some_and(|index|
+        crate::ui_chrome_tabs::terminal_input_marker(app, index, std::time::Instant::now()).is_some());
+    if (!app.show_panel && !terminal_resize && !waiting) || app.menu_active || app.tab_context_active
         || app.side_notice.area.is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()))
         || crate::ui_modal::active(app).is_some() || crate::ui_quick_picker::active(app).is_some() { return; }
-    let point = (app.mouse_col, app.mouse_row).into();
-    let hint = if terminal_resize { Some("Drag to resize Terminal".into()) }
+    let hint = if waiting { Some(crate::terminal_input_activity::HINT.into()) }
+        else if terminal_resize { Some("Drag to resize Terminal".into()) }
         else if app.panel_chrome.close.contains(point) { Some("Close Panel".into()) }
         else if app.panel_chrome.maximize.contains(point) { Some(if app.panel_chrome.maximized { "Restore Panel Size" } else { "Maximize Panel" }.into()) }
         else { crate::ui_logs::hint(app) };
@@ -423,9 +440,12 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
             background, app.hovered_terminal_tab == Some(index), false, false,
         );
         if is_active { style = style.add_modifier(Modifier::UNDERLINED).underline_color(app.colors.ui.border_terminal_tab); }
-        let color = if notice.failed() { app.colors.fg_error } else { app.colors.fg_success };
+        crate::ui_chrome_tabs::show_terminal_input(app, Some(index), now);
+        let waiting = crate::ui_chrome_tabs::terminal_input_marker(app, index, now);
+        let color = if waiting.is_some() { app.colors.fg_accent_blue }
+            else if notice.failed() { app.colors.fg_error } else { app.colors.fg_success };
         let label = vec![
-            Span::styled(if notified { "● " } else { "  " },
+            Span::styled(waiting.map_or_else(|| if notified { "● " } else { "  " }.to_owned(), |symbol| format!("{} ", symbol.trim_end())),
                 style.fg(app.colors.ui.readable_foreground(color, background, 3.0))),
             Span::styled(format!("{name} "), style),
         ];

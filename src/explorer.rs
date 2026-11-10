@@ -1264,6 +1264,19 @@ impl FileExplorer {
         );
     }
 
+    pub(crate) fn reveal_directory_deferred(&mut self, path: &Path) -> bool {
+        let expanded = self.expanded_dirs.insert(path.to_owned());
+        let refresh = self.reveal_file_centered_deferred(path);
+        expanded || refresh
+    }
+
+    pub(crate) fn cancel_pending_reveal(&mut self, path: &Path) {
+        if self.pending_reveal.as_deref() == Some(path) {
+            self.pending_reveal = None;
+            self.center_reveal_pending = false;
+        }
+    }
+
     pub(crate) fn reveal_file_centered_deferred(&mut self, file_path: &Path) -> bool {
         // Check the rendered rows before revealing scrolls the selection into
         // view. Visible files must stay put so a preview click can be repeated.

@@ -49,112 +49,6 @@ fn benchmark_tab_lifecycle() {
     eprintln!("switch pane (4,000 tabs): {:?}", samples[3]);
 }
 
-// Frozen pre-optimization geometry, including its temporary names and width
-// list. This independently checks the binary offset search and benchmarks the
-// same behavior with distant tabs and narrow tab bars.
-fn original_width(app: &App, tab: &Tab) -> usize {
-    if let TabKind::Chat(key) = tab.kind {
-        return app.chat.editor_tab_title(key).width() + 6 + if tab.pinned { 4 } else { 0 };
-    }
-    let name = if let Some(revision) = tab
-        .editor
-        .blame
-        .revision
-        .as_ref()
-        .filter(|_| tab.kind == TabKind::GitRevision)
-    {
-        revision.tab_title()
-    } else if tab.kind == TabKind::CommitDetails {
-        "Commit details".to_string()
-    } else if tab.kind == TabKind::MarkdownPreview {
-        format!("Preview: {}", tab.editor.file_name())
-    } else if matches!(tab.kind, TabKind::Diff(_)) {
-        format!("{} (Diff)", tab.editor.file_name())
-    } else {
-        tab.editor.file_name().to_string()
-    };
-    1 + if tab.pinned { 4 } else { 0 }
-        + if tab.has_unsaved_changes() { 2 } else { 0 }
-        + if matches!(tab.kind, TabKind::File | TabKind::GitRevision)
-            && crate::file_icons::for_editor(&tab.editor).0 == "·  "
-        {
-            // Placeholder file icons no longer occupy space in tabs.
-            0
-        } else if matches!(
-            tab.kind,
-            TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
-        ) {
-            2
-        } else {
-            0
-        }
-        + if tab.kind == TabKind::File && tab.editor.disk_unavailable {
-            1
-        } else {
-            0
-        }
-        + name.width()
-        + 3
-}
-
-fn original_visible(app: &App, offset: usize, width: usize) -> Option<usize> {
-    if app.tabs.is_empty() || offset >= app.tabs.len() || width == 0 {
-        return None;
-    }
-    let mut used = if offset > 0 { 2 } else { 0 };
-    let mut widths = Vec::new();
-    for (idx, tab) in app.tabs.iter().enumerate().skip(offset) {
-        let w = original_width(app, tab);
-        if !widths.is_empty() && used + w > width {
-            break;
-        }
-        used += w;
-        widths.push((idx, w));
-    }
-    if widths
-        .last()
-        .is_some_and(|(idx, _)| idx + 1 < app.tabs.len())
-    {
-        while widths.len() > 1 && used + 2 > width {
-            used = used.saturating_sub(widths.pop().unwrap().1);
-        }
-    }
-    widths.last().map(|(idx, _)| *idx)
-}
-
-fn original_offset(app: &App, mut offset: usize, width: usize) -> usize {
-    if app.tabs.is_empty() {
-        return 0;
-    }
-    if app.tab_scroll_manual_anchor == Some(app.active_tab) {
-        return offset.min(app.max_tab_scroll_offset());
-    }
-    if app.active_tab < offset {
-        offset = app.active_tab;
-    }
-    if width == 0 {
-        if app.active_tab >= offset + 8 {
-            offset = app.active_tab.saturating_sub(7);
-        }
-        return offset;
-    }
-    while original_visible(app, offset, width).is_some_and(|last| app.active_tab > last) {
-        offset = (offset + 1).min(app.active_tab);
-    }
-    if original_visible(app, offset, width).is_some_and(|last| last + 1 >= app.tabs.len()) {
-        while offset > 0 {
-            let candidate = offset - 1;
-            if !original_visible(app, candidate, width)
-                .is_some_and(|last| candidate <= app.active_tab && app.active_tab <= last)
-            {
-                break;
-            }
-            offset = candidate;
-        }
-    }
-    offset
-}
-
 fn tabs_app(count: usize) -> App {
     let mut app = App::test_new();
     app.tabs = (0..count)
@@ -191,42 +85,56 @@ fn tabs_app(count: usize) -> App {
 }
 
 #[test]
-fn tab_geometry_and_binary_reveal_match_original_for_unicode_and_tiny_bars() {
+fn cell_reveal_keeps_unicode_tabs_visible_in_narrow_bars() {
     let mut app = tabs_app(20);
-    for width in [0, 1, 2, 3, 4, 5, 8, 12, 24, 40, 80, 160, 600] {
-        app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, width as u16, 1));
+    for width in [1, 2, 3, 4, 5, 8, 12, 24, 40, 80, 160, 600] {
+        let area = ratatui::layout::Rect::new(0, 0, width, 1);
+        app.tab_bar_area = Some(area);
         for offset in 0..app.tabs.len() {
-            assert_eq!(
-                app.visible_last_tab_index(&app.tabs, offset, width),
-                original_visible(&app, offset, width)
-            );
             for active in 0..app.tabs.len() {
                 app.active_tab = active;
                 app.tab_scroll_offset = offset;
                 app.tab_scroll_manual_anchor = None;
-                let prefix=crate::ui_desks::controls(&app,app.tab_bar_area.unwrap(),app.active_group).2 as usize;
-                let expected = original_offset(&app, offset, width.saturating_sub(prefix));
+                app.tab_strip_scroll = None;
                 app.ensure_active_tab_visible();
-                assert_eq!(
-                    app.tab_scroll_offset, expected,
-                    "width={width} offset={offset} active={active}"
-                );
+                let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, area);
+                if width > crate::ui_desks::controls(&app, area, app.active_group).2 {
+                    assert!(hits.tabs.iter().any(|(index, _, _)| *index == active),
+                        "width={width} offset={offset} active={active}");
+                }
+                for (_, rect, close) in hits.tabs {
+                    assert_eq!(rect.intersection(area), rect);
+                    assert!(close.is_empty() || close.intersection(rect) == close);
+                }
             }
         }
     }
-    app.tab_scroll_offset = 19;
-    app.active_tab = 4;
-    app.tab_scroll_manual_anchor = Some(4);
-    let expected = original_offset(&app, 19, 596);
+}
+
+#[test]
+fn reveal_keeps_manual_index_scroll_and_unmeasured_layout_fallback() {
+    let mut app = tabs_app(20);
+    app.active_tab = 19;
     app.ensure_active_tab_visible();
-    assert_eq!(app.tab_scroll_offset, expected);
+    assert_eq!(app.tab_scroll_offset, 12);
+    app.active_tab = 4;
+    app.ensure_active_tab_visible();
+    assert_eq!(app.tab_scroll_offset, 4);
+    app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 40, 1));
+    app.tab_scroll_offset = 19;
+    app.tab_scroll_manual_anchor = Some(4);
+    let expected = app.max_tab_scroll_offset();
+    app.ensure_active_tab_visible();
+    assert_eq!(app.tab_scroll_offset, 19.min(expected));
     assert_eq!(app.tab_scroll_manual_anchor, Some(4));
     app.active_tab = 17;
     app.ensure_active_tab_visible();
     assert_eq!(app.tab_scroll_manual_anchor, None);
+    assert!(app.tab_strip_scroll.is_some());
     app.tabs.clear();
     app.ensure_active_tab_visible();
     assert_eq!(app.tab_scroll_offset, 0);
+    assert!(app.tab_strip_scroll.is_none());
 }
 
 #[test]
@@ -234,37 +142,18 @@ fn tab_geometry_and_binary_reveal_match_original_for_unicode_and_tiny_bars() {
 fn benchmark_distant_tab_reveal() {
     for count in [2_000, 10_000] {
         let mut app = tabs_app(count);
-        app.active_tab = count - 1;
-        app.tab_bar_area = Some(ratatui::layout::Rect::new(0, 0, 160, 1));
-        let mut before = Vec::new();
-        let mut after = Vec::new();
-        let expected = original_offset(&app, 0, 160);
-        for sample in 0..9 {
-            for optimized in [sample % 2 == 0, sample % 2 != 0] {
-                app.tab_scroll_offset = 0;
-                let start = std::time::Instant::now();
-                let actual = if optimized {
-                    app.ensure_active_tab_visible();
-                    app.tab_scroll_offset
-                } else {
-                    original_offset(&app, 0, 160)
-                };
-                let elapsed = start.elapsed();
-                assert_eq!(actual, expected);
-                if optimized {
-                    after.push(elapsed);
-                } else {
-                    before.push(elapsed);
-                }
-            }
+        let area = ratatui::layout::Rect::new(0, 0, 160, 1);
+        app.tab_bar_area = Some(area);
+        let mut samples = Vec::new();
+        for active in [count - 1, 0].into_iter().cycle().take(18) {
+            app.active_tab = active;
+            let start = std::time::Instant::now();
+            app.ensure_active_tab_visible();
+            samples.push(start.elapsed());
+            assert!(crate::ui_chrome_tabs::TabBarHits::new(&app, area)
+                .tabs.iter().any(|(index, _, _)| *index == active));
         }
-        before.sort_unstable();
-        after.sort_unstable();
-        eprintln!(
-            "distant tab reveal {count}tabs: original {:?}, optimized {:?}, {:.1}x",
-            before[4],
-            after[4],
-            before[4].as_secs_f64() / after[4].as_secs_f64()
-        );
+        samples.sort_unstable();
+        eprintln!("cell reveal {count} tabs: {:?}", samples[9]);
     }
 }
