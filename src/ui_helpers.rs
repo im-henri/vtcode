@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::terminal_input_activity::Activity;
 
 pub(crate) use crate::ui_markdown::draw_markdown_preview;
 pub(crate) use crate::ui_diff_display::{draw_inline_diff, draw_side_by_side_diff};
@@ -326,6 +327,7 @@ fn draw_terminal_in_group(f: &mut Frame, app: &mut App, area: Rect, group: usize
             &app.colors.ui,
             app.cursor_visible,
             app.focused_terminal_find() != Some(app.terminals[idx].find.id),
+            &app.terminals[idx].input_activity,
         );
         crate::terminal_scrollbar::draw(f, app, surface, area);
         crate::app_terminal_find::draw(f, app, idx, content);
@@ -355,7 +357,9 @@ pub(crate) fn draw_terminal_emulator(
     palette: &crate::theme_workbench::WorkbenchColors,
     blink_visible: bool,
 ) {
-    draw_terminal_emulator_with_cursor(f, pty, area, palette, blink_visible, true);
+    draw_terminal_emulator_with_cursor(
+        f, pty, area, palette, blink_visible, true, &Activity::default(),
+    );
 }
 
 pub(crate) fn draw_terminal_emulator_with_cursor(
@@ -365,13 +369,15 @@ pub(crate) fn draw_terminal_emulator_with_cursor(
     palette: &crate::theme_workbench::WorkbenchColors,
     blink_visible: bool,
     allow_cursor: bool,
+    input_activity: &Activity,
 ) {
     let width = area.width as usize;
     let height = area.height as usize;
     let default_fg = palette.fg_terminal;
     let default_bg = palette.bg_terminal;
     let grid = &pty.grid;
-    let awaiting_input = pty.remote_input_progress().pending;
+    let input_progress = pty.remote_input_progress();
+    let awaiting_input = input_progress.pending;
     let steady_cursor = awaiting_input || matches!(grid.cursor_shape, 2 | 4 | 6);
     let show_cursor = allow_cursor && grid.cursor_visible
         && !grid.has_selection()
@@ -380,54 +386,67 @@ pub(crate) fn draw_terminal_emulator_with_cursor(
         && grid.cursor_row < height
         && grid.cursor_col < width;
 
-    {
-        let buffer = f.buffer_mut();
-        pty.render_rows.borrow_mut().paint(buffer, grid, area, palette);
+    pty.render_rows
+        .borrow_mut()
+        .paint(f.buffer_mut(), grid, area, palette);
+    if !show_cursor {
+        return;
+    }
 
-        // Keep a buffer-level cursor as well, so screenshots and terminals that
-        // suppress the native cursor still show an insertion point.
-        if show_cursor {
-            let x = area.x + grid.cursor_col as u16;
-            let y = area.y + grid.cursor_row as u16;
-            if let Some(cell) = buffer.cell_mut((x, y)) {
-                match grid.cursor_shape {
-                    3 | 4 => {
-                        if cell.symbol().trim().is_empty() {
-                            cell.set_char('▁');
-                        }
-                        cell.set_style(
-                            Style::default()
-                                .fg(default_fg)
-                                .bg(default_bg)
-                                .add_modifier(Modifier::UNDERLINED),
-                        );
+    let position = (area.x + grid.cursor_col as u16, area.y + grid.cursor_row as u16);
+    // Paint the caret over the cached text so the next frame restores the cell.
+    if let Some(cell) = f.buffer_mut().cell_mut(position) {
+        let spinner = if awaiting_input {
+            // A visible cursor also drives the timer when the tab strip is hidden.
+            let now = std::time::Instant::now();
+            input_activity.show(now);
+            input_activity.symbol(input_progress, now)
+        } else {
+            None
+        };
+        if let Some(symbol) = spinner {
+            let foreground = palette.readable_foreground(palette.bg_terminal_cursor, cell.bg, 4.5);
+            cell.set_symbol(symbol.trim_end()).set_fg(foreground);
+            cell.modifier = Modifier::empty();
+        } else {
+            match grid.cursor_shape {
+                3 | 4 => {
+                    if cell.symbol().trim().is_empty() {
+                        cell.set_char('▁');
                     }
-                    5 | 6 => {
-                        if cell.symbol().trim().is_empty() {
-                            cell.set_char('▏');
-                            cell.set_style(Style::default().fg(default_fg).bg(default_bg));
-                        } else {
-                            cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
-                        }
+                    cell.set_style(
+                        Style::default()
+                            .fg(default_fg)
+                            .bg(default_bg)
+                            .add_modifier(Modifier::UNDERLINED),
+                    );
+                }
+                5 | 6 => {
+                    if cell.symbol().trim().is_empty() {
+                        cell.set_char('▏');
+                        cell.set_style(Style::default().fg(default_fg).bg(default_bg));
+                    } else {
+                        cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
                     }
-                    _ => {
-                        cell.set_style(
-                            crate::ui_colors::block_cursor_style(
-                                palette.bg_terminal_cursor, palette.fg_terminal_cursor, cell.bg, palette.contrast_colors()).remove_modifier(Modifier::DIM),
-                        );
-                    }
+                }
+                _ => {
+                    cell.set_style(
+                        crate::ui_colors::block_cursor_style(
+                            palette.bg_terminal_cursor,
+                            palette.fg_terminal_cursor,
+                            cell.bg,
+                            palette.contrast_colors(),
+                        )
+                        .remove_modifier(Modifier::DIM),
+                    );
                 }
             }
         }
     }
 
-    // The host cursor has its own blink clock. While input is unacknowledged,
-    // show only the steady buffer cursor so it cannot blink or flicker anyway.
-    if show_cursor && !awaiting_input {
-        f.set_cursor_position((
-            area.x + grid.cursor_col as u16,
-            area.y + grid.cursor_row as u16,
-        ));
+    // While input is pending the buffer draws the whole caret, including its spinner.
+    if !awaiting_input {
+        f.set_cursor_position(position);
     }
 }
 

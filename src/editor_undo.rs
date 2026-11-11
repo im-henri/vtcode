@@ -40,6 +40,7 @@ impl Editor {
             self.reset_unsaved_diff_cache();
         } else {
             self.modified = true;
+            self.refresh_git_index_match();
         }
     }
 
@@ -62,6 +63,12 @@ impl Editor {
         self.saved_encoding = encoding;
         self.saved_save_options = None;
         self.refresh_modified_from_saved();
+        if self.saved_rope.as_ref().is_some_and(|saved| self.rope.is_instance(saved)) {
+            self.insertion_anchors = self.insertion_anchors.take().and_then(|anchors| anchors.rebase(&self.rope));
+            self.saved_insertion_anchors = self.insertion_anchors.clone();
+        } else if !same_baseline {
+            self.saved_insertion_anchors = None;
+        }
             })
     }
 
@@ -123,6 +130,7 @@ impl Editor {
         self.undo_stack.push_back(UndoState {
             snapshot_id: next_snapshot_id(),
             rope: self.rope.clone(),
+            insertion_anchors: self.insertion_anchors.clone(),
             line_ending: self.cached_line_ending,
             cursor_line: self.cursor_line,
             cursor_col: self.cursor_col,
@@ -210,6 +218,7 @@ impl Editor {
             self.redo_stack.push_back(UndoState {
                 snapshot_id: next_snapshot_id(),
                 rope: self.rope.clone(),
+                insertion_anchors: self.insertion_anchors.clone(),
                 line_ending: self.cached_line_ending,
                 cursor_line: self.cursor_line,
                 cursor_col: self.cursor_col,
@@ -227,6 +236,7 @@ impl Editor {
                 self.redo_stack.pop_front();
             }
             self.rope = state.rope;
+            self.insertion_anchors = state.insertion_anchors;
             self.cached_line_ending = state.line_ending;
             self.cursor_line = state.cursor_line;
             self.cursor_col = state.cursor_col;
@@ -261,6 +271,7 @@ impl Editor {
             self.undo_stack.push_back(UndoState {
                 snapshot_id: next_snapshot_id(),
                 rope: self.rope.clone(),
+                insertion_anchors: self.insertion_anchors.clone(),
                 line_ending: self.cached_line_ending,
                 cursor_line: self.cursor_line,
                 cursor_col: self.cursor_col,
@@ -278,6 +289,7 @@ impl Editor {
                 self.undo_stack.pop_front();
             }
             self.rope = state.rope;
+            self.insertion_anchors = state.insertion_anchors;
             self.cached_line_ending = state.line_ending;
             self.cursor_line = state.cursor_line;
             self.cursor_col = state.cursor_col;
@@ -411,6 +423,7 @@ impl Editor {
             self.undo_stack.push_back(UndoState {
                 snapshot_id: next_snapshot_id(),
                 line_ending: crate::editor::rope_line_ending(&rope),
+                insertion_anchors: None,
                 rope,
                 cursor_line: cl,
                 cursor_col: cc,
@@ -443,6 +456,7 @@ impl Editor {
             self.redo_stack.push_back(UndoState {
                 snapshot_id: next_snapshot_id(),
                 line_ending: crate::editor::rope_line_ending(&rope),
+                insertion_anchors: None,
                 rope,
                 cursor_line: cl,
                 cursor_col: cc,

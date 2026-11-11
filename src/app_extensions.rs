@@ -99,7 +99,7 @@ impl App {
         self.bg_extension_scan_running = true;
         let roots = self.extension_manager.scan_roots();
         let sender = self.background.sender.clone();
-        let pool = self.background.maintenance_sender();
+        let pool = self.background.extension_sender();
         let initial = self.extension_manager.records.is_empty()
             .then(|| self.extension_manager.initial_scan_manager());
         let generation = self.extension_scan_generation;
@@ -153,10 +153,19 @@ impl App {
         &mut self, generation: u64, manager: Box<crate::extensions::ExtensionManager>, notices: Vec<String>,
     ) -> bool {
         self.bg_extension_scan_running = false;
-        if generation != self.extension_scan_generation || !self.extension_manager.records.is_empty() {
-            // Never replace runtimes installed by a newer workspace/operation.
+        // A rescan requested during activation (the watcher's initial rescan,
+        // vtcode writing its own workspace state) only makes this snapshot
+        // possibly stale. Keep it and let the queued rescan reconcile changed
+        // records by mtime: discarding it recompiled every module (~3 s each).
+        // Never replace runtimes installed by a newer workspace/operation.
+        let superseded = !self.extension_manager.records.is_empty()
+            || !manager.same_scope(&self.extension_manager);
+        if generation != self.extension_scan_generation && !superseded {
+            self.bg_extension_scan_pending = true;
+        }
+        if superseded {
             // Releasing compiled modules can be expensive too.
-            let _ = self.background.maintenance_sender().send(Box::new(move || drop(manager)));
+            let _ = self.background.extension_sender().send(Box::new(move || drop(manager)));
             self.resume_pending_extension_scan();
             return false;
         }

@@ -34,12 +34,12 @@ fn remote_external_files_open_and_save_without_opening_a_different_workspace() {
         .unwrap()
         .target_key(uri.as_str())
         .unwrap();
-    fixture.app.execute_palette_command("open_file_path");
-    assert!(fixture.app.file_open.remote);
+    fixture.app.execute_palette_command("open_file");
+    assert!(fixture.app.folder_browser_remote().is_some());
     type_path(&mut fixture.app, &path.display().to_string());
     enter(&mut fixture.app);
     drain(&mut fixture);
-    assert!(!fixture.app.file_open.active);
+    assert!(!fixture.app.file_browser_active());
     let editor = fixture.app.editor().unwrap();
     assert_eq!(editor.file_path.as_ref(), Some(&key));
     assert_eq!(editor.rope.to_string(), "remote log\n");
@@ -64,13 +64,13 @@ fn local_files_in_a_remote_workbench_open_save_and_save_as_on_the_local_device()
     let path = local.path().join("local.log");
     std::fs::write(&path, "local data\n").unwrap();
     let root = fixture.app.explorer.root.clone();
-    fixture.app.begin_open_file_path();
-    fixture.app.switch_open_file_device();
-    assert!(!fixture.app.file_open.remote);
+    fixture.app.begin_open_file_browser();
+    fixture.app.switch_file_browser_device();
+    assert!(fixture.app.folder_browser_remote().is_none());
     type_path(&mut fixture.app, &path.display().to_string());
     enter(&mut fixture.app);
     drain(&mut fixture);
-    assert!(!fixture.app.file_open.active);
+    assert!(!fixture.app.file_browser_active());
     assert_eq!(
         fixture.app.editor().unwrap().file_path.as_ref(),
         Some(&path)
@@ -109,7 +109,7 @@ fn local_files_in_a_remote_workbench_open_save_and_save_as_on_the_local_device()
 #[test]
 fn source_switching_preserves_drafts_and_the_rendered_source_is_explicit() {
     let mut fixture = setup_dialog();
-    fixture.app.begin_open_file_path();
+    fixture.app.begin_open_file_browser();
     type_path(&mut fixture.app, "/var/log/remote.log");
     for _ in 0..2 {
         crate::input_keyboard::handle_keyboard_event(
@@ -118,12 +118,12 @@ fn source_switching_preserves_drafts_and_the_rendered_source_is_explicit() {
         );
     }
     enter(&mut fixture.app);
-    assert!(!fixture.app.file_open.remote);
-    assert!(fixture.app.file_open.input.query.is_empty());
+    assert!(fixture.app.folder_browser_remote().is_none());
+    assert!(fixture.app.folder_browser.folder.is_empty());
     type_path(&mut fixture.app, "local.log");
     let mut terminal = Terminal::new(TestBackend::new(100, 26)).unwrap();
     terminal
-        .draw(|frame| crate::ui_modal::draw_active(frame, &mut fixture.app))
+        .draw(|frame| crate::ui::draw(frame, &mut fixture.app))
         .unwrap();
     let text: String = terminal
         .backend()
@@ -132,17 +132,17 @@ fn source_switching_preserves_drafts_and_the_rendered_source_is_explicit() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(text.contains("this device"));
+    assert!(text.contains("This Device"));
     assert!(text.contains("Use Remote"));
     let switch = fixture
         .app
-        .modal
-        .buttons
+        .folder_browser
+        .controls
         .iter()
-        .find(|(_, index)| *index == 1)
+        .find(|(_, action)| matches!(action, crate::folder_browser::Action::SwitchDevice))
         .unwrap()
         .0;
-    crate::ui_modal::handle_mouse(
+    crate::mouse::handle_mouse(
         &mut fixture.app,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -151,10 +151,38 @@ fn source_switching_preserves_drafts_and_the_rendered_source_is_explicit() {
             modifiers: KeyModifiers::NONE,
         },
     );
-    assert!(fixture.app.file_open.remote);
-    assert_eq!(fixture.app.file_open.input.query, "/var/log/remote.log");
-    fixture.app.switch_open_file_device();
-    assert_eq!(fixture.app.file_open.input.query, "local.log");
+    assert!(fixture.app.folder_browser_remote().is_some());
+    assert_eq!(fixture.app.folder_browser.folder, "/var/log/remote.log");
+    fixture.app.switch_file_browser_device();
+    assert_eq!(fixture.app.folder_browser.folder, "local.log");
+}
+
+#[test]
+fn the_remote_picker_browses_a_typed_external_directory_and_opens_a_listed_file() {
+    let mut fixture = setup_dialog();
+    let outside = tempfile::tempdir().unwrap();
+    let path = outside.path().join("listed.log");
+    std::fs::write(&path, "from the file list\n").unwrap();
+    let root = fixture.app.explorer.root.clone();
+    fixture.app.begin_open_file_browser();
+    type_path(&mut fixture.app, url::Url::from_directory_path(outside.path()).unwrap().as_str());
+    enter(&mut fixture.app);
+    fixture.app.wait_for_background(Duration::from_secs(10), |app| {
+        !app.folder_browser_loading && !app.file_browser_open_pending()
+    });
+    assert!(fixture.app.file_browser_active());
+    assert!(fixture.app.folder_browser.error.is_none(), "{:?}", fixture.app.folder_browser.error);
+    let entries = &fixture.app.folder_browser_entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(fixture.app.folder_browser_entry_name(&entries[0]), "listed.log");
+    assert!(fixture.app.folder_browser_entry_is_file(0));
+
+    crate::input_keyboard::handle_keyboard_event(&mut fixture.app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    enter(&mut fixture.app);
+    drain(&mut fixture);
+    assert!(!fixture.app.file_browser_active());
+    assert_eq!(fixture.app.editor().unwrap().rope.to_string(), "from the file list\n");
+    assert_eq!(fixture.app.explorer.root, root);
 }
 
 #[test]
@@ -164,13 +192,13 @@ fn switching_to_a_local_file_does_not_wait_for_a_stalled_remote_open_or_accept_i
     let local = tempfile::tempdir().unwrap();
     let path = local.path().join("local.log");
     std::fs::write(&path, "local data\n").unwrap();
-    fixture.app.begin_open_file_path();
+    fixture.app.begin_open_file_browser();
     type_path(&mut fixture.app, "remote.log");
     fixture.hold.store(true, Ordering::Release);
     enter(&mut fixture.app);
     until(|| fixture.blocked.load(Ordering::Acquire));
-    assert!(fixture.app.file_open.pending);
-    fixture.app.switch_open_file_device();
+    assert!(fixture.app.file_browser_open_pending());
+    fixture.app.switch_file_browser_device();
     type_path(&mut fixture.app, &path.display().to_string());
     enter(&mut fixture.app);
     fixture
@@ -200,18 +228,18 @@ fn switching_to_a_local_file_does_not_wait_for_a_stalled_remote_open_or_accept_i
 fn canceling_a_remote_path_open_keeps_the_existing_file_and_drops_the_reply() {
     let mut fixture = setup_dialog();
     file(&fixture, "remote.log", "remote data\n");
-    fixture.app.begin_open_file_path();
+    fixture.app.begin_open_file_browser();
     type_path(&mut fixture.app, "remote.log");
     fixture.hold.store(true, Ordering::Release);
     enter(&mut fixture.app);
     until(|| fixture.blocked.load(Ordering::Acquire));
-    crate::ui_modal::handle_key(
+    crate::input_keyboard::handle_keyboard_event(
         &mut fixture.app,
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
     );
     fixture.hold.store(false, Ordering::Release);
     drain(&mut fixture);
-    assert!(!fixture.app.file_open.active);
+    assert!(!fixture.app.file_browser_active());
     assert_eq!(fixture.app.tabs.len(), 1);
     assert_eq!(fixture.app.editor().unwrap().rope.to_string(), "origin\n");
 }
@@ -220,7 +248,7 @@ fn canceling_a_remote_path_open_keeps_the_existing_file_and_drops_the_reply() {
 fn background_editor_updates_do_not_cancel_the_file_path_prompt() {
     let mut fixture = setup_dialog();
     let target = file(&fixture, "remote.log", "remote data\n");
-    fixture.app.begin_open_file_path();
+    fixture.app.begin_open_file_browser();
     type_path(&mut fixture.app, "remote.log");
     fixture.hold.store(true, Ordering::Release);
     enter(&mut fixture.app);
@@ -229,10 +257,10 @@ fn background_editor_updates_do_not_cancel_the_file_path_prompt() {
     // the dialog holds focus. Its result must not silently cancel Open.
     fixture.app.editor_mut().unwrap().insert_char('B');
     fixture.app.cancel_stale_remote_location();
-    assert!(fixture.app.file_open.pending);
+    assert!(fixture.app.file_browser_open_pending());
     fixture.hold.store(false, Ordering::Release);
     drain(&mut fixture);
-    assert!(!fixture.app.file_open.active);
+    assert!(!fixture.app.file_browser_active());
     assert_eq!(
         fixture.app.editor().unwrap().file_path.as_ref(),
         Some(&target)

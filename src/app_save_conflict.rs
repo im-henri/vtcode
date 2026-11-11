@@ -52,7 +52,7 @@ fn load_disk(
 ) -> io::Result<Option<LoadedTextFile>> {
     let loaded = if let Some(remote) = remote {
         remote
-            .open_location(path, cancel, |_, _| {})
+            .open_location(path, cancel, false, |_, _| {})
             .and_then(|location| match location {
                 crate::remote::workspace::Location::File(loaded) => Ok(loaded),
                 _ => Err(io::Error::other(

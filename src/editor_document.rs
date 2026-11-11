@@ -1,7 +1,7 @@
 //! A document is shared by every view, including views on hidden desks.
 //! Editors retain cheap immutable Rope snapshots for rendering; transactions
 //! read and publish one authoritative document and share the actual undo queues.
-use crate::editor::{Editor, UndoState};
+use crate::editor::{Editor, InsertionAnchors, UndoState};
 use ropey::Rope;
 use std::{
     cell::Cell,
@@ -106,6 +106,8 @@ struct Document {
     revision: u64,
     rope: Rope,
     saved: Option<Rope>,
+    insertion_anchors: Option<InsertionAnchors>,
+    saved_insertion_anchors: Option<InsertionAnchors>,
     modified: bool,
     version: u64,
     identity: u64,
@@ -138,6 +140,8 @@ impl Document {
             revision,
             rope: e.rope.clone(),
             saved: e.saved_rope.clone(),
+            insertion_anchors: e.insertion_anchors.clone(),
+            saved_insertion_anchors: e.saved_insertion_anchors.clone(),
             modified: e.modified,
             version: e.content_version,
             identity: e.save_identity,
@@ -226,12 +230,14 @@ impl Editor {
     pub(crate) fn begin_document_edit(&mut self) {
         if self.document.depth == 0 {
             self.refresh_document();
+            self.begin_unsaved_diff_edit();
         }
         self.document.depth += 1;
     }
     pub(crate) fn end_document_edit(&mut self) {
         self.document.depth -= 1;
         if self.document.depth == 0 {
+            self.prepare_live_unsaved_diff();
             self.publish_document();
         }
     }
@@ -292,6 +298,8 @@ impl Editor {
         }
         self.rope = doc.rope.clone();
         self.saved_rope = doc.saved.clone();
+        self.insertion_anchors = doc.insertion_anchors.clone();
+        self.saved_insertion_anchors = doc.saved_insertion_anchors.clone();
         self.modified = doc.modified;
         self.content_version = doc.version;
         self.save_identity = doc.identity;

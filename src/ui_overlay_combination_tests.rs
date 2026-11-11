@@ -38,7 +38,7 @@ fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 #[test]
 fn save_error_over_folder_browser_is_visible_and_owns_pointer_input() {
     let (_directory, mut app) = fixture();
-    app.open_folder_browser();
+    app.open_path_browser(crate::folder_browser::Mode::OpenFolder);
     let path = app.folder_browser_path.clone();
     let query = app.change_dir_query.clone();
     app.show_save_error("Asynchronous save failed while choosing a folder");

@@ -101,8 +101,9 @@ pub(crate) fn measure_wrap(
         (original_text_width(cache, panes.left), code.width.saturating_sub(2) as usize)
     } else {
         let layout = inline_diff_layout(area, minimap.is_some(), minimap.unwrap_or(0));
-        let width = (layout.code_area.width as usize)
-            .saturating_sub(inline_number_width(cache, editor.line_count()) * 2 + 4);
+        let number_width = inline_number_width(cache, editor.line_count());
+        let width = usize::from(layout.code_area.width)
+            .saturating_sub(inline_gutter_width(number_width));
         (width, width)
     };
     Widths::new(editor, left, right)
@@ -113,7 +114,12 @@ fn original_text_width(cache: &DiffRenderCache, pane: Rect) -> usize {
 }
 
 fn inline_number_width(cache: &DiffRenderCache, line_count: usize) -> usize {
-    digit_count(cache.max_left_line.max(line_count)).max(4)
+    let last_line = cache.max_left_line.max(cache.target_content_lines()).max(line_count);
+    digit_count(last_line).max(4)
+}
+
+fn inline_gutter_width(number_width: usize) -> usize {
+    2 * (number_width + 1)
 }
 
 fn diff_labels(app: &App) -> (&str, &str) {
@@ -1550,8 +1556,9 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let review_row = crate::commit_review::painting_row(app);
     let mut layout = inline_diff_layout(area, app.show_minimap && !app.context_diff_active() && review_row.is_none(), app.minimap_render_width());
     let number_width = inline_number_width(&diff_cache, app.editor().map_or(1, Editor::line_count));
-    let gutter_width = (number_width * 2 + 4).min(layout.code_area.width as usize);
-    let text_width = layout.code_area.width.saturating_sub(gutter_width as u16);
+    let full_gutter_width = inline_gutter_width(number_width);
+    let gutter_width = full_gutter_width.min(usize::from(layout.code_area.width)) as u16;
+    let text_width = layout.code_area.width - gutter_width;
     let widths = app.editor().and_then(|editor| Widths::new(editor, text_width as usize, text_width as usize));
     let horizontal_area = if widths.is_none() && diff_cache.max_inline_text_width > text_width as usize
         && layout.code_area.height > 1 && text_width > 0
@@ -1561,7 +1568,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         if let Some(minimap) = &mut layout.minimap_area { minimap.height = layout.code_area.height; }
         if let Some(separator) = &mut layout.minimap_sep_area { separator.height = layout.code_area.height; }
         Some(Rect::new(
-            layout.code_area.x + gutter_width as u16,
+            layout.code_area.x + gutter_width,
             layout.code_area.bottom(),
             text_width,
             1,
@@ -1570,13 +1577,13 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         None
     };
     let text_area = Rect::new(
-        layout.code_area.x + gutter_width as u16,
+        layout.code_area.x + gutter_width,
         layout.code_area.y,
         text_width,
         layout.code_area.height,
     );
     app.code_area = Some(text_area);
-    app.gutter_width = gutter_width as u16;
+    app.gutter_width = gutter_width;
     app.h_scrollbar_area = horizontal_area;
     app.minimap_area = layout.minimap_area;
     app.scrollbar_area = Some(layout.scrollbar_area);
@@ -1613,7 +1620,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let visible = layout.code_area.height as usize;
     let scroll = app.diff_inline_scroll.row;
     let horizontal_scroll = app.diff_inline_scroll.column;
-    let width = layout.code_area.width as usize;
+    let available = usize::from(text_width);
 
     let mut contrast = crate::ui_colors::TextContrastCache::new(&app.colors.ui);
     let mut render_lines: Vec<Line<'_>> = Vec::new();
@@ -1679,43 +1686,40 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             None
         };
-        let (prefix, bg, bg_hl, fg) = match cached_row.kind {
+        let (old_marker, new_marker, bg, bg_hl, fg) = match cached_row.kind {
             '-' => (
-                "- ",
+                "",
+                "-",
                 app.colors.bg_diff_removed,
                 app.colors.bg_diff_removed_highlight,
                 app.colors.fg_diff_removed,
             ),
             '+' => (
-                "+ ",
+                "+",
+                "",
                 app.colors.bg_diff_added,
                 app.colors.bg_diff_added_highlight,
                 app.colors.fg_diff_added,
             ),
             _ => (
-                "  ",
+                "",
+                "",
                 app.colors.bg_editor,
                 app.colors.bg_editor,
                 app.colors.fg_text,
             ),
         };
-        let old_disp = old_ln.filter(|_| display.continuation == 0).map(|n| n + 1);
-        let new_disp = new_ln.filter(|_| display.continuation == 0).map(|n| n + 1);
-        let mut line_head = String::with_capacity(16);
-        if let Some(n) = old_disp {
-            let _ = write!(line_head, "{n:>number_width$}");
+        let mut line_head = String::with_capacity(full_gutter_width);
+        if display.continuation == 0 {
+            for (line, marker) in [(old_ln, old_marker), (new_ln, new_marker)] {
+                let _ = match line {
+                    Some(line) => write!(line_head, "{:>number_width$} ", line + 1),
+                    None => write!(line_head, "{marker:>number_width$} "),
+                };
+            }
         } else {
-            line_head.push_str(&crate::helpers::spaces(number_width));
+            let _ = write!(line_head, "{:full_gutter_width$}", "");
         }
-        line_head.push(' ');
-        if let Some(n) = new_disp {
-            let _ = write!(line_head, "{n:>number_width$}");
-        } else {
-            line_head.push_str(&crate::helpers::spaces(number_width));
-        }
-        line_head.push(' ');
-        line_head.push_str(if display.continuation == 0 { prefix } else { "  " });
-        let available = width.saturating_sub(UnicodeWidthStr::width(line_head.as_str()));
         let mut row_spans = vec![Span::styled(line_head, Style::default().fg(fg).bg(bg))];
         let window = || display.window(aligned_row, cached_row.kind == '-', false, horizontal_scroll, available);
         #[cfg(test)]
@@ -1829,7 +1833,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             Style::default().bg(app.colors.bg_editor),
         );
         buffer.set_style(
-            Rect::new(layout.code_area.x, horizontal_area.y, gutter_width as u16, 1),
+            Rect::new(layout.code_area.x, horizontal_area.y, gutter_width, 1),
             Style::default().bg(app.colors.bg_dark),
         );
         draw_horizontal_scrollbar(f, HScrollbarParams {
@@ -2670,9 +2674,19 @@ mod tests {
         let (mut old_line, mut new_line) = (0, 0);
         for (index, (kind, text)) in expected.iter().enumerate() {
             let y = code.y + index as u16;
-            let old = if *kind == '+' { String::new() } else { old_line += 1; old_line.to_string() };
-            let new = if *kind == '-' { String::new() } else { new_line += 1; new_line.to_string() };
-            let expected = format!("{old:>4} {new:>4} {kind} {text}");
+            let old = if *kind == '+' {
+                "+".to_string()
+            } else {
+                old_line += 1;
+                old_line.to_string()
+            };
+            let new = if *kind == '-' {
+                "-".to_string()
+            } else {
+                new_line += 1;
+                new_line.to_string()
+            };
+            let expected = format!("{old:>4} {new:>4} {text}");
             assert_eq!(buffer_row(buffer, y, 120).trim_end(), expected.trim_end());
             let background = match kind {
                 '-' => app.colors.bg_diff_removed,
@@ -2747,14 +2761,9 @@ mod tests {
     #[test]
     fn inline_diff_keeps_removed_lines_at_the_top_of_the_viewport() {
         for (base, target, scroll, expected) in [
-            ("before\n", "after\n", 0, vec!["- before", "+ after"]),
-            ("gone\nkept\n", "kept\n", 0, vec!["- gone", "kept"]),
-            (
-                "kept\nbefore\n",
-                "kept\nafter\n",
-                1,
-                vec!["- before", "+ after"],
-            ),
+            ("before\n", "after\n", 0, ["before", "after"]),
+            ("gone\nkept\n", "kept\n", 0, ["gone", "kept"]),
+            ("kept\nbefore\n", "kept\nafter\n", 1, ["before", "after"]),
         ] {
             let mut app = app_with_diff(base, target);
             app.show_minimap = false;
@@ -2763,9 +2772,56 @@ mod tests {
             terminal
                 .draw(|frame| draw_inline_diff(frame, &mut app, Rect::new(0, 0, 60, 3)))
                 .unwrap();
-            for (row, text) in expected.iter().enumerate() {
-                assert!(buffer_row(terminal.backend().buffer(), row as u16 + 1, 60).contains(text));
+            let code = app.code_area.unwrap();
+            for (row, text) in expected.into_iter().enumerate() {
+                let line = buffer_row(
+                    terminal.backend().buffer(), code.y + row as u16, code.right(),
+                );
+                assert_eq!(line[usize::from(code.x)..].trim_end(), text);
             }
+        }
+    }
+
+    #[test]
+    fn inline_diff_markers_use_empty_number_fields_on_wrapped_changes() {
+        let context = "context\n".repeat(999);
+        let base = format!("{context}{}\n", "r".repeat(24));
+        let target = format!("{context}{}\n", "a".repeat(24));
+        let mut app = app_with_diff(&base, &target);
+        app.diff_mode = DiffMode::Inline;
+        app.show_minimap = false;
+        let editor = app.editor_mut().unwrap();
+        editor.word_wrap = true;
+        editor.word_wrap_column = 0;
+        editor.scroll_offset = 999;
+        let width = 32;
+        let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+        draw_inline(&mut app, &mut terminal);
+
+        let code = app.code_area.unwrap();
+        assert_eq!(code.x, 10);
+        let measured = measure_wrap(
+            &app.diff_render_cache,
+            app.editor().unwrap(),
+            DiffMode::Inline,
+            width,
+            0.5,
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(measured.right, usize::from(code.width));
+        assert_eq!(app.diff_inline_scroll.wrap.widths(), Some(measured));
+        let buffer = terminal.backend().buffer();
+        for (row, (gutter, source)) in [
+            ("1000    - ", "r"),
+            ("          ", "r"),
+            ("   + 1000 ", "a"),
+            ("          ", "a"),
+        ].into_iter().enumerate() {
+            let y = code.y + row as u16;
+            assert_eq!(buffer_row(buffer, y, code.x), gutter);
+            assert_eq!(buffer[(code.x, y)].symbol(), source);
         }
     }
 

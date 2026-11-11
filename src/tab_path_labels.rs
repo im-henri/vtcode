@@ -1,6 +1,6 @@
 //! Short, distinct path hints without filesystem access or an all-tabs trie.
-//! Only potential visible paths are retained; other tabs update their conflicts
-//! in one pass. Identical paths in multiple views do not count as conflicts.
+//! Retain paths near the viewport and check them for conflicts in one pass over
+//! the current desk. Identical paths in multiple views do not count as conflicts.
 use crate::app::{App, Tab, TabKind};
 use rustc_hash::{FxHashMap, FxHasher};
 use std::{
@@ -49,13 +49,15 @@ fn active_tabs(app: &App) -> &[Tab] {
         .map_or(app.tabs.as_slice(), |group| group.tabs.as_slice())
 }
 
-fn all_tabs(app: &App) -> impl Iterator<Item = &Tab> {
-    active_tabs(app).iter().chain(
+fn desk_tab_lists(app: &App) -> impl Iterator<Item = &[Tab]> {
+    std::iter::once(active_tabs(app)).chain(
         app.groups
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index != app.active_group)
-            .flat_map(|(_, group)| group.tabs.iter()),
+            .filter(|(index, group)| {
+                *index != app.active_group && group.desk == app.desks.active
+            })
+            .map(|(_, group)| group.tabs.as_slice()),
     )
 }
 
@@ -64,7 +66,7 @@ pub(super) fn context(app: &App, tab: &Tab) -> Option<String> {
     let (name, path) = parent(tab)?;
     let mut required = 0;
     let mut shared = usize::MAX;
-    for other in all_tabs(app) {
+    for other in desk_tab_lists(app).flatten() {
         let Some((other_name, other_path)) = parent(other) else {
             continue;
         };
@@ -107,7 +109,7 @@ impl<'a> Builder<'a> {
         for tab in candidates {
             result.insert(tab);
         }
-        for tab in all_tabs(app) {
+        for tab in desk_tab_lists(app).flatten() {
             result.observe(tab);
         }
         result
@@ -266,14 +268,7 @@ impl TabNameDuplicates {
     }
 
     fn for_candidates(app: &App, tabs: &[Tab], active: usize, scroll: usize, limit: usize) -> Option<Self> {
-        let count = active_tabs(app).len()
-            + app
-                .groups
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| *index != app.active_group)
-                .map(|(_, group)| group.tabs.len())
-                .sum::<usize>();
+        let count = desk_tab_lists(app).map(|tabs| tabs.len()).sum::<usize>();
         if count <= 64 || limit == 0 {
             return None;
         }
@@ -291,7 +286,7 @@ impl TabNameDuplicates {
             .take(limit)
             .map(|(_, tab)| tab)
             .collect();
-        let universe = fingerprint(all_tabs(app));
+        let universe = fingerprint(desk_tab_lists(app).flatten());
         let key = fingerprint(candidates.iter().copied());
         {
             let mut cache = app.tab_name_cache.borrow_mut();

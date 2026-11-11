@@ -1,4 +1,4 @@
-//! In-app directory picker state and navigation, with background directory listings.
+//! In-app file and folder navigation with background directory listings.
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,15 @@ use crate::app::App;
 use crate::text_input::TextInputId;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Mode {
+    #[default]
+    OpenFolder,
+    AddFolder,
+    SaveLocation,
+    OpenFile,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Focus {
     Address,
     Search,
@@ -20,6 +29,7 @@ pub(crate) enum Focus {
     List,
     Folder,
     Open,
+    Device,
     Cancel,
 }
 
@@ -48,13 +58,20 @@ pub(crate) enum Action {
     SortName,
     SortModified,
     ClearSearch,
+    SwitchDevice,
     Close,
+}
+
+struct DeviceDraft {
+    path: PathBuf,
+    address: (String, usize, Option<usize>),
+    filename: (String, usize, Option<usize>),
+    focus: Focus,
 }
 
 #[derive(Default)]
 pub(crate) struct FolderBrowser {
-    pub add_workspace: bool,
-    pub save_as_return: bool,
+    pub mode: Mode,
     pub focus: Focus,
     pub address_cursor: usize,
     pub address_anchor: Option<usize>,
@@ -78,8 +95,12 @@ pub(crate) struct FolderBrowser {
     pub location_scroll: usize,
     pub location_area: Rect,
     pub modified: HashMap<PathBuf, SystemTime>,
+    pub directory_count: usize,
     pub controls: Vec<(Rect, Action)>,
     pub last_click: Option<(usize, Instant)>,
+    use_selection: bool,
+    local_files: bool,
+    other_device: Option<DeviceDraft>,
     listing_cache: RefCell<Option<FolderBrowserListing>>,
 }
 
@@ -183,6 +204,22 @@ fn known_location(_name: &str) -> Option<PathBuf> {
 }
 
 impl App {
+    pub(crate) fn file_browser_active(&self) -> bool {
+        self.change_dir_active && self.folder_browser.mode == Mode::OpenFile
+    }
+
+    pub(crate) fn folder_browser_remote(&self) -> Option<&crate::remote::workspace::Workspace> {
+        self.remote_workspace.as_ref().filter(|_| !self.folder_browser.local_files)
+    }
+
+    pub(crate) fn folder_browser_can_switch_device(&self) -> bool {
+        self.folder_browser.mode == Mode::OpenFile && self.remote_workspace.is_some()
+    }
+
+    pub(crate) fn folder_browser_entry_is_file(&self, index: usize) -> bool {
+        self.folder_browser.mode == Mode::OpenFile && index >= self.folder_browser.directory_count
+    }
+
     /// An empty location is the virtual Computer page, never a filesystem path.
     pub(crate) fn folder_browser_is_computer(&self) -> bool {
         self.folder_browser_path.as_os_str().is_empty()
@@ -199,14 +236,20 @@ impl App {
             .unwrap_or_else(|| path.file_name().unwrap_or_default().to_string_lossy())
     }
 
-    pub(crate) fn open_folder_browser(&mut self) {
+    pub(crate) fn open_path_browser(&mut self, mode: Mode) {
         let generation = self.folder_browser.generation.wrapping_add(1);
         self.folder_browser = FolderBrowser {
+            mode,
             generation,
             ..FolderBrowser::default()
         };
         self.change_dir_active = true;
         self.folder_browser_path = self.explorer.root.clone();
+        if mode == Mode::OpenFile && self.folder_browser_path.as_os_str().is_empty() {
+            self.folder_browser_path = self.editor().and_then(|editor| editor.file_path.as_deref())
+                .and_then(Path::parent).map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok()).unwrap_or_default();
+        }
         self.text_input_drag = None;
         self.text_input_regions.clear();
         for id in [
@@ -221,16 +264,20 @@ impl App {
 
     pub(crate) fn refresh_folder_browser(&mut self) {
         let computer = self.folder_browser_is_computer();
-        if !computer && self.remote_workspace.is_none() { self.folder_browser_path = normalized_path(&self.folder_browser_path); }
+        if !computer && self.folder_browser_remote().is_none() { self.folder_browser_path = normalized_path(&self.folder_browser_path); }
+        if self.file_browser_open_pending() { self.cancel_remote_location(); }
+        let include_files = self.folder_browser.mode == Mode::OpenFile;
         self.change_dir_query = self.display_path(&self.folder_browser_path);
         self.folder_browser.address_cursor = self.change_dir_query.len();
         self.folder_browser.address_anchor = None;
-        self.folder_browser.folder = self.change_dir_query.clone();
+        self.folder_browser.folder = if include_files { String::new() } else { self.change_dir_query.clone() };
+        self.folder_browser.use_selection = false;
         self.folder_browser.folder_cursor = self.folder_browser.folder.len();
         self.folder_browser.folder_anchor = None;
         self.folder_browser.error = None;
         self.folder_browser.last_click = None;
         self.folder_browser.modified.clear();
+        self.folder_browser.directory_count = 0;
         self.folder_browser_entries.clear();
         self.folder_browser_selected = 0;
         self.folder_browser_scroll = 0;
@@ -239,13 +286,14 @@ impl App {
         let generation = self.folder_browser.generation;
         let hidden = self.folder_browser.show_hidden;
         let path = self.folder_browser_path.clone();
-        let workspace = self.explorer.root.clone();
+        let workspace = if self.folder_browser.local_files { self.local_file_base() } else { self.explorer.root.clone() };
         let cached_locations = self.folder_browser.locations.clone();
         let sender = self.background.sender.clone();
         let read_path = path.clone();
-        if let Some(remote) = self.remote_workspace.clone() {
+        if let Some(remote) = self.folder_browser_remote().cloned() {
             self.background.read_for_file("remote-folder-browser", &read_path, true, move || {
                 let mut entries = Vec::new();
+                let mut files = Vec::new();
                 let mut locations = if cached_locations.is_empty() || computer {
                     vec![("Computer".into(), PathBuf::new()), ("Remote workspace".into(), workspace)]
                 } else { cached_locations };
@@ -256,11 +304,16 @@ impl App {
                     })
                 } else {
                     remote.remote_path(&path).and_then(|remote_path| remote.list(&remote_path)).map(|items| {
-                        entries = items.iter().filter(|entry| entry.is_dir && (hidden || !entry.path.name().starts_with('.'))).map(|entry| remote.view_key(&entry.path)).collect();
+                        for entry in items.iter().filter(|entry| hidden || !entry.path.name().starts_with('.')) {
+                            if entry.is_dir { entries.push(remote.view_key(&entry.path)); }
+                            else if include_files { files.push(remote.view_key(&entry.path)); }
+                        }
                     })
                 };
+                let directory_count = entries.len();
+                entries.extend(files);
                 let _ = sender.send(crate::background::BackgroundResult::FolderBrowserEntries {
-                    path, generation, entries, modified: HashMap::new(),
+                    path, generation, entries, directory_count, modified: HashMap::new(),
                     locations, error: result.err().map(|error| error.to_string()),
                 });
             });
@@ -278,12 +331,13 @@ impl App {
                     }
                 }
                 let _ = sender.send(crate::background::BackgroundResult::FolderBrowserEntries {
-                    path, generation, entries, modified: HashMap::new(), locations,
+                    path, generation, directory_count: entries.len(), entries, modified: HashMap::new(), locations,
                     error: roots.err().map(|error| format!("Cannot list file systems: {error}")),
                 });
                 return;
             }
             let mut dirs = Vec::new();
+            let mut files = Vec::new();
             let mut modified = HashMap::new();
             let mut error = None;
             match std::fs::read_dir(&path) {
@@ -292,24 +346,22 @@ impl App {
                         let entry = match entry {
                             Ok(entry) => entry,
                             Err(err) => {
-                                error = Some(format!("Some folders could not be read: {err}"));
+                                error = Some(format!("Some entries could not be read: {err}"));
                                 continue;
                             }
                         };
                         if !hidden && entry.file_name().to_string_lossy().starts_with('.') {
                             continue;
                         }
-                        // Most workspace entries are files. read_dir already
-                        // supplies their type; only stat directories (or a
-                        // symlink that may resolve to one) for modification time.
+                        // Skip file metadata entirely in folder-only mode.
                         if let Ok(kind) = entry.file_type() {
-                            if !kind.is_dir() && !kind.is_symlink() {
+                            if !(kind.is_dir() || kind.is_symlink() || include_files && kind.is_file()) {
                                 continue;
                             }
                         }
                         let entry_path = entry.path();
                         let metadata = match std::fs::metadata(&entry_path) {
-                            Ok(metadata) if metadata.is_dir() => metadata,
+                            Ok(metadata) if metadata.is_dir() || include_files && metadata.is_file() => metadata,
                             _ => continue,
                         };
                         #[cfg(windows)]
@@ -322,21 +374,21 @@ impl App {
                         if let Ok(time) = metadata.modified() {
                             modified.insert(entry_path.clone(), time);
                         }
-                        dirs.push(entry_path);
+                        if metadata.is_dir() { dirs.push(entry_path); } else { files.push(entry_path); }
                     }
                 }
                 Err(err) => error = Some(format!("Cannot read this folder: {err}")),
             }
-            dirs.sort_by_cached_key(|p| {
-                p.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_lowercase()
-            });
+            for entries in [&mut dirs, &mut files] {
+                entries.sort_by_cached_key(|path| path.file_name().unwrap_or_default().to_string_lossy().to_lowercase());
+            }
+            let directory_count = dirs.len();
+            dirs.extend(files);
             let _ = sender.send(crate::background::BackgroundResult::FolderBrowserEntries {
                 path,
                 generation,
                 entries: dirs,
+                directory_count,
                 modified,
                 locations: if cached_locations.is_empty() {
                     locations(workspace)
@@ -371,16 +423,15 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect();
-        if self.folder_browser.sort_modified {
-            indices.sort_by_cached_key(|&i| {
-                self.folder_browser
-                    .modified
-                    .get(&self.folder_browser_entries[i])
-                    .copied()
-            });
-        }
-        if self.folder_browser.descending {
-            indices.reverse();
+        let first_file = indices.partition_point(|&i| !self.folder_browser_entry_is_file(i));
+        let (folders, files) = indices.split_at_mut(first_file);
+        for group in [folders, files] {
+            if browser.sort_modified {
+                group.sort_by_cached_key(|&i| browser.modified.get(&self.folder_browser_entries[i]).copied());
+            }
+            if browser.descending {
+                group.reverse();
+            }
         }
         let indices: Arc<[usize]> = indices.into();
         *cached = Some(FolderBrowserListing {
@@ -404,27 +455,42 @@ impl App {
         self.folder_browser_selected = 0;
         self.folder_browser_scroll = 0;
         self.folder_browser.last_click = None;
-        if !self.folder_browser.new_folder {
+        if self.folder_browser.mode == Mode::OpenFile {
+            if std::mem::take(&mut self.folder_browser.use_selection) {
+                self.folder_browser.folder.clear();
+                self.folder_browser.folder_cursor = 0;
+                self.folder_browser.folder_anchor = None;
+            }
+        } else if !self.folder_browser.new_folder {
             self.folder_browser.folder = self.display_path(&self.folder_browser_path);
             self.folder_browser.folder_cursor = self.folder_browser.folder.len();
             self.folder_browser.folder_anchor = None;
         }
     }
 
-    fn selected_browser_folder(&self) -> Option<PathBuf> {
+    fn selected_browser_entry(&self) -> Option<(usize, &Path)> {
         let offset = usize::from(self.folder_browser_parent().is_some());
         let index = self.folder_browser_selected.checked_sub(offset)?;
         self.folder_browser_indices()
             .get(index)
-            .map(|&i| self.folder_browser_entries[i].clone())
+            .map(|&i| (i, self.folder_browser_entries[i].as_path()))
     }
 
     pub(crate) fn select_browser_row(&mut self, index: usize) {
-        self.folder_browser_selected = index.min(self.folder_browser_count().saturating_sub(1));
+        let count = self.folder_browser_count();
+        if self.folder_browser.mode == Mode::OpenFile && count == 0 { return; }
+        if self.file_browser_open_pending() { self.cancel_remote_location(); }
+        self.folder_browser_selected = index.min(count.saturating_sub(1));
         self.folder_browser.focus = Focus::List;
         self.folder_browser.new_folder = false;
-        self.folder_browser.folder = self.selected_browser_folder()
-            .map(|path| self.display_path(&path)).unwrap_or_else(|| self.display_path(&self.folder_browser_path));
+        let entry = self.selected_browser_entry().map(|(_, path)| self.display_path(path));
+        self.folder_browser.folder = if self.folder_browser.mode == Mode::OpenFile {
+            self.folder_browser.use_selection = true;
+            self.folder_browser.error = None;
+            entry.unwrap_or_else(|| "..".into())
+        } else {
+            entry.unwrap_or_else(|| self.display_path(&self.folder_browser_path))
+        };
         self.folder_browser.folder_cursor = self.folder_browser.folder.len();
         self.folder_browser.folder_anchor = None;
     }
@@ -433,7 +499,7 @@ impl App {
         if self.folder_browser.creating {
             return;
         }
-        let path = if path.as_os_str().is_empty() || self.remote_workspace.is_some() { path } else { normalized_path(&path) };
+        let path = if path.as_os_str().is_empty() || self.folder_browser_remote().is_some() { path } else { normalized_path(&path) };
         if path != self.folder_browser_path {
             self.folder_browser
                 .back
@@ -450,8 +516,13 @@ impl App {
     }
 
     pub(crate) fn folder_browser_enter(&mut self) {
-        if let Some(path) = self.selected_browser_folder() {
-            self.navigate_folder_browser(path);
+        if let Some((index, path)) = self.selected_browser_entry() {
+            let path = path.to_path_buf();
+            if self.folder_browser_entry_is_file(index) {
+                self.open_path_dialog_location(path);
+            } else {
+                self.navigate_folder_browser(path);
+            }
         } else if self.folder_browser_parent().is_some() {
             self.folder_browser_up();
         }
@@ -465,7 +536,7 @@ impl App {
 
     pub(crate) fn folder_browser_parent(&self) -> Option<PathBuf> {
         if self.folder_browser_is_computer() { return None; }
-        if let Some(remote) = &self.remote_workspace {
+        if let Some(remote) = self.folder_browser_remote() {
             return remote.parent_key(&self.folder_browser_path).ok().map(|parent| parent.unwrap_or_default());
         }
         Some(normalized_path(&self.folder_browser_path).parent().map(Path::to_path_buf).unwrap_or_default())
@@ -521,7 +592,7 @@ impl App {
                 self.folder_browser.address_anchor = Some(0);
             }
             Action::NewFolder => {
-                if self.folder_browser_is_computer() { return; }
+                if self.folder_browser.mode == Mode::OpenFile || self.folder_browser_is_computer() { return; }
                 self.folder_browser.new_folder = true;
                 self.folder_browser.focus = Focus::Folder;
                 self.folder_browser.folder = "New folder".into();
@@ -548,11 +619,14 @@ impl App {
                 self.folder_browser.search.clear();
                 self.folder_browser.search_cursor = 0;
                 self.folder_browser.search_anchor = None;
+                self.folder_browser_path_changed(TextInputId::FolderSearch);
                 self.filter_folder_browser();
             }
+            Action::SwitchDevice => self.switch_file_browser_device(),
             Action::Close => {
+                if self.file_browser_open_pending() { self.cancel_remote_location(); }
                 self.change_dir_active = false;
-                if self.folder_browser.save_as_return {
+                if self.folder_browser.mode == Mode::SaveLocation {
                     self.save_as_active = true;
                     self.modal.kind = None;
                 }
@@ -561,16 +635,76 @@ impl App {
         }
     }
 
+    pub(crate) fn folder_browser_path_changed(&mut self, id: TextInputId) {
+        self.folder_browser.error = None;
+        if id == TextInputId::FolderName { self.folder_browser.use_selection = false; }
+        if self.file_browser_open_pending() { self.cancel_remote_location(); }
+    }
+
+    pub(crate) fn switch_file_browser_device(&mut self) {
+        if !self.folder_browser_can_switch_device() { return; }
+        let browser = &mut self.folder_browser;
+        let next = browser.other_device.take();
+        browser.other_device = Some(DeviceDraft {
+            path: self.folder_browser_path.clone(),
+            address: (std::mem::take(&mut self.change_dir_query), browser.address_cursor, browser.address_anchor),
+            filename: if browser.use_selection { Default::default() } else {
+                (std::mem::take(&mut browser.folder), browser.folder_cursor, browser.folder_anchor)
+            },
+            focus: browser.focus,
+        });
+        browser.local_files = !browser.local_files;
+        browser.back.clear();
+        browser.forward.clear();
+        browser.locations.clear();
+        browser.location_selected = 0;
+        browser.location_scroll = 0;
+        browser.search.clear();
+        browser.search_cursor = 0;
+        browser.search_anchor = None;
+        self.folder_browser_path = next.as_ref().map_or_else(|| self.local_file_base(), |draft| draft.path.clone());
+        self.refresh_folder_browser();
+        let mut focus = TextInputId::FolderName;
+        if let Some(draft) = next {
+            (self.change_dir_query, self.folder_browser.address_cursor, self.folder_browser.address_anchor) = draft.address;
+            (self.folder_browser.folder, self.folder_browser.folder_cursor, self.folder_browser.folder_anchor) = draft.filename;
+            if draft.focus == Focus::Address { focus = TextInputId::FolderAddress; }
+        }
+        for id in [TextInputId::FolderAddress, TextInputId::FolderSearch, TextInputId::FolderName] {
+            self.text_input_histories.remove(&id);
+        }
+        self.text_input_drag = None;
+        self.text_input_regions.clear();
+        self.focus_text_input(focus);
+    }
+
     fn browser_typed_path(&self, value: &str) -> std::io::Result<PathBuf> {
-        let value = value.trim().trim_matches('"');
-        if value.is_empty() { return Err(std::io::Error::other("Enter a folder path.")); }
-        if let Some(remote) = &self.remote_workspace {
+        let value = value.trim();
+        let value = value.strip_prefix('"').and_then(|value| value.strip_suffix('"')).unwrap_or(value);
+        if value.is_empty() {
+            return Err(std::io::Error::other(if self.folder_browser.mode == Mode::OpenFile {
+                "Enter a file name or path."
+            } else { "Enter a folder path." }));
+        }
+        if let Some(remote) = self.folder_browser_remote() {
+            let native;
+            let value = if remote.windows_paths() && !value.starts_with("file://") {
+                let path = value.replace('\\', "/");
+                native = if path.starts_with("//") { format!("file:{path}") }
+                    else if path.as_bytes().get(1) == Some(&b':') { format!("/{path}") }
+                    else { path };
+                native.as_str()
+            } else { value };
             return if self.folder_browser_is_computer() {
                 if !value.starts_with('/') && !value.starts_with("file://") {
-                    return Err(std::io::Error::other("Enter an absolute remote folder path."));
+                    return Err(std::io::Error::other("Enter an absolute remote path."));
                 }
                 remote.target_key(value)
             } else { remote.resolve_from_key(&self.folder_browser_path, value) };
+        }
+        if value.starts_with("file://") {
+            return url::Url::parse(value).ok().and_then(|url| url.to_file_path().ok())
+                .ok_or_else(|| std::io::Error::other("Invalid local file URL"));
         }
         if value == "~" || value.starts_with("~/") || value.starts_with("~\\") {
             if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
@@ -579,13 +713,18 @@ impl App {
             }
         }
         if self.folder_browser_is_computer() && !Path::new(value).is_absolute() {
-            return Err(std::io::Error::other("Enter an absolute folder path."));
+            return Err(std::io::Error::other("Enter an absolute path."));
         }
         Ok(self.folder_browser_path.join(value))
     }
 
     pub(crate) fn confirm_folder_browser(&mut self) {
-        if self.folder_browser.creating {
+        if self.folder_browser.creating || self.file_browser_open_pending() {
+            return;
+        }
+        if self.folder_browser.mode == Mode::OpenFile {
+            if self.folder_browser.use_selection { self.folder_browser_enter(); }
+            else { self.submit_browser_path(TextInputId::FolderName); }
             return;
         }
         if self.folder_browser_is_computer()
@@ -632,7 +771,7 @@ impl App {
                 Some("Choose an existing folder, or use New folder to create one.".into());
             return;
         }
-        if self.folder_browser.save_as_return {
+        if self.folder_browser.mode == Mode::SaveLocation {
             self.save_as_query = if let Some(remote) = &self.remote_workspace {
                 let name = remote.target_key(&self.save_as_query).ok()
                     .and_then(|key| remote.remote_path(&key).ok())
@@ -653,13 +792,31 @@ impl App {
             self.save_as_selection_anchor = None;
             crate::ui_modal::field_changed(self);
         } else {
-            if self.folder_browser.add_workspace {
+            if self.folder_browser.mode == Mode::AddFolder {
                 self.workspaces.request = Some(crate::app_workspaces::Request::Add(path));
             } else {
                 self.workspaces.request = Some(crate::app_workspaces::Request::Replace(path));
             }
         }
         self.folder_browser_action(Action::Close);
+    }
+
+    fn submit_browser_path(&mut self, id: TextInputId) {
+        let value = if id == TextInputId::FolderAddress { &self.change_dir_query } else { &self.folder_browser.folder };
+        match self.browser_typed_path(value) {
+            Ok(path) if self.folder_browser.mode == Mode::OpenFile => self.open_path_dialog_location(path),
+            Ok(path) => self.navigate_folder_browser(path),
+            Err(error) => self.folder_browser.error = Some(error.to_string()),
+        }
+    }
+
+    pub(crate) fn folder_browser_can_confirm(&self) -> bool {
+        if self.folder_browser.creating || self.file_browser_open_pending() { return false; }
+        if self.folder_browser.mode == Mode::OpenFile {
+            self.folder_browser.use_selection || !self.folder_browser.folder.trim().is_empty()
+        } else {
+            !self.folder_browser_is_computer() || !self.folder_browser.folder.is_empty()
+        }
     }
 
     pub(crate) fn folder_browser_key(&mut self, key: KeyEvent) {
@@ -674,7 +831,9 @@ impl App {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             KeyCode::Esc => {
-                if self.folder_browser.new_folder && !self.folder_browser.creating {
+                if self.file_browser_open_pending() {
+                    self.folder_browser_action(Action::Close);
+                } else if self.folder_browser.new_folder && !self.folder_browser.creating {
                     self.folder_browser.new_folder = false;
                     self.folder_browser.error = None;
                     self.filter_folder_browser();
@@ -728,6 +887,7 @@ impl App {
                     Focus::List,
                     Focus::Folder,
                     Focus::Open,
+                    Focus::Device,
                     Focus::Cancel,
                 ];
                 let i = order
@@ -736,38 +896,33 @@ impl App {
                     .unwrap_or(0);
                 let reverse =
                     key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-                let mut next = if reverse {
-                    (i + order.len() - 1) % order.len()
-                } else {
-                    (i + 1) % order.len()
-                };
-                // Compact layouts hide the locations pane; do not strand focus there.
-                if order[next] == Focus::Locations && self.folder_browser.location_area.is_empty() {
-                    next = if reverse {
-                        (next + order.len() - 1) % order.len()
-                    } else {
-                        (next + 1) % order.len()
-                    };
+                let step = if reverse { order.len() - 1 } else { 1 };
+                let mut next = (i + step) % order.len();
+                while (order[next] == Focus::Locations && self.folder_browser.location_area.is_empty())
+                    || (order[next] == Focus::Device && !self.folder_browser_can_switch_device())
+                {
+                    next = (next + step) % order.len();
                 }
                 self.folder_browser.focus = order[next];
                 return;
             }
             KeyCode::Enter if ctrl => {
-                self.confirm_folder_browser();
+                if self.folder_browser.mode == Mode::OpenFile && self.folder_browser.focus == Focus::Address {
+                    self.submit_browser_path(TextInputId::FolderAddress);
+                } else { self.confirm_folder_browser(); }
                 return;
             }
             _ => {}
         }
         match self.folder_browser.focus {
             Focus::Address | Focus::Search | Focus::Folder => {
-                if key.code == KeyCode::Enter {
+                if self.folder_browser.mode == Mode::OpenFile && self.folder_browser.focus == Focus::Folder
+                    && matches!(key.code, KeyCode::Up | KeyCode::Down) && key.modifiers.is_empty()
+                {
+                    self.select_browser_row(usize::from(key.code == KeyCode::Down));
+                } else if key.code == KeyCode::Enter {
                     match self.folder_browser.focus {
-                        Focus::Address => {
-                            match self.browser_typed_path(&self.change_dir_query) {
-                                Ok(path) => self.navigate_folder_browser(path),
-                                Err(error) => self.folder_browser.error = Some(error.to_string()),
-                            }
-                        }
+                        Focus::Address => self.submit_browser_path(TextInputId::FolderAddress),
                         Focus::Folder => self.confirm_folder_browser(),
                         _ => {
                             self.folder_browser.focus = Focus::List;
@@ -825,6 +980,11 @@ impl App {
                     }
                 }
             }
+            Focus::Device => {
+                if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                    self.switch_file_browser_device();
+                }
+            }
             Focus::List => {
                 let selected = self.folder_browser_selected;
                 let page = self
@@ -839,17 +999,20 @@ impl App {
                     KeyCode::End => {
                         self.select_browser_row(self.folder_browser_count().saturating_sub(1))
                     }
-                    KeyCode::Enter | KeyCode::Right => self.folder_browser_enter(),
+                    KeyCode::Enter => self.folder_browser_enter(),
+                    KeyCode::Right if self.selected_browser_entry().is_none_or(|(i, _)| !self.folder_browser_entry_is_file(i)) => self.folder_browser_enter(),
                     KeyCode::Left | KeyCode::Backspace => self.folder_browser_up(),
                     KeyCode::Char(c) if !ctrl && !alt => {
                         self.folder_browser.focus = Focus::Search;
-                        self.edit_text_input(
-                            TextInputId::FolderSearch,
+                        let id = TextInputId::FolderSearch;
+                        if self.edit_text_input(
+                            id,
                             KeyCode::Char(c),
                             key.modifiers,
                             None,
-                        );
-                        self.filter_folder_browser();
+                        ).changed {
+                            self.text_input_changed(id);
+                        }
                     }
                     _ => {}
                 }
@@ -879,7 +1042,7 @@ impl App {
             .position(|&(x, y, w)| row == y && col >= x && col < x + w)
         {
             if index == 0 {
-                self.confirm_folder_browser();
+                if self.folder_browser_can_confirm() { self.confirm_folder_browser(); }
             } else {
                 self.folder_browser_action(Action::Close);
             }
@@ -913,8 +1076,7 @@ impl App {
     pub(crate) fn hover_folder_browser_button(&mut self, col: u16, row: u16) {
         if let Some(index) = self.folder_browser_buttons.iter()
             .position(|&(x, y, width)| row == y && col >= x && col < x + width)
-            && (index != 0 || (!self.folder_browser.creating
-                && (!self.folder_browser_is_computer() || !self.folder_browser.folder.is_empty())))
+            && (index != 0 || self.folder_browser_can_confirm())
         {
             self.folder_browser.focus = if index == 0 { Focus::Open } else { Focus::Cancel };
         }
@@ -971,7 +1133,7 @@ mod tests {
     fn folder_browser_can_go_above_the_filesystem_root_and_navigate_disk_history() {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::new_deferred(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         let mut depth = 0;
         while !app.folder_browser_is_computer() {
@@ -1022,7 +1184,7 @@ mod tests {
     fn folder_browser_computer_rejects_stale_directory_results_and_invalid_addresses() {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::new_deferred(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         let generation = app.folder_browser.generation;
         app.navigate_folder_browser(PathBuf::new());
@@ -1030,6 +1192,7 @@ mod tests {
         let roots = app.folder_browser_entries.clone();
         app.background.sender.send(crate::background::BackgroundResult::FolderBrowserEntries {
             path: root.path().to_path_buf(), generation, entries: vec![root.path().join("stale")],
+            directory_count: 1,
             modified: HashMap::new(), locations: Vec::new(), error: None,
         }).unwrap();
         app.poll_background_results();
@@ -1114,7 +1277,7 @@ mod tests {
         std::fs::create_dir(&beta).unwrap();
         std::fs::create_dir(root.path().join(".hidden")).unwrap();
         let mut app = App::new(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         assert_eq!(app.folder_browser_entries.len(), 2);
         app.navigate_folder_browser(alpha.clone());
@@ -1145,7 +1308,7 @@ mod tests {
         std::fs::create_dir(&alpha).unwrap();
         std::fs::create_dir(&beta).unwrap();
         let mut app = App::new(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         app.folder_browser.search = "BET".into();
         app.filter_folder_browser();
@@ -1181,7 +1344,7 @@ mod tests {
         let child = root.path().join("unicode-你好");
         std::fs::create_dir(&child).unwrap();
         let mut app = App::new(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         app.folder_browser_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
         assert!(app.paste_into_focused_text_input("unicode-你好"));
@@ -1198,7 +1361,7 @@ mod tests {
     fn folder_browser_reports_read_errors_and_rejects_stale_same_path_results() {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::new(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         let generation = app.folder_browser.generation;
         app.folder_browser_action(Action::Hidden);
@@ -1209,6 +1372,7 @@ mod tests {
                 path: root.path().to_path_buf(),
                 generation,
                 entries: vec![root.path().join("stale")],
+                directory_count: 1,
                 modified: HashMap::new(),
                 locations: Vec::new(),
                 error: None,
@@ -1237,7 +1401,7 @@ mod tests {
     fn folder_browser_new_folder_success_collision_and_cancel() {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::new(root.path().to_path_buf());
-        app.open_folder_browser();
+        app.open_path_browser(Mode::OpenFolder);
         ready(&mut app);
         app.folder_browser_action(Action::NewFolder);
         app.folder_browser.folder = "../outside".into();

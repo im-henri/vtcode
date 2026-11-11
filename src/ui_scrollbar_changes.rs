@@ -1,54 +1,47 @@
 //! Scrollbar change coverage uses solid half-cell blocks so even a single
 //! changed line stays visible in a long file. Projection is bounded by the
 //! scrollbar height.
+use crate::line_changes::LineChanges;
+
 const SUBROWS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ChangeRow([u8; SUBROWS]);
+pub(crate) struct ChangeRow([LineChanges; SUBROWS]);
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ChangeRows(Vec<ChangeRow>);
 
-fn priority(status: char) -> u8 {
-    match status {
-        'N' => 4,
-        'U' | 'A' | 'M' => 3,
-        'D' => 2,
-        'S' => 1,
-        _ => 0,
-    }
-}
-
 impl ChangeRow {
-    pub(crate) fn status(self) -> Option<char> {
-        match self.0.into_iter().max().unwrap_or(0) {
-            4 => Some('N'),
-            3 => Some('U'),
-            2 => Some('D'),
-            1 => Some('S'),
-            _ => None,
-        }
+    pub(crate) fn halves(self) -> [LineChanges; SUBROWS] {
+        self.0
+    }
+
+    pub(crate) fn changes(self) -> LineChanges {
+        self.0[0].merge(self.0[1])
     }
 
     pub(crate) fn symbol(self) -> char {
         let [upper, lower] = self.0;
-        match (upper != 0, lower != 0) {
-            (false, false) => ' ',
-            (true, false) => '▀',
-            (false, true) => '▄',
-            (true, true) => '█',
-        }
+        coverage_symbol(!upper.is_empty(), !lower.is_empty(), false)
     }
 
     /// Keep the left half free for navigation in a one-column scrollbar,
     /// retaining the same half-row precision as the full-width markers.
     pub(crate) fn narrow_symbol(self) -> char {
-        match self.symbol() {
-            '▀' => '▝',
-            '▄' => '▗',
-            '█' => '▐',
-            _ => ' ',
-        }
+        let [upper, lower] = self.0;
+        coverage_symbol(!upper.is_empty(), !lower.is_empty(), true)
+    }
+}
+
+pub(super) fn coverage_symbol(upper: bool, lower: bool, narrow: bool) -> char {
+    match (upper, lower, narrow) {
+        (true, false, false) => '▀',
+        (false, true, false) => '▄',
+        (true, true, false) => '█',
+        (true, false, true) => '▝',
+        (false, true, true) => '▗',
+        (true, true, true) => '▐',
+        _ => ' ',
     }
 }
 
@@ -63,7 +56,7 @@ impl ChangeRows {
     pub(crate) fn project(
         height: usize,
         total: usize,
-        mut query: impl FnMut(usize, usize) -> Option<char>,
+        mut query: impl FnMut(usize, usize) -> LineChanges,
     ) -> Self {
         let mut rows = vec![ChangeRow::default(); height];
         let samples = height * SUBROWS;
@@ -74,7 +67,7 @@ impl ChangeRows {
                 let start = (index as u128 * total as u128 / samples as u128) as usize;
                 let end =
                     (((index + 1) as u128 * total as u128).div_ceil(samples as u128)) as usize;
-                *slot = query(start, end).map_or(0, priority);
+                *slot = query(start, end);
             }
         }
         Self(rows)
@@ -82,27 +75,28 @@ impl ChangeRows {
 
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.iter().all(|row| row.status().is_none())
+        self.0.iter().all(|row| row.changes().is_empty())
     }
 
     /// Independent forward projection for reference tests. Production uses
     /// indexed range queries above and is bounded by scrollbar height.
     #[cfg(test)]
-    pub(crate) fn from_lines(
+    pub(crate) fn from_lines<T: Into<LineChanges>>(
         height: usize,
         total: usize,
-        lines: impl IntoIterator<Item = (usize, char)>,
+        lines: impl IntoIterator<Item = (usize, T)>,
     ) -> Self {
         let mut rows = vec![ChangeRow::default(); height];
         let samples = height * SUBROWS;
         let total = total.max(1);
         for (line, status) in lines {
+            let change = status.into();
             let line = line.min(total - 1);
             let start = (line as u128 * samples as u128 / total as u128) as usize;
             let end = (((line + 1) as u128 * samples as u128).div_ceil(total as u128)) as usize;
             for index in start..end {
                 let slot = &mut rows[index / SUBROWS].0[index % SUBROWS];
-                *slot = (*slot).max(priority(status));
+                *slot = slot.merge(change);
             }
         }
         Self(rows)
@@ -122,13 +116,13 @@ mod tests {
             rows.0.iter().map(|row| row.symbol()).collect::<String>(),
             "▀   ▀▄   ▄"
         );
-        assert_eq!(rows.row(4).status(), Some('U'));
-        assert_eq!(rows.row(5).status(), Some('D'));
+        assert_eq!(rows.row(4).changes(), 'U'.into());
+        assert_eq!(rows.row(5).changes(), 'D'.into());
     }
 
     #[test]
     fn whole_changed_lines_scale_as_intervals_in_short_documents() {
-        let all = ChangeRows::project(10, 7, |_, _| Some('U'));
+        let all = ChangeRows::project(10, 7, |_, _| 'U'.into());
         assert!(all.0.iter().all(|row| row.symbol() == '█'));
         let first_three = ChangeRows::from_lines(10, 12, (0..3).map(|line| (line, 'N')));
         assert_eq!(first_three.row(0).symbol(), '█');
@@ -142,7 +136,7 @@ mod tests {
         for (coverage, symbol, narrow) in [([0, 0], ' ', ' '), ([3, 0], '▀', '▝'),
             ([0, 2], '▄', '▗'), ([3, 2], '█', '▐')]
         {
-            let row = ChangeRow(coverage);
+            let row = ChangeRow(coverage.map(LineChanges::from_bits));
             assert_eq!(row.symbol(), symbol);
             assert_eq!(row.narrow_symbol(), narrow);
             assert_eq!(unicode_width::UnicodeWidthChar::width(symbol), Some(1));
@@ -164,8 +158,7 @@ mod tests {
                     changes
                         .iter()
                         .filter(|&&(line, _)| (start..end).contains(&line.min(total - 1)))
-                        .map(|&(_, status)| status)
-                        .max_by_key(|&status| priority(status))
+                        .fold(LineChanges::default(), |combined, &(_, status)| combined.merge(status.into()))
                 });
                 assert_eq!(
                     actual,
@@ -178,7 +171,7 @@ mod tests {
         assert!(
             ChangeRows::project(0, 0, |_, _| {
                 called = true;
-                Some('N')
+                LineChanges::UNSAVED
             })
             .is_empty()
         );
@@ -192,7 +185,7 @@ mod tests {
             crate::app_theme::EditorTheme::Light,
         ] {
             let colors = theme.colors();
-            let changes = ChangeRows::from_lines(10, 400, [(160, 'U'), (170, 'D'), (220, 'D')]);
+            let changes = ChangeRows::from_lines(10, 400, [(160, 'M'), (170, 'D'), (220, 'D')]);
             for scroll in [0, 160] {
                 for (hovered, active) in [(false, false), (true, false), (false, true)] {
                     let (track, thumb) =
@@ -249,12 +242,14 @@ mod tests {
 
     #[test]
     fn preparation_work_is_bounded_by_track_height_even_for_huge_documents() {
+        let height = 40;
         let mut queries = 0;
-        let rows = ChangeRows::project(40, usize::MAX, |_, _| {
+        let rows = ChangeRows::project(height, usize::MAX, |_, _| {
             queries += 1;
-            Some('U')
+            'U'.into()
         });
-        assert_eq!(queries, 40 * SUBROWS);
-        assert_eq!(std::mem::size_of_val(rows.0.as_slice()), 80);
+        assert_eq!(queries, height * SUBROWS);
+        assert_eq!(rows.0.len(), height);
+        assert!(std::mem::size_of::<ChangeRow>() <= SUBROWS * std::mem::size_of::<u16>());
     }
 }

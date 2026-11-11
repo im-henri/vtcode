@@ -1218,6 +1218,7 @@ impl Editor {
         let previous_lines = self.rope.len_lines();
         self.save_undo();
         self.rope = loaded.rope;
+        self.insertion_anchors = None;
         self.update_large_file_mode(crate::editor::LARGE_FILE_THRESHOLD);
         if let Some(mut state) = self.undo_stack.back_mut() {
             // Reload can change text anywhere, independently of the cursor.

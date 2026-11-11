@@ -291,9 +291,11 @@ fn opening_editing_and_cpu_jobs_do_not_wait_for_startup_assets() {
     app.request_syntax_assets_async();
     app.initialize_extensions();
     app.open_file(&path);
-    app.wait_for_background(WAIT, |app| app.editor().is_some_and(|e| !e.bg_loading));
+    app.wait_for_background(WAIT, |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading) && !app.bg_extension_scan_running
+    });
     assert!(app.highlighter.syntax_names().contains(&"Rust".into()));
-    assert!(app.bg_syntax_asset_refresh_running && app.bg_extension_scan_running);
+    assert!(app.bg_syntax_asset_refresh_running, "extension discovery must finish while syntax assets are blocked");
     let (cpu, done) = mpsc::channel();
     app.background.pool_sender().send(Box::new(move || cpu.send(()).unwrap())).unwrap();
     done.recv_timeout(WAIT).expect("asset work must not occupy the editor CPU workers");

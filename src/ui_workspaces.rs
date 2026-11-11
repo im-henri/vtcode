@@ -109,8 +109,8 @@ fn choose_folder(app: &mut App, add: bool) {
         return;
     }
     dismiss(app);
-    app.open_folder_browser();
-    app.folder_browser.add_workspace = add;
+    use crate::folder_browser::Mode;
+    app.open_path_browser(if add { Mode::AddFolder } else { Mode::OpenFolder });
 }
 pub(crate) fn close(app: &mut App) {
     if !can_close(app) {

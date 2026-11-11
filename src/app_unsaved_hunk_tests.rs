@@ -517,7 +517,7 @@ fn unsaved_minus_restores_space_replaced_code_and_redraws_it_immediately() {
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: gutter.x,
+            column: crate::ui_editor_highlight::change_gutter_column(gutter).unwrap(),
             row,
             modifiers: KeyModifiers::NONE,
         },

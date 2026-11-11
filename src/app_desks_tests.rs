@@ -285,7 +285,7 @@ fn background_edit_to_hidden_view_is_published_without_focus_change() {
 }
 
 #[test]
-fn leading_plus_and_selector_do_not_overlap_files_or_repeat_in_splits() {
+fn desk_controls_do_not_overlap_files_or_repeat_in_splits() {
     let mut app = app();
     let area = ratatui::layout::Rect::new(2, 3, 80, 1);
     let (plus, picker, width) = crate::ui_desks::controls(&app, area, 0);
@@ -294,9 +294,13 @@ fn leading_plus_and_selector_do_not_overlap_files_or_repeat_in_splits() {
     assert_eq!(width, 4);
     app.new_desk("An exceptionally long desk name", true);
     app.desks.host = app.active_group;
-    for width in [4, 8, 16, 40, 80] {
+    for width in [4, 8, 16, 32, 40, 80] {
         let area = ratatui::layout::Rect::new(2, 3, width, 1);
-        let (_, picker, prefix) = crate::ui_desks::controls(&app, area, app.active_group);
+        let (plus, picker, prefix) = crate::ui_desks::controls(&app, area, app.active_group);
+        assert!(plus.is_empty());
+        assert!(!picker.is_empty());
+        assert_eq!(picker.x, area.x);
+        assert_eq!(prefix, picker.width + 1);
         assert!(prefix <= width);
         assert!(picker.right() <= area.right());
         let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, area);
@@ -448,7 +452,7 @@ fn desk_picker_keeps_pane_counts_and_unsaved_markers_visible_for_long_names() {
     for name in [
         "really long desk name ".repeat(6),
         "編輯工作桌名稱".repeat(12),
-        "👩‍💻e\u{301}".repeat(16),
+        "👩‍💻e\u{301}".repeat(36),
     ] {
         let name = format!("{name} unique-tail");
         app.desks.items[0].name = name.clone();
@@ -528,10 +532,11 @@ fn render_desk_controls_and_group_popups() {
             _ => {}
         }
         let width = if scenario == "narrow" { 32 } else { 100 };
-        app.tab_bar_area = Some(Rect::new(0, 0, width, 1));
+        let area = Rect::new(0, 0, width, 1);
+        app.tab_bar_area = Some(area);
         terminal
             .draw(|f| {
-                crate::ui_chrome_tabs::draw_tab_bar(f, &app, Rect::new(0, 0, width, 1));
+                crate::ui_chrome_tabs::draw_tab_bar(f, &app, area);
                 crate::ui_desks::draw(f, &mut app);
             })
             .unwrap();
@@ -539,7 +544,12 @@ fn render_desk_controls_and_group_popups() {
         let first_row = (0..width)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
-        assert!(first_row.contains('+'));
+        let (_, _, prefix) = crate::ui_desks::controls(&app, area, app.active_group);
+        let controls = (0..prefix)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert_eq!(controls.contains('+'), scenario == "single");
+        assert_eq!(controls.contains('▾'), scenario != "single");
         if scenario == "single" {
             assert!(!first_row.contains("Main"));
         }
@@ -549,7 +559,7 @@ fn render_desk_controls_and_group_popups() {
         }
         if scenario == "narrow" {
             assert!(
-                first_row.contains("main"),
+                first_row.contains("main.rs") || first_row.contains("ma…rs"),
                 "active file must remain visible: {first_row}"
             );
         }
@@ -719,7 +729,7 @@ fn corrupt_desk_layout_is_repaired_without_losing_active_files() {
 }
 
 #[test]
-fn desk_plus_and_multiselect_use_the_drawn_hit_targets() {
+fn desk_creation_and_multiselect_use_the_drawn_hit_targets() {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
@@ -739,7 +749,8 @@ fn desk_plus_and_multiselect_use_the_drawn_hit_targets() {
         click(1, 0, KeyModifiers::empty())
     ));
     assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::New));
-    crate::ui_desks::paste(&mut app, "Debugging");
+    let name = "Debugging the long running integration test suite on the remote host";
+    crate::ui_desks::paste(&mut app, name);
     terminal
         .draw(|f| crate::ui_desks::draw(f, &mut app))
         .unwrap();
@@ -769,9 +780,42 @@ fn desk_plus_and_multiselect_use_the_drawn_hit_targets() {
         &mut app,
         click(popup.x + 2, copy_row, KeyModifiers::empty()),
     ));
-    assert_eq!(app.current_desk_name(), "Debugging");
+    assert_eq!(app.current_desk_name(), name);
     assert_eq!(app.tabs.len(), 3, "Copy layout uses the bottom row's hit target");
-    crate::ui_desks::open(&mut app, crate::ui_desks::Mode::New);
+
+    app.desks.host = app.active_group;
+    app.tab_bar_area = Some(area);
+    let (_, picker, _) = crate::ui_desks::controls(&app, area, app.active_group);
+    terminal
+        .draw(|f| crate::ui_chrome_tabs::draw_tab_bar(f, &app, area))
+        .unwrap();
+    let label = (picker.x..picker.right())
+        .map(|x| terminal.backend().buffer()[(x, picker.y)].symbol())
+        .collect::<String>();
+    assert_eq!(label, " Debugging t… ▾");
+    assert!(crate::ui_desks::handle_mouse(
+        &mut app,
+        click(picker.right() - 1, picker.y, KeyModifiers::empty()),
+    ));
+    assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::Switch));
+    terminal.draw(|f| crate::ui_desks::draw(f, &mut app)).unwrap();
+    let popup = app.desks.popup.area;
+    let find_row = |label: &str| {
+        (popup.y..popup.bottom())
+            .find(|&y| {
+                (popup.x..popup.right())
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains(label)
+            })
+            .unwrap_or_else(|| panic!("missing dropdown row {label:?}"))
+    };
+    find_row(name);
+    assert!(crate::ui_desks::handle_mouse(
+        &mut app,
+        click(popup.x + 2, find_row("Add New Desk"), KeyModifiers::empty()),
+    ));
+    assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::New));
     crate::ui_desks::paste(&mut app, "Empty");
     crate::ui_desks::handle_key(
         &mut app,

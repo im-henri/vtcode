@@ -637,7 +637,6 @@ impl DiffRenderCache {
             .map(AlignedDiffRow::right_cell_len)
             .max().unwrap_or(0).max(max_left_text_width);
         let mut hunks = Vec::new();
-        let mut target_statuses = vec![' '; max_right_line];
         let mut target_line = 0usize;
         let mut hunk_start: Option<usize> = None;
         for (kind, _) in diff_lines {
@@ -658,19 +657,10 @@ impl DiffRenderCache {
                 }
                 '+' => {
                     hunk_start.get_or_insert(target_line);
-                    if let Some(status) = target_statuses.get_mut(target_line) {
-                        *status = 'U';
-                    }
                     target_line = target_line.saturating_add(1);
                 }
                 '-' => {
                     hunk_start.get_or_insert(target_line);
-                    let marker_line = target_line.min(last_target_line);
-                    if let Some(status) = target_statuses.get_mut(marker_line) {
-                        if *status == ' ' {
-                            *status = 'D';
-                        }
-                    }
                 }
                 _ => {}
             }
@@ -686,7 +676,7 @@ impl DiffRenderCache {
                 target_end,
             });
         }
-        let target_changes = target_statuses
+        let target_changes = crate::app_git_display::target_line_markers_from_compare_diff(diff_lines, max_right_line)
             .into_iter()
             .enumerate()
             .filter_map(|(line, status)| (status != ' ').then_some((line, status)))
@@ -901,13 +891,11 @@ impl DiffRenderCache {
             .enumerate()
             .filter(|(_, row)| row.hidden_lines == 0)
         {
-            let kind = if row.right_kind == '+' {
-                '+'
-            } else {
-                row.left_kind
-            };
-            if kind != ' ' {
-                result[0][usize::from(kind == '-')].push(index);
+            if row.right_kind == '+' {
+                result[0][0].push(index);
+            }
+            if row.left_kind == '-' {
+                result[0][1].push(index);
             }
         }
         for (index, entry) in inline.iter().enumerate() {
@@ -924,18 +912,16 @@ impl DiffRenderCache {
         aligned: bool,
         start: usize,
         end: usize,
-    ) -> Option<char> {
-        if start >= end {
-            return None;
-        }
+    ) -> crate::line_changes::LineChanges {
         let rows = &self.overview_rows[usize::from(!aligned)];
-        for (indices, status) in rows.iter().zip(['U', 'D']) {
+        let mut changes = crate::line_changes::LineChanges::default();
+        for (indices, status) in rows.iter().zip(['A', 'D']) {
             let first = indices.partition_point(|row| *row < start);
             if indices.get(first).is_some_and(|row| *row < end) {
-                return Some(status);
+                changes = changes.merge(status.into());
             }
         }
-        None
+        changes
     }
 
     /// Project complete revisions into hunks without renumbering source lines.
@@ -2396,7 +2382,7 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(cache.target_changes, vec![(1, 'U'), (2, 'U'), (4, 'D')]);
+        assert_eq!(cache.target_changes, vec![(1, 'M'), (2, 'M'), (4, 'D')]);
         assert_eq!(cache.next_hunk_target(0), Some(1));
         assert_eq!(cache.next_hunk_target(1), Some(4));
         assert_eq!(cache.next_hunk_target(2), Some(4));

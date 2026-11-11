@@ -60,7 +60,8 @@ impl Fixture {
         terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut self.app, Rect::new(10, 3, 110, 32))).unwrap();
         let gutter = self.app.gutter_area.unwrap();
         crate::mouse::handle_mouse(&mut self.app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: gutter.x,
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: crate::ui_editor_highlight::change_gutter_column(gutter).unwrap(),
             row: gutter.y + line as u16, modifiers: KeyModifiers::NONE,
         });
         assert!(self.app.hunk_popup_active, "the gutter must open the preview");
@@ -115,6 +116,26 @@ fn staged_gutter_markers_follow_unstaged_insertions_and_deletions() {
             fixture.click(line);
             fixture.assert_preview(true, "c", Some("C"));
         }
+    }
+}
+
+#[test]
+fn staging_an_edit_at_a_staged_deletion_keeps_both_kinds_until_the_index_changes() {
+    use crate::line_changes::LineChanges;
+
+    let head = "first\nremoved\nretained\nlast\n";
+    let index = "first\nretained\nlast\n";
+    let working = "first\nedited retained\nlast\n";
+    for remote in [false, true] {
+        let mut fixture = Fixture::new(remote, head, index, working);
+        assert_eq!(fixture.app.editor().unwrap().line_changes(1), LineChanges::git('D', 'M'));
+        fixture.click(1);
+        fixture.assert_preview(false, "retained", Some("edited retained"));
+        fixture.app.execute_hunk_popup_action(0);
+        fixture.app.wait_for_git_action();
+        fixture.refresh();
+        assert_eq!(fixture.index(), working);
+        assert_eq!(fixture.app.editor().unwrap().line_changes(1), LineChanges::git('M', ' '));
     }
 }
 

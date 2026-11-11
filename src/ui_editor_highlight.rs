@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::Span,
     widgets::Paragraph,
     Frame,
@@ -253,26 +253,46 @@ impl<'a> LineWhitespace<'a> {
     }
 }
 
+const GUTTER_CHANGE_BAR: &str = "┃";
+const GUTTER_SPLIT_CHANGE_BAR: &str = "▐";
+const GUTTER_REMOVAL_WEDGE: &str = "▸";
+
+/// The change marker sits between the line number and the fold control.
+pub(crate) fn change_gutter_column(gutter: Rect) -> Option<u16> {
+    (gutter.width >= 2).then(|| gutter.right() - 2)
+}
+
 pub(crate) fn gutter_diff_indicator(
-    diff_status: char,
+    changes: impl Into<crate::line_changes::LineChanges>,
     bg: Color,
     hovered: bool,
     colors: &crate::app_theme::ThemeColors,
 ) -> (&'static str, Style) {
-    let hover_lighten = |c: Color| -> Color {
-        if hovered && !colors.ui.preserve_theme_colors {
-            crate::ui_colors::lighten(c, 30)
-        } else {
-            c
-        }
+    use crate::{line_changes::ChangeKind, ui_colors::ChangeSurface};
+
+    let changes = changes.into();
+    let (working, staged) = (changes.working(), changes.staged());
+    let Some(kind) = working.or(staged) else {
+        return (" ", Style::default().bg(bg));
     };
-    match crate::ui_colors::change_marker_color(diff_status, colors) {
-        Some(base) => {
-            let fg = hover_lighten(base);
-            ("┃", Style::default().fg(fg).bg(bg))
+    let color = |kind, staged| ChangeSurface::Gutter { staged }.color(kind, colors);
+    // The right half-block uses the foreground for its right stripe and the
+    // background for its left stripe, so both stripes fit in one column.
+    let (symbol, fg, bg) = match (working, staged) {
+        (Some(working), Some(staged)) => {
+            (GUTTER_SPLIT_CHANGE_BAR, color(working, false), color(staged, true))
         }
-        None => (" ", Style::default().fg(bg).bg(bg)),
+        _ => (
+            if kind == ChangeKind::Removed { GUTTER_REMOVAL_WEDGE } else { GUTTER_CHANGE_BAR },
+            color(kind, staged.is_some()),
+            bg,
+        ),
+    };
+    let mut style = Style::default().fg(fg).bg(bg);
+    if hovered {
+        style = style.add_modifier(Modifier::BOLD);
     }
+    (symbol, style)
 }
 
 /// Binary search for all matches on a given line in the sorted search_matches vec.
@@ -2337,34 +2357,39 @@ pub(crate) fn draw_text_drag_indicator(
 }
 
 
-/// Draw a git blame tooltip when hovering over the gutter.
-pub(crate) fn draw_gutter_blame_tooltip(f: &mut Frame, app: &App, gutter_area: Rect) {
-    if let Some(hover_line) = app.hovered_gutter_line {
-        if let Some(editor) = app.editor() {
-            if let Some(blame_text) = get_cached_blame_line(app, editor, hover_line) {
-                let tooltip_text = format!(" {blame_text} ");
-                let tw = unicode_width::UnicodeWidthStr::width(tooltip_text.as_str()) as u16;
-                let tx = gutter_area.x + gutter_area.width;
-                let ty = {
-                    let rel = hover_line.saturating_sub(editor.scroll_offset);
-                    gutter_area.y + (rel as u16).min(gutter_area.height.saturating_sub(1))
-                };
-                let tooltip_area = Rect::new(
-                    tx.min(f.area().width.saturating_sub(tw)),
-                    ty,
-                    tw.min(f.area().width),
-                    1,
-                );
-                let tooltip = Paragraph::new(Span::styled(
-                    tooltip_text,
-                    Style::default()
-                        .fg(app.colors.fg_text)
-                        .bg(app.colors.bg_dark),
-                ));
-                f.render_widget(tooltip, tooltip_area);
-            }
-        }
-    }
+pub(crate) fn draw_gutter_tooltip(f: &mut Frame, app: &App, gutter_area: Rect) {
+    let (Some(hover_line), Some(editor)) = (app.hovered_gutter_line, app.editor()) else { return; };
+    let change_tooltip = if change_gutter_column(gutter_area) == Some(app.mouse_col)
+        && gutter_area.contains((app.mouse_col, app.mouse_row).into())
+        && !app.rendering_inactive_editor && !app.should_render_diff_for_active_editor()
+    {
+        let changes = editor.line_changes(hover_line);
+        changes.primary().filter(|_| f.buffer_mut().cell((app.mouse_col, app.mouse_row))
+            .is_some_and(|cell| matches!(cell.symbol(), GUTTER_CHANGE_BAR | GUTTER_SPLIT_CHANGE_BAR | GUTTER_REMOVAL_WEDGE))).map(|_| {
+            let labels = [
+                changes.staged().map(|kind| format!("Staged {}", kind.description())),
+                changes.unstaged().map(|kind| format!("Unstaged {}", kind.description())),
+                changes.unsaved().then(|| "Unsaved changes".into()),
+            ];
+            labels.into_iter().flatten().collect::<Vec<_>>().join("  ·  ")
+        })
+    } else { None };
+    let (text, y) = if let Some(text) = change_tooltip {
+        (text, app.mouse_row)
+    } else if let Some(text) = get_cached_blame_line(app, editor, hover_line) {
+        let offset = hover_line.saturating_sub(editor.scroll_offset);
+        (text, gutter_area.y + (offset as u16).min(gutter_area.height.saturating_sub(1)))
+    } else {
+        return;
+    };
+    let text = format!(" {text} ");
+    let width = crate::helpers::len_as_u16(unicode_width::UnicodeWidthStr::width(text.as_str()))
+        .min(f.area().width);
+    let area = Rect::new(gutter_area.right().min(f.area().right().saturating_sub(width)), y, width, 1);
+    f.render_widget(
+        Paragraph::new(Span::styled(text, Style::default().fg(app.colors.fg_text).bg(app.colors.bg_dark))),
+        area,
+    );
 }
 
 #[path = "ui_marker_tooltip.rs"]

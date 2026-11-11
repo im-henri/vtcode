@@ -171,7 +171,7 @@ pub(crate) fn prepare_target(
             };
             let text = if staged { &index } else { &worktree };
             let mut peek = match target {
-                PeekTarget::Line(line) => {
+                PeekTarget::Line(line) | PeekTarget::InsertedLine(line) => {
                     let mapped = equal.iter().find_map(|&(old, new, len)| {
                         (line >= new && line < new + len).then(|| old + line - new)
                     });
@@ -179,7 +179,8 @@ pub(crate) fn prepare_target(
                         let Some(mapped) = mapped.or_else(|| (index == worktree).then_some(line)) else { return Ok(None); };
                         mapped
                     } else { line };
-                    let Some(peek) = HunkPeek::for_target(&patch, text, PeekTarget::Line(mapped), tab_size)? else { return Ok(None); };
+                    let selection = if staged { PeekTarget::Line(mapped) } else { target };
+                    let Some(peek) = HunkPeek::for_target(&patch, text, selection, tab_size)? else { return Ok(None); };
                     peek
                 }
                 PeekTarget::Hunk(_) => HunkPeek::for_target(&patch, text, target, tab_size)?.unwrap(),
@@ -192,7 +193,9 @@ pub(crate) fn prepare_target(
                     });
                 }
             }
-            if let PeekTarget::Line(line) = target { peek.hunks[peek.selected].action_line = Some(line); }
+            if staged && let PeekTarget::Line(line) | PeekTarget::InsertedLine(line) = target {
+                peek.hunks[peek.selected].action_line = Some(line);
+            }
             peek
         };
     peek.remote = Some(Snapshot {

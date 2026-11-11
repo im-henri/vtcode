@@ -1298,14 +1298,14 @@ fn tab_render_width_modified_wider() {
 }
 
 #[test]
-fn tab_render_width_pinned_wider() {
+fn tab_render_width_pin_uses_the_same_space_as_close() {
     let app = App::test_new();
     let tab = make_tab("main.rs");
     let mut pinned_tab = make_tab("main.rs");
     pinned_tab.pinned = true;
     let w_normal = tab_render_width(&app, 0, &tab);
     let w_pinned = tab_render_width(&app, 0, &pinned_tab);
-    assert!(w_pinned > w_normal, "pinned tab should be wider");
+    assert_eq!(w_pinned, w_normal);
 }
 
 #[test]

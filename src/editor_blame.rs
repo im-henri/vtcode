@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
@@ -103,7 +103,7 @@ impl View {
             .unwrap_or(0) as u16;
     }
 
-    fn contains_header(&self, point: ratatui::layout::Position) -> bool {
+    fn contains_header(&self, point: Position) -> bool {
         [
             self.button,
             self.revision_previous,
@@ -115,6 +115,12 @@ impl View {
         .into_iter()
         .flatten()
         .any(|area| area.contains(point))
+    }
+
+    fn contains(&self, point: Position) -> bool {
+        self.contains_header(point)
+            || self.hits.iter().any(|(area, _)| area.contains(point))
+            || self.panel.is_some_and(|area| area.contains(point))
     }
 
     fn clear_obscured_header(&mut self, area: Rect) {
@@ -909,32 +915,37 @@ fn details(
     view.detail_max_scroll = max_scroll;
 }
 
+fn blame_view_at(app: &App, point: Position) -> Option<(usize, &View)> {
+    if let Some(editor) = app.editor().filter(|editor| editor.blame.contains(point)) {
+        return Some((app.active_group, &editor.blame));
+    }
+    // Hidden desks keep the blame rectangles from their last render.
+    let pane_at = |index| {
+        if index == app.active_group || !app.group_in_current_desk(index) {
+            return None;
+        }
+        let group = app.groups.get(index)?;
+        let view = &group.tabs.get(group.active_tab)?.editor.blame;
+        view.contains(point).then_some((index, view))
+    };
+    if let Some(tree) = &app.split_tree {
+        let mut hit = None;
+        tree.visit_leaves(&mut |index| {
+            if hit.is_none() {
+                hit = pane_at(index);
+            }
+        });
+        hit
+    } else if app.split_active() {
+        // Legacy sessions can still have a flat split layout.
+        (0..app.groups.len()).find_map(pane_at)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn hovered(app: &App, column: u16, row: u16) -> bool {
-    let point = (column, row).into();
-    app.tabs
-        .get(app.active_tab)
-        .into_iter()
-        .chain(
-            app.groups
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| *index != app.active_group)
-                .filter_map(|(_, group)| group.tabs.get(group.active_tab)),
-        )
-        .any(|tab| {
-            tab.editor.blame.contains_header(point)
-                || tab
-                    .editor
-                    .blame
-                    .hits
-                    .iter()
-                    .any(|(area, _)| area.contains(point))
-                || tab
-                    .editor
-                    .blame
-                    .panel
-                    .is_some_and(|area| area.contains(point))
-        })
+    blame_view_at(app, (column, row).into()).is_some()
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
@@ -960,50 +971,16 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             }
         }
     }
-    // Tabs retain their controls across splits and moves. Focus the pane owning
-    // this rail before acting; inactive copies of the active group are ignored.
-    if let Some(index) = app
-        .groups
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != app.active_group)
-        .find_map(|(index, group)| {
-            group
-                .tabs
-                .get(group.active_tab)
-                .filter(|tab| {
-                    tab.editor.blame.contains_header(point)
-                        || tab
-                            .editor
-                            .blame
-                            .hits
-                            .iter()
-                            .any(|(area, _)| area.contains(point))
-                        || tab
-                            .editor
-                            .blame
-                            .panel
-                            .is_some_and(|area| area.contains(point))
-                })
-                .map(|_| index)
-        })
+    if let Some((index, view)) = blame_view_at(app, point)
+        && index != app.active_group
     {
-        if matches!(
-            mouse.kind,
-            MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
-        ) || (matches!(
-            mouse.kind,
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {}
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) && app.groups[index].tabs[app.groups[index].active_tab]
-            .editor
-            .blame
-            .panel
-            .is_some_and(|area| area.contains(point)))
-        {
-            app.switch_group(index);
-        } else {
-            return false;
+                if view.panel.is_some_and(|area| area.contains(point)) => {}
+            _ => return false,
         }
+        app.switch_group(index);
     }
     let Some(editor) = app.editor() else {
         return false;

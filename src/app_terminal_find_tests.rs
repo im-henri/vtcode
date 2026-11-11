@@ -342,6 +342,7 @@ fn matches_highlight_the_visible_scrollback_and_manual_selection_takes_precedenc
             &app.colors.ui,
             false,
             false,
+            &app.terminals[0].input_activity,
         );
         super::draw(frame, app, 0, frame.area());
     };

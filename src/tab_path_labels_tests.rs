@@ -22,7 +22,7 @@ fn label(app: &App, tab: &Tab) -> String {
 
 fn assert_unique_paths(app: &App) {
     let mut labels = FxHashMap::default();
-    for tab in all_tabs(app) {
+    for tab in desk_tab_lists(app).flatten() {
         let Some((_, parent)) = parent(tab) else {
             continue;
         };
@@ -126,6 +126,31 @@ fn contexts_follow_rename_close_reorder_and_split_group_membership() {
     app.groups[1].tabs[0].editor.file_path = Some("cores/arm/src/entry.cps".into());
     app.groups[1].tabs.clear();
     assert_eq!(label(&app, &app.tabs[0]), "entry.cps");
+}
+
+#[test]
+fn moving_a_same_named_file_to_another_desk_removes_path_hints() {
+    let mut app = fixture(&["left/src/entry.cps", "right/src/entry.cps"]);
+    app.tabs
+        .extend((0..64).map(|index| tab(format!("unrelated/file-{index}.txt"))));
+    let main = app.desks.active;
+    let other = app.new_desk("Other", false);
+    app.switch_desk(main);
+
+    assert!(label(&app, &app.tabs[0]).contains("left"));
+    let index = TabNameDuplicates::for_viewport(&app, 80).unwrap();
+    assert!(index.context(&app.tabs[0]).unwrap().is_some());
+
+    let moved = app.tabs[1].editor.navigation_id;
+    app.move_tabs_to_desk(other, false, &[moved]);
+    assert_eq!(label(&app, &app.tabs[0]), "entry.cps");
+    let index = TabNameDuplicates::for_viewport(&app, 80).unwrap();
+    assert_eq!(index.context(&app.tabs[0]), Some(None));
+
+    app.switch_desk(other);
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(label(&app, &app.tabs[0]), "entry.cps");
+    assert!(TabNameDuplicates::for_viewport(&app, 80).is_none());
 }
 
 #[test]

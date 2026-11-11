@@ -1565,7 +1565,9 @@ impl App {
         self.confirm_close_active = false;
         self.terminal_close = None;
         self.save_as_active = false;
-        self.file_open = Default::default();
+        if self.file_browser_active() {
+            self.folder_browser_action(crate::folder_browser::Action::Close);
+        }
         self.settings_editor_active = false;
         crate::ui_lsp_settings::activate(self, crate::ui_lsp_settings::Action::Close);
         self.tab_context_active = false;
@@ -1773,7 +1775,8 @@ impl App {
         } else {
             0
         };
-        1 + pin_len + mod_len + icon_len + deleted_prefix_len + display_width + 1
+        1 + pin_len + mod_len + icon_len + deleted_prefix_len + display_width
+            + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
     }
 
     fn placed_tab_width(&self, tab: &Tab) -> usize {
@@ -1781,13 +1784,15 @@ impl App {
             crate::ui_chrome_tabs::diff_tab_width(self, tab)
         } else if let TabKind::Chat(key) = tab.kind {
             let title = self.chat.editor_tab_title(key);
-            title.width() + 4 + if tab.pinned { "📌".width() } else { 0 }
+            title.width() + 3 + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
+                + if tab.pinned { "📌".width() } else { 0 }
         } else if let TabKind::RemoteConnection(id) = tab.kind {
             let width = if id == 0 { "SSH: Reconnect".width() } else {
                 "SSH: ".width() + self.remote_targets.attempt.as_ref().filter(|attempt| attempt.id == id)
                     .map_or("Connection".width(), |attempt| attempt.target.name.width())
             };
-            width + 5 + if tab.pinned { "📌".width() } else { 0 }
+            width + 4 + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
+                + if tab.pinned { "📌".width() } else { 0 }
         } else { Self::tab_ui_width(tab) }
     }
 
@@ -2356,10 +2361,10 @@ mod tests {
     fn tab_ui_width_basic() {
         let tab = make_tab("main.rs", false, false);
         let w = App::tab_ui_width(&tab);
-        // One cell of padding on each side; close overlays the label.
-        assert_eq!(w, 11);
+        // Leading padding, file icon, filename, and three close-button cells.
+        assert_eq!(w, 13);
         let unknown = make_tab("notes.unknown", false, false);
-        assert_eq!(App::tab_ui_width(&unknown), 15);
+        assert_eq!(App::tab_ui_width(&unknown), 17);
     }
 
     #[test]
@@ -2374,7 +2379,7 @@ mod tests {
     fn tab_ui_width_reserves_cached_deleted_marker() {
         let mut tab = make_tab("main.rs", false, false);
         tab.editor.disk_unavailable = true;
-        assert_eq!(App::tab_ui_width(&tab), 12);
+        assert_eq!(App::tab_ui_width(&tab), 14);
     }
 
     #[test]

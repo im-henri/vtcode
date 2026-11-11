@@ -36,6 +36,7 @@ fn sparse_unsaved_queries_preserve_boundaries_empty_ranges_and_eof() {
     let changes = UnsavedDiff {
         line_count: 12,
         changed_ranges: vec![1..3, 5..6, 9..12],
+        ..Default::default()
     };
     for start in 0..=15 {
         for end in 0..=15 {
@@ -71,7 +72,7 @@ fn exact_diff_shortcuts_still_obey_deadlines_and_cancellation() {
     let current = Rope::from_str(&"after\n".repeat(10_000));
     let polls = std::cell::Cell::new(0);
     assert!(
-        compute_unsaved_diff_markers_cancellable(&saved, &current, None, &|| {
+        compute_unsaved_diff_markers_cancellable(&saved, &current, &[], None, &|| {
             polls.set(polls.get() + 1);
             polls.get() >= 8
         })
@@ -81,6 +82,7 @@ fn exact_diff_shortcuts_still_obey_deadlines_and_cancellation() {
         compute_unsaved_diff_markers_cancellable(
             &saved,
             &current,
+            &[],
             Some(std::time::Instant::now()),
             &|| false
         )

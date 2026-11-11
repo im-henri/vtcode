@@ -167,6 +167,10 @@ impl Drop for State {
 }
 
 impl App {
+    pub(crate) fn file_browser_open_pending(&self) -> bool {
+        self.remote_navigation.pending.as_ref().is_some_and(|request| request.source == Source::PathDialog)
+    }
+
     pub(crate) fn cancel_remote_terminal_location(&mut self) {
         self.cancel_terminal_directory_reveal();
         if self.remote_navigation.pending.as_ref().is_some_and(|request| request.source == Source::Terminal) {
@@ -184,7 +188,6 @@ impl App {
         }
         if let Some(request) = self.remote_navigation.pending.take()
         {
-            if request.source == Source::PathDialog { self.file_open.pending = false; }
             if self.status_message == request.status { self.status_message = request.previous_status; }
         }
     }
@@ -223,6 +226,8 @@ impl App {
     }
 
     pub(crate) fn open_path_dialog_location(&mut self, path: PathBuf) {
+        if !self.file_browser_active() || self.file_browser_open_pending() { return; }
+        self.folder_browser.error = None;
         self.open_location_at(path, None, 0, Source::PathDialog);
     }
 
@@ -240,7 +245,11 @@ impl App {
             return;
         }
         if path == self.explorer.root {
-            if matches!(source, Source::FileCommand | Source::PathDialog) {
+            if source == Source::PathDialog {
+                self.navigate_folder_browser(path);
+                return;
+            }
+            if source == Source::FileCommand {
                 self.remote_location_error(
                     source,
                     "Choose a file, not the workspace folder".into(),
@@ -269,9 +278,7 @@ impl App {
             });
         if live {
             if source == Source::PathDialog {
-                self.file_open.active = false;
-                self.file_open.pending = false;
-                self.modal = Default::default();
+                self.folder_browser_action(crate::folder_browser::Action::Close);
             }
             self.open_file(&path);
             if source == Source::Terminal { self.terminal_panel_focused = false; }
@@ -335,9 +342,8 @@ impl App {
                     });
                 });
                 let result = match workspace {
-                    Some(workspace) => workspace.open_location(&path, &cancel, progress),
-                    None => crate::app_terminal_links::open_local_location(&path, &root, &cancel,
-                        matches!(source, Source::FileCommand | Source::PathDialog)),
+                    Some(workspace) => workspace.open_location(&path, &cancel, source == Source::PathDialog, progress),
+                    None => crate::app_terminal_links::open_local_location(&path, &root, &cancel, source),
                 }.map_err(|error| error.to_string());
                 // A cancelled large result is freed here, never on the input thread.
                 let result = if cancel.is_cancelled() {
@@ -393,8 +399,8 @@ impl App {
         }
         let valid = request.generation == self.workspace_generation
             && request.origin.matches(self)
-            && (request.source != Source::PathDialog || (self.file_open.active && self.file_open.pending
-                && crate::ui_modal::active(self) == Some(crate::ui_modal::Kind::OpenFilePath)))
+            && (request.source != Source::PathDialog || (self.file_browser_active()
+                && crate::ui_modal::active(self).is_none()))
             && request.root == self.explorer.root
             && match (&self.remote_workspace, &request.workspace) {
                 (Some(workspace), Some(original)) => workspace.view_root == original.view_root
@@ -403,13 +409,14 @@ impl App {
                 _ => false,
             };
         if !valid {
-            if request.source == Source::PathDialog { self.file_open.pending = false; }
             self.discard_remote_location(result);
             return true;
         }
         match result {
             Ok(Location::Directory(path)) => {
-                if matches!(request.source, Source::FileCommand | Source::PathDialog) {
+                if request.source == Source::PathDialog {
+                    self.navigate_folder_browser(path);
+                } else if request.source == Source::FileCommand {
                     self.remote_location_error(
                         request.source,
                         format!("{} is a folder, not a file", self.display_path(&path)),
@@ -422,9 +429,7 @@ impl App {
             }
             Ok(Location::File(loaded)) => {
                 if request.source == Source::PathDialog {
-                    self.file_open.active = false;
-                    self.file_open.pending = false;
-                    self.modal = Default::default();
+                    self.folder_browser_action(crate::folder_browser::Action::Close);
                 }
                 self.push_nav_history();
                 self.open_file_with_preloaded(&request.path, loaded);
@@ -512,10 +517,7 @@ impl App {
         match source {
             Source::Chat => self.chat.error = Some(error),
             Source::Markdown | Source::FileCommand => self.notify_warn(error),
-            Source::PathDialog => {
-                self.file_open.pending = false;
-                self.modal.error = Some(error);
-            },
+            Source::PathDialog => self.folder_browser.error = Some(error),
             Source::Terminal => crate::app_terminal_links::show_error(self, error),
         }
     }

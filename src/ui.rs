@@ -377,8 +377,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.animations.begin_frame();
     let animation_view = crate::diff_scope_source::animation_view_id(app);
     app.animations.set_active_view(animation_view);
-    // Cosmetic frames can replay cached tab strips. Preserve their visible
-    // indicators until the next normal frame recomputes tab visibility.
+    // Cosmetic frames can replay cached tab strips. Preserve their activity
+    // visibility and the terminal spinner sample until the next normal frame.
     if !app.rendering_animation_frame {
         app.chat.activity.begin_frame();
         for terminal in &app.terminals { terminal.input_activity.begin_frame(); }

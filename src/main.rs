@@ -258,6 +258,7 @@ mod ui_commit_details;
 mod diff_tabs;
 mod git_diff_sources;
 mod inline_diff;
+mod line_changes;
 mod git_history;
 mod git_repositories;
 mod git_ignore;

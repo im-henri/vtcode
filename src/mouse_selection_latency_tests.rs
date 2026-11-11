@@ -1,4 +1,4 @@
-use super::{TerminalEventPump, handle_mouse_input};
+use super::{TerminalEventPump, advance_editor_selection_scroll, handle_mouse_input};
 use crate::{
     app::{ActivePane, App, Tab},
     editor::Editor,
@@ -132,6 +132,124 @@ fn horizontal_selection_reaches_the_latest_queued_endpoint_in_one_frame() {
             assert_selection_equal(&actual, &expected);
         }
     }
+}
+
+#[test]
+fn holding_the_right_edge_extends_selection_to_the_end_of_an_unwrapped_line() {
+    use std::time::Duration;
+
+    let (mut app, _) = fixture(false);
+    let area = app.code_area.unwrap();
+    let line = app.editor().unwrap().cursor_line;
+    let end = app.editor().unwrap().line_len(line);
+    let start = end - usize::from(area.width) - 2;
+    app.editor_mut().unwrap().horizontal_scroll = start;
+    let anchor = app.editor().unwrap().selection_anchor;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut pump = TerminalEventPump::from_receiver(receiver);
+    let drag = pointer(
+        MouseEventKind::Drag(MouseButton::Left),
+        area.right() - 1,
+        area.y + 3,
+    );
+    sender.send(Ok(Event::Mouse(drag))).unwrap();
+    assert!(send_drag(&mut pump, &mut app));
+    for step in 1..=3 {
+        if step > 1 {
+            let deadline = app.editor_selection_scroll_at.unwrap();
+            assert!(!advance_editor_selection_scroll(
+                &mut app,
+                &mut pump,
+                deadline - Duration::from_millis(1)
+            ));
+            assert!(advance_editor_selection_scroll(
+                &mut app, &mut pump, deadline
+            ));
+        }
+        let editor = app.editor().unwrap();
+        assert_eq!(editor.horizontal_scroll, start + step);
+        assert_eq!(
+            (editor.cursor_line, editor.cursor_col),
+            (line, end - 3 + step)
+        );
+        assert_eq!(editor.selection_anchor, anchor);
+    }
+    assert!(app.editor_selection_scroll_at.is_none());
+}
+
+#[test]
+fn horizontal_edge_samples_are_ordered_and_releasing_or_leaving_the_edge_stops_scroll() {
+    let (mut app, _) = fixture(true);
+    let area = app.code_area.unwrap();
+    let row = area.y + 3;
+    let right = pointer(
+        MouseEventKind::Drag(MouseButton::Left),
+        area.right() - 1,
+        row,
+    );
+    let interior = MouseEvent {
+        column: area.x + 8,
+        ..right
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut pump = TerminalEventPump::from_receiver(receiver);
+    for mouse in [interior, right, right, right] {
+        sender.send(Ok(Event::Mouse(mouse))).unwrap();
+    }
+    while pump.has_pending_event() {
+        send_drag(&mut pump, &mut app);
+    }
+    let editor = app.editor().unwrap();
+    assert_eq!(editor.horizontal_scroll, 3);
+    let line = editor.cursor_line;
+    let (column, _) =
+        editor.source_column_at_cell(line, 3, editor.line_len(line), usize::from(area.width - 1));
+    assert_eq!(editor.cursor_col, column);
+
+    let left = MouseEvent {
+        column: area.x,
+        ..right
+    };
+    assert!(handle_mouse_input(&mut app, &mut pump, left));
+    assert_eq!(app.editor().unwrap().horizontal_scroll, 2);
+    let deadline = app.editor_selection_scroll_at.unwrap();
+    assert!(advance_editor_selection_scroll(
+        &mut app, &mut pump, deadline
+    ));
+    assert_eq!(app.editor().unwrap().horizontal_scroll, 1);
+
+    assert!(handle_mouse_input(&mut app, &mut pump, interior));
+    assert!(app.editor_selection_scroll_at.is_none());
+    assert!(handle_mouse_input(&mut app, &mut pump, right));
+    let deadline = app.editor_selection_scroll_at.unwrap();
+    let released = MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        ..right
+    };
+    handle_mouse_input(&mut app, &mut pump, released);
+    assert!(!advance_editor_selection_scroll(
+        &mut app, &mut pump, deadline
+    ));
+    assert_eq!(app.editor().unwrap().horizontal_scroll, 2);
+}
+
+#[test]
+fn wrapped_selection_at_the_right_edge_has_no_horizontal_scroll_timer() {
+    let (mut app, mut terminal) = fixture(true);
+    app.editor_mut().unwrap().word_wrap = true;
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
+    let area = app.code_area.unwrap();
+    let drag = pointer(
+        MouseEventKind::Drag(MouseButton::Left),
+        area.right() - 1,
+        area.y + 3,
+    );
+    crate::mouse::handle_mouse(&mut app, drag);
+    assert!(app.editor().unwrap().has_selection());
+    assert_eq!(app.editor().unwrap().horizontal_scroll, 0);
+    assert!(app.editor_selection_scroll_at.is_none());
 }
 
 #[test]

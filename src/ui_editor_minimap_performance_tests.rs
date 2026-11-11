@@ -247,13 +247,15 @@ fn dense_fixture(lines: usize) -> (Editor, Vec<(usize, u8)>, Vec<(usize, char)>)
             _ => ' ',
         })
         .collect();
+    let mut changes: Vec<_> = statuses.iter().copied().enumerate()
+        .filter(|&(_, status)| status != ' ')
+        .collect();
     editor.set_git_line_status(statuses);
     let diagnostics = (0..lines * 8 / 5)
         .map(|index| (index * 17 % lines, 2 + (index % 3) as u8))
         .collect::<Vec<_>>();
     let mut diagnostics = diagnostics;
     diagnostics.sort_unstable_by_key(|&(line, _)| line);
-    let mut changes = editor.git_change_lines().to_vec();
     changes.push((usize::MAX, 'D'));
     (editor, diagnostics, changes)
 }

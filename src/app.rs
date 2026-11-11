@@ -16,7 +16,7 @@ pub(crate) type VisibleHighlightKey = (PathBuf, u64, usize, usize, String, Optio
 pub(crate) type OverviewChangeRowsKey = (
     u64,             // stable editor identity (also distinguishes untitled panes)
     Option<PathBuf>, // document identity
-    bool,            // whether unsaved markers are currently visible
+    (bool, bool),    // dirty buffer and whether it matches the Git index
     bool,            // whether document-wide markers are disabled
     u64,             // applied marker revision
     usize,           // compatibility status length
@@ -66,7 +66,6 @@ pub(crate) struct App {
     pub(crate) remote_explorer_error: Option<String>,
     pub(crate) explorer_expanding: rustc_hash::FxHashSet<PathBuf>,
     pub(crate) remote_navigation: crate::app_remote_navigation::State,
-    pub(crate) file_open: crate::app_open_file_path::State,
     pub(crate) global_search_service: std::sync::OnceLock<crate::app_search::LatestQueryService>,
     pub(crate) global_search_model_updates: crate::app_global_search::ModelUpdates,
     pub(crate) desks: crate::app_desks::Desks,
@@ -414,6 +413,7 @@ pub(crate) struct App {
     pub dragging_text_start: Option<(u16, u16)>,
     /// Document that received the press starting an ordinary editor selection.
     pub(crate) editor_selection_drag: Option<u64>,
+    pub(crate) editor_selection_scroll_at: Option<std::time::Instant>,
     /// Suppresses drag/release handling after an Alt+mousedown cursor toggle.
     pub alt_cursor_mouse_down_active: bool,
     pub dragging_gutter: bool,
@@ -1157,7 +1157,6 @@ impl App {
             explorer_expanding: Default::default(),
             loading: Default::default(),
             remote_navigation: crate::app_remote_navigation::State::default(),
-            file_open: Default::default(),
             global_search_service: Default::default(),
             global_search_model_updates: Default::default(),
             desks: crate::app_desks::Desks::default(),
@@ -1450,6 +1449,7 @@ impl App {
             dragging_text: false,
             dragging_text_start: None,
             editor_selection_drag: None,
+            editor_selection_scroll_at: None,
             alt_cursor_mouse_down_active: false,
             dragging_gutter: false,
             dragging_gutter_start_line: None,
@@ -2287,12 +2287,13 @@ impl App {
                 crate::background::BackgroundResult::SourceControlFileStats(stats) => {
                     has_visual_changes |= crate::app_source_control_hover::finish(self, stats);
                 }
-                crate::background::BackgroundResult::FolderBrowserEntries { path, generation, entries, modified, locations, error } => {
+                crate::background::BackgroundResult::FolderBrowserEntries { path, generation, entries, directory_count, modified, locations, error } => {
                     if self.folder_browser_path == path && self.folder_browser.generation == generation {
                         self.folder_browser_entries = entries;
+                        self.folder_browser.directory_count = directory_count;
                         self.folder_browser.modified = modified;
                         self.folder_browser.locations = locations;
-                        self.folder_browser.error = error;
+                        if self.folder_browser.error.is_none() { self.folder_browser.error = error; }
                         self.folder_browser_selected = 0;
                         self.folder_browser_scroll = 0;
                         self.folder_browser_loading = false;
@@ -2400,6 +2401,12 @@ impl App {
                                 self.git_branch_picker_cursor = 0;
                                 self.git_branch_picker_selection_anchor = None;
                                 self.git_branch_picker_scroll_offset = 0;
+                            }
+                            if outcome.refresh_line_status
+                                && let Some(remote) = &self.remote_workspace
+                            {
+                                // The line refresh can finish before the status scan.
+                                remote.invalidate_git_sources();
                             }
                             self.refresh_source_control_async();
                             if outcome.refresh_line_status {
@@ -4628,8 +4635,8 @@ impl App {
         self.tabs.get_mut(self.active_tab).map(|t| &mut t.editor)
     }
 
-    /// Pending remote input holds the caret steady; an acknowledgement starts
-    /// a fresh blink interval, even when the program does not echo its input.
+    /// Pending remote input suspends blinking. An acknowledgement starts a
+    /// fresh blink interval even when the program does not echo its input.
     pub(crate) fn cursor_blink_start(&self) -> Option<std::time::Instant> {
         if !self.cursor_blinking || !self.has_text_input_focus() { return None; }
         let progress = self.focused_text_input_id().is_none()
@@ -4685,6 +4692,11 @@ impl App {
                 } else if tab.editor.rope.len_lines() == status.len() {
                     changed |= tab.editor.set_prepared_git_line_status(status.clone());
                 } else {
+                    // The row projection may be stale after an edit or undo.
+                    // The index is independent of the buffer's row count.
+                    if let Some(index) = &status.index {
+                        changed |= tab.editor.set_git_index_line_status(Some(index.clone()));
+                    }
                     stale = true;
                 }
             }
@@ -5647,6 +5659,55 @@ mod tests {
     }
 
     #[test]
+    fn initial_extension_activation_survives_a_rescan_requested_meanwhile() {
+        // The watcher's startup rescan used to discard the finished activation
+        // and compile every Wasm module again.
+        let mut app = App::test_new();
+        app.bg_extension_scan_running = true;
+        app.extension_scan_generation = 2;
+        let manager = app.extension_manager.initial_scan_manager();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::ExtensionsInitialized {
+                generation: 1,
+                manager: Box::new(manager),
+                notices: vec!["kept initial activation".to_string()],
+            })
+            .unwrap();
+
+        assert!(app.poll_background_results());
+        assert!(app
+            .notification_history
+            .iter()
+            .any(|(message, _, _)| message.contains("kept initial activation")));
+        assert!(app.bg_extension_scan_running, "the requested rescan reconciles the kept snapshot");
+    }
+
+    #[test]
+    fn initial_extension_activation_for_another_workspace_is_discarded() {
+        let mut app = App::test_new();
+        app.bg_extension_scan_running = true;
+        app.extension_scan_generation = 2;
+        let other = tempfile::tempdir().unwrap();
+        let manager = crate::extensions::ExtensionManager::new(other.path());
+        assert!(!manager.same_scope(&app.extension_manager));
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::ExtensionsInitialized {
+                generation: 1,
+                manager: Box::new(manager),
+                notices: vec!["other workspace activation".to_string()],
+            })
+            .unwrap();
+
+        app.poll_background_results();
+        assert!(!app
+            .notification_history
+            .iter()
+            .any(|(message, _, _)| message.contains("other workspace activation")));
+    }
+
+    #[test]
     fn unchanged_git_line_diff_does_not_request_a_redraw() {
         let mut app = App::test_new();
         let path = PathBuf::from("stable-diff.txt");
@@ -5885,7 +5946,7 @@ mod tests {
                 warnings: 3,
                 max_line_width: 7,
                 word_count: 1,
-                unsaved_diff: crate::editor::UnsavedDiff { line_count: 2, changed_ranges: vec![0..1] },
+                unsaved_diff: crate::editor::UnsavedDiff { line_count: 2, changed_ranges: vec![0..1], ..Default::default() },
                 sticky_scopes: Default::default(),
             })
             .unwrap();
@@ -5957,7 +6018,7 @@ mod tests {
                 warnings: 99,
                 max_line_width: 99,
                 word_count: 99,
-                unsaved_diff: crate::editor::UnsavedDiff { line_count: 1, changed_ranges: vec![0..1] },
+                unsaved_diff: crate::editor::UnsavedDiff { line_count: 1, changed_ranges: vec![0..1], ..Default::default() },
                 sticky_scopes: Default::default(),
             })
             .unwrap();
@@ -6460,6 +6521,33 @@ mod tests {
         );
 
         assert_eq!(markers.markers(), ['D']);
+    }
+
+    #[test]
+    fn git_index_can_clear_undo_markers_before_the_row_projection_is_ready() {
+        let mut app = App::test_new();
+        let path = PathBuf::from("restored.txt");
+        let original = "one\ntwo\n";
+        let mut editor = Editor::test_with_text(original);
+        editor.file_path = Some(path.clone());
+        editor.saved_rope = Some(editor.rope.clone());
+        editor.set_cursor(0, 3);
+        editor.insert_newline();
+        let saved = editor.rope.clone();
+        editor.record_saved_snapshot(saved.clone());
+        editor.undo();
+        assert!(editor.modified);
+        assert!(editor.has_unsaved_change_in_range(0, editor.line_count()));
+        app.tabs = vec![Tab::new_file(editor)];
+
+        let late = crate::editor::PreparedGitLineStatus::from_diffs(saved.len_lines(), &[], &[' ', 'A'])
+            .with_index(&path, original, &[], &saved, None);
+        assert!(app.apply_git_line_status_to_open_editors(&path, &late));
+        let editor = app.editor().unwrap();
+        assert!(editor.modified);
+        assert!(editor.uses_git_index_markers());
+        assert!(!editor.has_unsaved_change_in_range(0, editor.line_count()));
+        assert!((0..editor.line_count()).all(|line| editor.line_changes(line).is_empty()));
     }
 
     #[test]

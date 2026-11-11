@@ -314,10 +314,14 @@ impl Editor {
         self.delete_selection_for_replacement();
         self.cursor_col = self.cursor_col.min(self.line_len(self.cursor_line));
         let idx = self.rope.line_to_char(self.cursor_line) + self.cursor_col;
+        let before = self.rope.clone();
         if self.cursor_col == 0 {
             // No indentation belongs before a split at the start of a line.
             // In particular, do not read/copy a generated line's entire indent.
             self.rope.insert(idx, "\n");
+            let line = before.line(self.cursor_line);
+            let was_blank = line.len_chars() != 0 && Self::line_content_len(line) == 0;
+            self.record_line_insertion(&before, self.cursor_line + usize::from(was_blank));
             self.cursor_line += 1;
             self.modified = true;
             self.shift_bookmarks(self.cursor_line, 1);
@@ -394,6 +398,7 @@ impl Editor {
             };
         self.rope.insert(idx, &insertion);
         self.cursor_line += 1;
+        self.record_line_insertion(&before, self.cursor_line);
         self.cursor_col = new_col;
         self.modified = true;
         self.shift_bookmarks(self.cursor_line, lines_inserted);
@@ -463,7 +468,9 @@ impl Editor {
         }
         insertion.push('\n');
         let line_start = self.rope.line_to_char(self.cursor_line);
+        let before = self.rope.clone();
         self.rope.insert(line_start, &insertion);
+        self.record_line_insertion(&before, self.cursor_line);
         self.cursor_col = indent_chars;
         self.modified = true;
         self.shift_bookmarks(self.cursor_line, 1);
@@ -505,8 +512,10 @@ impl Editor {
         } else {
             insertion.insert(0, '\n');
         }
+        let before = self.rope.clone();
         self.rope.insert(line_end, &insertion);
         self.cursor_line += 1;
+        self.record_line_insertion(&before, self.cursor_line);
         self.cursor_col = indent_chars;
         self.modified = true;
         self.shift_bookmarks(self.cursor_line, 1);

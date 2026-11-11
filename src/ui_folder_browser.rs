@@ -1,4 +1,4 @@
-//! Explorer-style folder selection inside the terminal workbench.
+//! Explorer-style file and folder selection inside the terminal workbench.
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,7 +9,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
-use crate::folder_browser::{Action, Focus};
+use crate::folder_browser::{Action, Focus, Mode};
 use crate::text_input::TextInputId;
 use crate::ui_pickers::truncate_to_width;
 use crate::ui_widgets::InputField;
@@ -81,9 +81,11 @@ fn surface_at(f: &mut Frame, app: &App, area: Rect) -> ratatui::style::Color {
 
 fn control(f: &mut Frame, app: &mut App, area: Rect, text: &str, action: Action, enabled: bool) {
     let hovered = area.contains((app.mouse_col, app.mouse_row).into());
+    let focused = matches!(action, Action::SwitchDevice) && app.folder_browser.focus == Focus::Device;
     let surface = surface_at(f, app, area);
     let mut style = app.colors.ui.toolbar_layer_style(app.colors.ui.widget_foreground, surface,
-        hovered && enabled, false, false);
+        (hovered || focused) && enabled, false, false);
+    if focused && enabled { style = style.add_modifier(Modifier::BOLD); }
     if !enabled {
         let fg = style.fg.unwrap();
         style = style.fg(crate::ui_colors::disabled_text_color(
@@ -173,7 +175,7 @@ fn breadcrumbs(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let mut parts: Vec<_> = if app.folder_browser_is_computer() {
         Vec::new()
-    } else if let Some(remote) = &app.remote_workspace {
+    } else if let Some(remote) = app.folder_browser_remote() {
         remote.breadcrumbs(&app.folder_browser_path).unwrap_or_default()
     } else {
         let mut parts: Vec<_> = app
@@ -327,6 +329,10 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
 pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let layout = layout(area);
+    let mode = app.folder_browser.mode;
+    let files = mode == Mode::OpenFile;
+    let can_switch_device = app.folder_browser_can_switch_device();
+    let remote = app.folder_browser_remote().is_some();
     app.folder_browser.controls.clear();
     app.folder_browser_buttons.clear();
     let bg = crate::ui_widgets::widget_background(f, &app.colors, area);
@@ -343,7 +349,14 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     label(
         f,
         layout.title,
-        if app.folder_browser.save_as_return { "  ▰  Choose Save Location" } else if app.folder_browser.add_workspace { "  ▰  Add Folder" } else { "  ▰  Open Folder" },
+        match mode {
+            Mode::OpenFile if remote => "  ▤  Open File · Remote",
+            Mode::OpenFile if can_switch_device => "  ▤  Open File · This Device",
+            Mode::OpenFile => "  ▤  Open File",
+            Mode::SaveLocation => "  ▰  Choose Save Location",
+            Mode::AddFolder => "  ▰  Add Folder",
+            Mode::OpenFolder => "  ▰  Open Folder",
+        },
         Style::default()
             .bg(bg)
             .fg(app.colors.ui.widget_text_color(bg))
@@ -410,7 +423,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             app,
             address,
             TextInputId::FolderAddress,
-            "Enter folder path",
+            if files { "Enter a file or folder path" } else { "Enter folder path" },
         );
     } else {
         breadcrumbs(f, app, address);
@@ -422,7 +435,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             app,
             search,
             TextInputId::FolderSearch,
-            if search_width >= 26 {
+            if files {
+                "Search this folder"
+            } else if search_width >= 26 {
                 "Search folders  Ctrl+F"
             } else {
                 "Search folders"
@@ -446,35 +461,39 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         "",
         Style::default().bg(app.colors.bg_sidebar),
     );
-    let new_width = layout.tools.width.min(16);
-    control(
-        f,
-        app,
-        Rect::new(
-            layout.tools.x,
-            layout.tools.y,
-            new_width,
-            layout.tools.height,
-        ),
-        " + New folder ",
-        Action::NewFolder,
-        !app.folder_browser_loading && !app.folder_browser.creating && !app.folder_browser_is_computer(),
-    );
-    let hidden_width = layout.tools.width.saturating_sub(new_width).min(21);
+    let tool = if can_switch_device {
+        let text = match (remote, area.width >= 42) {
+            (true, true) => " Use This Device ",
+            (true, false) => " Local ",
+            (false, true) => " Use Remote ",
+            (false, false) => " Remote ",
+        };
+        Some((text, Action::SwitchDevice, true))
+    } else if !files {
+        Some((" + New folder ", Action::NewFolder,
+            !app.folder_browser_loading && !app.folder_browser.creating && !app.folder_browser_is_computer()))
+    } else { None };
+    let mut tool_width = 0;
+    if let Some((text, action, enabled)) = tool {
+        tool_width = layout.tools.width.min(text.width() as u16 + 2);
+        control(f, app, Rect::new(layout.tools.x, layout.tools.y, tool_width, layout.tools.height), text, action, enabled);
+    }
+    let hidden_width = layout.tools.width.saturating_sub(tool_width).min(21);
     if search_width > 0 {
         control(
             f,
             app,
             Rect::new(
-                layout.tools.x + new_width,
+                layout.tools.x + tool_width,
                 layout.tools.y,
                 hidden_width,
                 layout.tools.height,
             ),
-            if app.folder_browser.show_hidden {
-                " [x] Hidden folders "
-            } else {
-                " [ ] Hidden folders "
+            match (files, app.folder_browser.show_hidden) {
+                (true, true) => " [x] Hidden items ",
+                (true, false) => " [ ] Hidden items ",
+                (false, true) => " [x] Hidden folders ",
+                (false, false) => " [ ] Hidden folders ",
             },
             Action::Hidden,
             true,
@@ -482,12 +501,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
     if search_width == 0 {
         let search = Rect::new(
-            layout.tools.x + new_width,
+            layout.tools.x + tool_width,
             layout.tools.y,
-            layout.tools.width.saturating_sub(new_width),
+            layout.tools.width.saturating_sub(tool_width),
             layout.tools.height,
         );
-        input(f, app, search, TextInputId::FolderSearch, "Search folders");
+        input(f, app, search, TextInputId::FolderSearch, if files { "Search this folder" } else { "Search folders" });
         app.folder_browser
             .controls
             .retain(|(_, a)| !matches!(a, Action::Hidden));
@@ -495,7 +514,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         label(
             f,
             Rect::new(layout.tools.right() - 33, layout.tools.y, 32, 1),
-            "Ctrl+L  Path   Ctrl+Shift+N  New",
+            if files { "Ctrl+L  Path" } else { "Ctrl+L  Path   Ctrl+Shift+N  New" },
             Style::default().fg(app.colors.ui.description_color(app.colors.bg_sidebar)),
         );
     }
@@ -608,13 +627,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let description = if selected || hovered { fg } else { app.colors.ui.description_color(bg) };
         label(f, row, "", style);
         let is_parent = parent == 1 && index == 0;
-        let path = if is_parent {
-            None
-        } else {
-            indices
-                .get(index - parent)
-                .map(|&i| &app.folder_browser_entries[i])
-        };
+        let entry = index.checked_sub(parent).and_then(|index| indices.get(index)).copied();
+        let path = entry.map(|i| &app.folder_browser_entries[i]);
+        let is_file = entry.is_some_and(|i| app.folder_browser_entry_is_file(i));
         let name = path.map(|path| app.folder_browser_entry_name(path).into_owned())
             .unwrap_or_else(|| if app.folder_browser_parent().is_some_and(|parent| parent.as_os_str().is_empty()) {
                 "..  Computer".into()
@@ -622,9 +637,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    if is_parent { " ↑ " } else { " ▰ " },
+                    if is_parent { " ↑ " } else if is_file { " ▤ " } else { " ▰ " },
                     Style::default().fg(app.colors.ui.list_icon_color(
-                        app.colors.ui.folder_icon_color(bg), bg, selected, active,
+                        if is_file { fg } else { app.colors.ui.folder_icon_color(bg) }, bg, selected, active,
                     )),
                 ),
                 Span::styled(
@@ -659,7 +674,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             label(
                 f,
                 Rect::new(row.right().saturating_sub(14), row.y, 13, 1),
-                if is_parent { "" } else if app.folder_browser_is_computer() { " File system" } else { " File folder" },
+                if is_parent { "" } else if app.folder_browser_is_computer() { " File system" }
+                else if is_file { " File" } else { " File folder" },
                 Style::default()
                     .fg(description)
                     .bg(bg),
@@ -671,22 +687,26 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             crate::ui_loading::draw_header(f, app, layout.header);
         }
         let message = if app.folder_browser_loading {
-            if app.folder_browser_is_computer() { "Loading file systems…" } else {
-            "Loading folders…"
-            }
+            if app.folder_browser_is_computer() { "Loading file systems…" }
+            else if files { "Loading files and folders…" } else { "Loading folders…" }
         } else if app.folder_browser.error.is_some() {
-            "This folder could not be fully listed."
+            if files { "" } else { "This folder could not be fully listed." }
         } else if !app.folder_browser.search.is_empty() {
             if app.folder_browser_is_computer() { "No file systems match your search." }
+            else if files { "No items match your search." }
             else { "No folders match your search." }
         } else if app.folder_browser_is_computer() {
             "No file systems are available."
+        } else if files {
+            "This folder is empty."
         } else {
             "This folder has no subfolders."
         };
         let hint = if !app.folder_browser.search.is_empty() {
-            "Clear the search to see all folders."
-        } else if app.folder_browser.add_workspace {
+            if files { "Clear the search to see all items." } else { "Clear the search to see all folders." }
+        } else if files {
+            "Type a filename or path to open it."
+        } else if mode == Mode::AddFolder {
             "Use Add folder to add this folder."
         } else {
             "Use Select folder to open this location."
@@ -728,9 +748,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         );
     }
 
-    let noun = if app.folder_browser_is_computer() { "locations" } else { "folders" };
+    let noun = if app.folder_browser_is_computer() { "locations" } else if files { "items" } else { "folders" };
+    let opening_file = app.file_browser_open_pending();
     let status = if let Some(error) = &app.folder_browser.error {
         format!("  {error}")
+    } else if opening_file {
+        format!("  {}", app.status_message)
     } else if app.folder_browser.creating {
         "  Creating folder…".into()
     } else if app.folder_browser_loading {
@@ -738,7 +761,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else if app.folder_browser.new_folder {
         "  Choose a name for the new folder.".into()
     } else if app.folder_browser.search.is_empty() {
-        format!("  {} {noun}  ·  Double-click to browse", indices.len())
+        let action = if files { "Double-click to open" } else { "Double-click to browse" };
+        format!("  {} {noun}  ·  {action}", indices.len())
     } else {
         format!(
             "  {} of {} {noun}  ·  Search in this location",
@@ -764,7 +788,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         "",
         Style::default().bg(app.colors.bg_sidebar),
     );
-    let prefix = if app.folder_browser.new_folder {
+    let prefix = if files {
+        " File: "
+    } else if app.folder_browser.new_folder {
         " New folder: "
     } else {
         " Folder: "
@@ -791,7 +817,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             layout.folder.height,
         ),
         TextInputId::FolderName,
-        "Folder path",
+        if files { "File name or path" } else { "Folder path" },
     );
 
     label(
@@ -800,13 +826,17 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         "",
         Style::default().bg(app.colors.bg_sidebar),
     );
-    let primary = if app.folder_browser.creating {
+    let primary = if opening_file {
+        " Opening… "
+    } else if files {
+        " Open "
+    } else if app.folder_browser.creating {
         " Creating… "
     } else if app.folder_browser.new_folder {
         " Create folder "
-    } else if app.folder_browser.save_as_return {
+    } else if mode == Mode::SaveLocation {
         " Use folder "
-    } else if app.folder_browser.add_workspace {
+    } else if mode == Mode::AddFolder {
         if area.width >= 45 { " Add folder " } else { " Add " }
     } else if area.width >= 45 {
         " Select folder "
@@ -827,8 +857,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let width = (text.trim().width() as u16 + 4).min(layout.actions.right().saturating_sub(x));
         let rect = Rect::new(x, layout.actions.y, width, layout.actions.height);
         let focused = app.folder_browser.focus == if i == 0 { Focus::Open } else { Focus::Cancel };
-        let enabled = i != 0 || (!app.folder_browser.creating
-            && (!app.folder_browser_is_computer() || !app.folder_browser.folder.is_empty()));
+        let enabled = i != 0 || app.folder_browser_can_confirm();
         let mut style = app.colors.ui.button_style(app.colors.bg_sidebar, i == 0,
             rect.contains((app.mouse_col, app.mouse_row).into()), enabled);
         if focused && enabled {

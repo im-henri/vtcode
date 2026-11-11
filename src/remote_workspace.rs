@@ -666,6 +666,7 @@ impl Workspace {
         &self,
         key: &Path,
         cancel: &crate::background::CancellationToken,
+        browse_folders: bool,
         progress: impl FnMut(u64, u64),
     ) -> io::Result<Location> {
         let path = self.remote_path(key)?;
@@ -681,7 +682,7 @@ impl Workspace {
                     .client
                     .call_file_cancellable(Command::OpenLocation { path }, cancel)?;
                 if let Reply::Directory { identity } = reply {
-                    if identity.is_absolute() {
+                    if identity.is_absolute() && !browse_folders {
                         return Err(io::Error::other(
                             "This directory is outside the current workspace.",
                         ));

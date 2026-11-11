@@ -1949,7 +1949,7 @@ impl App {
         let Some(editor) = self.editor() else {
             return;
         };
-        if editor.bg_loading || editor.large_file_mode {
+        if editor.bg_loading || editor.large_file_mode || editor.encoding == "Binary" {
             return;
         }
         let Some(file_path) = editor.file_path.clone() else {
@@ -1957,6 +1957,8 @@ impl App {
         };
         let line_count = editor.rope.len_lines();
         let saved_snapshot = editor.saved_rope.clone().unwrap_or_else(|| editor.rope.clone());
+        let insertion_anchors = editor.saved_insertion_anchors.clone();
+        let previous_index = editor.git_index_line_status().cloned();
         let include_untracked = self.sc_visibility.untracked;
         if self.bg_git_diff_running {
             self.bg_git_diff_pending = true;
@@ -1967,6 +1969,27 @@ impl App {
         let hint = self.repository_hint_for_path(&file_path);
         let sender = self.source_control_sender();
         let log = self.git_output();
+        let prepare = move |path: &Path, head: Option<&str>, index: Option<&str>, conflicted| {
+            // The editor decodes away a UTF-8 BOM. Compare Git blobs in the
+            // same representation as the saved buffer in both workspaces.
+            let head = head.unwrap_or_default();
+            let head = head.strip_prefix('\u{feff}').unwrap_or(head);
+            let index_text = index.unwrap_or_default();
+            let index_text = index_text.strip_prefix('\u{feff}').unwrap_or(index_text);
+            let head_lines: Vec<_> = head.lines().collect();
+            let index_lines: Vec<_> = index_text.lines().collect();
+            let saved = saved_snapshot.to_string();
+            let worktree_lines: Vec<_> = saved.lines().collect();
+            let anchors = insertion_anchors.as_ref().map_or(&[][..], |anchors| anchors.rows(&saved_snapshot));
+            let staged = if conflicted { Vec::new() } else { compute_line_diff(&head_lines, &index_lines) };
+            let (projected, unstaged) = compute_worktree_line_diffs(&staged, &index_lines, &worktree_lines, anchors);
+            let status = crate::editor::PreparedGitLineStatus::from_diffs(line_count, &projected, &unstaged);
+            if !conflicted && index.is_some() {
+                status.with_index(path, index_text, &staged, &saved_snapshot, previous_index.as_ref())
+            } else {
+                status
+            }
+        };
         if let Some(remote) = self.remote_workspace.clone() {
             self.background.spawn("remote-git-line-diff", move || {
                 let mut untracked = false;
@@ -1975,17 +1998,11 @@ impl App {
                     if sources.ignored || (untracked && !include_untracked) || sender.is_cancelled() {
                         return None;
                     }
-                    let head = sources.head.as_deref().unwrap_or_default().lines().collect::<Vec<_>>();
-                    let index = sources.index.as_deref().unwrap_or_default().lines().collect::<Vec<_>>();
-                    let saved = saved_snapshot.to_string();
-                    let working = saved.lines().collect::<Vec<_>>();
-                    let staged = if sources.conflicted { Vec::new() } else { compute_line_diff(&head, &index) };
-                    Some(compute_worktree_line_diffs(&staged, &index, &working))
+                    Some(prepare(&file_path, sources.head.as_deref(), sources.index.as_deref(), sources.conflicted))
                 });
-                let (staged, unstaged) = result.unwrap_or_default();
-                let mut status = crate::editor::PreparedGitLineStatus::from_diffs(
-                    if untracked && !include_untracked { 0 } else { line_count }, &staged, &unstaged,
-                );
+                let mut status = result.unwrap_or_else(|| crate::editor::PreparedGitLineStatus::from_diffs(
+                    if untracked && !include_untracked { 0 } else { line_count }, &[], &[],
+                ));
                 status.untracked = untracked;
                 let _ = sender.send(crate::background::BackgroundResult::GitLineDiff { file_path, status });
             });
@@ -1995,7 +2012,7 @@ impl App {
             if sender.is_cancelled() { return; }
             let mut operation = None;
             let mut untracked = false;
-            let result = (|| -> Option<(Vec<char>, Vec<char>)> {
+            let result = (|| {
                 let repo = crate::git_repositories::open_file_repository(&file_path, hint.as_deref()).ok()?;
                 if sender.is_cancelled() { return None; }
                 let workdir = repo.workdir()?.to_path_buf();
@@ -2020,17 +2037,7 @@ impl App {
                 };
 
                 if sender.is_cancelled() { return None; }
-                let worktree_content = std::fs::read_to_string(&file_path).ok()?;
-                if sender.is_cancelled() { return None; }
-
-                let head_text = head_content.as_deref().unwrap_or("");
-                let index_text = index_content.as_deref().unwrap_or("");
-                let head_lines: Vec<&str> = head_text.lines().collect();
-                let index_lines: Vec<&str> = index_text.lines().collect();
-                let worktree_lines: Vec<&str> = worktree_content.lines().collect();
-
-                let staged = if conflicted { Vec::new() } else { compute_line_diff(&head_lines, &index_lines) };
-                Some(compute_worktree_line_diffs(&staged, &index_lines, &worktree_lines))
+                Some(prepare(&file_path, head_content.as_deref(), index_content.as_deref(), conflicted))
             })();
 
             if !sender.is_cancelled() && let Some(operation) = operation {
@@ -2038,10 +2045,9 @@ impl App {
             }
             // Empty results also clear markers left by a previous repository
             // state. Hidden untracked files need no per-line allocation.
-            let (staged, unstaged) = result.unwrap_or_default();
-            let mut status = crate::editor::PreparedGitLineStatus::from_diffs(
-                if untracked && !include_untracked { 0 } else { line_count }, &staged, &unstaged,
-            );
+            let mut status = result.unwrap_or_else(|| crate::editor::PreparedGitLineStatus::from_diffs(
+                if untracked && !include_untracked { 0 } else { line_count }, &[], &[],
+            ));
             status.untracked = untracked;
             // Error OK: receiver dropped means no listener
             let _ = sender.send(crate::background::BackgroundResult::GitLineDiff { file_path, status });

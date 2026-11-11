@@ -10,6 +10,8 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+const TAB_BAR_DESK_NAME_WIDTH: usize = 12;
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Mode {
     Switch,
@@ -24,6 +26,7 @@ pub(crate) enum Mode {
 #[derive(Clone)]
 enum Action {
     Switch(u64),
+    New,
     Rename,
     Close,
     Create(bool),
@@ -107,24 +110,17 @@ fn host_area(app: &App) -> Option<Rect> {
 }
 
 pub(crate) fn controls(app: &App, area: Rect, group: usize) -> (Rect, Rect, u16) {
-    if group != app.desks.host || area.width < 4 {
+    if group != app.desks.host || area.width < 4 || area.height == 0 {
         return (Rect::default(), Rect::default(), 0);
     }
-    let plus = Rect::new(area.x, area.y, 3, 1);
-    let width = if app.desk_count() > 1 {
-        (app.current_desk_name().width() as u16 + 3)
-            .min(22)
-            .min(area.width.saturating_sub(16))
-    } else {
-        0
-    };
-    let width = if app.desk_count() > 1 && width < 3 && area.width >= 8 {
-        2
-    } else {
-        width
-    };
-    let pick = Rect::new(area.x + 3, area.y, width, 1);
-    (plus, pick, 4 + width)
+    if app.desk_count() <= 1 {
+        return (Rect::new(area.x, area.y, 3, 1), Rect::default(), 4);
+    }
+    let name_width = app.current_desk_name().width().min(TAB_BAR_DESK_NAME_WIDTH) as u16;
+    // Leave room for the separator and 16 cells of file tabs when space allows.
+    let width = (name_width + 3).min(area.width.saturating_sub(17));
+    let width = if width < 4 { 2 } else { width };
+    (Rect::default(), Rect::new(area.x, area.y, width, 1), width + 1)
 }
 
 pub(crate) fn group_color(app: &App, color: u8) -> Color {
@@ -151,17 +147,16 @@ pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) 
             .toolbar_style(app.colors.ui.fg_tab_active, bg, hovered(r), false, false)
             .remove_modifier(Modifier::UNDERLINED)
     };
-    f.render_widget(Paragraph::new(" + ").style(style(plus)), plus);
+    if !plus.is_empty() {
+        f.render_widget(Paragraph::new(" + ").style(style(plus)), plus);
+    }
     if !pick.is_empty() {
-        let label = if pick.width < 5 {
-            "▾".into()
+        let label = if pick.width < 4 {
+            " ▾".into()
         } else {
             format!(
-                "{} ▾",
-                clipped_name(
-                    app.current_desk_name(),
-                    usize::from(pick.width.saturating_sub(2))
-                )
+                " {} ▾",
+                clipped_name(app.current_desk_name(), usize::from(pick.width - 3))
             )
         };
         f.render_widget(Paragraph::new(label).style(style(pick)), pick);
@@ -206,6 +201,7 @@ fn entries(app: &App, label_width: usize) -> Vec<(String, Action)> {
                 )
             })
             .chain([
+                ("Add New Desk".into(), Action::New),
                 ("Rename desk…".into(), Action::Rename),
                 (
                     if app.current_desk_is_empty() { "Close desk" } else { "Close desk…" }.into(),
@@ -295,6 +291,7 @@ fn activate(app: &mut App, action: Action) {
     let text = app.desks.popup.text.clone();
     match action {
         Action::Switch(id) => app.switch_desk(id),
+        Action::New => open(app, Mode::New),
         Action::Rename => open(app, Mode::Rename),
         Action::Close => open(app, Mode::Close),
         Action::Create(copy) => {
@@ -806,15 +803,20 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         _ => "Type to filter…",
     };
     let screen = f.area();
+    let max_width = if mode == Mode::Switch {
+        screen.width
+    } else {
+        screen.width.min(58)
+    };
     // One cell of padding on each side, plus the popup's two borders.
-    let rows = entries(app, usize::from(screen.width.min(58).saturating_sub(4)));
+    let rows = entries(app, usize::from(max_width.saturating_sub(4)));
     let content_width = rows
         .iter()
         .map(|(label, _)| label.width())
         .chain([title.width(), placeholder.width()])
         .max()
         .unwrap_or(0);
-    let width = screen.width.min((content_width + 4).clamp(28, 58) as u16);
+    let width = (content_width + 4).max(28).min(usize::from(max_width)) as u16;
     let height = screen.height.min((rows.len() + 3).clamp(4, 18) as u16);
     let viewport = app.text_input_viewport(crate::text_input::TextInputId::DeskPopup);
     let p = &mut app.desks.popup;

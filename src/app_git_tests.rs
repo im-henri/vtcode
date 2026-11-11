@@ -1690,10 +1690,13 @@ fn target_markers_include_deleted_lines() {
 }
 
 #[test]
-fn target_markers_preserve_added_marker_when_delete_maps_same_line() {
-    let compare = vec![('+', "new".to_string()), ('-', "old".to_string())];
-    let markers = app_git_display::target_line_markers_from_compare_diff(&compare, 1);
-    assert_eq!(markers, vec!['U']);
+fn target_markers_classify_a_replacement_as_modified() {
+    let mut compare = [('+', "new".to_string()), ('-', "old".to_string())];
+    for _ in 0..2 {
+        let markers = app_git_display::target_line_markers_from_compare_diff(&compare, 1);
+        assert_eq!(markers, ['M']);
+        compare.reverse();
+    }
 }
 
 #[test]
@@ -2026,7 +2029,8 @@ fn hunk_peek_unsaved_gutter_click_uses_saved_snapshot_without_writing_the_file()
         let gutter = app.gutter_area.unwrap();
         assert_eq!(app.editor().unwrap().line_diff_status(1), 'N');
         crate::mouse::handle_mouse(&mut app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: gutter.x,
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: crate::ui_editor_highlight::change_gutter_column(gutter).unwrap(),
             row: gutter.y + 1, modifiers: KeyModifiers::NONE,
         });
         app.wait_for_hunk_preview();
@@ -2170,7 +2174,7 @@ fn hunk_peek_opens_from_a_real_gutter_click_with_windows_paths() {
         let gutter = app.gutter_area.unwrap();
         crate::mouse::handle_mouse(&mut app, MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: gutter.x,
+            column: crate::ui_editor_highlight::change_gutter_column(gutter).unwrap(),
             row: gutter.y + 1,
             modifiers: KeyModifiers::NONE,
         });
@@ -2218,7 +2222,7 @@ fn hunk_peek_opens_and_stages_from_deleted_line_gutter_markers() {
         let gutter = app.gutter_area.unwrap();
         crate::mouse::handle_mouse(&mut app, MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: gutter.x,
+            column: crate::ui_editor_highlight::change_gutter_column(gutter).unwrap(),
             row: gutter.y + line as u16,
             modifiers: KeyModifiers::NONE,
         });

@@ -210,6 +210,7 @@ impl App {
         self.dragging_text = false;
         self.dragging_text_start = None;
         self.editor_selection_drag = None;
+        self.editor_selection_scroll_at = None;
         self.alt_cursor_mouse_down_active = false;
         self.tab_drop_zone = None;
         self.tab_drop_target_group = None;

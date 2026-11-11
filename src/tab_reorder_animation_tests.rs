@@ -274,11 +274,6 @@ fn drag_targets_stay_logical_and_clicks_and_close_buttons_follow_the_presented_l
         .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving)
         .unwrap()
         .2;
-    assert_ne!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
-    app.mouse_position_known = true;
-    app.mouse_col = close.x;
-    app.mouse_row = close.y;
-    draw(&mut app, &mut terminal, area, start + Duration::from_millis(25));
     assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
     mouse(
         &mut app,
@@ -404,8 +399,10 @@ fn clipped_unicode_labels_and_named_groups_keep_fixed_controls_and_pins_intact()
 }
 
 #[test]
-fn hover_close_tracks_moving_labels_and_leaves_no_cross_in_cached_frames() {
+fn close_buttons_and_hover_highlights_follow_moving_tabs_in_cached_frames() {
     let (mut app, mut terminal, area) = fixture(&["a", "BRAVO.rs", "CHARLIE.rs"], 80);
+    let hover_bg = Color::Rgb(48, 76, 116);
+    app.colors.ui.toolbar_hover = crate::theme_workbench::ColorLayer::opaque(hover_bg);
     let started = Instant::now();
     draw(&mut app, &mut terminal, area, started);
     let moving = app.tabs[0].editor.navigation_id;
@@ -418,16 +415,20 @@ fn hover_close_tracks_moving_labels_and_leaves_no_cross_in_cached_frames() {
         draw(&mut app, &mut terminal, area, now);
         let (_, rect, close) = TabBarHits::new(&app, area).tabs.into_iter()
             .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving).unwrap();
-        assert_eq!(close.width, 1);
+        assert_eq!(close.width, 2);
+        let idle = terminal.backend().buffer()[(close.x, close.y)].clone();
+        assert_eq!(idle.symbol(), "×");
+        assert_ne!(idle.bg, hover_bg);
         app.mouse_position_known = true;
         app.mouse_col = close.x;
         app.mouse_row = close.y;
         draw(&mut app, &mut terminal, area, now);
         assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
+        assert_eq!(terminal.backend().buffer()[(close.x, close.y)].bg, hover_bg);
         assert!(text(&terminal, rect).contains('a'));
         app.mouse_row = area.bottom() + 1;
         draw(&mut app, &mut terminal, area, now);
-        assert!(!text(&terminal, area).contains('×'), "cached labels must restore their text after hover");
+        assert_eq!(terminal.backend().buffer()[(close.x, close.y)], idle);
     }
 }
 

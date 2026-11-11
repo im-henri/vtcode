@@ -117,6 +117,11 @@ impl ExtensionManager {
         manager
     }
 
+    /// Whether both managers discover extensions for the same workspace.
+    pub(crate) fn same_scope(&self, other: &Self) -> bool {
+        self.search_roots == other.search_roots && self.settings_file == other.settings_file
+    }
+
     #[cfg(test)]
     pub(crate) fn scan_and_sync(&mut self) -> Vec<String> {
         let (discovered, notices) = extension_manifest::discover_extensions(&self.search_roots);

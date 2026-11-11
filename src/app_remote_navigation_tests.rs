@@ -92,7 +92,7 @@ fn remote_folder_browser_goes_up_to_the_nodes_filesystems_and_back() {
     use crate::folder_browser::{Action, Focus};
     let mut fixture = setup();
     let workspace = fixture.app.remote_workspace.as_ref().unwrap().clone();
-    fixture.app.open_folder_browser();
+    fixture.app.open_path_browser(crate::folder_browser::Mode::OpenFolder);
     fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     let mut depth = 0;
     while !fixture.app.folder_browser_is_computer() {
@@ -266,7 +266,7 @@ fn remote_save_as_browse_preserves_opaque_filename_and_header_commands_reject_fo
         fixture.app.save_as_query = workspace.display_path(&source).unwrap();
         fixture.app.folder_browser_path = directory.clone();
         fixture.app.folder_browser.folder = workspace.display_path(&directory).unwrap();
-        fixture.app.folder_browser.save_as_return = true;
+        fixture.app.folder_browser.mode = crate::folder_browser::Mode::SaveLocation;
         fixture.app.confirm_folder_browser();
         let result = workspace.target_key(&fixture.app.save_as_query).unwrap();
         assert_eq!(
@@ -498,7 +498,7 @@ fn remote_directory_aliases_are_canonical_and_outside_directories_are_rejected()
     let workspace = fixture.app.remote_workspace.as_ref().unwrap();
     let cancel = CancellationToken::new();
     let Location::Directory(identity) = workspace
-        .open_location(&key(&fixture, "inside-alias"), &cancel, |_, _| {})
+        .open_location(&key(&fixture, "inside-alias"), &cancel, false, |_, _| {})
         .unwrap()
     else {
         panic!()
@@ -506,7 +506,7 @@ fn remote_directory_aliases_are_canonical_and_outside_directories_are_rejected()
     assert_eq!(identity, key(&fixture, "inside"));
     assert!(
         workspace
-            .open_location(&key(&fixture, "outside-alias"), &cancel, |_, _| {})
+            .open_location(&key(&fixture, "outside-alias"), &cancel, false, |_, _| {})
             .is_err()
     );
     let path = key(&fixture, "outside-alias");

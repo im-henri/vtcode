@@ -200,7 +200,7 @@ fn handle_exit_confirm_key_inner(app: &mut App, key: KeyEvent, backup_confirmed:
     Some(false)
 }
 
-/// Handle change-directory folder browser dialog.
+/// Give the full-screen file and folder browser exclusive keyboard input.
 pub(crate) fn handle_change_dir_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     if !app.change_dir_active {
         return None;

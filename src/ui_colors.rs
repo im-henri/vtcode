@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap as CssColorMap;
 use std::sync::LazyLock;
 
 use crate::ui::hsl_to_rgb;
+use crate::line_changes::{ChangeKind, LineChanges};
 
 pub(crate) fn syntax_font_modifiers(font: crate::textmate::FontStyle) -> Modifier {
     use crate::textmate::FontStyle;
@@ -14,56 +15,69 @@ pub(crate) fn syntax_font_modifiers(font: crate::textmate::FontStyle) -> Modifie
     modifiers
 }
 
-/// Keep document change markers consistent in the gutter and overviews.
-pub(crate) fn change_marker_color(
-    status: char,
-    colors: &crate::app_theme::ThemeColors,
-) -> Option<Color> {
-    match status {
-        'N' => Some(colors.ui.fg_gutter_added),
-        'U' | 'A' | 'M' => Some(colors.ui.fg_gutter_modified),
-        'D' => Some(colors.ui.fg_gutter_deleted),
-        'S' => Some(colors.fg_success),
-        _ => None,
+#[derive(Clone, Copy)]
+pub(crate) enum ChangeSurface {
+    Gutter { staged: bool },
+    Minimap,
+    Scrollbar,
+}
+
+impl ChangeSurface {
+    pub(crate) fn color(self, kind: ChangeKind, colors: &crate::app_theme::ThemeColors) -> Color {
+        let ui = &colors.ui;
+        let (added, removed, modified) = match self {
+            Self::Gutter { staged: false } => (ui.fg_gutter_added, ui.fg_gutter_deleted, ui.fg_gutter_modified),
+            Self::Gutter { staged: true } => (
+                ui.fg_gutter_added_secondary, ui.fg_gutter_deleted_secondary, ui.fg_gutter_modified_secondary,
+            ),
+            Self::Minimap => (ui.fg_minimap_added, ui.fg_minimap_deleted, ui.fg_minimap_modified),
+            Self::Scrollbar => (ui.fg_overview_added, ui.fg_overview_deleted, ui.fg_overview_modified),
+        };
+        match kind {
+            ChangeKind::Added => added,
+            ChangeKind::Unsaved => match self {
+                Self::Gutter { .. } => modified,
+                _ => added,
+            },
+            ChangeKind::Removed => removed,
+            ChangeKind::Replaced | ChangeKind::Modified => modified,
+        }
+    }
+
+    pub(crate) fn marker(
+        self, kind: ChangeKind, staged: bool, bg: Color, colors: &crate::app_theme::ThemeColors,
+    ) -> Style {
+        let color = self.color(kind, colors);
+        if staged {
+            let ink = ensure_contrast(bg, color, 4.5, &[
+                colors.fg_text, Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255),
+            ]);
+            Style::default().fg(ink).bg(color)
+        } else {
+            Style::default().fg(color).bg(bg)
+        }
+    }
+
+    pub(crate) fn primary_marker(
+        self, changes: LineChanges, bg: Color, colors: &crate::app_theme::ThemeColors,
+    ) -> (&'static str, Style) {
+        let Some(kind) = changes.primary() else { return (" ", Style::default().bg(bg)); };
+        let staged = changes.staged();
+        let working = changes.working().is_some();
+        let mut style = self.marker(kind, staged.is_some() && !working, bg, colors);
+        if let Some(staged) = staged.filter(|_| working) {
+            style = style.add_modifier(Modifier::UNDERLINED).underline_color(self.color(staged, colors));
+        }
+        (kind.symbol(), style)
     }
 }
 
-pub(crate) fn minimap_marker_color(
-    status: char,
-    colors: &crate::app_theme::ThemeColors,
-) -> Option<Color> {
-    match status {
-        'N' => Some(colors.ui.fg_minimap_added),
-        'U' | 'A' | 'M' => Some(colors.ui.fg_minimap_modified),
-        'D' => Some(colors.ui.fg_minimap_deleted),
-        'S' => Some(colors.fg_success),
-        _ => None,
-    }
-}
-
+#[cfg(test)]
 pub(crate) fn overview_marker_color(
     status: char,
     colors: &crate::app_theme::ThemeColors,
 ) -> Option<Color> {
-    match status {
-        'N' => Some(colors.ui.fg_overview_added),
-        'U' | 'A' | 'M' => Some(colors.ui.fg_overview_modified),
-        'D' => Some(colors.ui.fg_overview_deleted),
-        'S' => Some(colors.fg_success),
-        _ => None,
-    }
-}
-
-/// Add `amount` to every RGB channel (clamped at 255). Non-RGB variants pass through.
-pub(crate) fn lighten(color: Color, amount: u8) -> Color {
-    match color {
-        Color::Rgb(r, g, b) => Color::Rgb(
-            r.saturating_add(amount),
-            g.saturating_add(amount),
-            b.saturating_add(amount),
-        ),
-        other => other,
-    }
+    LineChanges::from(status).summary().map(|kind| ChangeSurface::Scrollbar.color(kind, colors))
 }
 
 /// TextMate token colors can also carry alpha. Ignoring it makes translucent
@@ -671,34 +685,6 @@ mod scan_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── lighten ──────────────────────────────────────────────────────
-
-    #[test]
-    fn lighten_rgb_basic() {
-        assert_eq!(lighten(Color::Rgb(100, 100, 100), 10), Color::Rgb(110, 110, 110));
-    }
-
-    #[test]
-    fn lighten_rgb_saturates_at_255() {
-        assert_eq!(lighten(Color::Rgb(250, 250, 250), 20), Color::Rgb(255, 255, 255));
-    }
-
-    #[test]
-    fn lighten_zero_amount() {
-        assert_eq!(lighten(Color::Rgb(42, 42, 42), 0), Color::Rgb(42, 42, 42));
-    }
-
-    #[test]
-    fn lighten_non_rgb_passes_through() {
-        assert_eq!(lighten(Color::Red, 50), Color::Red);
-        assert_eq!(lighten(Color::Reset, 50), Color::Reset);
-    }
-
-    #[test]
-    fn lighten_black_to_gray() {
-        assert_eq!(lighten(Color::Rgb(0, 0, 0), 128), Color::Rgb(128, 128, 128));
-    }
 
     // ── is_word_boundary ─────────────────────────────────────────────
 

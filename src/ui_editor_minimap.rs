@@ -1,4 +1,6 @@
 use rustc_hash::FxHashMap;
+use crate::line_changes::{ChangeKind, LineChanges};
+use crate::ui_colors::ChangeSurface;
 
 #[path = "ui_scrollbar_changes.rs"]
 mod scrollbar_changes;
@@ -35,7 +37,6 @@ pub(crate) struct LinePriorityIndex<T> {
 }
 
 pub(crate) type DiagnosticLineIndex = LinePriorityIndex<u8>;
-pub(crate) type ChangeLineIndex = LinePriorityIndex<char>;
 
 impl<T: Copy> LinePriorityIndex<T> {
     fn build(lines: impl IntoIterator<Item = (usize, T)>, priority: impl Fn(T) -> u8) -> Self {
@@ -80,36 +81,41 @@ impl DiagnosticLineIndex {
     }
 }
 
+/// Separate buckets retain every kind in a compressed row while keeping
+/// queries bounded by the number of kinds, independent of the file size.
+#[derive(Default)]
+pub(crate) struct ChangeLineIndex([Vec<usize>; LineChanges::BIT_COUNT]);
+
 impl ChangeLineIndex {
-    pub(crate) fn from_changes(changes: &[(usize, char)]) -> Self {
-        Self::build(
-            changes.iter().filter_map(|&(line, status)| {
-                let status = minimap_status_bucket(status);
-                (status != ' ').then_some((line, status))
-            }),
-            |status| match status {
-                'N' => 0,
-                'U' => 1,
-                'D' => 2,
-                _ => 3,
-            },
-        )
+    pub(crate) fn from_changes<T: Copy + Into<LineChanges>>(changes: &[(usize, T)]) -> Self {
+        let mut index = Self::default();
+        for &(line, change) in changes {
+            let bits = change.into().bits();
+            for (bit, lines) in index.0.iter_mut().enumerate() {
+                if bits & (1 << bit) != 0 {
+                    lines.push(line);
+                }
+            }
+        }
+        for lines in &mut index.0 {
+            lines.sort_unstable();
+            lines.dedup();
+        }
+        index
     }
 
-    fn best_in_clamped_range(&self, start: usize, end: usize, total_lines: usize) -> Option<char> {
-        // A stale marker beyond EOF is drawn on the final document line. Keep
-        // this rule even when the overview is taller than the document.
-        self.best_in_range_inner(start, end, end == total_lines)
-    }
-}
-
-fn minimap_status_bucket(status: char) -> char {
-    match status {
-        'N' => 'N',
-        'D' => 'D',
-        'U' | 'A' | 'M' => 'U',
-        'S' => 'S',
-        _ => ' ',
+    fn in_range(&self, start: usize, end: usize, include_tail: bool) -> LineChanges {
+        if start >= end {
+            return LineChanges::default();
+        }
+        let mut bits = 0;
+        for (bit, lines) in self.0.iter().enumerate() {
+            let index = lines.partition_point(|&line| line < start);
+            if lines.get(index).is_some_and(|&line| include_tail || line < end) {
+                bits |= 1 << bit;
+            }
+        }
+        LineChanges::from_bits(bits)
     }
 }
 
@@ -176,13 +182,79 @@ fn dim_color(c: Color, scale: u8, surface: Color) -> Color {
     }
 }
 
-fn minimap_diff_colors(
-    status: char,
+fn minimap_row_changes(p: MinimapParams<'_>, start: usize, end: usize) -> LineChanges {
+    if p.diff_changes.is_none() && p.editor.large_file_mode {
+        return LineChanges::default();
+    }
+    let mut changes = p.change_index.map_or_else(
+        || match p.diff_changes {
+            Some(source) => minimap_change_in_range(source, start, end),
+            None => minimap_change_in_range(p.editor.git_change_lines(), start, end),
+        },
+        |index| index.in_range(start, end, false),
+    );
+    if p.diff_changes.is_none() && p.editor.has_unsaved_change_in_range(start, end) {
+        changes = changes.merge(LineChanges::UNSAVED);
+    }
+    changes
+}
+
+struct MinimapRowMarkers {
+    background: Color,
+    cells: [(&'static str, Style); 3],
+    width: usize,
+}
+
+fn minimap_row_markers(
+    changes: LineChanges,
+    diagnostic: Option<u8>,
+    has_search_match: bool,
+    width: usize,
     bg: Color,
     colors: &crate::app_theme::ThemeColors,
-) -> Option<(Color, Color)> {
-    crate::ui_colors::minimap_marker_color(status, colors)
-        .map(|color| (color, dim_color(color, 100, bg)))
+) -> MinimapRowMarkers {
+    let surface = ChangeSurface::Minimap;
+    let kind = changes.summary();
+    let background = if has_search_match {
+        dim_color(colors.ui.fg_minimap_find, 100, bg)
+    } else if let Some(kind) = kind {
+        dim_color(surface.color(kind, colors), 56, bg)
+    } else { bg };
+    let blank = Style::default().bg(background);
+    let mut cells = [(" ", blank); 3];
+    let width = if kind.is_some() || diagnostic.is_some() { width.min(cells.len()) } else { 0 };
+    let marker = |kind: ChangeKind, staged| {
+        (kind.symbol(), surface.marker(kind, staged, background, colors).add_modifier(Modifier::BOLD))
+    };
+    let diagnostic = diagnostic.map(|severity| {
+        ("█", blank.fg(diagnostic_marker_color(severity, colors)).add_modifier(Modifier::BOLD))
+    });
+    if let Some(diag) = diagnostic {
+        cells[0] = diag;
+        if kind.is_none() {
+            cells[..width].fill(diag);
+        }
+    }
+    let lanes = &mut cells[usize::from(diagnostic.is_some()).min(width)..width];
+    if let (Some(kind), Some((last, rest))) = (kind, lanes.split_last_mut()) {
+        let working = changes.working();
+        let staged = changes.staged();
+        match (rest.last_mut(), working, staged) {
+            (Some(left), Some(working), Some(staged)) => {
+                *left = marker(staged, true);
+                *last = marker(working, false);
+            }
+            (left, _, _) => {
+                if let Some(left) = left {
+                    let accent = if kind == ChangeKind::Replaced { ChangeKind::Removed } else { kind };
+                    *left = ("▐", blank.fg(surface.color(accent, colors)).add_modifier(Modifier::BOLD));
+                }
+                let (symbol, style) = surface.primary_marker(changes, background, colors);
+                *last = (symbol, style.add_modifier(Modifier::BOLD));
+            }
+        }
+    }
+    MinimapRowMarkers { background, cells, width }
 }
 
 #[cfg(test)]
@@ -195,16 +267,14 @@ pub(crate) fn scrollbar_change_rows(
         return ChangeRows::default();
     }
     let total_lines = editor.line_count().max(1);
-    let mut changes = diff_changes
-        .unwrap_or_else(|| editor.git_change_lines())
-        .to_vec();
-    if diff_changes.is_none() {
-        changes.extend(
-            (0..total_lines)
-                .filter(|&line| editor.has_unsaved_change_in_range(line, line + 1))
-                .map(|line| (line, 'N')),
-        );
+    if let Some(changes) = diff_changes {
+        return ChangeRows::from_lines(height, total_lines, changes.iter().copied());
     }
+    let changes = editor.git_change_lines().iter().copied().chain(
+        (0..total_lines)
+            .filter(|&line| editor.has_unsaved_change_in_range(line, line + 1))
+            .map(|line| (line, LineChanges::UNSAVED)),
+    );
     ChangeRows::from_lines(height, total_lines, changes)
 }
 
@@ -229,11 +299,11 @@ pub(crate) fn scrollbar_change_rows_indexed(
     ChangeRows::project(height, editor.overview_total_rows(), |start, end| {
         let start = editor.overview_source_boundary(start);
         let end = editor.overview_source_boundary(end);
+        // Include stale markers beyond EOF in the last source row.
+        let change = changes.in_range(start, end, end == total_lines);
         if !compare && editor.has_unsaved_change_in_range(start, end) {
-            Some('N')
-        } else {
-            changes.best_in_clamped_range(start, end, total_lines)
-        }
+            change.merge(LineChanges::UNSAVED)
+        } else { change }
     })
 }
 
@@ -384,20 +454,14 @@ impl MinimapLayout {
     }
 }
 
-fn minimap_change_in_range(changes: &[(usize, char)], start: usize, end: usize) -> char {
+fn minimap_change_in_range<T: Copy + Into<LineChanges>>(
+    changes: &[(usize, T)], start: usize, end: usize,
+) -> LineChanges {
     let index = changes.partition_point(|&(line, _)| line < start);
     changes[index..]
         .iter()
         .take_while(|&&(line, _)| line < end)
-        .map(|&(_, status)| minimap_status_bucket(status))
-        .max_by_key(|status| match status {
-            'N' => 4,
-            'U' => 3,
-            'D' => 2,
-            'S' => 1,
-            _ => 0,
-        })
-        .unwrap_or(' ')
+        .fold(LineChanges::default(), |combined, &(_, change)| combined.merge(change.into()))
 }
 
 fn minimap_source_range(window: MinimapWindow, row: usize, height: usize) -> (usize, usize) {
@@ -470,28 +534,16 @@ fn draw_minimap_viewport_border(
     let top_y = area.y + view_start_row.min(height.saturating_sub(1)) as u16;
     let bot_row = view_end_row.min(height).saturating_sub(1);
     let bot_y = area.y + bot_row as u16;
-    let marker_color = |color: Color| {
-        ['N', 'U', 'D', 'S']
-            .iter()
-            .any(|&status| crate::ui_colors::minimap_marker_color(status, colors) == Some(color))
-            || color == colors.ui.fg_minimap_error
-            || color == colors.ui.fg_minimap_warning
-            || color == colors.ui.fg_minimap_info
-            || color == colors.fg_bookmark
-    };
     for x in area.x..area.x + area.width {
-        if let Some(cell) = buf.cell_mut((x, top_y)) {
-            if !marker_color(cell.fg) {
-                cell.set_fg(colors.ui.readable_foreground(border_fg, cell.bg, 3.0));
-            }
-            cell.set_symbol("▔");
-        }
-        if bot_y > top_y {
-            if let Some(cell) = buf.cell_mut((x, bot_y)) {
-                if !marker_color(cell.fg) {
+        for (y, symbol) in [(top_y, "▔"), (bot_y, "▁")] {
+            if symbol == "▁" && bot_y <= top_y { continue; }
+            if let Some(cell) = buf.cell_mut((x, y))
+                && !cell.modifier.contains(Modifier::BOLD)
+            {
+                if cell.fg != colors.fg_bookmark {
                     cell.set_fg(colors.ui.readable_foreground(border_fg, cell.bg, 3.0));
                 }
-                cell.set_symbol("▁");
+                cell.set_symbol(symbol);
             }
         }
     }
@@ -506,8 +558,8 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         search_matches,
         diagnostic_lines,
         diagnostic_index,
-        change_index,
-        diff_changes,
+        change_index: _,
+        diff_changes: _,
         colors,
         hovered,
         active,
@@ -554,29 +606,7 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
             .range(source_line..row_end_line)
             .next()
             .is_some();
-        let diff_status = if let Some(changes) = diff_changes {
-            change_index.map_or_else(
-                || minimap_change_in_range(changes, source_line, row_end_line),
-                |index| {
-                    index
-                        .best_in_range(source_line, row_end_line)
-                        .unwrap_or(' ')
-                },
-            )
-        } else if editor.large_file_mode {
-            ' '
-        } else if editor.has_unsaved_change_in_range(source_line, row_end_line) {
-            'N'
-        } else {
-            change_index.map_or_else(
-                || minimap_change_in_range(editor.git_change_lines(), source_line, row_end_line),
-                |index| {
-                    index
-                        .best_in_range(source_line, row_end_line)
-                        .unwrap_or(' ')
-                },
-            )
-        };
+        let changes = minimap_row_changes(p, source_line, row_end_line);
         let has_selection = selection_overlaps_range(selection_lines, source_line, row_end_line);
         let diag_severity = diagnostic_index.map_or_else(
             || worst_diagnostic_in_range(diagnostic_lines, source_line, row_end_line),
@@ -592,27 +622,9 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         };
 
         if source_line < total_lines {
-            let diff_colors = minimap_diff_colors(diff_status, bg, &colors);
-            let override_bg = if has_search_match {
-                Some(dim_color(colors.ui.fg_minimap_find, 100, bg))
-            } else if let Some((_, rbg)) = diff_colors {
-                Some(rbg)
-            } else {
-                None
-            };
-            let row_bg = override_bg.unwrap_or(bg);
-            // Diagnostic markers take priority over diff markers
-            let effective_marker = if let Some(sev) = diag_severity {
-                Some((diagnostic_marker_color(sev, &colors), row_bg))
-            } else {
-                diff_colors
-            };
-            let marker_width = if effective_marker.is_some() {
-                if width == 0 { 0 } else { width.clamp(1, 3) }
-            } else {
-                0
-            };
-            let content_width = width.saturating_sub(marker_width);
+            let markers = minimap_row_markers(changes, diag_severity, has_search_match, width, bg, &colors);
+            let row_bg = markers.background;
+            let content_width = width - markers.width;
             let highlight = if has_search_match {
                 Some(colors.ui.fg_minimap_find)
             } else if has_bookmark {
@@ -645,17 +657,9 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
                     cell.set_char(ch).set_style(style);
                 }
             }
-            if let Some((marker_fg, _)) = effective_marker {
-                let style = Style::default()
-                    .fg(marker_fg)
-                    .bg(row_bg)
-                    .add_modifier(Modifier::BOLD);
-                for column in content_width..width {
-                    if let Some(cell) =
-                        buffer.cell_mut((area.x + column as u16, area.y + row as u16))
-                    {
-                        cell.set_char('█').set_style(style);
-                    }
+            for (offset, &(symbol, style)) in markers.cells[..markers.width].iter().enumerate() {
+                if let Some(cell) = buffer.cell_mut((area.x + (content_width + offset) as u16, area.y + row as u16)) {
+                    cell.set_symbol(symbol).set_style(style);
                 }
             }
         } else {
@@ -713,7 +717,8 @@ fn scrollbar_row_cells(
     width: usize,
     in_thumb: bool,
     is_cursor: bool,
-    marker: Option<(char, char, Color)>,
+    marker: Option<Color>,
+    change: scrollbar_changes::ChangeRow,
     colors: &crate::app_theme::ThemeColors,
     track: Color,
     thumb: Color,
@@ -725,19 +730,50 @@ fn scrollbar_row_cells(
     } else {
         (if in_thumb { '█' } else { ' ' }, Style::default().fg(surface).bg(surface))
     };
+    let navigation_bg = if is_cursor { navigation.1.fg.unwrap_or(colors.bg_cursor) } else { surface };
+    let blank = (' ', Style::default().fg(track).bg(track));
+    if let Some(color) = marker {
+        return if width == 1 {
+            [('▐', Style::default().fg(color).bg(navigation_bg)); 2]
+        } else {
+            [navigation, ('█', Style::default().fg(color).bg(track))]
+        };
+    }
+    let combined = change.changes();
+    let palette = ChangeSurface::Scrollbar;
+    let color = |kind| palette.color(kind, colors);
     if width == 1 {
-        let cell = if let Some((_, symbol, color)) = marker {
-            let background = if is_cursor {
-                navigation.1.fg.unwrap_or(colors.bg_cursor)
-            } else { surface };
-            (symbol, Style::default().fg(color).bg(background))
-        } else { navigation };
+        let cell = combined.summary().map_or(navigation, |kind| {
+            let mut style = Style::default().fg(color(kind)).bg(navigation_bg);
+            if let Some(staged) = combined.staged() {
+                style = style.add_modifier(Modifier::UNDERLINED).underline_color(color(staged));
+            }
+            (change.narrow_symbol(), style)
+        });
         return [cell; 2];
     }
-    let overview = marker.map_or((' ', Style::default().fg(track).bg(track)), |(symbol, _, color)| {
-        (symbol, Style::default().fg(color).bg(track))
+    if combined.working().is_none() {
+        let staged = combined.staged().map_or(blank, |kind| {
+            (change.symbol(), Style::default().fg(color(kind)).bg(track).add_modifier(Modifier::UNDERLINED))
+        });
+        return [navigation, staged];
+    }
+    let [upper, lower] = change.halves();
+    let staged_lane = combined.staged().map_or(navigation, |kind| {
+        let symbol = scrollbar_changes::coverage_symbol(upper.staged().is_some(), lower.staged().is_some(), true);
+        (symbol, Style::default().fg(color(kind)).bg(navigation_bg).add_modifier(Modifier::UNDERLINED))
     });
-    [navigation, overview]
+    let [top, bottom] = [upper.working(), lower.working()];
+    let working_lane = match (top, bottom) {
+        (Some(a), Some(b)) if color(a) != color(b) => ('▀', Style::default().fg(color(a)).bg(color(b))),
+        (None, None) => blank,
+        _ => {
+            let symbol = scrollbar_changes::coverage_symbol(top.is_some(), bottom.is_some(), false);
+            let kind = combined.working().unwrap();
+            (symbol, Style::default().fg(color(kind)).bg(track))
+        }
+    };
+    [staged_lane, working_lane]
 }
 
 fn draw_scrollbar_with_mapping(
@@ -845,16 +881,14 @@ fn draw_scrollbar_with_mapping(
                 3 => colors.ui.fg_overview_info,
                 _ => colors.fg_dim,
             };
-            Some(('█', '▐', c))
+            Some(c)
         } else if has_match {
             let c = colors.ui.fg_overview_find;
-            Some(('█', '▐', c))
-        } else if let Some(c) = change.status().and_then(|status| crate::ui_colors::overview_marker_color(status, &colors)) {
-            Some((change.symbol(), change.narrow_symbol(), c))
+            Some(c)
         } else {
             None
         };
-        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, &colors, track, thumb);
+        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, change, &colors, track, thumb);
         for column in 0..width {
             let (symbol, style) = cells[usize::from(column >= width / 2)];
             if let Some(cell) = buffer.cell_mut((area.x + column as u16, area.y + i as u16)) {
@@ -884,21 +918,52 @@ mod tests {
         *COLORS.get_or_init(|| crate::app_theme::EditorTheme::Dark.colors())
     }
 
-    // -- minimap_status_bucket --
+    #[test]
+    fn compressed_rows_keep_additions_and_removals_in_each_git_source() {
+        let changes = [
+            (0, LineChanges::git('D', ' ')),
+            (1, LineChanges::git(' ', 'D')),
+            (2, LineChanges::git('A', 'A')),
+        ];
+        let index = ChangeLineIndex::from_changes(&changes);
+        let compressed = index.in_range(0, 3, false);
+        assert_eq!(compressed, LineChanges::git('M', 'M'));
+        assert_eq!(compressed, minimap_change_in_range(&changes, 0, 3));
+        assert_eq!(index.in_range(0, 1, false), changes[0].1);
+        assert_eq!(index.in_range(1, 2, false), changes[1].1);
+    }
 
     #[test]
-    fn status_buckets_distinguish_new_deleted_saved_and_all_modified_states() {
-        for (status, expected) in [
-            ('N', 'N'),
-            ('D', 'D'),
-            ('M', 'U'),
-            ('A', 'U'),
-            ('U', 'U'),
-            ('S', 'S'),
-            ('?', ' '),
-            (' ', ' '),
-        ] {
-            assert_eq!(minimap_status_bucket(status), expected, "{status:?}");
+    fn overview_marks_keep_staged_removals_distinct_from_working_additions() {
+        for theme in [crate::app_theme::EditorTheme::Dark, crate::app_theme::EditorTheme::Light] {
+            let colors = theme.colors();
+            let overlap = LineChanges::git('D', 'A');
+            let markers = minimap_row_markers(overlap, Some(2), false, 12, colors.ui.bg_minimap, &colors);
+            assert_eq!(markers.cells.map(|(symbol, _)| symbol), ["█", "−", "+"]);
+            assert_eq!(markers.cells[0].1.fg, Some(colors.ui.fg_minimap_warning));
+            assert_eq!(markers.cells[1].1.bg, Some(colors.ui.fg_minimap_deleted));
+            assert_eq!(markers.cells[2].1.fg, Some(colors.ui.fg_minimap_added));
+
+            let replacement = minimap_row_markers(LineChanges::git('M', ' '), None, false, 12, colors.ui.bg_minimap, &colors);
+            assert_eq!(replacement.cells[1].1.fg, Some(colors.ui.fg_minimap_deleted));
+            assert_eq!(replacement.cells[2].0, "±");
+            assert_eq!(replacement.cells[2].1.bg, Some(colors.ui.fg_minimap_modified));
+
+            let rows = ChangeRows::from_lines(10, 100, [(40, overlap), (45, 'D'.into())]);
+            let (track, thumb) = colors.ui.scrollbar_colors(colors.ui.bg_overview, false, false);
+            let [staged, working] = scrollbar_row_cells(2, true, false, None, rows.row(4), &colors, track, thumb);
+            assert_eq!(staged.0, '▝');
+            assert_eq!(staged.1.fg, Some(colors.ui.fg_overview_deleted));
+            assert_eq!(staged.1.bg, Some(thumb));
+            assert_eq!(working.0, '▀');
+            assert_eq!(working.1.fg, Some(colors.ui.fg_overview_added));
+            assert_eq!(working.1.bg, Some(colors.ui.fg_overview_deleted));
+
+            let [marker, _] = scrollbar_row_cells(1, true, false, None, rows.row(4), &colors, track, thumb);
+            assert_eq!(marker.0, '▐');
+            assert_eq!(marker.1.bg, Some(thumb));
+            assert_eq!(marker.1.fg, Some(colors.ui.fg_overview_modified));
+            assert_eq!(marker.1.underline_color, Some(colors.ui.fg_overview_deleted));
         }
     }
 
@@ -1014,10 +1079,9 @@ mod tests {
         );
         let mut colors = test_colors();
         colors.ui.fg_minimap_deleted = Color::Rgb(20, 40, 60);
-        assert_eq!(
-            minimap_diff_colors('D', surface, &colors),
-            Some((Color::Rgb(20, 40, 60), Color::Rgb(154, 165, 175)))
-        );
+        let markers = minimap_row_markers('D'.into(), None, false, 3, surface, &colors);
+        assert_eq!(markers.background, Color::Rgb(192, 200, 208));
+        assert_eq!(markers.cells[2].1.fg, Some(Color::Rgb(20, 40, 60)));
     }
 
     #[test]
@@ -1052,12 +1116,10 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         for x in 0..12 {
-            assert_eq!(buffer[(x, 2)].bg, Color::Rgb(154, 165, 175));
+            assert_eq!(buffer[(x, 2)].bg, Color::Rgb(192, 200, 208));
         }
         assert_eq!(buffer[(11, 2)].fg, Color::Rgb(20, 40, 60));
     }
-
-    // -- minimap_diff_colors --
 
     #[test]
     fn diff_marker_colors_exist_only_for_changed_or_saved_statuses() {
@@ -1071,7 +1133,7 @@ mod tests {
             ('X', false),
         ] {
             assert_eq!(
-                minimap_diff_colors(status, Color::Black, &colors).is_some(),
+                minimap_row_markers(status.into(), None, false, 3, Color::Black, &colors).width > 0,
                 expected,
                 "{status:?}"
             );
@@ -1091,8 +1153,8 @@ mod tests {
         let with_compare = scrollbar_change_rows(&editor, 10, Some(&diff_changes));
 
         assert!(without_compare.is_empty());
-        assert_eq!(with_compare.row(5).status(), Some('U'));
-        assert_eq!(with_compare.row(9).status(), Some('D'));
+        assert_eq!(with_compare.row(5).changes(), 'U'.into());
+        assert_eq!(with_compare.row(9).changes(), 'D'.into());
     }
 
     #[test]
@@ -1103,8 +1165,8 @@ mod tests {
 
         let rows = scrollbar_change_rows(&editor, 10, Some(&changes));
 
-        assert_eq!(rows.row(0).status(), Some('U'));
-        assert_eq!(rows.row(9).status(), Some('D'));
+        assert_eq!(rows.row(0).changes(), 'U'.into());
+        assert_eq!(rows.row(9).changes(), 'D'.into());
     }
 
     #[test]
@@ -1142,7 +1204,8 @@ mod tests {
         let buffer = terminal.backend().buffer();
         // The aligned local window is 32..72: line 40 belongs to row 2,
         // rather than whole-document overview row 4.
-        assert!((9..12).all(|x| buffer.cell((x, 2)).unwrap().fg == colors.ui.fg_gutter_modified));
+        assert_eq!(buffer[(11, 2)].fg, colors.ui.fg_minimap_modified);
+        assert_eq!(buffer[(11, 2)].symbol(), "┃");
         assert!((0..10).all(|y| {
             (9..12).all(|x| buffer.cell((x, y)).unwrap().fg != colors.ui.fg_gutter_deleted)
         }));
@@ -1209,7 +1272,9 @@ mod tests {
         colors.ui.fg_overview_modified = Color::Rgb(42, 52, 62);
         colors.ui.fg_overview_deleted = Color::Rgb(72, 82, 92);
         for status in ['N', 'U', 'A', 'M', 'D', 'S'] {
-            let minimap_expected = crate::ui_colors::minimap_marker_color(status, &colors).unwrap();
+            let change = LineChanges::from(status);
+            let kind = change.summary().unwrap();
+            let minimap_expected = ChangeSurface::Minimap.color(kind, &colors);
             let overview_expected =
                 crate::ui_colors::overview_marker_color(status, &colors).unwrap();
             let changes = [(45, status)];
@@ -1255,10 +1320,11 @@ mod tests {
                 .unwrap();
             let buffer = terminal.backend().buffer();
             assert_eq!(
-                buffer.cell((11, 3)).unwrap().fg,
+                if status == 'S' { buffer[(11, 3)].bg } else { buffer[(11, 3)].fg },
                 minimap_expected,
                 "minimap {status}"
             );
+            assert_eq!(buffer[(11, 3)].symbol(), kind.symbol(), "minimap {status}");
             assert_eq!(
                 buffer.cell((13, 4)).unwrap().fg,
                 overview_expected,
@@ -1432,10 +1498,10 @@ mod tests {
     #[test]
     fn minimap_changes_are_clipped_to_the_rendered_source_range() {
         let changes = [(0, 'N'), (4990, 'U'), (5000, 'D'), (5010, 'S'), (9999, 'N')];
-        assert_eq!(minimap_change_in_range(&changes, 4980, 4990), ' ');
-        assert_eq!(minimap_change_in_range(&changes, 4990, 5001), 'U');
-        assert_eq!(minimap_change_in_range(&changes, 5000, 5001), 'D');
-        assert_eq!(minimap_change_in_range(&changes, 5010, 5010), ' ');
+        assert!(minimap_change_in_range(&changes, 4980, 4990).is_empty());
+        assert_eq!(minimap_change_in_range(&changes, 4990, 5001), LineChanges::from('U').merge('D'.into()));
+        assert_eq!(minimap_change_in_range(&changes, 5000, 5001), 'D'.into());
+        assert!(minimap_change_in_range(&changes, 5010, 5010).is_empty());
     }
 
     #[test]

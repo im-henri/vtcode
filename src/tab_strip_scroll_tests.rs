@@ -273,7 +273,7 @@ fn opening_a_long_diff_keeps_previous_tabs_and_a_partial_label_to_its_left() {
     for (tab, name) in app.tabs.iter_mut().zip(["aaa", "bbb", "ccc"]) {
         tab.editor.file_path = Some(format!("/project/{name}").into());
     }
-    let area = Rect::new(3, 1, 40, 1);
+    let area = Rect::new(3, 1, 60, 1);
     app.tab_bar_area = Some(area);
     app.active_tab = 2;
     app.ensure_active_tab_visible();

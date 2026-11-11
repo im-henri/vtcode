@@ -393,7 +393,7 @@ impl TerminalEventPump {
     }
 
     /// Interior character selection depends on the latest endpoint within the
-    /// viewport. Consume only queued samples; outside rows retain every
+    /// viewport. Consume only queued samples; edge drags retain every
     /// auto-scroll step, and all other input keeps its original ordering.
     fn latest_selection_drag(
         &mut self,
@@ -787,8 +787,10 @@ pub(crate) fn handle_mouse_input(
             mouse::handle_mouse(app, mouse);
             break;
         } else if mouse::handle_navigation_mouse(app, mouse) {
+            app.editor_selection_scroll_at = None;
             break;
         } else if app.context_menu_active {
+            app.editor_selection_scroll_at = None;
             // A panel press keeps its release even if a context menu opens.
             if !crate::ui_panels::captured_mouse(app, mouse) {
                 mouse_overlay::handle_context_menu_mouse(app, mouse);
@@ -906,7 +908,7 @@ fn editor_selection_drag_state(
     }
     navigation_batch_target(app)?;
     if app.lsp_hover_active || app.should_render_diff_for_active_editor() { return None; }
-    let area = app.code_area.filter(|area| area.contains((mouse.column, mouse.row).into()))?;
+    let mut area = app.code_area?;
     let press = app.drag_start_pos?;
     if !area.contains(press.into()) { return None; }
     let editor = app.editor()?;
@@ -915,6 +917,14 @@ fn editor_selection_drag_state(
     {
         return None;
     }
+    if !editor.word_wrap && !area.is_empty() {
+        // The rightmost code cell can scroll right. The leftmost can scroll
+        // back once the viewport is offset. Keep those drag samples ordered.
+        let left = u16::from(editor.horizontal_scroll > 0 && area.width > 1);
+        area.x += left;
+        area.width = area.width.saturating_sub(left + 1);
+    }
+    if !area.contains((mouse.column, mouse.row).into()) { return None; }
     Some(SelectionDragState {
         area,
         target: (app.active_group, app.active_tab, editor.navigation_id),
@@ -958,6 +968,28 @@ fn editor_scroll_batch_area(app: &App, mouse: crossterm::event::MouseEvent) -> O
         return None;
     }
     app.code_area.filter(|area| area.contains((mouse.column, mouse.row).into()))
+}
+
+fn advance_editor_selection_scroll(
+    app: &mut App,
+    pump: &mut TerminalEventPump,
+    now: std::time::Instant,
+) -> bool {
+    if !app.terminal_has_focus
+        || app.editor_selection_scroll_at.take_if(|deadline| *deadline <= now).is_none()
+        || app.active_pane != ActivePane::Editor
+        || app.editor().is_none_or(|editor| app.editor_selection_drag != Some(editor.navigation_id))
+    {
+        return false;
+    }
+    // Route a held edge through the same drag handling as a pointer sample.
+    let mouse = crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+        column: app.mouse_col,
+        row: app.mouse_row,
+        modifiers: app.lsp_link_hover.modifiers,
+    };
+    handle_mouse_input(app, pump, mouse)
 }
 
 fn is_marker_word_char(byte: u8) -> bool {
@@ -3076,6 +3108,9 @@ fn next_event_wait(
 
     if let Some(extension_wait) = next_visible_extension_tick_wait(app) { include(extension_wait); }
     if app.terminal_has_focus {
+        if let Some(deadline) = app.editor_selection_scroll_at {
+            include(deadline.saturating_duration_since(std::time::Instant::now()));
+        }
         if let Some(wait) = app.next_terminal_completion_wait(std::time::Instant::now()) {
             include(wait);
         }
@@ -3274,9 +3309,9 @@ fn refresh_caches(app: &mut App) {
                 app.cached_editor_analysis_target = Some(target.clone());
             } else if !app.bg_editor_analysis_running && edit_has_settled {
                 app.editor_analysis_deferred = false;
-                let (rope, saved_rope) = app.editor().map_or_else(
-                    || (ropey::Rope::new(), None),
-                    |editor| (editor.rope.clone(), editor.saved_rope.clone()),
+                let (rope, saved_rope, insertion_anchors) = app.editor().map_or_else(
+                    || (ropey::Rope::new(), None, None),
+                    |editor| (editor.rope.clone(), editor.saved_rope.clone(), editor.insertion_anchors.clone()),
                 );
                 let sender = app.background.sender.clone();
                 let pool_sender = app.background.pool_sender();
@@ -3298,8 +3333,9 @@ fn refresh_caches(app: &mut App) {
                         let metrics = content_cache.lock().unwrap_or_else(|error| error.into_inner())
                             .analyze(document, &rope, deadline, &|| cancel.is_cancelled())?;
                         let unsaved_diff = if request_target.modified && let Some(saved) = &saved_rope {
+                            let anchors = insertion_anchors.as_ref().map_or(&[][..], |anchors| anchors.rows(&rope));
                             crate::editor::compute_unsaved_diff_markers_cancellable(
-                                saved, &rope, Some(deadline), &|| cancel.is_cancelled(),
+                                saved, &rope, anchors, Some(deadline), &|| cancel.is_cancelled(),
                             )?
                         } else { crate::editor::UnsavedDiff::default() };
                         Some((metrics, unsaved_diff))
@@ -4173,6 +4209,10 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 next_event = event_pump.try_recv()?;
             }
             if next_event.is_none() {
+                if advance_editor_selection_scroll(app, &mut event_pump, std::time::Instant::now()) {
+                    needs_redraw = true;
+                    input_redraw = true;
+                }
                 // Redraw only when a timed overlay actually reaches its expiry.
                 let screencast_key_expired = app.screencast_mode
                     && app
@@ -4201,6 +4241,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
             let next_event = next_event.expect("terminal event checked above");
             selection_drag = None;
+            if !matches!(next_event, Event::Mouse(_)) {
+                app.editor_selection_scroll_at = None;
+            }
             if matches!(next_event, Event::Resize(..)) {
                 app.cancel_wheel_scroll();
                 app.minimap_resize.cancel();

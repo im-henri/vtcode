@@ -54,6 +54,7 @@ pub(crate) struct UnsavedHunkSnapshot {
 #[derive(Clone, Copy)]
 pub(crate) enum PeekTarget {
     Line(usize),
+    InsertedLine(usize),
     Hunk(usize),
 }
 
@@ -139,21 +140,40 @@ impl HunkPeek {
         patch: &GitFilePatch, target: &str, selection: PeekTarget, tab_size: usize,
     ) -> Result<Option<Self>, String> {
         if patch.hunks.is_empty() { return Ok(None); }
-        let selected = match selection {
-            PeekTarget::Line(line) => {
-                let Some(index) = patch.hunks.iter().position(|hunk| {
+        let (selected, action_line) = match selection {
+            PeekTarget::Line(line) | PeekTarget::InsertedLine(line) => {
+                let exact = patch.hunks.iter().position(|hunk| {
                     crate::app_git_display::line_number_in_hunk(
                         line.saturating_add(1), hunk.new_start, hunk.new_count,
                     )
-                }) else { return Ok(None); };
-                index
+                });
+                if let Some(index) = exact {
+                    (index, Some(line))
+                } else if matches!(selection, PeekTarget::InsertedLine(_)) {
+                    // Git may put an insertion at a different row in the
+                    // same run of equal text. Keep actions on its patch row.
+                    let lines = target.tokenize_lines();
+                    let Some(content) = lines.get(line).map(|text| text.trim_end_matches(['\r', '\n'])) else {
+                        return Ok(None);
+                    };
+                    let Some((index, anchor)) = patch.hunks.iter().enumerate().find_map(|(index, hunk)| {
+                        if hunk.old_count != 0 || hunk.new_count == 0 { return None; }
+                        let start = range_start(hunk.new_start, hunk.new_count);
+                        let span = start.min(line)..(start + hunk.new_count).max(line + 1);
+                        lines.get(span)?.iter().all(|text| text.trim_end_matches(['\r', '\n']) == content)
+                            .then_some((index, start))
+                    }) else { return Ok(None); };
+                    (index, Some(anchor))
+                } else {
+                    return Ok(None);
+                }
             }
             // Removing one hunk leaves its successor at the same index.
             // After the last hunk, wrap to the first remaining change.
-            PeekTarget::Hunk(index) => if index < patch.hunks.len() { index } else { 0 },
+            PeekTarget::Hunk(index) => (if index < patch.hunks.len() { index } else { 0 }, None),
         };
         let mut peek = Self::with_tab_size(patch, target, selected, tab_size);
-        if let PeekTarget::Line(line) = selection { peek.hunks[selected].action_line = Some(line); }
+        if action_line.is_some() { peek.hunks[selected].action_line = action_line; }
         Ok(Some(peek))
     }
 

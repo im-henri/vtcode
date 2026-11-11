@@ -3,6 +3,7 @@ use super::{
     compute_unsaved_diff_markers, load_text_file, save_temp_path, sort_json_value, Editor,
 };
 use crate::editor_snippets::{get_snippet, parse_snippet_body};
+use crate::line_changes::LineChanges;
 use ropey::Rope;
 
 #[test]
@@ -957,62 +958,137 @@ fn stale_unsaved_diff_does_not_compare_shifted_lines_by_index() {
 }
 
 #[test]
-fn stale_unsaved_diff_with_new_line_marks_only_active_cursor_lines() {
-    let saved = Rope::from_str("zero\none\ntwo\nthree\n");
-    let mut ed = Editor::test_with_text("zero\none\ntwo\nthree\n");
-    ed.saved_rope = Some(saved);
-    ed.modified = true;
-    let diff = compute_unsaved_diff_markers(ed.saved_rope.as_ref().unwrap(), &ed.rope);
-    ed.apply_unsaved_diff_cache(ed.content_version, diff);
+fn enter_at_line_end_marks_only_the_inserted_line() {
+    for ending in ["\n", "\r\n"] {
+        for original_line in [1, 3] {
+            let text = format!("zero{ending}one{ending}two{ending}last{ending}");
+            let mut ed = Editor::test_with_text(&text);
+            ed.saved_rope = Some(ed.rope.clone());
+            ed.set_cursor(original_line, ed.line_len(original_line));
+            ed.insert_newline();
+            let added = original_line + 1;
+            let assert_marks = |ed: &Editor| {
+                let markers: Vec<_> = (0..ed.line_count()).filter_map(|line| {
+                    let changes = ed.line_changes(line);
+                    (!changes.is_empty()).then_some((line, changes))
+                }).collect();
+                assert_eq!(markers, [(added, LineChanges::UNSAVED_ADDED)]);
+                let current = ed.rope.to_string();
+                let saved_marks = crate::app_git_display::compute_line_diff(
+                    &text.lines().collect::<Vec<_>>(),
+                    &current.lines().collect::<Vec<_>>(),
+                );
+                assert_eq!(saved_marks.get(added), Some(&'A'));
+                assert!(saved_marks.iter().enumerate().all(|(line, &marker)| {
+                    marker == if line == added { 'A' } else { ' ' }
+                }));
+            };
+            assert_marks(&ed);
+            ed.insert_char('x');
+            assert_marks(&ed);
+            let diff = compute_unsaved_diff_markers(ed.saved_rope.as_ref().unwrap(), &ed.rope);
+            ed.apply_unsaved_diff_cache(ed.content_version, diff);
+            assert_marks(&ed);
 
-    ed.cursor_line = 1;
-    ed.cursor_col = 3;
-    ed.insert_newline();
-
-    assert_eq!(ed.unsaved_line_status(ed.cursor_line), 'N');
-    for line in 0..ed.line_count() {
-        if line != ed.cursor_line {
-            assert_eq!(ed.unsaved_line_status(line), ' ', "line {line}");
+            ed.undo();
+            assert_marks(&ed);
+            ed.undo();
+            assert_eq!(ed.rope, text.as_str());
+            assert!(!ed.has_unsaved_change_in_range(0, ed.line_count()));
+            ed.redo();
+            assert_marks(&ed);
         }
     }
 }
 
 #[test]
+fn enter_keeps_markers_on_the_inserted_rows_among_existing_blank_lines() {
+    for ending in ["\n", "\r\n"] {
+        let text = format!("one{ending}{ending}{ending}two{ending}{ending}last{ending}");
+        let mut editor = Editor::test_with_text(&text);
+        editor.saved_rope = Some(editor.rope.clone());
+        let assert_markers = |editor: &Editor, expected: &[usize]| {
+            let markers: Vec<_> = (0..editor.line_count()).filter(|&row| {
+                let change = editor.line_changes(row);
+                if !change.is_empty() { assert_eq!(change, LineChanges::UNSAVED_ADDED); }
+                !change.is_empty()
+            }).collect();
+            assert_eq!(markers, expected);
+        };
+
+        editor.set_cursor(0, 3);
+        editor.insert_newline();
+        assert_markers(&editor, &[1]);
+        editor.set_cursor(3, 0);
+        editor.insert_newline();
+        editor.set_cursor(5, 3);
+        editor.insert_newline();
+        assert_markers(&editor, &[1, 4, 6]);
+
+        let anchors = editor.insertion_anchors.as_ref().unwrap().rows(&editor.rope);
+        let worker = crate::editor::compute_unsaved_diff_markers_cancellable(
+            editor.saved_rope.as_ref().unwrap(), &editor.rope, anchors, None, &|| false,
+        ).unwrap();
+        editor.apply_unsaved_diff_cache(editor.content_version, worker);
+        assert_markers(&editor, &[1, 4, 6]);
+        editor.undo();
+        assert_markers(&editor, &[1, 4]);
+        editor.redo();
+        assert_markers(&editor, &[1, 4, 6]);
+    }
+}
+
+#[test]
 fn stale_unsaved_diff_projects_unchanged_rows_across_line_insertion() {
-    let saved = Rope::from_str("changed zero\none\ntwo\nthree\nchanged four\n");
-    let mut ed = Editor::test_with_text("live zero\none\ntwo\nthree\nlive four\n");
-    ed.saved_rope = Some(saved);
-    ed.modified = true;
+    let context_lines = 150;
+    let before = "before\n".repeat(context_lines);
+    let after = "after\n".repeat(context_lines);
+    let text = format!("zero\n{before}two\n{after}last\n");
+    let mut ed = Editor::test_with_text(&text);
+    ed.saved_rope = Some(ed.rope.clone());
+    let original_last = ed.line_count() - 2;
+    ed.set_cursor(original_last, 0);
+    ed.insert_char('x');
+    ed.set_cursor(0, 0);
+    ed.insert_char('x');
     let diff = compute_unsaved_diff_markers(ed.saved_rope.as_ref().unwrap(), &ed.rope);
     ed.apply_unsaved_diff_cache(ed.content_version, diff);
+    ed.mark_syntax_dirty_range(0, 0);
 
-    ed.cursor_line = 2;
-    ed.cursor_col = 3;
+    let inserted = context_lines + 2;
+    ed.set_cursor(inserted - 1, 3);
     ed.insert_newline();
-    // The input post-edit hook widens the current edit through the new row.
-    ed.mark_syntax_dirty_range(2, 3);
 
+    assert_ne!(ed.unsaved_diff_cache.0, ed.content_version);
     assert_eq!(ed.unsaved_line_status(0), 'N');
-    assert_eq!(ed.unsaved_line_status(5), 'N');
+    assert_eq!(ed.unsaved_line_status(original_last + 1), 'N');
     assert!(ed.has_unsaved_change_in_range(0, 1));
-    assert!(ed.has_unsaved_change_in_range(5, 6));
-    assert!(ed.has_unsaved_change_in_range(ed.cursor_line, ed.cursor_line + 1));
+    assert!(ed.has_unsaved_change_in_range(original_last + 1, original_last + 2));
+    assert_eq!(ed.line_changes(inserted - 1), LineChanges::default());
+    assert_eq!(ed.line_changes(inserted), LineChanges::default());
+
+    let diff = compute_unsaved_diff_markers(ed.saved_rope.as_ref().unwrap(), &ed.rope);
+    ed.apply_unsaved_diff_cache(ed.content_version, diff);
+    assert_eq!(ed.line_changes(inserted - 1), LineChanges::default());
+    assert_eq!(ed.line_changes(inserted), LineChanges::UNSAVED_ADDED);
 }
 
 #[test]
 fn syntax_convergence_does_not_clear_stale_unsaved_markers() {
-    let saved = Rope::from_str("changed zero\none\ntwo\nthree\nchanged four\n");
-    let mut ed = Editor::test_with_text("live zero\none\ntwo\nthree\nlive four\n");
+    let context = "three\n".repeat(150);
+    let saved = Rope::from_str(&format!("changed zero\none\ntwo\n{context}changed last\n"));
+    let mut ed = Editor::test_with_text(&format!("live zero\none\ntwo\n{context}live last\n"));
     ed.saved_rope = Some(saved);
     ed.modified = true;
     let diff = compute_unsaved_diff_markers(ed.saved_rope.as_ref().unwrap(), &ed.rope);
     ed.apply_unsaved_diff_cache(ed.content_version, diff);
 
-    ed.cursor_line = 2;
-    ed.cursor_col = 3;
+    ed.set_cursor(2, 3);
     ed.insert_newline();
     ed.mark_syntax_dirty_range(2, 3);
-    assert_eq!(ed.unsaved_line_status(5), 'N');
+    let last = ed.line_count() - 2;
+    assert_ne!(ed.unsaved_diff_cache.0, ed.content_version);
+    assert_eq!(ed.unsaved_line_status(last), 'N');
 
     // Syntax usually converges before the deliberately deferred whole-file
     // diff. Its acknowledgement must not blank unrelated gutter markers in
@@ -1020,8 +1096,8 @@ fn syntax_convergence_does_not_clear_stale_unsaved_markers() {
     ed.syntax_dirty_from = None;
     ed.syntax_dirty_through = None;
     assert_eq!(ed.unsaved_line_status(0), 'N');
-    assert_eq!(ed.unsaved_line_status(5), 'N');
-    assert!(ed.has_unsaved_change_in_range(5, 6));
+    assert_eq!(ed.unsaved_line_status(last), 'N');
+    assert!(ed.has_unsaved_change_in_range(last, last + 1));
 }
 
 #[test]

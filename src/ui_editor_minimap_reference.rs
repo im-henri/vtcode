@@ -10,8 +10,8 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
         search_matches,
         diagnostic_lines,
         diagnostic_index,
-        change_index,
-        diff_changes,
+        change_index: _,
+        diff_changes: _,
         colors,
         hovered,
         active,
@@ -44,8 +44,6 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
     let mut raster = Vec::new();
     let mut spans: Vec<Span> = Vec::with_capacity(width + 1);
     let mut batch_buf = String::with_capacity(width);
-    let marker_max_width = if width == 0 { 0 } else { width.clamp(1, 3) };
-    let marker_str_detail = crate::helpers::blocks(marker_max_width);
     let track_bg = colors.ui.bg_minimap;
     let slider_bg = if active {
         colors.ui.bg_minimap_slider_active
@@ -65,29 +63,7 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
             .range(source_line..row_end_line)
             .next()
             .is_some();
-        let diff_status = if let Some(changes) = diff_changes {
-            change_index.map_or_else(
-                || minimap_change_in_range(changes, source_line, row_end_line),
-                |index| {
-                    index
-                        .best_in_range(source_line, row_end_line)
-                        .unwrap_or(' ')
-                },
-            )
-        } else if editor.large_file_mode {
-            ' '
-        } else if editor.has_unsaved_change_in_range(source_line, row_end_line) {
-            'N'
-        } else {
-            change_index.map_or_else(
-                || minimap_change_in_range(editor.git_change_lines(), source_line, row_end_line),
-                |index| {
-                    index
-                        .best_in_range(source_line, row_end_line)
-                        .unwrap_or(' ')
-                },
-            )
-        };
+        let changes = minimap_row_changes(p, source_line, row_end_line);
         let has_selection = selection_overlaps_range(selection_lines, source_line, row_end_line);
         let diag_severity = diagnostic_index.map_or_else(
             || worst_diagnostic_in_range(diagnostic_lines, source_line, row_end_line),
@@ -112,27 +88,9 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
                     editor.line_for_visible_row(source), width, editor.tab_size);
                 for (cell, &glyph) in raster.iter_mut().zip(&glyphs) { cell.add(glyph, dots); }
             }
-            let diff_colors = minimap_diff_colors(diff_status, bg, &colors);
-            let override_bg = if has_search_match {
-                Some(dim_color(colors.ui.fg_minimap_find, 100, bg))
-            } else if let Some((_, rbg)) = diff_colors {
-                Some(rbg)
-            } else {
-                None
-            };
-            let row_bg = override_bg.unwrap_or(bg);
-            // Diagnostic markers take priority over diff markers
-            let effective_marker = if let Some(sev) = diag_severity {
-                Some((diagnostic_marker_color(sev, &colors), row_bg))
-            } else {
-                diff_colors
-            };
-            let marker_width = if effective_marker.is_some() {
-                if width == 0 { 0 } else { width.clamp(1, 3) }
-            } else {
-                0
-            };
-            let content_width = width.saturating_sub(marker_width);
+            let markers = minimap_row_markers(changes, diag_severity, has_search_match, width, bg, &colors);
+            let row_bg = markers.background;
+            let content_width = width - markers.width;
             let mut batch_style = Style::default().bg(row_bg);
             batch_buf.clear();
             let mut rendered_cols = 0usize;
@@ -166,15 +124,7 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
                     Style::default().bg(row_bg),
                 ));
             }
-            if let Some((marker_fg, _)) = effective_marker {
-                spans.push(Span::styled(
-                    marker_str_detail,
-                    Style::default()
-                        .fg(marker_fg)
-                        .bg(row_bg)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
+            spans.extend(markers.cells[..markers.width].iter().map(|&(symbol, style)| Span::styled(symbol, style)));
             lines.push(Line::from(std::mem::take(&mut spans)));
         } else {
             lines.push(Line::from(Span::styled(
@@ -288,18 +238,16 @@ pub(super) fn draw_scrollbar_reference(
                 3 => colors.ui.fg_overview_info,
                 _ => colors.fg_dim,
             };
-            Some(('█', '▐', c))
+            Some(c)
         } else if has_match {
             let c = colors.ui.fg_overview_find;
-            Some(('█', '▐', c))
-        } else if let Some(c) = change.status().and_then(|status| crate::ui_colors::overview_marker_color(status, &colors)) {
-            Some((change.symbol(), change.narrow_symbol(), c))
+            Some(c)
         } else {
             None
         };
         // Share the visual rules while retaining Paragraph allocation and
         // painting as the independent direct-cell performance reference.
-        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, &colors, track, thumb);
+        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, change, &colors, track, thumb);
         let spans: Vec<_> = cells.into_iter().zip([width / 2, width - width / 2])
             .filter(|&(_, length)| length > 0)
             .map(|((symbol, style), length)| Span::styled(std::iter::repeat_n(symbol, length).collect::<String>(), style))

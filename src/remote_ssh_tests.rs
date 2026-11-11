@@ -950,7 +950,7 @@ fn windows_ssh_file_commands_and_save_as_preserve_filename_bytes() {
         let folder = workspace.view_key(&directory);
         app.folder_browser_path = folder.clone();
         app.folder_browser.folder = workspace.display_path(&folder).unwrap();
-        app.folder_browser.save_as_return = true;
+        app.folder_browser.mode = crate::folder_browser::Mode::SaveLocation;
         app.confirm_folder_browser();
         let target = workspace.view_key(&directory.child(name).unwrap());
         assert_eq!(workspace.target_key(&app.save_as_query).unwrap(), target);

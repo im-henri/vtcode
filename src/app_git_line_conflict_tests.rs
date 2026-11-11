@@ -116,8 +116,10 @@ fn assert_sparse_conflict_markers(app: &mut App) {
     app.show_breadcrumbs = false;
     app.sticky_scroll = false;
     app.cursor_visible = false;
-    app.colors.ui.fg_gutter_modified = Color::Rgb(1, 2, 3);
+    app.colors.ui.fg_gutter_added = Color::Rgb(1, 2, 3);
+    app.colors.ui.fg_minimap_added = Color::Rgb(10, 11, 12);
     app.colors.ui.fg_minimap_modified = Color::Rgb(4, 5, 6);
+    app.colors.ui.fg_overview_added = Color::Rgb(13, 14, 15);
     app.colors.ui.fg_overview_modified = Color::Rgb(7, 8, 9);
     let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
     terminal
@@ -125,6 +127,7 @@ fn assert_sparse_conflict_markers(app: &mut App) {
         .unwrap();
     let buffer = terminal.backend().buffer();
     let gutter = app.gutter_area.unwrap();
+    let marker_col = crate::ui_editor_highlight::change_gutter_column(gutter).unwrap();
     let code = app.code_area.unwrap();
     let editor = app.editor().unwrap();
     let start = editor
@@ -140,21 +143,19 @@ fn assert_sparse_conflict_markers(app: &mut App) {
             .iter()
             .position(|row| row.is_some_and(|row| row.line_idx == line))
             .unwrap();
-        assert_eq!(
-            (gutter.x..gutter.right())
-                .any(|x| buffer[(x, code.y + row as u16)].fg == app.colors.ui.fg_gutter_modified),
-            changed
-        );
+        let marker = &buffer[(marker_col, code.y + row as u16)];
+        assert_eq!(marker.symbol(), if changed { "┃" } else { " " });
+        assert_eq!(marker.fg == app.colors.ui.fg_gutter_added, changed);
     }
-    for (area, color) in [
-        (app.minimap_area.unwrap(), app.colors.ui.fg_minimap_modified),
+    for (area, colors) in [
+        (app.minimap_area.unwrap(), [app.colors.ui.fg_minimap_added, app.colors.ui.fg_minimap_modified]),
         (
             app.scrollbar_area.unwrap(),
-            app.colors.ui.fg_overview_modified,
+            [app.colors.ui.fg_overview_added, app.colors.ui.fg_overview_modified],
         ),
     ] {
         let colored = (area.y..area.bottom())
-            .filter(|&y| (area.x..area.right()).any(|x| buffer[(x, y)].fg == color))
+            .filter(|&y| (area.x..area.right()).any(|x| colors.contains(&buffer[(x, y)].fg)))
             .count();
         assert!(
             colored > 0 && colored < usize::from(area.height) / 2,
@@ -289,7 +290,9 @@ fn resolved_unmerged_file_keeps_only_real_changes_before_and_after_staging() {
         refresh(&mut app);
         assert_eq!(
             app.editor().unwrap().git_change_lines(),
-            &[(110, if staged { 'S' } else { 'U' })]
+            &[(110, if staged {
+                crate::line_changes::LineChanges::git('M', ' ')
+            } else { 'M'.into() })]
         );
     }
 }

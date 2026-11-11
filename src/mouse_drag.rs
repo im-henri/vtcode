@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crossterm::event::KeyModifiers;
 use crate::app::{ActivePane, App, TabKind, TerminalDock};
 use crate::explorer::FileExplorer;
@@ -11,6 +13,7 @@ mod tab_column_tests;
 type CursorPlacement = (usize, usize, Option<(usize, usize)>);
 
 const MAX_CACHED_BLOCK_ROWS: usize = 8_192;
+const SELECTION_SCROLL_INTERVAL: Duration = Duration::from_millis(30);
 
 fn apply_cursor_list<T: Clone + PartialEq>(current: &mut Vec<T>, planned: &Vec<T>) {
     let common = current.len().min(planned.len());
@@ -845,22 +848,48 @@ pub(crate) fn handle_left_drag(
         if app.editor().is_none_or(|editor| editor.navigation_id != document) {
             return;
         }
-        if let Some(code_area) = app.code_area {
-            // Auto-scroll when dragging beyond viewport
-            if row < code_area.y {
-                if let Some(ed) = app.editor_mut() { ed.scroll_up(1); }
-            } else if row >= code_area.y + code_area.height {
-                if let Some(ed) = app.editor_mut() { ed.scroll_down(1); }
-            }
-            // Clamp mouse position into code_area so drag-select works
-            // even when the mouse moves above or below the editor.
-            let clamped_col = col.max(code_area.x).min(code_area.x + code_area.width.saturating_sub(1));
-            let clamped_row = row.max(code_area.y).min(code_area.y + code_area.height.saturating_sub(1));
+        if let Some(code_area) = app.code_area.filter(|area| !area.is_empty()) {
+            let clamped_col = col.clamp(code_area.x, code_area.right() - 1);
+            let clamped_row = row.clamp(code_area.y, code_area.bottom() - 1);
             let mc_anchor = app.multi_click_anchor;
             let cc = app.click_count;
+            let pointer_moved = app.drag_start_pos != Some((col, row));
+            let mut repeat_scroll = false;
             if let Some(ed) = app.editor_mut() {
-                let (drag_line, drag_col) =
+                if row < code_area.y {
+                    ed.scroll_up(1);
+                } else if row >= code_area.bottom() {
+                    ed.scroll_down(1);
+                }
+                let (drag_line, mut drag_col) =
                     code_area_to_buffer_pos(ed, code_area, clamped_col, clamped_row);
+                if (col <= code_area.x || col >= code_area.right() - 1)
+                    && !ed.word_wrap && !ed.bg_loading && !ed.ai_review.active
+                    && ed.diff_display_rows.is_none() && ed.selection_anchor.is_some()
+                    && (pointer_moved || ed.has_selection())
+                {
+                    let start = ed.horizontal_scroll;
+                    let end = ed.line_len(drag_line);
+                    let left = col < code_area.x || (code_area.width > 1 && col == code_area.x);
+                    if left {
+                        ed.horizontal_scroll = start.saturating_sub(1);
+                    } else if drag_col < end {
+                        ed.horizontal_scroll = start.saturating_add(1);
+                    }
+                    if ed.horizontal_scroll != start {
+                        // The offset is in source columns. Hit-test the newly
+                        // visible edge to account for tabs and wide characters.
+                        drag_col = ed.source_column_at_cell(
+                            drag_line, ed.horizontal_scroll, end,
+                            usize::from(clamped_col - code_area.x),
+                        ).0;
+                        repeat_scroll = if left {
+                            ed.horizontal_scroll > 0
+                        } else {
+                            drag_col < end
+                        };
+                    }
+                }
                 if let Some((anchor_line, anchor_start, _anchor_end_line, anchor_end)) = mc_anchor {
                     if cc >= 3 {
                         // Line-granularity drag
@@ -889,6 +918,8 @@ pub(crate) fn handle_left_drag(
                     ed.set_cursor_without_scrolling(drag_line, drag_col);
                 }
             }
+            app.editor_selection_scroll_at =
+                repeat_scroll.then(|| Instant::now() + SELECTION_SCROLL_INTERVAL);
         }
     }
 }

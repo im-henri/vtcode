@@ -1,6 +1,6 @@
 //! Horizontal cell scrolling shared by active-tab reveal and manual panning.
 use super::{
-    App, CloseOverlay, Rect, TabBarHits, TabNameDuplicates, tab_label_name, tab_label_width,
+    App, CloseButton, Rect, TabBarHits, TabNameDuplicates, tab_label_name, tab_label_width,
 };
 use crate::app::Tab;
 use unicode_width::UnicodeWidthStr;
@@ -51,7 +51,7 @@ struct Item {
     kind: Kind,
     start: usize,
     width: usize,
-    close: Option<CloseOverlay>,
+    close: Option<CloseButton>,
 }
 
 struct Strip {
@@ -104,17 +104,13 @@ impl Strip {
             }
             let name = tab_label_name(app, area, group, index, tab, names);
             let width = tab_label_width(app, tab, &name);
-            strip.push(
-                Kind::Tab(index),
-                width,
-                CloseOverlay::for_tab(tab, &name, width),
-            );
+            strip.push(Kind::Tab(index), width, CloseButton::for_tab(tab, width));
         }
         strip.push(Kind::New, 3, None);
         strip
     }
 
-    fn push(&mut self, kind: Kind, width: usize, close: Option<CloseOverlay>) {
+    fn push(&mut self, kind: Kind, width: usize, close: Option<CloseButton>) {
         self.items.push(Item {
             kind,
             start: self.width,

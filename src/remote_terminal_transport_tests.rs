@@ -127,7 +127,7 @@ fn quiet_terminal(client: &client::Client, wake: crate::background::UiWake) -> c
 }
 
 #[test]
-fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_without_echo() {
+fn pending_remote_input_animates_the_cursor_and_a_silent_acknowledgement_restores_it() {
     use crate::{app::{ActivePane, App, Tab, TabKind}, app_terminal_selection::TerminalSurface,
         editor::Editor};
     use ratatui::{Terminal, backend::{Backend, TestBackend}, layout::{Position, Rect}};
@@ -149,19 +149,24 @@ fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_wit
     assert_eq!(app.cursor_blink_start(), Some(app.last_blink));
     gate.pause();
     app.terminals[0].terminal_pty.as_ref().unwrap().write(b"x");
-    assert!(app.terminals[0].terminal_pty.as_ref().unwrap().remote_input_progress().pending);
+    let progress = app.terminals[0].terminal_pty.as_ref().unwrap().remote_input_progress();
+    assert!(progress.pending);
+    let started = progress.pending_since.unwrap();
     assert!(app.process_terminals());
     assert_eq!(app.cursor_blink_start(), None);
     assert!(!app.terminals[0].terminal_pty.as_ref().unwrap().has_pending_output());
     let paint = |app: &App, blink| {
+        let tab = &app.terminals[0];
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         // Omitting the native cursor request leaves it hidden at this sentinel.
         terminal.backend_mut().set_cursor_position((99, 29)).unwrap();
-        terminal.draw(|frame| crate::ui_helpers::draw_terminal_emulator(frame,
-            app.terminals[0].terminal_pty.as_ref().unwrap(), area, &app.colors.ui, blink)).unwrap();
+        terminal.draw(|frame| crate::ui_helpers::draw_terminal_emulator_with_cursor(frame,
+            tab.terminal_pty.as_ref().unwrap(), area, &app.colors.ui, blink, true,
+            &tab.input_activity)).unwrap();
         let position = terminal.backend_mut().get_cursor_position().unwrap();
         (terminal.backend().buffer().clone(), position)
     };
+    app.terminals[0].input_activity.show(started);
     for shape in 0..=6 {
         app.terminals[0].terminal_pty.as_mut().unwrap().grid.cursor_shape = shape;
         let off = paint(&app, false);
@@ -173,6 +178,21 @@ fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_wit
         let y = area.y + pty.grid.cursor_row as u16;
         assert_ne!(on.0[(x, y)], on.0[(x + 1, y)], "the steady cursor must remain visible");
     }
+
+    let grid = &mut app.terminals[0].terminal_pty.as_mut().unwrap().grid;
+    grid.cells[grid.cursor_row][grid.cursor_col].ch = '>';
+    let position = (area.x + grid.cursor_col as u16, area.y + grid.cursor_row as u16);
+    for (elapsed, symbol) in [(200, "⠋"), (320, "⠙")] {
+        let now = started + Duration::from_millis(elapsed);
+        let activity = &app.terminals[0].input_activity;
+        activity.begin_frame();
+        activity.show(now);
+        let off = paint(&app, false);
+        assert_eq!(off, paint(&app, true));
+        assert_eq!(off.0[position].symbol(), symbol);
+        assert_eq!(off.1, Position::new(99, 29), "the spinner replaces the host cursor");
+    }
+
     // A waiting terminal behind another input must not freeze that input.
     app.palette.active = true;
     assert_eq!(app.cursor_blink_start(), Some(app.last_blink));
@@ -202,14 +222,15 @@ fn pending_remote_input_holds_a_steady_cursor_and_acknowledgements_resume_it_wit
     assert!(acknowledged > app.last_blink);
     let off = paint(&app, false);
     let on = paint(&app, true);
+    assert_eq!(off.0[position].symbol(), ">");
     assert_ne!(off.0, on.0, "normal blinking resumes after delivery");
-    assert_ne!(on.1, Position::new(99, 29));
+    assert_eq!(on.1, Position::from(position));
     drop(app);
     client.call(Command::Shutdown).unwrap();
 }
 
 #[test]
-fn remote_terminal_input_spinner_renders_in_docks_and_tabs_and_clears_without_echo() {
+fn remote_terminal_input_spinner_matches_docked_and_editor_cursors_and_clears_without_echo() {
     use crate::{app::{ActivePane, App, Tab}, editor::Editor};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
 
@@ -220,6 +241,11 @@ fn remote_terminal_input_spinner_renders_in_docks_and_tabs_and_clears_without_ec
     }
     fn text(buffer: &Buffer, rect: Rect) -> String {
         (rect.x..rect.right()).map(|x| buffer[(x, rect.y)].symbol()).collect()
+    }
+    fn cursor_position(app: &App) -> (u16, u16) {
+        let area = app.terminal_surfaces.iter().find(|surface| surface.index == 0).unwrap().area;
+        let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
+        (area.x + grid.cursor_col as u16, area.y + grid.cursor_row as u16)
     }
     let directory = tempfile::tempdir().unwrap();
     let (client, gate) = gated_connection(directory.path());
@@ -246,7 +272,9 @@ fn remote_terminal_input_spinner_renders_in_docks_and_tabs_and_clears_without_ec
     std::thread::sleep((started + Duration::from_millis(210)).saturating_duration_since(Instant::now()));
     let buffer = draw(&mut app);
     let area = tab_areas.iter().find(|(_, index)| *index == 0).unwrap().0;
-    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(buffer[(area.x, area.y)].symbol()));
+    let spinner = buffer[(area.x, area.y)].symbol();
+    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(spinner));
+    assert_eq!(buffer[cursor_position(&app)].symbol(), spinner);
     assert!(text(&buffer, area).ends_with(" Shell "));
     assert_eq!(app.terminal_sidebar_tab_areas, tab_areas);
     assert_eq!(app.terminal_sidebar_close_areas, close_areas);
@@ -265,6 +293,25 @@ fn remote_terminal_input_spinner_renders_in_docks_and_tabs_and_clears_without_ec
     assert_eq!(app.next_terminal_input_wait(Instant::now()), None, "hidden indicators must not poll");
 
     assert!(app.detach_terminal_to_group(0, app.active_group));
+    let buffer = draw(&mut app);
+    let bar = app.tab_bar_area.unwrap();
+    let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, bar);
+    let terminal_area = hits.tabs.iter().find(|(index, _, _)| *index == app.active_tab).unwrap().1;
+    let spinner = buffer[(terminal_area.x + 1, terminal_area.y)].symbol();
+    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(spinner));
+    assert_eq!(buffer[cursor_position(&app)].symbol(), spinner);
+
+    app.show_tab_bar = false;
+    let buffer = draw(&mut app);
+    assert!("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(buffer[cursor_position(&app)].symbol()));
+    assert!(app.next_terminal_input_wait(Instant::now()).is_some(), "the cursor drives the spinner without the tab bar");
+    app.terminals[0].terminal_pty.as_mut().unwrap().grid.cursor_visible = false;
+    let buffer = draw(&mut app);
+    assert!(!"⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(buffer[cursor_position(&app)].symbol()));
+    assert_eq!(app.next_terminal_input_wait(Instant::now()), None);
+    app.terminals[0].terminal_pty.as_mut().unwrap().grid.cursor_visible = true;
+
+    app.show_tab_bar = true;
     app.active_tab = 0; // Keep only the terminal's tab visible, without its console.
     app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, true);
     let buffer = draw(&mut app);

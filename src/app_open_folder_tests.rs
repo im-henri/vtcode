@@ -6,7 +6,7 @@ mod confirmation_tests;
 
 fn choose(app: &mut App, path: &Path) {
     app.execute_palette_command("change_dir");
-    assert!(app.change_dir_active && !app.folder_browser.add_workspace);
+    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
     app.folder_browser.folder = app.display_path(path);
     app.confirm_folder_browser();
     assert!(!app.change_dir_active);
@@ -47,11 +47,11 @@ fn open_folder_and_ctrl_o_replace_while_add_folder_keeps_existing_workbenches() 
     let mut app = a.app(Default::default());
     crate::input_keyboard::handle_keyboard_event(&mut app,
         KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
-    assert!(app.change_dir_active && !app.folder_browser.add_workspace);
+    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
     app.folder_browser_action(crate::folder_browser::Action::Close);
 
     app.execute_palette_command("workspace_add");
-    assert!(app.change_dir_active && app.folder_browser.add_workspace);
+    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::AddFolder);
     app.folder_browser.folder = b.path().display().to_string();
     app.confirm_folder_browser();
     assert!(matches!(app.workspaces.request, Some(Request::Add(_))));
@@ -204,7 +204,7 @@ fn open_folder_from_the_empty_folder_picker_uses_replacement_mode() {
     crate::ui_workspaces::open(&mut app);
     crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
     crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(app.change_dir_active && !app.folder_browser.add_workspace);
+    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
     assert_eq!(app.editor().unwrap().rope.to_string(), "loose file");
 }
 

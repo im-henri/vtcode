@@ -23,13 +23,13 @@ pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, sc
 mod reorder;
 pub(crate) use reorder::State as ReorderState;
 
-#[path = "tab_close_overlay.rs"]
-mod close_overlay;
-use close_overlay::CloseOverlay;
+#[path = "tab_close_button.rs"]
+mod close_button;
+use close_button::CloseButton;
 
 #[cfg(test)]
-#[path = "tab_close_overlay_tests.rs"]
-mod close_overlay_tests;
+#[path = "tab_close_button_tests.rs"]
+mod close_button_tests;
 
 /// Width of each tab-bar scroll indicator ("◂ " / " ▸").
 const TAB_SCROLL_INDICATOR_WIDTH: usize = 2;
@@ -176,7 +176,7 @@ impl TabBarHits {
                 break;
             }
             let rect = cells(used, width);
-            let close = CloseOverlay::for_tab(tab, &name, width)
+            let close = CloseButton::for_tab(tab, width)
                 .map_or_else(Rect::default, |close| close.rect(rect, 0));
             hits.tabs.push((index, rect, close));
             hits.tab_widths.push(width);
@@ -239,7 +239,11 @@ fn tab_label_width_with_icon(tab: &crate::app::Tab, display_name: &str, icon: &s
         + if tab.has_unsaved_changes() { 2 } else { 0 }
         + icon.width()
         + usize::from(tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable)
-        + display_name.width() + 1
+        + display_name.width() + tab_trailing_padding(tab).len()
+}
+
+pub(crate) fn tab_trailing_padding(tab: &crate::app::Tab) -> &'static str {
+    if tab.pinned { " " } else { close_button::PADDING }
 }
 
 /// Keep long titles readable without letting one tab consume the strip. The
@@ -390,8 +394,9 @@ pub(crate) fn chat_tab_marker(app: &App, kind: crate::app::TabKind) -> Option<(&
 }
 
 pub(crate) fn terminal_input_marker(app: &App, index: usize, now: std::time::Instant) -> Option<&'static str> {
-    let progress = app.terminals.get(index)?.terminal_pty.as_ref()?.remote_input_progress();
-    crate::terminal_input_activity::symbol(progress, now)
+    let terminal = app.terminals.get(index)?;
+    let progress = terminal.terminal_pty.as_ref()?.remote_input_progress();
+    terminal.input_activity.symbol(progress, now)
 }
 
 pub(crate) fn show_terminal_input(app: &App, index: Option<usize>, now: std::time::Instant) {
@@ -635,22 +640,20 @@ pub(crate) fn draw_tab_bar_for_group(
             spans.push(Span::styled("~", style));
         }
         let display_name = tab_label_name(app, area, group, i, tab, duplicates.as_ref());
-        let width = tab_label_width(app, tab, &display_name);
-        let close_overlay = CloseOverlay::for_tab(tab, &display_name, width);
         spans.push(Span::styled(display_name, style));
-        spans.push(Span::styled(" ", style));
+        spans.push(Span::styled(tab_trailing_padding(tab), style));
         if let Some(labels) = &mut reorder_labels {
+            let width = hits.tab_widths[position];
             let line = Line::from(spans.iter().cloned().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>());
             labels.push(reorder::Label {
                 id: tab.editor.navigation_id, index: i, x: i32::from(rect.x) - clip as i32,
-                width, close: close_overlay, line, style,
+                width, close: CloseButton::for_tab(tab, width), line, style,
                 icon: matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision)
                     .then_some(icon_start..icon_start + icon.width()),
             });
         }
         f.render_widget(Paragraph::new(Line::from(spans)).scroll((0, crate::helpers::len_as_u16(clip))).style(style), rect);
-        let gap = close_overlay.map_or_else(Rect::default, |close| close.gap_rect(rect, clip));
-        close_overlay::paint(f, app, rect, close, gap, style);
+        close_button::paint(f, app, close);
         if is_active {
             active_rect = Some(rect);
         }
@@ -804,7 +807,7 @@ fn draw_tab_bar_labels(
     let visible_capacity = app.tabs.len().min(usize::from(area.width) / 2 + 2);
     let mut spans = Vec::with_capacity(visible_capacity * 6 + 2);
     let mut file_icon_areas = Vec::new();
-    let mut close_overlays = Vec::new();
+    let mut close_buttons = Vec::new();
     let mut active_tab_area = None;
     let has_gradient = app.colors.gradients.bg_tabbar.start != app.colors.gradients.bg_tabbar.end;
     let tab_active_bg = app.colors.bg_tab_active;
@@ -834,7 +837,7 @@ fn draw_tab_bar_labels(
     for (visible_count, (i, tab)) in app.tabs.iter().enumerate().skip(scroll).enumerate() {
         let is_file_tab = matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision);
         let deleted_prefix =
-            if is_file_tab && tab.editor.disk_unavailable {
+            if tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable {
                 "~"
             } else {
                 ""
@@ -848,7 +851,7 @@ fn draw_tab_bar_labels(
         let prefix = if tab.pinned { " 📌" } else { " " };
         let modified_width = if tab.has_unsaved_changes() { 2 } else { 0 }; // "● " = 2
         let tab_width = tab_label_width_with_icon(tab, display_name.as_ref(), icon);
-        let close_overlay = CloseOverlay::for_tab(tab, &display_name, tab_width);
+        let close_button = CloseButton::for_tab(tab, tab_width);
         if used_width + tab_width > available_width && visible_count > 0 {
             // Show right scroll indicator
             let right_style = app.colors.ui.toolbar_style(fg_text, tab_bar_bg, app.hovered_tab_scroll_right, false, false);
@@ -857,13 +860,14 @@ fn draw_tab_bar_labels(
             break;
         }
 
+        let rect = Rect::new(
+            area.x.saturating_add(crate::helpers::len_as_u16(used_width)),
+            area.y,
+            crate::helpers::len_as_u16(tab_width),
+            1,
+        ).intersection(area);
         if i == app.active_tab {
-            active_tab_area = Some(Rect::new(
-                area.x.saturating_add(crate::helpers::len_as_u16(used_width)),
-                area.y,
-                crate::helpers::len_as_u16(tab_width),
-                1,
-            ).intersection(area));
+            active_tab_area = Some(rect);
         }
 
         if used_width + 2 < available_width
@@ -929,20 +933,15 @@ fn draw_tab_bar_labels(
         spans.push(Span::styled(label, text_style));
         let trailing_style = app.colors.ui.border_tab.map_or(text_style, |border|
             text_style.add_modifier(Modifier::UNDERLINED).underline_color(border));
-        spans.push(Span::styled(" ", trailing_style));
-        let rect = Rect::new(area.x.saturating_add(crate::helpers::len_as_u16(used_width)),
-            area.y, crate::helpers::len_as_u16(tab_width), 1).intersection(area);
-        if let Some(close) = close_overlay
-            && app.mouse_position_known
-            && rect.contains((app.mouse_col, app.mouse_row).into())
-        {
-            close_overlays.push((rect, close.rect(rect, 0), close.gap_rect(rect, 0), text_style));
+        spans.push(Span::styled(tab_trailing_padding(tab), trailing_style));
+        if let Some(button) = close_button {
+            close_buttons.push(button.rect(rect, 0));
         }
         if let Some(labels) = &mut reorder_labels {
             let start = prefix.width() + modified_width;
             labels.push(reorder::Label {
                 id: tab.editor.navigation_id, index: i, x: i32::from(area.x) + used_width as i32,
-                width: tab_width, close: close_overlay, style: text_style,
+                width: tab_width, close: close_button, style: text_style,
                 line: Line::from(spans[span_start..].iter().map(|span|
                     Span::styled(span.content.to_string(), span.style)).collect::<Vec<_>>()),
                 icon: is_file_tab.then_some(start..start + icon.width()),
@@ -969,7 +968,9 @@ fn draw_tab_bar_labels(
     let line = Line::from(spans);
     let p = Paragraph::new(line);
     f.render_widget(p, area);
-    for (tab, close, gap, style) in close_overlays { close_overlay::paint(f, app, tab, close, gap, style); }
+    for close in close_buttons {
+        close_button::paint(f, app, close);
+    }
 
     // Apply gradient to tab bar background (cell by cell)
     let tb_grad = &app.colors.gradients.bg_tabbar;

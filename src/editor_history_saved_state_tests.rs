@@ -132,7 +132,8 @@ fn restored_clean_history_flag_cannot_hide_missing_rows_or_allow_silent_close() 
             app.tabs[0].has_unsaved_changes(),
             "missing rows must still be unsaved"
         );
-        assert_ne!(app.editor().unwrap().unsaved_line_status(0), ' ');
+        assert_ne!(app.editor().unwrap().unsaved_line_status(line), ' ');
+        assert_eq!(app.editor().unwrap().unsaved_line_status(0), ' ');
 
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 1)).unwrap();

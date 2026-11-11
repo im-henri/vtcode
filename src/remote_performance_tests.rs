@@ -967,6 +967,7 @@ fn native_and_headless_open_reject_named_pipes_without_waiting_for_a_writer() {
                     .open_location(
                         &worker_workspace.view_key(&path("pipe.txt")),
                         &worker_cancel,
+                        false,
                         |_, _| {},
                     )
                     .map(|_| ()),

@@ -118,6 +118,9 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     if let Some(quit) = crate::ui_modal::handle_key(app, key) {
         return quit;
     }
+    if let Some(quit) = input_dialogs::handle_change_dir_key(app, key) {
+        return quit;
+    }
     if crate::app_terminal_find::key(app, key) { return false; }
     if app.sc_context_active {
         let count = app.source_control_context_menu_items().len();
@@ -152,11 +155,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
     // Exit confirmation dialog
     if let Some(quit) = input_dialogs::handle_exit_confirm_key(app, key) {
-        return quit;
-    }
-
-    // Change directory dialog
-    if let Some(quit) = input_dialogs::handle_change_dir_key(app, key) {
         return quit;
     }
 

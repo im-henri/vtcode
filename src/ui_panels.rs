@@ -525,6 +525,7 @@ fn draw_docked_terminal(f: &mut Frame, app: &mut App, index: usize, area: Rect) 
             &app.colors.ui,
             app.cursor_visible && app.active_terminal == index && app.terminal_panel_focused,
             app.focused_terminal_find() != Some(app.terminals[index].find.id),
+            &app.terminals[index].input_activity,
         );
         crate::terminal_scrollbar::draw(f, app, surface, area);
         crate::app_terminal_find::draw(f, app, index, content);

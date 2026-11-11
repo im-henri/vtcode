@@ -1,6 +1,6 @@
 //! Whole-label tab motion. Layout and drag thresholds remain immediate; only
 //! the visible labels move, and pointer clicks use the last presented frame.
-use super::{App, TabBarHits, CloseOverlay, close_overlay, strip_scroll_position};
+use super::{App, CloseButton, TabBarHits, close_button, strip_scroll_position};
 use crate::animation_config::AnimationEffect;
 use ratatui::{Frame, buffer::Buffer, layout::Rect, style::Style, text::Line, widgets::Paragraph};
 use std::{
@@ -14,7 +14,7 @@ pub(super) struct Label {
     pub index: usize,
     pub x: i32,
     pub width: usize,
-    pub close: Option<CloseOverlay>,
+    pub close: Option<CloseButton>,
     pub line: Line<'static>,
     pub style: Style,
     pub icon: Option<Range<usize>>,
@@ -443,6 +443,8 @@ impl State {
                     .style(label.style),
                 rect,
             );
+            let close = label.close.map_or_else(Rect::default, |button| button.rect(rect, inset));
+            close_button::paint(frame, app, close);
             let icon = label
                 .icon
                 .as_ref()
@@ -461,9 +463,6 @@ impl State {
                     icon.as_slice(),
                 );
             }
-            let close = label.close.map_or_else(Rect::default, |close| close.rect(rect, inset));
-            let gap = label.close.map_or_else(Rect::default, |close| close.gap_rect(rect, inset));
-            close_overlay::paint(frame, app, rect, close, gap, label.style);
             self.presented.push(Presented {
                 id: label.id,
                 rect,

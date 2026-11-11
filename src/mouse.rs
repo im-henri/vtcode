@@ -43,6 +43,7 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     app.mouse_position_known = true;
+    app.editor_selection_scroll_at = None;
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.mouse_press_serial = app.mouse_press_serial.wrapping_add(1);
     }
@@ -449,6 +450,12 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // the entire workbench through preparation, rendering and output.
             let editor_tooltip = crate::ui_editor_highlight::has_diagnostic_marker_tooltip(app, old_editor)
                 || crate::ui_editor_highlight::has_diagnostic_marker_tooltip(app, app.hovered_editor_pos);
+            let gutter_marker_moved = app.gutter_area.is_some_and(|area| {
+                let column = crate::ui_editor_highlight::change_gutter_column(area);
+                let at_marker = |x, y| column == Some(x) && area.contains((x, y).into());
+                (col, row) != (prev_mouse_col, prev_mouse_row)
+                    && (at_marker(col, row) || at_marker(prev_mouse_col, prev_mouse_row))
+            });
             let sticky_hover = app.sticky_scroll && !app.cached_sticky_lines.is_empty()
                 && app.code_area.is_some_and(|area| {
                     let bottom = area.y.saturating_add(app.cached_sticky_lines.len().min(area.height as usize) as u16);
@@ -462,7 +469,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 || was_over_performance
                 || extension_hover || app.lsp_hover_active
                 || mouse.modifiers.contains(KeyModifiers::CONTROL)
-                || editor_tooltip || sticky_hover
+                || editor_tooltip || gutter_marker_moved || sticky_hover
                 || app.chat.area.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
                 || app.hovered_gutter_line != old_gutter
                 || fold_hover != old_fold_hover

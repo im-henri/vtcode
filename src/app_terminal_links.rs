@@ -89,15 +89,19 @@ fn open(app: &mut App, surface: TerminalSurface, location: Location) {
 
 /// Local filesystem access shares the cancellable link worker used for SSH.
 /// Canonical identities map directory aliases back into the current tree.
-pub(crate) fn open_local_location(path: &Path, root: &Path, cancel: &crate::background::CancellationToken, files_only: bool)
+pub(crate) fn open_local_location(path: &Path, root: &Path, cancel: &crate::background::CancellationToken, source: crate::app_remote_navigation::Source)
     -> io::Result<crate::remote::workspace::Location>
 {
-    use crate::remote::workspace::Location;
+    use crate::{app_remote_navigation::Source, remote::workspace::Location};
     let result = (|| {
         if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
         let metadata = std::fs::metadata(path)?;
         if metadata.is_dir() {
-            if files_only { return Err(io::Error::new(io::ErrorKind::IsADirectory, "Choose a file, not a folder")); }
+            if source == Source::PathDialog {
+                drop(std::fs::read_dir(path)?);
+                return Ok(Location::Directory(path.to_path_buf()));
+            }
+            if source == Source::FileCommand { return Err(io::Error::new(io::ErrorKind::IsADirectory, "Choose a file, not a folder")); }
             let canonical = path.canonicalize()?;
             let canonical_root = root.canonicalize()?;
             let relative = crate::native_paths::strip_prefix(&canonical, &canonical_root)

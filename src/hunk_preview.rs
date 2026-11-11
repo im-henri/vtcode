@@ -86,7 +86,7 @@ impl Request {
             return Ok(Some(peek));
         }
         let mut prepared = self.load_git(self.status == 'S', cancel)?;
-        if prepared.is_none() && matches!(self.target, PeekTarget::Line(_)) {
+        if prepared.is_none() && matches!(self.target, PeekTarget::Line(_) | PeekTarget::InsertedLine(_)) {
             // A marker can outlive staging/unstaging until the background
             // refresh arrives. Check the other source once, at this exact
             // line. Continuations must end when their source has no hunks.
@@ -145,8 +145,12 @@ impl App {
         let file = self.hunk_popup_file.clone();
         let repository = file.as_deref().and_then(|path| self.repository_hint_for_path(path));
         let status = self.hunk_popup_status;
+        let line = self.hunk_popup_line;
         let editor = self.hunk_preview_editor();
         let document = editor.as_ref().map(|editor| (editor.navigation_id, editor.content_version));
+        let inserted = status != 'S' && editor.as_ref().is_some_and(|editor| {
+            editor.line_changes(line).working() == Some(crate::line_changes::ChangeKind::Added)
+        });
         let tab_size = editor.as_ref().map_or(4, |editor| editor.tab_size);
         let live = editor.as_ref().filter(|editor| editor.modified || status == 'N')
             .map(|editor| editor.rope.clone());
@@ -155,7 +159,8 @@ impl App {
             remote: self.remote_workspace.clone(), root: self.explorer.root.clone(),
             file, repository,
             target: self.hunk_preview_continuation.as_ref().filter(|next| next.action.is_none())
-                .map_or(PeekTarget::Line(self.hunk_popup_line), |next| PeekTarget::Hunk(next.next)),
+                .map_or(if inserted { PeekTarget::InsertedLine(line) } else { PeekTarget::Line(line) },
+                    |next| PeekTarget::Hunk(next.next)),
             status, document, tab_size, live, saved,
         }
     }

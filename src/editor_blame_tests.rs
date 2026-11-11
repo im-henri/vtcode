@@ -670,6 +670,61 @@ fn blame_cold_breadcrumb_loads_on_click_and_explains_the_action() {
 }
 
 #[test]
+fn blame_button_stays_on_the_visible_desk_when_a_hidden_button_overlaps() {
+    let draw = |app: &mut App, terminal: &mut Terminal<TestBackend>| {
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                crate::ui_chrome::draw_editor_section(frame, app, area);
+            })
+            .unwrap();
+    };
+    for split in [false, true] {
+        let mut app = App::test_new();
+        let mut editor = Editor::test_with_text(SOURCE);
+        editor.file_path = Some(PathBuf::from("example.c"));
+        app.tabs.push(Tab::new_file(editor));
+        app.show_breadcrumbs = true;
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        draw(&mut app, &mut terminal);
+        let hidden_group = app.active_group;
+        let hidden_button = app.editor().unwrap().blame.button.unwrap();
+
+        let desk = app.new_desk("Other", true);
+        let hidden_hover = hovered(&app, hidden_button.x, hidden_button.y);
+        let first_pane = app.active_group;
+        let target = if split {
+            let other = app.clone_desk_tab(&app.tabs[0]);
+            app.tabs.push(other);
+            app.create_split_group_at(1, TabDropZone::Right);
+            let right_pane = app.active_group;
+            app.switch_group(first_pane);
+            right_pane
+        } else {
+            first_pane
+        };
+        draw(&mut app, &mut terminal);
+        let editor = if split {
+            &app.groups[target].tabs[0].editor
+        } else {
+            app.editor().unwrap()
+        };
+        let button = editor.blame.button.unwrap();
+        assert_eq!(button, hidden_button);
+        assert!(hovered(&app, button.x, button.y));
+        pointer(&mut app, button, MouseEventKind::Down(MouseButton::Left));
+
+        assert_eq!(app.desks.active, desk);
+        assert_eq!(app.active_group, target);
+        assert!(app.editor().unwrap().blame.enabled);
+        assert!(!app.groups[hidden_group].tabs[0].editor.blame.enabled);
+        assert!(!hidden_hover);
+        draw(&mut app, &mut terminal);
+        assert!(output(&terminal).contains("Loading blame…"));
+    }
+}
+
+#[test]
 fn blame_unsupported_files_explain_the_reason_and_do_not_retry_at_idle() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("example.c");

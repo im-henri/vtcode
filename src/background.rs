@@ -424,6 +424,7 @@ pub enum BackgroundResult {
         path: PathBuf,
         generation: u64,
         entries: Vec<PathBuf>,
+        directory_count: usize,
         modified: std::collections::HashMap<PathBuf, std::time::SystemTime>,
         locations: Vec<(String, PathBuf)>,
         error: Option<String>,
@@ -1016,6 +1017,10 @@ pub struct BackgroundWorkers {
     /// Serial long-lived asset/discovery work must not occupy the short editor
     /// jobs' pool, especially when only one CPU worker is available.
     maintenance_pool_sender: Option<BackgroundTaskSender>,
+    /// Extension discovery compiles Wasm modules, which takes seconds. On the
+    /// serial maintenance worker it held up the startup syntax registry and
+    /// left restored files unhighlighted for ~3 s.
+    extension_pool_sender: Option<BackgroundTaskSender>,
     /// Chat context may wait on SSH or a remote disk. Keep it out of editor
     /// CPU/read pools and bound it across sessions instead of spawning threads.
     context_pool_sender: Option<BackgroundTaskSender>,
@@ -1060,6 +1065,7 @@ impl BackgroundWorkers {
             completion_pool_sender: None,
             save_pool_sender: None,
             maintenance_pool_sender: None,
+            extension_pool_sender: None,
             context_pool_sender: None,
             read_pool: None,
             prioritized_read_path: None,
@@ -1093,6 +1099,13 @@ impl BackgroundWorkers {
     pub(crate) fn maintenance_sender(&mut self) -> BackgroundTaskSender {
         self.maintenance_pool_sender.get_or_insert_with(|| {
             BackgroundTaskSender::pool("asset-worker", 1, self.active_jobs.clone(), self.wake.clone())
+        }).clone()
+    }
+
+    /// Serial extension discovery, activation and runtime release.
+    pub(crate) fn extension_sender(&mut self) -> BackgroundTaskSender {
+        self.extension_pool_sender.get_or_insert_with(|| {
+            BackgroundTaskSender::pool("extension-worker", 1, self.active_jobs.clone(), self.wake.clone())
         }).clone()
     }
 
@@ -1343,7 +1356,8 @@ impl BackgroundWorkers {
         let mut live = 0;
         for pool in std::iter::once(&self.pool_sender).chain(self.save_pool_sender.as_ref())
             .chain(self.completion_pool_sender.as_ref())
-            .chain(self.maintenance_pool_sender.as_ref()).chain(self.context_pool_sender.as_ref()) {
+            .chain(self.maintenance_pool_sender.as_ref()).chain(self.extension_pool_sender.as_ref())
+            .chain(self.context_pool_sender.as_ref()) {
             queued += pool.load.queued.load(Ordering::Relaxed);
             running += pool.load.running.load(Ordering::Relaxed);
             live += pool.load.live.load(Ordering::Relaxed);

@@ -113,7 +113,7 @@ fn title_controls_and_tabs_switch_in_one_click_and_toggle_closed() {
         .find(|&x| buffer[(x, add_row)].symbol() == "+")
         .unwrap();
     click(&mut app, Rect::new(add_col, add_row, 1, 1));
-    assert!(app.change_dir_active && app.folder_browser.add_workspace);
+    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::AddFolder);
     assert!(!app.workspaces.popup.open);
 }
 

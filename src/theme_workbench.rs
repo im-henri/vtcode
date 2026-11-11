@@ -374,6 +374,9 @@ pub(crate) struct WorkbenchColors {
     pub fg_gutter_added: Color,
     pub fg_gutter_modified: Color,
     pub fg_gutter_deleted: Color,
+    pub fg_gutter_added_secondary: Color,
+    pub fg_gutter_modified_secondary: Color,
+    pub fg_gutter_deleted_secondary: Color,
     pub fg_list_match: Color,
     pub fg_menu_selected: Color,
     pub fg_menu_disabled: Color,
@@ -486,6 +489,12 @@ impl WorkbenchColors {
             base.fg_git_deleted,
             base.bg_dark,
         );
+        let secondary_gutter_color = |id, primary, factor| {
+            let fallback = if high_contrast { primary } else { adjust_lightness(primary, factor) };
+            get(id, fallback, base.bg_dark)
+        };
+        let secondary_lightness = if light { 1.7 } else { 0.5 };
+        let deleted_secondary_lightness = if light { 1.3 } else { 0.6 };
         let section = surface("sideBarSectionHeader.background", base.bg_sidebar);
         let overview = get("editorOverviewRuler.background", base.bg_editor, base.bg_editor);
         let unfocused_tab = get("tab.unfocusedActiveBackground", base.bg_tab_active, base.bg_tabbar);
@@ -1095,6 +1104,15 @@ impl WorkbenchColors {
             fg_gutter_added: gutter_added,
             fg_gutter_modified: gutter_modified,
             fg_gutter_deleted: gutter_deleted,
+            fg_gutter_added_secondary: secondary_gutter_color(
+                "editorGutter.addedSecondaryBackground", gutter_added, secondary_lightness,
+            ),
+            fg_gutter_modified_secondary: secondary_gutter_color(
+                "editorGutter.modifiedSecondaryBackground", gutter_modified, secondary_lightness,
+            ),
+            fg_gutter_deleted_secondary: secondary_gutter_color(
+                "editorGutter.deletedSecondaryBackground", gutter_deleted, deleted_secondary_lightness,
+            ),
             fg_list_match: get("list.highlightForeground", base.fg_accent, base.bg_sidebar),
             fg_menu_selected: get(
                 "menu.selectionForeground",
@@ -2051,6 +2069,9 @@ impl Default for WorkbenchColors {
             fg_gutter_added: Color::Reset,
             fg_gutter_modified: Color::Reset,
             fg_gutter_deleted: Color::Reset,
+            fg_gutter_added_secondary: Color::Reset,
+            fg_gutter_modified_secondary: Color::Reset,
+            fg_gutter_deleted_secondary: Color::Reset,
             fg_list_match: Color::Reset,
             fg_menu_selected: Color::Reset,
             fg_menu_disabled: Color::Reset,
@@ -2097,6 +2118,23 @@ impl Default for WorkbenchColors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staged_gutter_resolves_secondary_colors_and_native_fallbacks() {
+        let base = crate::app_theme::EditorTheme::Dark.colors();
+        let values = serde_json::json!({
+            "editorGutter.addedBackground": "#808080",
+            "editorGutter.deletedSecondaryBackground": "#b54848",
+            "editorGutter.modifiedSecondaryBackground": "#519cbb",
+        });
+        for (light, added) in [(false, 64), (true, 218)] {
+            let colors = WorkbenchColors::resolve(values.as_object().unwrap(), &base, light, false);
+            assert_eq!(colors.fg_gutter_added, Color::Rgb(128, 128, 128));
+            assert_eq!(colors.fg_gutter_added_secondary, Color::Rgb(added, added, added));
+            assert_eq!(colors.fg_gutter_deleted_secondary, Color::Rgb(181, 72, 72));
+            assert_eq!(colors.fg_gutter_modified_secondary, Color::Rgb(81, 156, 187));
+        }
+    }
 
     #[test]
     fn bracket_palette_skips_disabled_slots_before_blending_alpha() {

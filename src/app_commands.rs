@@ -288,7 +288,7 @@ impl App {
                 self.save_as_cursor = self.save_as_query.len();
                 self.save_as_selection_anchor = None;
             }
-            "open_file_path" => self.begin_open_file_path(),
+            "open_file" | "open_file_path" => self.begin_open_file_browser(),
             "new_file" => self.new_file(),
             "close_tab" | "close_tab_menu" => self.close_tab(self.active_tab),
             "close_saved" => self.close_saved_tabs(),

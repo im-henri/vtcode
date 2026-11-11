@@ -502,6 +502,10 @@ impl workspace::Workspace {
         }
         state.epoch
     }
+
+    pub(crate) fn invalidate_git_sources(&self) {
+        self.refresh_git_source_cache(true);
+    }
     pub(crate) fn commit_details(
         &self,
         root: &Path,

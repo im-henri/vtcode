@@ -4,11 +4,12 @@ use super::*;
 fn cancelled_or_expired_diffs_never_publish_partial_change_markers() {
     let saved = Rope::from_str(&"before\n".repeat(1_000));
     let current = Rope::from_str(&"after\n".repeat(1_000));
-    assert!(compute_unsaved_diff_markers_cancellable(&saved, &current, None, &|| true).is_none());
+    assert!(compute_unsaved_diff_markers_cancellable(&saved, &current, &[], None, &|| true).is_none());
     assert!(
         compute_unsaved_diff_markers_cancellable(
             &saved,
             &current,
+            &[],
             Some(std::time::Instant::now()),
             &|| false,
         )
@@ -16,7 +17,7 @@ fn cancelled_or_expired_diffs_never_publish_partial_change_markers() {
     );
     let checks = std::cell::Cell::new(0);
     assert!(
-        compute_unsaved_diff_markers_cancellable(&saved, &current, None, &|| {
+        compute_unsaved_diff_markers_cancellable(&saved, &current, &[], None, &|| {
             checks.set(checks.get() + 1);
             checks.get() >= 8
         })
@@ -28,6 +29,7 @@ fn cancelled_or_expired_diffs_never_publish_partial_change_markers() {
         compute_unsaved_diff_markers_cancellable(
             &saved,
             &current,
+            &[],
             Some(std::time::Instant::now() + std::time::Duration::from_secs(5)),
             &|| false
         )
@@ -39,9 +41,14 @@ fn cancelled_or_expired_diffs_never_publish_partial_change_markers() {
 fn reference_diff(saved: &Rope, current: &Rope) -> UnsavedDiff {
     fn lines(rope: &Rope) -> Vec<Cow<'_, str>> {
         rope.lines()
+            .filter(|line| line.len_bytes() != 0)
             .map(|line| match line.as_str() {
-                Some(text) => Cow::Borrowed(text),
-                None => Cow::Owned(line.to_string()),
+                Some(text) => Cow::Borrowed(text.trim_end_matches(['\r', '\n'])),
+                None => {
+                    let mut text = line.to_string();
+                    text.truncate(text.trim_end_matches(['\r', '\n']).len());
+                    Cow::Owned(text)
+                }
             })
             .collect()
     }
@@ -86,9 +93,20 @@ fn reference_diff(saved: &Rope, current: &Rope) -> UnsavedDiff {
             }
         }
     }
+    let mut removed_lines: Vec<_> = diff.ops().iter().filter_map(|op| {
+        match *op {
+            similar::DiffOp::Delete { new_index, .. } => Some(new_index.min(new_lines.len().saturating_sub(1))),
+            _ => None,
+        }
+    }).collect();
+    removed_lines.dedup();
     UnsavedDiff {
-        line_count: result.len(),
+        line_count: current.len_lines(),
         changed_ranges,
+        added_ranges: diff.ops().iter().filter_map(|op| {
+            matches!(op, similar::DiffOp::Insert { .. }).then(|| op.new_range())
+        }).collect(),
+        removed_lines,
     }
 }
 
@@ -96,7 +114,10 @@ fn assert_same(saved: &Rope, current: &Rope) {
     assert_eq!(crate::rope_changes::equal(saved, current), saved == current);
     let expected = reference_diff(saved, current);
     let actual = compute_unsaved_diff_markers(saved, current);
-    assert_eq!(actual, expected, "old={saved}, new={current}");
+    assert_eq!(actual, expected, "old={:?}, new={:?}", saved.to_string(), current.to_string());
+    if let Some(live) = unsaved_diff::compute_live_unsaved_diff(saved, current, &[]) {
+        assert_eq!(live, actual);
+    }
 }
 
 #[test]

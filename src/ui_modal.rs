@@ -31,7 +31,6 @@ pub(crate) enum Kind {
     ThemeInstall,
     ThemeVsixLink,
     ThemeDelete,
-    OpenFilePath,
     SaveAs,
     Rename,
     RenameTerminal,
@@ -53,7 +52,6 @@ impl Kind {
         match self {
             Self::ThemeInstall => Some(TextInputId::CommandPalette),
             Self::SaveAs => Some(TextInputId::SaveAs),
-            Self::OpenFilePath => Some(TextInputId::OpenFilePath),
             Self::Rename => Some(TextInputId::RenameSymbol),
             Self::RenameTerminal => Some(TextInputId::TerminalRename),
             Self::Goto => Some(TextInputId::GotoLine),
@@ -108,8 +106,6 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
         Some(Kind::StageAllCommit)
     } else if let Some(request) = &app.git_operation_ui.request {
         Some(if request.choice == crate::ui_git_operation::Choice::Start { Kind::GitOperationTarget } else { Kind::GitOperationConfirm })
-    } else if app.file_open.active {
-        Some(Kind::OpenFilePath)
     } else if app.save_as_active {
         Some(Kind::SaveAs)
     } else if app.rename.symbol_active {
@@ -180,7 +176,6 @@ fn sync(app: &mut App, kind: Kind) {
 }
 
 fn focus_enabled(app: &App, kind: Kind, focus: usize) -> bool {
-    if kind == Kind::OpenFilePath && app.file_open.pending && focus == 1 { return false; }
     if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending { return false; }
     if kind == Kind::ExitRecovery { return false; }
     if kind == Kind::SaveError && app.save_conflict.as_ref().is_some_and(|conflict| conflict.busy()) { return false; }
@@ -230,14 +225,6 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
             buttons
         }
         Kind::ThemeVsixLink => vec!["Copy link", "Open in browser", "Back"],
-        Kind::OpenFilePath => {
-            let mut buttons = vec![if app.file_open.pending { "Opening…" } else { "Open" }];
-            if app.remote_workspace.is_some() {
-                buttons.push(if app.file_open.remote { "Use This Device" } else { "Use Remote" });
-            }
-            buttons.push("Cancel");
-            buttons
-        },
         Kind::SaveAs => {
             let mut buttons = vec![if app.modal.overwrite.is_some() { "Replace file" } else { "Save" }];
             if app.remote_workspace.is_none() || app.editor_uses_remote_files() { buttons.push("Browse…"); }
@@ -290,7 +277,6 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::ThemeDelete => app.cancel_theme_removal(),
         Kind::ThemeInstall => app.close_palette(),
         Kind::ThemeVsixLink => app.palette.theme_vsix_url = None,
-        Kind::OpenFilePath => app.cancel_open_file_path(),
         Kind::SaveAs => app.save_as_active = false,
         Kind::Rename => app.rename.symbol_active = false,
         Kind::RenameTerminal => app.cancel_terminal_rename(),
@@ -360,8 +346,6 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
         Kind::CloseAgent => app.confirm_close_chat_agent(),
         Kind::CloseTerminal => app.confirm_terminal_close(),
         Kind::ThemeDelete => app.confirm_theme_removal(),
-        Kind::OpenFilePath if index == 1 => app.switch_open_file_device(),
-        Kind::OpenFilePath => app.execute_open_file_path(),
         Kind::SaveAs if index == 1 => {
             let parent = if let Some(remote) = remote_save_workspace(app) {
                 remote.target_key(&app.save_as_query).ok()
@@ -369,8 +353,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
             } else {
                 save_path(app).parent().filter(|path| path.is_dir()).map(|path| path.to_path_buf())
             };
-            app.open_folder_browser();
-            app.folder_browser.save_as_return = true;
+            app.open_path_browser(crate::folder_browser::Mode::SaveLocation);
             if let Some(parent) = parent {
                 app.navigate_folder_browser(parent);
             }
@@ -870,17 +853,6 @@ fn copy(app: &App, kind: Kind) -> Copy {
             help: "Download in your browser, or copy the link to use on another device. Then choose Back and paste the downloaded .vsix file path to install.".into(),
             field: "",
         },
-        Kind::OpenFilePath => Copy {
-            title: "Open File by Path",
-            message: if app.file_open.remote { "Open one file from the remote computer." }
-                else { "Open one file from this device." }.into(),
-            context: vec![format!("Relative to   {}", if app.file_open.remote {
-                app.display_path(&app.explorer.root)
-            } else { app.local_file_base().display().to_string() })],
-            help: if app.file_open.pending { "Opening file… Escape cancels." }
-                else { "Enter a file path. Files outside the workspace can be opened too." }.into(),
-            field: if app.file_open.remote { "Remote file path" } else { "File path on this device" },
-        },
         Kind::SaveAs => Copy {
             title: "Save As",
             message: "Choose a name and location for this file.".into(),
@@ -1156,7 +1128,6 @@ pub(crate) fn draw_active(f: &mut Frame, app: &mut App) {
         Some(Kind::ThemeInstall) => draw(f, app, Kind::ThemeInstall),
         Some(Kind::ThemeVsixLink) => draw(f, app, Kind::ThemeVsixLink),
         Some(Kind::ThemeDelete) => draw(f, app, Kind::ThemeDelete),
-        Some(Kind::OpenFilePath) => draw(f, app, Kind::OpenFilePath),
         Some(Kind::SaveAs) => crate::ui_dialogs::draw_save_as_dialog(f, app),
         Some(Kind::Rename) => crate::ui_dialogs::draw_rename_symbol_dialog(f, app),
         Some(Kind::RenameTerminal) => draw(f, app, Kind::RenameTerminal),
@@ -1397,9 +1368,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                 app.palette.cursor,
                 app.palette.selection_anchor,
             ),
-            TextInputId::OpenFilePath => (
-                &app.file_open.input.query, app.file_open.input.cursor, app.file_open.input.anchor,
-            ),
             TextInputId::SaveAs => (
                 &app.save_as_query,
                 app.save_as_cursor,
@@ -1432,12 +1400,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                     Kind::ThemeInstall => if app.palette.install_syntax_mode { "Path to a syntax file…" }
                         else if app.palette.install_extension_mode { "https://github.com/owner/extensions…" }
                         else { "vscodethemes.com link or local path…" },
-                    Kind::OpenFilePath => {
-                        let windows = if app.file_open.remote {
-                            app.remote_workspace.as_ref().is_some_and(|workspace| workspace.windows_paths())
-                        } else { cfg!(windows) };
-                        if windows { "e.g. C:\\logs\\example.log" } else { "e.g. /var/log/example.log" }
-                    },
                     Kind::SaveAs => "e.g. src/main.rs",
                     Kind::Rename => "New symbol name",
                     Kind::RenameTerminal => "Terminal name",
@@ -1683,7 +1645,6 @@ mod tests {
                 app.palette.query = "https://vscodethemes.com/e/akamud.vscode-theme-onedark/atom-one-dark".into();
                 app.show_theme_vsix_link();
             }
-            Kind::OpenFilePath => app.begin_open_file_path(),
             Kind::SaveAs => {
                 app.save_as_active = true;
                 app.save_as_query = app
@@ -1960,7 +1921,6 @@ mod tests {
             Kind::ThemeInstall,
             Kind::ThemeVsixLink,
             Kind::ThemeDelete,
-            Kind::OpenFilePath,
             Kind::SaveAs,
             Kind::Rename,
             Kind::RenameTerminal,
@@ -2045,7 +2005,6 @@ mod tests {
             Kind::ThemeInstall,
             Kind::CloseTerminal,
             Kind::ThemeDelete,
-            Kind::OpenFilePath,
             Kind::SaveAs,
             Kind::Rename,
             Kind::RenameTerminal,

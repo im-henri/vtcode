@@ -92,7 +92,7 @@ pub(crate) fn handle_editor_area_left_click(
         {
             app.active_pane = ActivePane::Editor;
             app.clear_diff_selection();
-            let is_diff_col = col == gutter_area.x;
+            let is_diff_col = crate::ui_editor_highlight::change_gutter_column(gutter_area) == Some(col);
             let is_fold_col = col == gutter_area.x + gutter_area.width - 1;
             let screen_row = (row - gutter_area.y) as usize;
             let (clicked_row, file_path, diff_status) = {

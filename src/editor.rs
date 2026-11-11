@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 use ropey::Rope;
 
+use crate::line_changes::LineChanges;
+
 #[path = "editor_fold_map.rs"]
 mod fold_map;
 pub(crate) use fold_map::FoldedRanges;
@@ -41,22 +43,47 @@ pub(crate) struct LoadedTextFile {
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedGitLineStatus {
     markers: Arc<[char]>,
-    changes: Arc<[(usize, char)]>,
-    staged_deletions: Arc<[usize]>,
+    changes: Arc<[(usize, LineChanges)]>,
     signature: u64,
+    pub(crate) index: Option<Arc<GitIndexLineStatus>>,
     pub(crate) untracked: bool,
+}
+
+/// Staged markers in index coordinates, for when the buffer has returned to
+/// the index but a previous save still leaves worktree changes on disk.
+#[derive(Debug)]
+pub(crate) struct GitIndexLineStatus {
+    path: PathBuf,
+    text: Rope,
+    staged: Arc<[(usize, LineChanges)]>,
+}
+
+fn matches_git_index(text: &Rope, index: &Rope) -> bool {
+    if crate::rope_changes::equal(text, index) {
+        return true;
+    }
+    // Git can store LF while a Windows checkout uses CRLF.
+    if text.len_lines() != index.len_lines()
+        || text.len_bytes().abs_diff(index.len_bytes()) >= index.len_lines()
+    {
+        return false;
+    }
+    fn normalized_bytes(rope: &Rope) -> impl Iterator<Item = u8> + '_ {
+        let mut bytes = rope.bytes().peekable();
+        std::iter::from_fn(move || match bytes.next()? {
+            b'\r' if bytes.peek() == Some(&b'\n') => bytes.next(),
+            byte => Some(byte),
+        })
+    }
+    normalized_bytes(text).eq(normalized_bytes(index))
 }
 
 impl PreparedGitLineStatus {
     pub(crate) fn from_diffs(line_count: usize, staged: &[char], unstaged: &[char]) -> Self {
-        let mut markers = Vec::with_capacity(line_count);
-        let mut changes = Vec::new();
-        let mut staged_deletions = Vec::new();
-        let mut signature = 0xcbf29ce484222325u64;
-        for line in 0..line_count {
+        Self::prepare(vec![' '; line_count], |line, marker| {
             let unstaged = unstaged.get(line).copied().unwrap_or(' ');
             let staged = staged.get(line).copied().unwrap_or(' ');
-            let marker = if unstaged == 'D' || (unstaged == ' ' && staged == 'D') {
+            *marker = if unstaged == 'D' || (unstaged == ' ' && staged == 'D') {
                 'D'
             } else if unstaged != ' ' {
                 'U'
@@ -65,43 +92,58 @@ impl PreparedGitLineStatus {
             } else {
                 ' '
             };
-            if marker != ' ' {
-                changes.push((line, marker));
-            }
-            let staged_deletion = marker == 'D' && unstaged == ' ' && staged == 'D';
-            if staged_deletion { staged_deletions.push(line); }
-            let source = u64::from(marker as u32) | (u64::from(staged_deletion) << 32);
-            signature = (signature ^ source).wrapping_mul(0x100000001b3);
-            markers.push(marker);
-        }
-        signature ^= line_count as u64;
-        Self {
-            markers: markers.into(),
-            changes: changes.into(),
-            staged_deletions: staged_deletions.into(),
-            signature,
-            untracked: false,
-        }
+            LineChanges::git(staged, unstaged)
+        })
     }
 
     pub(crate) fn from_markers(markers: Vec<char>) -> Self {
-        let changes = markers
-            .iter()
-            .enumerate()
-            .filter_map(|(line, &marker)| (marker != ' ').then_some((line, marker)))
-            .collect::<Vec<_>>();
+        Self::prepare(markers, |_, marker| (*marker).into())
+    }
+
+    fn prepare(mut markers: Vec<char>, mut classify: impl FnMut(usize, &mut char) -> LineChanges) -> Self {
+        let mut changes = Vec::new();
         let mut signature = 0xcbf29ce484222325u64;
-        for &marker in &markers {
-            signature = (signature ^ u64::from(marker as u32)).wrapping_mul(0x100000001b3);
+        for (line, marker) in markers.iter_mut().enumerate() {
+            let change = classify(line, marker);
+            if !change.is_empty() {
+                changes.push((line, change));
+            }
+            let source = u64::from(*marker as u32) | (u64::from(change.bits()) << 32);
+            signature = (signature ^ source).wrapping_mul(0x100000001b3);
         }
         signature ^= markers.len() as u64;
         Self {
             markers: markers.into(),
             changes: changes.into(),
-            staged_deletions: Arc::from([]),
             signature,
+            index: None,
             untracked: false,
         }
+    }
+
+    pub(crate) fn with_index(
+        mut self,
+        path: &Path,
+        index_text: &str,
+        staged: &[char],
+        saved: &Rope,
+        previous: Option<&Arc<GitIndexLineStatus>>,
+    ) -> Self {
+        let text = Rope::from_str(index_text);
+        let staged: Arc<[_]> = staged.iter().enumerate().filter_map(|(line, &kind)| {
+            (kind != ' ').then_some((line, LineChanges::git(kind, ' ')))
+        }).collect();
+        self.index = Some(if let Some(previous) = previous.filter(|old| matches_git_index(&old.text, &text)) {
+            if previous.staged == staged {
+                Arc::clone(previous)
+            } else {
+                Arc::new(GitIndexLineStatus { path: path.to_owned(), text: previous.text.clone(), staged })
+            }
+        } else {
+            let text = if matches_git_index(saved, &text) { saved.clone() } else { text };
+            Arc::new(GitIndexLineStatus { path: path.to_owned(), text, staged })
+        });
+        self
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -262,14 +304,14 @@ pub(crate) fn is_save_temporary_path(path: &Path) -> bool {
 
 #[path = "editor_unsaved_diff.rs"]
 mod unsaved_diff;
-pub(crate) use unsaved_diff::{UnsavedDiff, compute_unsaved_diff_markers_cancellable};
+pub(crate) use unsaved_diff::{InsertionAnchors, UnsavedDiff, compute_unsaved_diff_markers_cancellable};
 
 /// Compute exact per-line unsaved-change markers without mutating an editor.
 /// Rope clones are cheap, so callers can run this on a background worker while
 /// the UI continues editing the live buffer.
 #[cfg(test)]
 pub(crate) fn compute_unsaved_diff_markers(saved: &Rope, current: &Rope) -> UnsavedDiff {
-    compute_unsaved_diff_markers_cancellable(saved, current, None, &|| false)
+    compute_unsaved_diff_markers_cancellable(saved, current, &[], None, &|| false)
         .expect("uncancelled diff")
 }
 
@@ -400,6 +442,7 @@ pub(crate) struct UndoState {
     /// dirty-range/checkpoint metadata does not change its identity.
     pub snapshot_id: u64,
     pub rope: Rope,
+    pub(crate) insertion_anchors: Option<InsertionAnchors>,
     pub line_ending: &'static str,
     pub cursor_line: usize,
     pub cursor_col: usize,
@@ -540,14 +583,19 @@ pub(crate) struct Editor {
     /// Cached unsaved-changes diff (computed via `similar` crate).
     /// Tuple: (version_at_compute_time, exact sparse change ranges).
     unsaved_diff_cache: (u64, UnsavedDiff),
+    live_unsaved_diff_attempt: Option<u64>,
+    pub(crate) insertion_anchors: Option<InsertionAnchors>,
+    pub(crate) saved_insertion_anchors: Option<InsertionAnchors>,
     /// Edit range used only to project the previous exact diff while the
     /// deferred diff worker catches up. Syntax can converge much earlier, so
     /// this lifetime must not be tied to `syntax_dirty_*`.
     unsaved_diff_dirty_from: Option<usize>,
     unsaved_diff_dirty_through: Option<usize>,
     /// Sparse Git markers used by overview widgets.
-    git_change_lines: Arc<[(usize, char)]>,
+    git_change_lines: Arc<[(usize, LineChanges)]>,
     git_line_status_signature: u64,
+    git_line_index: Option<Arc<GitIndexLineStatus>>,
+    git_index_match: Option<Rope>,
     /// Invalidates render-side overview caches when background markers arrive.
     pub(crate) overview_change_revision: u64,
     /// "Sticky" screen column within the visual row, preserved through shorter lines.
@@ -557,7 +605,6 @@ pub(crate) struct Editor {
     git_line_status: Arc<[char]>,
     // Deletions share their visual marker; retain the index/worktree source
     // separately so gutter clicks choose the correct preview and actions.
-    git_staged_deletions: Arc<[usize]>,
     /// Provenance of automatic Git markers, used when untracked files are hidden.
     pub(crate) git_line_status_untracked: bool,
     /// Large file mode: disables expensive parsing and whole-document features.
@@ -712,14 +759,18 @@ impl Editor {
             syntax_dirty_from: None,
             syntax_dirty_through: None,
             unsaved_diff_cache: (u64::MAX, UnsavedDiff::default()),
+            live_unsaved_diff_attempt: None,
+            insertion_anchors: None,
+            saved_insertion_anchors: None,
             unsaved_diff_dirty_from: None,
             unsaved_diff_dirty_through: None,
             git_change_lines: Arc::from([]),
             git_line_status_signature: 0,
+            git_line_index: None,
+            git_index_match: None,
             overview_change_revision: 0,
             desired_col: None,
             git_line_status: Arc::from([]),
-            git_staged_deletions: Arc::from([]),
             git_line_status_untracked: false,
             large_file_mode: false,
             rich_features_timed_out: false,
@@ -799,6 +850,8 @@ impl Editor {
         let loaded = load_text_file(path)?;
         let file_size = loaded.file_size;
         self.rope = loaded.rope;
+        self.insertion_anchors = None;
+        self.saved_insertion_anchors = None;
         self.encoding = loaded.encoding;
         if self.encoding == "Binary" { self.read_only = true; }
 
@@ -889,6 +942,8 @@ impl Editor {
 
         self.fold_hint_cache.get_mut().clear();
         self.rope = rope;
+        self.insertion_anchors = None;
+        self.saved_insertion_anchors = None;
         self.inferred_language = None;
         self.language_detection = None;
         self.language_detection_epoch = self.language_detection_epoch.wrapping_add(1);
@@ -1242,33 +1297,53 @@ impl Editor {
     }
 
     pub(crate) fn unsaved_line_status(&self, line: usize) -> char {
-        if !self.modified || self.saved_rope.is_none() {
-            return ' ';
+        if self.unsaved_line_changes(line).unsaved() { 'N' } else { ' ' }
+    }
+
+    fn unsaved_line_changes(&self, line: usize) -> LineChanges {
+        if !self.modified || self.saved_rope.is_none() || self.uses_git_index_markers() {
+            return LineChanges::default();
         }
 
-        // Use the exact worker-produced diff when it matches this buffer.
+        // Use the exact diff when it matches this buffer.
+        let cached = &self.unsaved_diff_cache.1;
         if self.unsaved_diff_cache.0 == self.content_version {
-            return self.unsaved_diff_cache.1.line_status(line);
+            return cached.line_changes(line);
         }
 
-        // Keep gutter feedback immediate for the lines currently being edited.
-        // The worker will replace these provisional markers with an exact diff.
-        if line == self.cursor_line
-            || self
-                .extra_cursors
-                .iter()
-                .any(|&(cursor_line, _)| cursor_line == line)
-        {
-            return 'N';
-        }
-
-        // Reuse the last exact markers while the next diff is in flight. For a
-        // line-count edit, the accumulated edit range gives us a safe unchanged
-        // prefix and a suffix shifted by the total line delta. Keeping those
-        // rows avoids the gutter blinking blank on newline undo/redo.
+        // Reuse known additions and edits while the worker runs. For a line-count
+        // edit, the dirty range gives us a safe prefix and a shifted suffix.
         self.stale_unsaved_source_line(line)
-            .map(|source| self.unsaved_diff_cache.1.line_status(source))
-            .unwrap_or(' ')
+            .map(|source| cached.line_changes(source)).unwrap_or_default()
+    }
+
+    pub(crate) fn begin_unsaved_diff_edit(&mut self) {
+        // Syntax can be invalidated again after the exact diff was installed.
+        // Track only subsequent edits when projecting that diff.
+        if self.unsaved_diff_cache.0 == self.content_version {
+            self.unsaved_diff_dirty_from = None;
+            self.unsaved_diff_dirty_through = None;
+        }
+    }
+
+    pub(crate) fn prepare_live_unsaved_diff(&mut self) {
+        self.insertion_anchors = self.insertion_anchors.take().and_then(|anchors| anchors.rebase(&self.rope));
+        if !self.modified || self.large_file_mode || self.uses_git_index_markers()
+            || self.unsaved_diff_cache.0 == self.content_version
+            || self.live_unsaved_diff_attempt == Some(self.content_version)
+        {
+            return;
+        }
+        let Some(saved) = &self.saved_rope else { return; };
+        self.live_unsaved_diff_attempt = Some(self.content_version);
+        let rows = self.insertion_anchors.as_ref().map_or(&[][..], |anchors| anchors.rows(&self.rope));
+        if let Some(changes) = unsaved_diff::compute_live_unsaved_diff(saved, &self.rope, rows) {
+            self.apply_unsaved_diff_cache(self.content_version, changes);
+        }
+    }
+
+    pub(crate) fn record_line_insertion(&mut self, before: &Rope, row: usize) {
+        self.insertion_anchors = InsertionAnchors::insert(self.insertion_anchors.take(), before, &self.rope, row);
     }
 
     pub(crate) fn apply_unsaved_diff_cache(
@@ -1276,17 +1351,21 @@ impl Editor {
         version: u64,
         changes: UnsavedDiff,
     ) {
-        if self.content_version == version {
+        if self.content_version != version {
+            return;
+        }
+        if self.unsaved_diff_cache.0 != version || self.unsaved_diff_cache.1 != changes {
             self.unsaved_diff_cache = (version, changes);
-            self.unsaved_diff_dirty_from = None;
-            self.unsaved_diff_dirty_through = None;
             self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
         }
+        self.unsaved_diff_dirty_from = None;
+        self.unsaved_diff_dirty_through = None;
     }
 
     /// Retire exact markers without discarding an already-known edit range.
     pub(crate) fn invalidate_unsaved_diff_version(&mut self) {
         self.unsaved_diff_cache.0 = u64::MAX;
+        self.live_unsaved_diff_attempt = None;
     }
 
     pub(crate) fn invalidate_unsaved_diff_cache(&mut self) {
@@ -1301,6 +1380,7 @@ impl Editor {
 
     pub(crate) fn reset_unsaved_diff_cache(&mut self) {
         self.unsaved_diff_cache = (self.content_version, UnsavedDiff::default());
+        self.live_unsaved_diff_attempt = None;
         self.unsaved_diff_dirty_from = None;
         self.unsaved_diff_dirty_through = None;
         self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
@@ -1312,14 +1392,11 @@ impl Editor {
         if old_line_count == 0 || current_line >= current_line_count {
             return None;
         }
-        if old_line_count == current_line_count {
-            return Some(current_line);
-        }
-
         let dirty_from = self.unsaved_diff_dirty_from.unwrap_or(0);
         let dirty_through = self
             .unsaved_diff_dirty_through
-            .unwrap_or_else(|| current_line_count.saturating_sub(1));
+            .unwrap_or_else(|| current_line_count.saturating_sub(1))
+            .saturating_add(current_line_count.saturating_sub(old_line_count));
         if current_line < dirty_from {
             return (current_line < old_line_count).then_some(current_line);
         }
@@ -1339,19 +1416,11 @@ impl Editor {
     /// markers. This is O(log changed-lines), even if a 50k-line document has
     /// every line marked, and retains safe stale rows until analysis catches up.
     pub(crate) fn has_unsaved_change_in_range(&self, start: usize, end: usize) -> bool {
-        if !self.modified || self.saved_rope.is_none() || start >= end {
+        if !self.modified || self.saved_rope.is_none() || start >= end || self.uses_git_index_markers() {
             return false;
         }
         if self.unsaved_diff_cache.0 == self.content_version {
             return self.sorted_unsaved_line_in_range(start, end);
-        }
-        if (start..end).contains(&self.cursor_line)
-            || self
-                .extra_cursors
-                .iter()
-                .any(|&(line, _)| (start..end).contains(&line))
-        {
-            return true;
         }
         let old_line_count = self.unsaved_diff_cache.1.line_count;
         let current_line_count = self.line_count();
@@ -1361,7 +1430,8 @@ impl Editor {
         let dirty_from = self.unsaved_diff_dirty_from.unwrap_or(0);
         let dirty_through = self
             .unsaved_diff_dirty_through
-            .unwrap_or_else(|| current_line_count.saturating_sub(1));
+            .unwrap_or_else(|| current_line_count.saturating_sub(1))
+            .saturating_add(current_line_count.saturating_sub(old_line_count));
 
         let prefix_end = end.min(dirty_from).min(old_line_count);
         if self.sorted_unsaved_line_in_range(start.min(prefix_end), prefix_end) {
@@ -1387,33 +1457,67 @@ impl Editor {
         status: PreparedGitLineStatus,
     ) -> bool {
         self.git_line_status_untracked = status.untracked;
+        let index_changed = self.set_git_index_line_status(status.index);
         if self.git_line_status.len() == status.markers.len()
             && self.git_line_status_signature == status.signature
         {
-            return false;
+            return index_changed;
         }
         self.git_line_status = status.markers;
         self.git_change_lines = status.changes;
-        self.git_staged_deletions = status.staged_deletions;
         self.git_line_status_signature = status.signature;
+        self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
+        true
+    }
+
+    pub(crate) fn set_git_index_line_status(&mut self, index: Option<Arc<GitIndexLineStatus>>) -> bool {
+        let same = match (&self.git_line_index, &index) {
+            (Some(old), Some(new)) => Arc::ptr_eq(old, new),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return false;
+        }
+        self.git_line_index = index;
+        self.git_index_match = None;
+        self.refresh_git_index_match();
         self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
         true
     }
 
     pub(crate) fn clear_git_line_status(&mut self) {
         self.git_line_status_untracked = false;
-        if self.git_line_status.is_empty() && self.git_change_lines.is_empty() {
+        self.git_index_match = None;
+        let had_index = self.git_line_index.take().is_some();
+        if self.git_line_status.is_empty() && self.git_change_lines.is_empty() && !had_index {
             return;
         }
         self.git_line_status = Arc::from([]);
         self.git_change_lines = Arc::from([]);
-        self.git_staged_deletions = Arc::from([]);
         self.git_line_status_signature = 0;
         self.overview_change_revision = self.overview_change_revision.wrapping_add(1);
     }
 
-    pub(crate) fn git_change_lines(&self) -> &[(usize, char)] {
-        &self.git_change_lines
+    pub(crate) fn git_change_lines(&self) -> &[(usize, LineChanges)] {
+        self.matching_git_index().map_or(&self.git_change_lines, |index| &index.staged)
+    }
+
+    fn git_changes_at(&self, line: usize) -> LineChanges {
+        let changes = if let Some(index) = self.matching_git_index() {
+            &index.staged
+        } else if self.git_line_status.get(line).is_some_and(|&marker| marker != ' ') {
+            &self.git_change_lines
+        } else {
+            return LineChanges::default();
+        };
+        changes
+            .binary_search_by_key(&line, |&(line, _)| line)
+            .map_or_else(|_| LineChanges::default(), |index| changes[index].1)
+    }
+
+    pub(crate) fn line_changes(&self, line: usize) -> LineChanges {
+        self.git_changes_at(line).merge(self.unsaved_line_changes(line))
     }
 
     pub(crate) fn git_line_status(&self) -> &[char] {
@@ -1432,15 +1536,50 @@ impl Editor {
         PreparedGitLineStatus {
             markers: Arc::clone(&self.git_line_status),
             changes: Arc::clone(&self.git_change_lines),
-            staged_deletions: Arc::clone(&self.git_staged_deletions),
             signature: self.git_line_status_signature,
+            index: self.git_line_index.clone(),
             untracked: self.git_line_status_untracked,
+        }
+    }
+
+    pub(crate) fn git_index_line_status(&self) -> Option<&Arc<GitIndexLineStatus>> {
+        self.git_line_index.as_ref().filter(|index| self.file_path.as_ref() == Some(&index.path))
+    }
+
+    fn matching_git_index(&self) -> Option<&GitIndexLineStatus> {
+        if !self.modified {
+            return None;
+        }
+        let index = self.git_line_index.as_deref()?;
+        let matches_buffer = self.rope.is_instance(&index.text)
+            || self.git_index_match.as_ref().is_some_and(|matched| self.rope.is_instance(matched));
+        (matches_buffer && self.file_path.as_ref() == Some(&index.path)).then_some(index)
+    }
+
+    pub(crate) fn uses_git_index_markers(&self) -> bool {
+        self.matching_git_index().is_some()
+    }
+
+    /// History restores immutable Rope snapshots. Verify an unfamiliar
+    /// snapshot once here, keeping equality checks out of frame rendering.
+    pub(crate) fn refresh_git_index_match(&mut self) {
+        if !self.uses_git_index_markers()
+            && self.git_index_line_status().is_some_and(|index| matches_git_index(&self.rope, &index.text))
+        {
+            self.git_index_match = Some(self.rope.clone());
         }
     }
 
     /// Returns per-line change status:
     /// 'N' = unsaved buffer change, 'U' = unstaged git change, 'D' = deleted-line marker, 'S' = staged git change, ' ' = unchanged.
     pub(crate) fn line_diff_status(&self, line: usize) -> char {
+        if self.uses_git_index_markers() {
+            return match self.git_changes_at(line).staged() {
+                Some(crate::line_changes::ChangeKind::Removed) => 'D',
+                Some(_) => 'S',
+                None => ' ',
+            };
+        }
         let unsaved = self.unsaved_line_status(line);
         if unsaved != ' ' {
             return unsaved;
@@ -1453,8 +1592,13 @@ impl Editor {
 
     pub(crate) fn line_hunk_status(&self, line: usize) -> char {
         let status = self.line_diff_status(line);
-        if status == 'D' && self.git_staged_deletions.binary_search(&line).is_ok() { 'S' }
-        else { status }
+        if status == 'D' {
+            let changes = self.git_changes_at(line);
+            if changes.unstaged().is_none() && changes.staged().is_some() {
+                return 'S';
+            }
+        }
+        status
     }
 
     pub(crate) fn current_line_len(&self) -> usize {

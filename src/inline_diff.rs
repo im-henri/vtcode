@@ -146,7 +146,7 @@ impl InlineDiffScroll {
             self.overview_geometry = Some(geometry);
             self.change_rows =
                 crate::ui_editor_minimap::ChangeRows::project(height, total, |start, end| {
-                    if start >= end { return None; }
+                    if start >= end { return Default::default(); }
                     let first = self.wrap.row_at(start).logical;
                     let last = self.wrap.row_at(end.saturating_sub(1)).logical;
                     self.cache.overview_status_in_range(self.aligned, first, last + 1)
@@ -612,10 +612,10 @@ mod tests {
             app.diff_inline_scroll.max_column()
         );
         assert!(text(&terminal).contains("END"));
-        assert_eq!(
-            terminal.backend().buffer().cell((10, 1)).unwrap().symbol(),
-            "-"
-        );
+        let code = app.code_area.unwrap();
+        let buffer = terminal.backend().buffer();
+        let gutter: String = (0..code.x).map(|x| buffer[(x, code.y)].symbol()).collect();
+        assert_eq!(gutter, format!("{:>4}    - ", app.diff_inline_scroll.row + 1));
         mouse(
             &mut app,
             MouseEventKind::Down(MouseButton::Left),
@@ -790,15 +790,18 @@ mod tests {
                             .rows
                             .iter()
                             .map(|row| {
-                                if row.right_kind == '+' {
-                                    '+'
-                                } else {
-                                    row.left_kind
+                                match (row.left_kind, row.right_kind) {
+                                    ('-', '+') => 'M',
+                                    (_, '+') => 'A',
+                                    ('-', _) => 'D',
+                                    _ => ' ',
                                 }
                             })
                             .collect()
                     } else {
-                        cache.inline_rows.iter().map(|row| row.kind).collect()
+                        cache.inline_rows.iter().map(|row| match row.kind {
+                            '+' => 'A', '-' => 'D', _ => ' ',
+                        }).collect()
                     };
                     let expected = crate::ui_editor_minimap::ChangeRows::from_lines(
                         17,
@@ -807,7 +810,7 @@ mod tests {
                             .iter()
                             .enumerate()
                             .filter(|(_, kind)| **kind != ' ')
-                            .map(|(row, kind)| (row, if *kind == '-' { 'D' } else { 'U' })),
+                            .map(|(row, &kind)| (row, kind)),
                     );
                     assert_eq!(
                         scroll.change_rows, expected,
@@ -830,15 +833,18 @@ mod tests {
                         .rows
                         .iter()
                         .map(|row| {
-                            if row.right_kind == '+' {
-                                '+'
-                            } else {
-                                row.left_kind
+                            match (row.left_kind, row.right_kind) {
+                                ('-', '+') => 'M',
+                                (_, '+') => 'A',
+                                ('-', _) => 'D',
+                                _ => ' ',
                             }
                         })
                         .collect()
                 } else {
-                    cache.inline_rows.iter().map(|row| row.kind).collect()
+                    cache.inline_rows.iter().map(|row| match row.kind {
+                        '+' => 'A', '-' => 'D', _ => ' ',
+                    }).collect()
                 };
                 let mut editor = Editor::test_with_text(target);
                 let mut scroll = InlineDiffScroll {
@@ -856,7 +862,7 @@ mod tests {
                             .iter()
                             .enumerate()
                             .filter(|(_, kind)| **kind != ' ')
-                            .map(|(row, kind)| (row, if *kind == '-' { 'D' } else { 'U' })),
+                            .map(|(row, &kind)| (row, kind)),
                     );
                     assert_eq!(
                         scroll.change_rows, expected,

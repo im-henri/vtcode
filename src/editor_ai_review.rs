@@ -1201,7 +1201,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         for row in 0..scrollbar.height as usize {
             // The source renderer already painted Git/unsaved change markers.
             // Keep them when adapting the thumb to virtual conflict/review rows.
-            if app.cached_overview_change_rows.row(row).status().is_some() {
+            if !app.cached_overview_change_rows.row(row).changes().is_empty() {
                 continue;
             }
             f.render_widget(
@@ -1643,7 +1643,8 @@ mod tests {
                     .iter()
                     .position(|row| row.is_some_and(|r| r.line_idx == 2))
                     .unwrap() as u16;
-            let gutter_x = view.code.x - 2;
+            let gutter = app.gutter_area.unwrap();
+            let gutter_x = crate::ui_editor_highlight::change_gutter_column(gutter).unwrap() - 1;
             mouse(
                 &mut app,
                 MouseEventKind::Down(MouseButton::Left),

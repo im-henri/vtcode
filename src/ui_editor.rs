@@ -271,12 +271,15 @@ pub(crate) fn refresh_editor_change_index(app: &mut App, diff_changes: Option<&[
     let Some(editor) = app.tabs.get(app.active_tab).map(|tab| &tab.editor) else {
         return;
     };
-    let source = diff_changes.unwrap_or_else(|| editor.git_change_lines());
+    let (source_ptr, source_len) = diff_changes.map_or_else(|| {
+        let source = editor.git_change_lines();
+        (source.as_ptr() as usize, source.len())
+    }, |source| (source.as_ptr() as usize, source.len()));
     let compare = diff_changes.is_some();
     let key = (
         editor.navigation_id,
-        source.as_ptr() as usize,
-        source.len(),
+        source_ptr,
+        source_len,
         compare,
         editor.large_file_mode,
         if compare {
@@ -302,10 +305,12 @@ pub(crate) fn refresh_editor_change_index(app: &mut App, diff_changes: Option<&[
     }
     let entry = EditorChangeIndexEntry {
         key,
-        index: std::sync::Arc::new(if editor.large_file_mode && !compare {
+        index: std::sync::Arc::new(if let Some(changes) = diff_changes {
+            ChangeLineIndex::from_changes(changes)
+        } else if editor.large_file_mode {
             ChangeLineIndex::default()
         } else {
-            ChangeLineIndex::from_changes(source)
+            ChangeLineIndex::from_changes(editor.git_change_lines())
         }),
         _git_source: (!compare).then(|| editor.prepared_git_line_status()),
         _compare_source: compare.then(|| std::sync::Arc::clone(&app.diff_render_cache)),
@@ -547,7 +552,7 @@ pub(crate) fn cached_overview_change_rows(
     let key = (
         editor.navigation_id,
         editor.file_path.clone(),
-        editor.modified,
+        (editor.modified, editor.uses_git_index_markers()),
         editor.large_file_mode,
         editor.overview_change_revision,
         editor.git_line_status_len(),
@@ -1080,8 +1085,8 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             Style::default().fg(colors.ui.fg_line_number).bg(gutter_bg)
         };
         gutter_lines.push(f, [
-            bookmark,
             Span::styled(gutter_num_buf.as_str(), number_style),
+            bookmark,
             Span::styled(" ", Style::default().bg(gutter_bg)),
         ]);
 
@@ -1376,6 +1381,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     if let Some(editor) = app.editor_mut() {
+        editor.prepare_live_unsaved_diff();
         editor.blame.inline_candidate = None;
         editor.blame.inline_annotation = None;
         editor.fold_buttons.clear();
@@ -1508,6 +1514,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         width: full_gutter_area.width.saturating_sub(scope_rail_width),
         ..full_gutter_area
     };
+    let change_column_hovered = change_gutter_column(gutter_area) == Some(app.mouse_col);
     let scope_rail_area = Rect::new(
         gutter_area.right(),
         gutter_area.y,
@@ -1717,11 +1724,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             };
 
             let diff_status = if row.is_first {
-                editor.line_diff_status(line_idx)
+                editor.line_changes(line_idx)
             } else {
-                ' '
+                Default::default()
             };
-            let gutter_hovered = app.hovered_gutter_line == Some(line_idx);
+            let gutter_hovered = change_column_hovered && app.hovered_gutter_line == Some(line_idx);
 
             // Check for diagnostics on this line (binary search on sorted diagnostics)
             let lsp_diag = if row.is_first {
@@ -1779,8 +1786,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             let fold_style = crate::ui_editor_folds::gutter_style(&app.colors, bg, fold_char == "+", is_fold_hovered);
 
             gutter_lines.push(f, [
-                Span::styled(diff_char, diff_style),
                 Span::styled(line_num_display, num_style),
+                Span::styled(diff_char, diff_style),
                 Span::styled(fold_char, fold_style),
             ]);
         }
@@ -2583,6 +2590,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             scope_rail_area,
             false,
         );
+        draw_gutter_tooltip(f, app, gutter_area);
         return;
     }
 
@@ -2616,14 +2624,14 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
         // Git diff indicator / bookmark indicator
         let is_bookmarked = editor.bookmarks.contains(&i);
-        let diff_status = editor.line_diff_status(i);
+        let diff_status = editor.line_changes(i);
         let (diff_char, diff_style) = if is_bookmarked {
             ("●", Style::default().fg(app.colors.fg_bookmark).bg(bg)) // Orange bookmark
         } else {
             gutter_diff_indicator(
                 diff_status,
                 bg,
-                app.hovered_gutter_line == Some(i),
+                change_column_hovered && app.hovered_gutter_line == Some(i),
                 &app.colors,
             )
         };
@@ -2653,8 +2661,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let fold_style = crate::ui_editor_folds::gutter_style(&app.colors, bg, fold_char == "+", is_fold_hovered);
 
         gutter_lines.push(f, [
-            Span::styled(diff_char, diff_style),
             Span::styled(line_num_display, num_style),
+            Span::styled(diff_char, diff_style),
             Span::styled(fold_char, fold_style),
         ]);
     }
@@ -3728,7 +3736,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             // Also overlay the gutter for sticky lines
             let mut gutter_buf = String::with_capacity(gw + 2);
             if render_line_numbers {
-                let _ = write!(gutter_buf, " {:>width$} ", _line_idx + 1, width = gw);
+                let _ = write!(gutter_buf, "{:>width$}  ", _line_idx + 1, width = gw);
             } else {
                 gutter_buf.push_str("  ");
             }
@@ -3849,8 +3857,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     app.copy_animation.observe(&selection_style);
     crate::ui_animation_frame::finish_editor(f, app, animation_geometry, animation_gutter, true);
 
-    // Gutter blame tooltip on hover
-    draw_gutter_blame_tooltip(f, app, gutter_area);
+    draw_gutter_tooltip(f, app, gutter_area);
 
     // Diagnostic marker tooltip on hover (TODO/FIXME/HACK/BUG/NOTE)
     draw_diagnostic_marker_tooltip(f, app, code_area);
@@ -3858,7 +3865,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
 pub(crate) fn draw_animation_frame_tooltips(f: &mut Frame, app: &mut App) {
     if let Some(gutter) = app.gutter_area {
-        draw_gutter_blame_tooltip(f, app, gutter);
+        draw_gutter_tooltip(f, app, gutter);
     }
     if let Some(code) = app.code_area {
         draw_diagnostic_marker_tooltip(f, app, code);
@@ -4259,7 +4266,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_unsaved_diff_never_paints_the_shifted_line_suffix() {
+    fn live_unsaved_diff_keeps_the_shifted_line_suffix_clear() {
         let saved = ropey::Rope::from_str(
             "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n",
         );
@@ -4276,14 +4283,14 @@ mod tests {
         );
         editor.apply_unsaved_diff_cache(editor.content_version, diff);
 
-        // Make the cache stale without changing the line count. The earlier
-        // inserted line means a naive same-index comparison paints every later
-        // gutter row yellow until the background diff completes.
+        // Typing after an earlier insertion must preserve the green marker and
+        // add a blue marker on the edited row, even before background analysis.
         editor.cursor_line = 7;
         editor.cursor_col = 0;
         editor.insert_char('x');
 
         let mut app = App::test_new();
+        app.colors = crate::app_theme_loader::builtin_theme("monokai").unwrap().to_theme_colors();
         app.tabs.push(Tab::new_file(editor));
         app.active_tab = 0;
         app.show_line_numbers = true;
@@ -4293,21 +4300,27 @@ mod tests {
         let area = Rect::new(0, 0, 60, 12);
         let mut terminal =
             Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
-        terminal
-            .draw(|frame| draw_editor(frame, &mut app, area))
-            .expect("editor draw");
-
-        let buffer = terminal.backend().buffer();
-        let gutter = app.gutter_area.expect("gutter area");
-        let marker_rows: Vec<u16> = (gutter.top()..gutter.bottom())
-            .filter(|&y| {
-                buffer
-                    .cell((gutter.x, y))
-                    .is_some_and(|cell| cell.symbol() == "┃")
-            })
-            .collect();
-
-        assert_eq!(marker_rows, vec![gutter.y + 1, gutter.y + 7]);
+        for exact in [false, true] {
+            if exact {
+                let editor = app.editor_mut().unwrap();
+                let diff = crate::editor::compute_unsaved_diff_markers(
+                    editor.saved_rope.as_ref().unwrap(), &editor.rope,
+                );
+                editor.apply_unsaved_diff_cache(editor.content_version, diff);
+            }
+            terminal.draw(|frame| draw_editor(frame, &mut app, area)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let gutter = app.gutter_area.expect("gutter area");
+            let marker_col = change_gutter_column(gutter).unwrap();
+            let markers: Vec<_> = (gutter.top()..gutter.bottom()).filter_map(|y| {
+                let cell = buffer.cell((marker_col, y))?;
+                (cell.symbol() == "┃").then_some((y, cell.fg))
+            }).collect();
+            assert_eq!(markers, [
+                (gutter.y + 1, app.colors.ui.fg_gutter_added),
+                (gutter.y + 7, app.colors.ui.fg_gutter_modified),
+            ], "exact={exact}");
+        }
     }
 
     #[test]
@@ -4616,6 +4629,73 @@ mod tests {
     }
 
     #[test]
+    fn change_gutter_renders_single_and_split_bars_in_one_column() {
+        use crate::editor::PreparedGitLineStatus;
+
+        for wrap in [false, true] {
+            let mut app = App::test_new();
+            app.colors = crate::app_theme_loader::builtin_theme("monokai").unwrap().to_theme_colors();
+            let mut editor = Editor::test_with_text(
+                "added\nanchor\nreplaced\nstaged addition\nstaged anchor\nstaged replacement\noverlap\nmodified\nkept\n",
+            );
+            editor.word_wrap = wrap;
+            editor.set_prepared_git_line_status(PreparedGitLineStatus::from_diffs(
+                editor.line_count(),
+                &[' ', ' ', ' ', 'A', 'D', 'M', 'D', ' '],
+                &['A', 'D', 'M', ' ', ' ', ' ', 'A', 'U'],
+            ));
+            app.tabs.push(Tab::new_file(editor));
+            app.sticky_scroll = false;
+            app.show_breadcrumbs = false;
+            app.show_line_numbers = true;
+            app.relative_line_numbers = false;
+            let mut terminal = Terminal::new(TestBackend::new(100, 14)).unwrap();
+            terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+            let gutter = app.gutter_area.unwrap();
+            let number_width = line_number_width(app.editor().unwrap().line_count()) as u16;
+            assert_eq!(gutter.width, number_width + 2);
+            let marker_col = change_gutter_column(gutter).unwrap();
+            assert_eq!(marker_col, gutter.x + number_width);
+            let buffer = terminal.backend().buffer();
+            let added = app.colors.ui.fg_gutter_added;
+            let removed = app.colors.ui.fg_gutter_deleted;
+            let modified = app.colors.ui.fg_gutter_modified;
+            let staged_added = app.colors.ui.fg_gutter_added_secondary;
+            let staged_removed = app.colors.ui.fg_gutter_deleted_secondary;
+            let staged_modified = app.colors.ui.fg_gutter_modified_secondary;
+            for (offset, symbol, color) in [
+                (0, "┃", added),
+                (1, "▸", removed),
+                (2, "┃", modified),
+                (3, "┃", staged_added),
+                (4, "▸", staged_removed),
+                (5, "┃", staged_modified),
+                (7, "┃", modified),
+            ] {
+                let y = gutter.y + offset;
+                let cell = &buffer[(marker_col, y)];
+                assert_eq!(cell.symbol(), symbol, "row {offset}, wrap={wrap}");
+                assert_eq!(cell.fg, color);
+                assert_eq!(cell.bg, buffer[(marker_col - 1, y)].bg);
+                assert_eq!(buffer[(marker_col - 1, y)].symbol(), (offset + 1).to_string());
+            }
+            let overlap = &buffer[(marker_col, gutter.y + 6)];
+            assert_eq!(overlap.symbol(), "▐");
+            assert_eq!((overlap.bg, overlap.fg), (staged_removed, added));
+            assert_eq!(buffer[(marker_col, gutter.y + 8)].symbol(), " ");
+
+            app.hovered_gutter_line = Some(6);
+            app.mouse_col = marker_col;
+            app.mouse_row = gutter.y + 6;
+            terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+            let buffer = terminal.backend().buffer();
+            let row: String = (gutter.right()..100).map(|x| buffer[(x, app.mouse_row)].symbol()).collect();
+            assert!(row.contains("Staged removed lines"), "{row}");
+            assert!(row.contains("Unstaged added lines"), "{row}");
+        }
+    }
+
+    #[test]
     fn editor_and_diff_layouts_render_solid_half_cell_markers_with_and_without_minimaps() {
         for (mode, unsaved, show_minimap) in [
             (crate::app::DiffMode::Off, false, false),
@@ -4862,7 +4942,7 @@ mod tests {
         let first = cached_overview_change_rows(&mut app, 10, None);
         let second = cached_overview_change_rows(&mut app, 10, None);
         assert!(std::sync::Arc::ptr_eq(&first, &second));
-        assert_eq!(first.row(5).status(), Some('U'));
+        assert_eq!(first.row(5).changes(), 'U'.into());
 
         app.editor_mut()
             .unwrap()
@@ -4878,18 +4958,18 @@ mod tests {
         let text = format!("{}line", "line\n".repeat(49_999));
         let mut editor = Editor::test_with_text(&text);
         editor.file_path = Some(std::path::PathBuf::from("dense-changes.txt"));
-        editor.saved_rope = Some(editor.rope.clone());
+        editor.saved_rope = Some(ropey::Rope::from_str(&format!("{}old", "old\n".repeat(49_999))));
         editor.modified = true;
         let line_count = editor.line_count();
         editor.apply_unsaved_diff_cache(
             editor.content_version,
-            crate::editor::UnsavedDiff { line_count, changed_ranges: vec![0..line_count] },
+            crate::editor::UnsavedDiff { line_count, changed_ranges: vec![0..line_count], ..Default::default() },
         );
         app.tabs.push(Tab::new_file(editor));
         app.active_tab = 0;
 
         let before_edit = cached_overview_change_rows(&mut app, 100, None);
-        assert!((0..100).all(|row| before_edit.row(row).status().is_some()));
+        assert!((0..100).all(|row| !before_edit.row(row).changes().is_empty()));
 
         app.editor_mut().unwrap().insert_char('x');
         let after_edit = cached_overview_change_rows(&mut app, 100, None);

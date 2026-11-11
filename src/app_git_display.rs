@@ -57,26 +57,45 @@ fn line_diff_from_ops(old_len: usize, new_len: usize, ops: &[similar::DiffOp]) -
     for op in ops {
         if let similar::DiffOp::Delete { new_index, .. } = *op {
             let line = new_index.min(result.len().saturating_sub(1));
-            result[line] = 'D';
+            result[line] = merge_kind(result[line], 'D');
         }
     }
     result
 }
 
+fn merge_kind(left: char, right: char) -> char {
+    match (left, right) {
+        (' ', other) | (other, ' ') => other,
+        (a, b) if a == b => a,
+        _ => 'M',
+    }
+}
+
 /// Both marker sets must use worktree coordinates. Reuse the unstaged diff's
-/// equal ranges instead of diffing a second time or mapping each line separately.
-pub(crate) fn compute_worktree_line_diffs(staged: &[char], index: &[&str], worktree: &[&str]) -> (Vec<char>, Vec<char>) {
+/// equal ranges and project overlapping staged changes onto the worktree edit.
+pub(crate) fn compute_worktree_line_diffs(staged: &[char], index: &[&str], worktree: &[&str], anchors: &[usize]) -> (Vec<char>, Vec<char>) {
     let diff = similar::TextDiff::from_slices(index, worktree);
-    let unstaged = line_diff_from_ops(index.len(), worktree.len(), diff.ops());
+    let ops = crate::line_changes::anchor_insertions(diff.ops(), anchors, |a, b| Some(worktree[a] == worktree[b]))
+        .expect("uncancelled gutter alignment");
+    let unstaged = line_diff_from_ops(index.len(), worktree.len(), &ops);
     let mut mapped = vec![' '; worktree.len().max(1)];
-    for op in diff.ops() {
+    for op in ops.iter() {
         if let similar::DiffOp::Equal { old_index, new_index, len } = *op
             && let Some(source) = staged.get(old_index..old_index + len)
         {
             mapped[new_index..new_index + len].copy_from_slice(source);
         }
     }
-    if index.is_empty() && worktree.is_empty() && staged.first() == Some(&'D') { mapped[0] = 'D'; }
+    for op in ops.iter().filter(|op| op.tag() != similar::DiffTag::Equal) {
+        let Some(source) = staged.get(op.old_range()) else { continue; };
+        let target = op.new_range();
+        for (offset, &kind) in source.iter().enumerate().filter(|(_, kind)| **kind != ' ') {
+            let line = (target.start + offset.min(target.len().saturating_sub(1)))
+                .min(mapped.len() - 1);
+            mapped[line] = merge_kind(mapped[line], kind);
+        }
+    }
+    if index.is_empty() && staged.first() == Some(&'D') { mapped[0] = 'D'; }
     (mapped, unstaged)
 }
 
@@ -86,29 +105,23 @@ pub(crate) fn target_line_markers_from_compare_diff(
 ) -> Vec<char> {
     let mut target_line_markers = vec![' '; target_line_count];
     let mut target_line = 0usize;
-    for (kind, _) in compare_diff_lines {
-        match *kind {
-            '+' => {
-                if let Some(marker) = target_line_markers.get_mut(target_line) {
-                    *marker = 'U';
-                }
-                target_line = target_line.saturating_add(1);
+    for run in compare_diff_lines.chunk_by(|a, b| (a.0 == ' ') == (b.0 == ' ')) {
+        if run[0].0 == ' ' {
+            target_line += run.len();
+            continue;
+        }
+        let additions = run.iter().filter(|(kind, _)| *kind == '+').count();
+        let removed = run.iter().any(|(kind, _)| *kind == '-');
+        if additions > 0 {
+            let end = target_line + additions;
+            target_line_markers[target_line.min(target_line_count)..end.min(target_line_count)]
+                .fill(if removed { 'M' } else { 'A' });
+            target_line = end;
+        } else if removed {
+            let anchor = target_line.min(target_line_count.saturating_sub(1));
+            if let Some(marker) = target_line_markers.get_mut(anchor) {
+                *marker = merge_kind(*marker, 'D');
             }
-            ' ' => {
-                target_line = target_line.saturating_add(1);
-            }
-            '-' => {
-                if target_line_markers.is_empty() {
-                    continue;
-                }
-                let marker_idx = target_line.min(target_line_markers.len().saturating_sub(1));
-                if let Some(marker) = target_line_markers.get_mut(marker_idx) {
-                    if *marker == ' ' {
-                        *marker = 'D';
-                    }
-                }
-            }
-            _ => {}
         }
     }
     target_line_markers
@@ -290,6 +303,27 @@ mod tests {
     }
 
     #[test]
+    fn blank_insertion_anchors_project_staged_rows_past_the_inserted_line() {
+        let index = ["one", "", "", "last"];
+        let worktree = ["one", "", "", "", "last"];
+        let (staged, unstaged) = compute_worktree_line_diffs(
+            &[' ', 'A', 'M', ' '], &index, &worktree, &[1],
+        );
+        assert_eq!(staged, [' ', ' ', 'A', 'M', ' ']);
+        assert_eq!(unstaged, [' ', 'A', ' ', ' ', ' ']);
+    }
+
+    #[test]
+    fn blank_insertion_after_deletions_preserves_the_equal_rows_from_the_index() {
+        let index = ["A", "", "B", "B", "A", "B", "", "B", ""];
+        let worktree = ["B", "A", "", "", "", ""];
+        let (staged, _) = compute_worktree_line_diffs(
+            &[' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'A'], &index, &worktree, &[3, 4],
+        );
+        assert_eq!(staged, [' ', ' ', ' ', ' ', ' ', 'A']);
+    }
+
+    #[test]
     fn compute_line_diff_all_added() {
         let result = compute_line_diff(&[], &["x", "y"]);
         assert_eq!(result, vec!['A', 'A']);
@@ -338,7 +372,7 @@ mod tests {
             ('+', "added".to_string()),
         ];
         let markers = target_line_markers_from_compare_diff(&diff, 2);
-        assert_eq!(markers, vec![' ', 'U']);
+        assert_eq!(markers, vec![' ', 'A']);
     }
 
     #[test]

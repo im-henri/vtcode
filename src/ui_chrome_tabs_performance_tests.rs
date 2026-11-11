@@ -129,7 +129,7 @@ fn tab_hits_match_drawn_buttons_and_stay_inside_the_bar() {
                 if app.tabs[index].pinned {
                     assert!(close.is_empty());
                 } else if !close.is_empty() {
-                    assert_ne!(buffer[(close.x, area.y)].symbol(), "×", "active tabs do not show close until hovered");
+                    assert_eq!(buffer[(close.x, area.y)].symbol(), "×");
                 }
             }
             assert!(hits.tab_at(area.right()).is_none());
@@ -189,12 +189,7 @@ fn split_tab_bars_share_path_hints_and_matching_hit_geometry() {
         let hits = TabBarHits::for_group(&app, Rect::new(0, row, 100, 1), group);
         let (_, rect, close) = hits.tabs[0];
         assert_eq!(hits.tab_at(rect.x).unwrap().0, 0);
-        assert_ne!(buffer[(close.x, row)].symbol(), "×");
-        app.mouse_position_known = true;
-        app.mouse_col = rect.x + 1;
-        app.mouse_row = row;
-        terminal.draw(|frame| draw_tab_bar_for_group(frame, &app, Rect::new(0, row, 100, 1), group, std::time::Instant::now())).unwrap();
-        assert_eq!(terminal.backend().buffer()[(close.x, row)].symbol(), "×");
+        assert_eq!(buffer[(close.x, row)].symbol(), "×");
     }
 }
 
