@@ -50,7 +50,6 @@ fn passive(messages: &[Value]) -> Vec<&Value> {
                 message["method"].as_str(),
                 Some(
                     "textDocument/inlayHint"
-                        | "textDocument/documentSymbol"
                         | "textDocument/foldingRange"
                         | "textDocument/codeLens"
                         | "textDocument/documentLink"
@@ -80,16 +79,15 @@ fn passive_features_wait_for_startup_then_request_the_original_snapshot() {
     for _ in 0..32 { poll(&mut app); }
     assert!(server.take_messages().is_empty());
     assert!(app.lsp_manager.inlay_hint_request.is_none());
-    assert!(app.lsp_manager.document_symbol_request.is_none());
+    assert!(app.lsp_manager.passive_document.is_none());
     // The manager also protects callers outside the app scheduler.
     assert!(!app.lsp_manager.request_inlay_hints(&path, 0, 100));
-    assert!(!app.lsp_manager.request_document_symbol(&path));
     assert!(app.lsp_manager.inlay_hint_request.is_none());
-    assert!(app.lsp_manager.document_symbol_request.is_none());
     server.queue_event(LspEvent::Initialized { capabilities: Box::new(None) });
     poll(&mut app);
     let messages = server.take_messages();
-    assert_eq!(passive(&messages).len(), 5);
+    assert_eq!(passive(&messages).len(), 4);
+    assert!(messages.iter().all(|message| message["method"] != "textDocument/documentSymbol"));
     let id = request_id(&messages, "textDocument/inlayHint");
     server.respond(json!({"id":id,"result":[hint("ready")]}));
     poll(&mut app);
@@ -106,12 +104,11 @@ fn unsupported_passive_features_are_recorded_without_building_requests_again() {
     app.lsp_inlay_hint_last_scroll = usize::MAX;
     poll(&mut app);
     assert_eq!(app.lsp_inlay_hint_last_scroll, 0);
-    assert_eq!(app.lsp_outline_last_version, 1);
     assert_eq!(app.lsp_folding_last_version, 1);
     assert_eq!(app.lsp_code_lens_last_version, 1);
     assert_eq!(app.lsp_document_links_last_version, 1);
     assert!(app.lsp_manager.inlay_hint_request.is_some());
-    assert!(app.lsp_manager.document_symbol_request.is_some());
+    assert!(app.lsp_manager.passive_document.is_some());
     for _ in 0..32 { poll(&mut app); }
     assert!(passive(&server.take_messages()).is_empty());
 }
@@ -121,9 +118,9 @@ fn typing_coalesces_all_passive_features_after_the_exact_did_change() {
     let (mut app, server, _directory, path) = fixture();
     poll(&mut app);
     let first = server.take_messages();
-    assert_eq!(passive(&first).len(), 5);
+    assert_eq!(passive(&first).len(), 4);
     let old_hint = request_id(&first, "textDocument/inlayHint");
-    let old_symbol = request_id(&first, "textDocument/documentSymbol");
+    let old_folds = request_id(&first, "textDocument/foldingRange");
     app.lsp_inlay_hints = vec![crate::app::InlayHintDisplay::new(0, 2, "published", None)];
 
     for version in 2..=51 {
@@ -143,7 +140,7 @@ fn typing_coalesces_all_passive_features_after_the_exact_did_change() {
             .iter()
             .filter(|message| message["method"] == "$/cancelRequest")
             .count(),
-        6 // Five passive features and the superseded document highlight.
+        5 // Four passive features and the superseded document highlight.
     );
     assert_eq!(app.lsp_inlay_hints[0].label, "published");
 
@@ -157,7 +154,7 @@ fn typing_coalesces_all_passive_features_after_the_exact_did_change() {
     poll(&mut app);
     let synchronized = server.take_messages();
     assert_eq!(synchronized[0]["method"], "textDocument/didChange");
-    assert_eq!(passive(&synchronized).len(), 5);
+    assert_eq!(passive(&synchronized).len(), 4);
     let requested_hint = passive(&synchronized)
         .into_iter()
         .find(|message| message["method"] == "textDocument/inlayHint")
@@ -180,12 +177,13 @@ fn typing_coalesces_all_passive_features_after_the_exact_did_change() {
         request_id: old_hint,
         hints: vec![hint("obsolete")],
     });
-    server.queue_event(LspEvent::DocumentSymbolResponse {
-        request_id: old_symbol,
-        symbols: Vec::new(),
+    server.queue_event(LspEvent::FoldingRangeResponse {
+        request_id: old_folds,
+        ranges: serde_json::from_value(json!([{"startLine": 0, "endLine": 2}])).unwrap(),
     });
     poll(&mut app);
     assert_eq!(app.lsp_inlay_hints[0].label, "published");
+    assert!(app.lsp_folding_ranges.is_empty());
     assert_eq!(app.lsp_manager.clients.len(), 1);
     assert!(passive(&server.take_messages()).is_empty());
 }
@@ -303,12 +301,8 @@ fn synchronized_scroll_reuses_covered_rows_and_requests_new_ranges_immediately()
     poll(&mut app);
     let initial = server.take_messages();
     app.lsp_inlay_hints = vec![crate::app::InlayHintDisplay::new(0, 2, "old hint", None)];
-    app.lsp_outline_available = true;
     for request in passive(&initial) {
-        let result = if matches!(
-            request["method"].as_str(),
-            Some("textDocument/inlayHint" | "textDocument/documentSymbol")
-        ) {
+        let result = if request["method"] == "textDocument/inlayHint" {
             Value::Null
         } else {
             json!([])
@@ -317,9 +311,7 @@ fn synchronized_scroll_reuses_covered_rows_and_requests_new_ranges_immediately()
     }
     poll(&mut app);
     assert!(app.lsp_inlay_hints.is_empty());
-    assert!(!app.lsp_outline_available);
     assert!(app.lsp_manager.active_inlay_hint_id.is_none());
-    assert!(app.lsp_manager.active_document_symbol_id.is_none());
     server.take_messages();
     app.last_edit_time = Instant::now();
     for offset in 1..=50 {
@@ -377,7 +369,9 @@ fn request_errors_retire_work_without_killing_the_server_or_repeating_unsupporte
     poll(&mut app);
     assert!(!app.lsp_format_pending);
     assert!(app.lsp_format_target_path.is_none());
-    assert!(!app.lsp_outline_available);
+    assert!(app.lsp_manager.active_folding_range_id.is_none());
+    assert!(app.lsp_manager.active_code_lens_id.is_none());
+    assert!(app.lsp_manager.active_document_links_id.is_none());
     assert_eq!(app.lsp_manager.clients.len(), 1);
     assert!(!app.lsp_manager.clients[0].server_dead);
     for _ in 0..32 {
@@ -391,7 +385,7 @@ fn request_errors_retire_work_without_killing_the_server_or_repeating_unsupporte
     poll(&mut app);
     let later = server.take_messages();
     assert_eq!(later[0]["method"], "textDocument/didChange");
-    assert_eq!(passive(&later).len(), 5);
+    assert_eq!(passive(&later).len(), 4);
 }
 
 #[test]
@@ -400,7 +394,7 @@ fn equal_versions_on_different_servers_and_close_cannot_accept_obsolete_replies(
     poll(&mut app);
     let initial = first_server.take_messages();
     let first_hint = request_id(&initial, "textDocument/inlayHint");
-    let first_symbol = request_id(&initial, "textDocument/documentSymbol");
+    let first_folds = request_id(&initial, "textDocument/foldingRange");
     let second_path = directory.path().join("second.py");
     let mut editor = Editor::test_with_text("second\n");
     editor.file_path = Some(second_path.clone());
@@ -414,23 +408,24 @@ fn equal_versions_on_different_servers_and_close_cannot_accept_obsolete_replies(
     app.active_tab = 1;
     poll(&mut app);
     let second = second_server.take_messages();
-    assert_eq!(passive(&second).len(), 5);
+    assert_eq!(passive(&second).len(), 4);
     assert_ne!(request_id(&second, "textDocument/inlayHint"), first_hint);
-    assert_ne!(
-        request_id(&second, "textDocument/documentSymbol"),
-        first_symbol
-    );
+    let second_folds = request_id(&second, "textDocument/foldingRange");
+    assert_ne!(second_folds, first_folds);
     first_server.queue_event(LspEvent::InlayHintResponse {
         request_id: first_hint,
         hints: vec![hint("wrong server")],
     });
-    first_server.queue_event(LspEvent::DocumentSymbolResponse {
-        request_id: first_symbol,
-        symbols: Vec::new(),
+    first_server.queue_event(LspEvent::FoldingRangeResponse {
+        request_id: first_folds,
+        ranges: serde_json::from_value(json!([{"startLine": 0, "endLine": 2}])).unwrap(),
     });
     poll(&mut app);
     assert!(app.lsp_inlay_hints.is_empty());
-    assert!(!app.lsp_outline_available);
+    assert!(app.lsp_folding_ranges.is_empty());
+    second_server.respond(json!({"id":second_folds,"result":[{"startLine":0,"endLine":1}]}));
+    poll(&mut app);
+    assert_eq!(app.editor().unwrap().lsp_folding_ranges, [(0, 1)]);
 
     let second_hint = request_id(&second, "textDocument/inlayHint");
     app.lsp_manager.did_close(&second_path);
@@ -443,7 +438,7 @@ fn equal_versions_on_different_servers_and_close_cannot_accept_obsolete_replies(
     assert!(app.lsp_inlay_hints.is_empty());
     assert!(passive(&second_server.take_messages()).is_empty());
     assert!(app.lsp_manager.inlay_hint_request.is_none());
-    assert!(app.lsp_manager.document_symbol_request.is_none());
+    assert!(app.lsp_manager.passive_document.is_none());
 }
 
 #[test]
@@ -484,10 +479,10 @@ fn save_orders_did_change_before_did_save_and_refreshes_only_the_latest_snapshot
     assert!(passive(&messages).is_empty());
     app.last_edit_time = Instant::now() - Duration::from_secs(2);
     poll(&mut app);
-    assert_eq!(passive(&server.take_messages()).len(), 5);
+    assert_eq!(passive(&server.take_messages()).len(), 4);
     assert_eq!(
         app.lsp_manager
-            .document_symbol_request
+            .passive_document
             .as_ref()
             .unwrap()
             .target

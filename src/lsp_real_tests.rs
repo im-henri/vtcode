@@ -108,11 +108,8 @@ impl Session {
                 },
             );
         }
-        // Early passive requests must not poison the cache before capabilities
-        // arrive. Later outline/inlay checks run against the same unchanged file.
-        assert!(!manager.request_document_symbol(&path));
+        // Later inlay requests should work on the same snapshot once the server initializes.
         assert!(!manager.request_inlay_hints(&path, 0, 7));
-        assert!(manager.document_symbol_request.is_none());
         assert!(manager.inlay_hint_request.is_none());
         wait(&mut manager, "initialize", |m| m.clients[0].initialized);
         Self {
@@ -319,14 +316,6 @@ fn editing_workflow(language: &str, source: &str) {
             .any(|s| s.label.contains("right"))
     );
     assert_eq!(signature.active_parameter, 1);
-    assert!(s.manager.request_document_symbol(&s.path));
-    wait(&mut s.manager, "outline", |m| m.document_symbols_dirty);
-    assert!(
-        s.manager
-            .document_symbols
-            .iter()
-            .any(|item| item.name == "sum_values")
-    );
     assert!(s.manager.request_document_highlight(
         &s.path,
         0,

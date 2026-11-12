@@ -15,6 +15,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 use std::{
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -213,23 +214,32 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let width = body.width.saturating_sub(6).max(1) as usize;
     app.chat.connection.input_layout.layout(&app.chat.connection.input, width);
     let input_height = (app.chat.input_layout.rows.len() as u16).clamp(2, 6);
-    let attachments_height = if app.chat.terminal_input.is_none()
-        && !app.chat.loading_id
-        && !app.chat.files.attached.is_empty()
-    {
+    let message_input = app.chat.terminal_input.is_none() && !app.chat.loading_id;
+    let attachments_height = if !message_input {
+        0
+    } else if body.width >= 10 && !app.chat.files.attached.is_empty() {
         1 + app.chat.files.attached.len().min(3) as u16
     } else {
-        u16::from(app.chat.terminal_input.is_none() && !app.chat.loading_id && app.chat.files.attaching.contains_key(&app.chat.selected))
+        u16::from(app.chat.files.attaching.contains_key(&app.chat.selected))
     };
+    let review_files: Vec<_> = if message_input && app.chat.rollback.enabled {
+        app.chat.session().into_iter()
+            .flat_map(|session| session.rollback.pending_files())
+            .map(|(path, count)| (path.to_path_buf(), count))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let review_height = review_files_height(review_files.len());
     let selectors = composer_selectors(
         app,
         body.width.saturating_sub(4),
         body.height
-            .saturating_sub(input_height + attachments_height + 10)
+            .saturating_sub(input_height + attachments_height + review_height + 10)
             .clamp(1, 4),
     );
     let composer_height =
-        (input_height + 5 + attachments_height + selectors.height.saturating_sub(1))
+        (input_height + 5 + attachments_height + review_height + selectors.height.saturating_sub(1))
             .min(body.height.saturating_sub(4));
     let composer = Rect::new(
         body.x + 1,
@@ -509,7 +519,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     queue::draw(f, app, Rect::new(composer.x, composer.y.saturating_sub(tasks_height + queue_height), composer.width, queue_height));
     tasks::draw(f, app, Rect::new(composer.x, composer.y.saturating_sub(tasks_height), composer.width, tasks_height));
-    draw_composer(f, app, composer, selectors);
+    draw_composer(f, app, composer, selectors, attachments_height, &review_files);
     app.chat.files.popup = None;
     if app.chat.picker.is_some() {
         draw_picker(f, app, body, composer);
@@ -660,15 +670,29 @@ fn button(
         if primary { widgets::ButtonKind::Primary } else { widgets::ButtonKind::Quiet });
 }
 
-fn draw_composer(f: &mut Frame, app: &mut App, mut area: Rect, mut selectors: ComposerSelectors) {
+fn draw_composer(
+    f: &mut Frame,
+    app: &mut App,
+    mut area: Rect,
+    mut selectors: ComposerSelectors,
+    attachments_height: u16,
+    review_files: &[(PathBuf, usize)],
+) {
     if area.height < 3 {
         return;
     }
-    if app.chat.terminal_input.is_none() && !app.chat.loading_id {
-        let height = draw_attached_files(f, app, area, selectors.height);
-        area.y += height;
-        area.height = area.height.saturating_sub(height);
-    }
+    // Keep the input and controls usable in short panes. Each file section
+    // can collapse to its list button when there is only room for the header.
+    let file_room = area.height.saturating_sub(7 + selectors.height.saturating_sub(1));
+    let attachment_reserve = attachments_height.min(2).min(file_room / 2);
+    let review_height = review_files_height(review_files.len()).min(file_room - attachment_reserve);
+    let attachments_height = attachments_height.min(file_room - review_height);
+    draw_attached_files(f, app, Rect { height: attachments_height, ..area });
+    area.y += attachments_height;
+    area.height -= attachments_height;
+    draw_review_files(f, app, Rect { height: review_height, ..area }, review_files);
+    area.y += review_height;
+    area.height -= review_height;
     let focused = app.active_pane == ActivePane::Chat
         && app.chat.picker.is_none()
         && app.chat.focus.is_none();
@@ -1281,31 +1305,30 @@ fn selector(f: &mut Frame, app: &mut App, area: Rect, label: &str, picker: Picke
     );
 }
 
-fn draw_attached_files(f: &mut Frame, app: &mut App, area: Rect, selector_rows: u16) -> u16 {
+fn draw_attached_files(f: &mut Frame, app: &mut App, area: Rect) {
+    if area.is_empty() {
+        return;
+    }
     let count = app.chat.files.attached.len();
     let checking = app.chat.files.attaching.contains_key(&app.chat.selected);
-    if count == 0 && checking && area.height > 0 {
+    if checking && (count == 0 || area.width < 8) {
         f.render_widget(Paragraph::new(" Checking attachments…").style(Style::default().fg(app.colors.fg_dim)), Rect::new(area.x, area.y, area.width, 1));
-        return 1;
+        return;
     }
-    let rows = count
-        .min(3)
-        .min(area.height.saturating_sub(6 + selector_rows.max(1)) as usize);
-    if rows == 0 || area.width < 8 {
-        return 0;
-    }
+    let rows = area.height.saturating_sub(1) as usize;
+    let paging = rows > 0 && count > rows && area.width >= 12;
     let start = app.chat.files.scroll.min(count.saturating_sub(rows));
     let caption = if checking { format!(" Files · {count} · Checking… ") } else { format!(" Files · {count} ▾ ") };
     button(
         f,
         app,
-        Rect::new(area.x, area.y, area.width.saturating_sub(8), 1),
+        Rect::new(area.x, area.y, area.width - if paging { 8 } else { 0 }, 1),
         &caption,
         ChatAction::Picker(Picker::Attachments),
         true,
         false,
     );
-    if count > rows {
+    if paging {
         button(
             f,
             app,
@@ -1349,7 +1372,60 @@ fn draw_attached_files(f: &mut Frame, app: &mut App, area: Rect, selector_rows: 
             false,
         );
     }
-    rows as u16 + 1
+}
+
+fn review_files_height(count: usize) -> u16 {
+    u16::from(count > 0) + count.min(3) as u16
+}
+
+fn draw_review_files(f: &mut Frame, app: &mut App, area: Rect, files: &[(PathBuf, usize)]) {
+    if files.is_empty() {
+        app.chat.review_files_scroll = 0;
+        return;
+    }
+    if area.is_empty() {
+        return;
+    }
+    let rows = area.height.saturating_sub(1) as usize;
+    let last = files.len() - rows;
+    let start = app.chat.review_files_scroll.min(last);
+    if rows > 0 {
+        app.chat.review_files_scroll = start;
+    }
+    let paging = rows > 0 && last > 0 && area.width >= 12;
+    let title_width = area.width - if paging { 6 } else { 0 };
+    let title = elide(&format!(" Unreviewed · {} ▾", files.len()), title_width as usize);
+    button(
+        f, app, Rect::new(area.x, area.y, title_width, 1), &title,
+        ChatAction::Picker(Picker::Unreviewed), true, false,
+    );
+    if paging {
+        for (x, label, offset) in [
+            (area.right() - 6, " ↑ ", start.saturating_sub(rows)),
+            (area.right() - 3, " ↓ ", (start + rows).min(last)),
+        ] {
+            button(
+                f, app, Rect::new(x, area.y, 3, 1), label,
+                ChatAction::ReviewFilesPage(offset), offset != start, false,
+            );
+        }
+    }
+    for (row, (path, count)) in files[start..start + rows].iter().enumerate() {
+        let root = &app.explorer.root;
+        let label = crate::app_chat_files::file_label(&root.join(path), root);
+        let suffix = format!("  {count} {}", if *count == 1 { "chunk" } else { "chunks" });
+        let width = area.width.saturating_sub(2) as usize;
+        let label = if width > suffix.width() + 4 {
+            format!("{}{}", elide(&label, width - suffix.width()), suffix)
+        } else {
+            elide(&label, width)
+        };
+        button(
+            f, app,
+            Rect::new(area.x + 1, area.y + 1 + row as u16, area.width - 2, 1),
+            &label, ChatAction::ReviewFile(path.clone()), true, false,
+        );
+    }
 }
 
 fn draw_file_completion(f: &mut Frame, app: &mut App, body: Rect, composer: Rect) {
@@ -1457,6 +1533,7 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         Picker::Commands => "Commands",
         Picker::Permissions => "Permission",
         Picker::Attachments => "Files",
+        Picker::Unreviewed => "Unreviewed files",
         Picker::Changes => "Pending agent changes",
         Picker::ChangedFile(_) => "File changes",
         Picker::Change(_) => "Review change",
@@ -1479,6 +1556,7 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
             | Picker::Commands
             | Picker::Permissions
             | Picker::Attachments
+            | Picker::Unreviewed
             | Picker::ThinkingInfo
     );
     let anchor_picker = if let Picker::Restore(id) = picker {
@@ -2031,10 +2109,8 @@ fn entry_rows_detail(
             }
         }
         ChatEntry::Edit(edit) => {
-            let pending = session.rollback.pending_file(&edit.path);
-            if let Some(change) = pending {
-                plain(&mut rows, "●  File updated · Pending review".into(), c.fg_warning,
-                    Some(ChatAction::Picker(Picker::ChangedFile(change.path.clone()))));
+            if session.rollback.pending_file(&edit.path).is_some() {
+                plain(&mut rows, "●  File updated · Pending review".into(), c.fg_warning, None);
             } else {
                 plain(&mut rows, "✓  File updated".into(), c.fg_success, None);
             }
@@ -2084,7 +2160,7 @@ fn diff_rows(rows: &mut Vec<ChatRow>, diff: &p::Diff, width: usize, c: &ThemeCol
         plain(
             rows,
             format!(
-                "  ↗ {} · Review full change",
+                "  ↗ {} · Review",
                 diff.path.file_name().unwrap_or_default().to_string_lossy()
             ),
             c.ui.fg_chat_edited_file,

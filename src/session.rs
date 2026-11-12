@@ -157,8 +157,6 @@ pub struct Session {
     pub(crate) repositories: crate::git_repositories::SavedRepositories,
     #[serde(default = "default_sc_graph_height")]
     pub sc_graph_height: u16,
-    #[serde(default)]
-    pub outline_scroll: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub search_history: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1627,7 +1625,6 @@ mod tests {
             theme: Some("gruvbox".to_string()),
             sc_graph_collapsed: true,
             sc_graph_height: 7,
-            outline_scroll: 12,
             global_search_query: "todo".to_string(),
             global_search_replace_query: "done".to_string(),
             search_include_pattern: "src\\**\\*.rs".to_string(),
@@ -1647,7 +1644,6 @@ mod tests {
         assert_eq!(loaded.theme.as_deref(), Some("gruvbox"));
         assert!(loaded.sc_graph_collapsed);
         assert_eq!(loaded.sc_graph_height, 7);
-        assert_eq!(loaded.outline_scroll, 12);
         assert_eq!(loaded.global_search_query, "todo");
         assert_eq!(loaded.global_search_replace_query, "done");
         assert_eq!(loaded.search_include_pattern, "src\\**\\*.rs");

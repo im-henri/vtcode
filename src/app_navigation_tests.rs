@@ -1161,7 +1161,7 @@ fn explicit_commands_do_not_reuse_the_source_selection_anchor() {
         move_to(&mut app, 20, 0);
         app.editor_mut().unwrap().selection_anchor = Some((20, 1));
         app.editor_mut().unwrap().bookmarks.insert(24);
-        app.last_edit_position = Some((0, 24, 0));
+        app.last_edit_position = Some((app.editor().unwrap().navigation_id, 24, 0));
         app.finish_navigation();
         app.execute_palette_command(command);
         assert_eq!(cursor(&app), (24, 0), "{command}");

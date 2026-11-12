@@ -46,8 +46,7 @@ def main():
                 if any(row[k] != case[k] for k in ("files", "bytes", "symbols", "digest")):
                     raise ValueError(f"changed source-symbol output: {name}")
         item = {k: case[k] for k in ("case", "files", "bytes", "symbols", "digest", "samples")}
-        for field in ("dispatchMedianNs", "readyMedianNs", "longestApplyMedianNs",
-                      "outlineDispatchNs", "outlineReadyNs"):
+        for field in ("dispatchMedianNs", "readyMedianNs", "longestApplyMedianNs"):
             before, after = ([r[field] for r in values[side]] for side in ("before", "after"))
             # Synchronous baseline has no result-application turn to time.
             item[field] = comparison(before, after) if median(before) else {

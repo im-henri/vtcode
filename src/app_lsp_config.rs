@@ -77,10 +77,8 @@ impl App {
         self.lsp_selection_ranges.clear();
         self.lsp_selection_range_source = None;
         self.lsp_selection_range_cursor = (usize::MAX, usize::MAX);
-        self.lsp_outline_available = false;
         self.lsp_inlay_hint_last_scroll = usize::MAX;
         self.lsp_semantic_tokens_last_version = u64::MAX;
-        self.lsp_outline_last_version = u64::MAX;
         self.lsp_folding_last_version = u64::MAX;
         self.lsp_code_lens_last_version = u64::MAX;
         self.lsp_document_links_last_version = u64::MAX;

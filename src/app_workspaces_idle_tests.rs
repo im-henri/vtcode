@@ -305,7 +305,7 @@ fn hidden_language_servers_drain_replies_without_requesting_ui_feedback() {
         server
             .take_messages()
             .iter()
-            .any(|message| message["method"] == "textDocument/documentSymbol")
+            .any(|message| message["method"] == "textDocument/foldingRange")
     );
 }
 

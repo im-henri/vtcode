@@ -1473,7 +1473,6 @@ impl App {
             SidebarView::SourceControl => "source-control",
             SidebarView::Settings => "settings",
             SidebarView::Extensions => "extensions",
-            SidebarView::Outline => "outline",
             SidebarView::Remote => "remote",
         };
         crate::session::Session {
@@ -1505,7 +1504,6 @@ impl App {
             sc_visibility: self.sc_visibility,
             repositories: self.saved_repositories(),
             sc_graph_height: self.sc_graph_height,
-            outline_scroll: self.outline_scroll,
             search_history: self.search_history.saved(&self.search_query),
             global_search_history: self.global_search_history.saved(&self.global_search_query),
             global_search_replace_history: self.global_search_replace_history.saved(&self.global_search_replace_query),
@@ -1681,7 +1679,6 @@ impl App {
                 "source-control" => SidebarView::SourceControl,
                 "settings" => SidebarView::Settings,
                 "extensions" => SidebarView::Extensions,
-                "outline" => SidebarView::Outline,
                 "remote" => SidebarView::Remote,
                 _ => SidebarView::Explorer,
             };
@@ -1690,24 +1687,12 @@ impl App {
         self.set_source_control_visibility(session.sc_visibility);
         self.restore_repositories(session.repositories.clone());
         self.sc_graph_height = session.sc_graph_height.max(1);
-        self.outline_scroll = session.outline_scroll;
         self.global_search_query = session.global_search_query.clone();
         self.global_search_replace_query = session.global_search_replace_query.clone();
         self.search_include_pattern = session.search_include_pattern.clone();
         self.search_exclude_pattern = session.search_exclude_pattern.clone();
         self.search_focus_field = session.search_focus_field.min(3);
         self.sync_activity_bar_selection();
-        if self.sidebar_view == SidebarView::Outline {
-            // Session files are restored asynchronously. Preserve the saved
-            // scroll position until the active file arrives; clamp the outline
-            // when the corresponding symbols have finished loading.
-            if self
-                .editor()
-                .is_some_and(|editor| !editor.bg_loading && !editor.large_file_mode)
-            {
-                self.update_outline();
-            }
-        }
         self.global_search_active = self.show_explorer && self.sidebar_view == SidebarView::Search;
         self.global_search_field_cursors = [
             self.global_search_query.len(),
@@ -2178,7 +2163,6 @@ mod tests {
             ("source-control", SidebarView::SourceControl, 2),
             ("settings", SidebarView::Settings, usize::MAX),
             ("extensions", SidebarView::Extensions, 4),
-            ("outline", SidebarView::Outline, 5),
             ("remote", SidebarView::Remote, 3),
             ("explorer", SidebarView::Explorer, 0),
             ("unknown", SidebarView::Explorer, 0),
@@ -2198,64 +2182,16 @@ mod tests {
     }
 
     #[test]
-    fn restore_session_rebuilds_outline_items_for_outline_view() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let file_path = dir.path().join("outline_restore.rs");
-        std::fs::write(
-            &file_path,
-            "fn restored_symbol() {}\nstruct RestoredStruct;\n",
-        )
-        .expect("write outline fixture");
-
+    fn legacy_outline_session_opens_explorer() {
         let mut app = App::test_new();
-        app.open_file(&file_path);
-        app.sidebar_view = SidebarView::Outline;
-        let session = app.build_session();
-
-        let mut restored = App::test_new();
-        restored.restore_session(&session);
-        wait_for_session_restore(&mut restored);
-
-        assert_eq!(restored.sidebar_view, SidebarView::Outline);
-        assert!(
-            restored
-                .outline_items
-                .iter()
-                .any(|item| item.name == "restored_symbol"),
-            "expected outline items to be rebuilt for restored outline view"
-        );
-        assert!(
-            restored
-                .outline_items
-                .iter()
-                .any(|item| item.name == "RestoredStruct"),
-            "expected multiple outline symbols to be available after restore"
-        );
-    }
-
-    #[test]
-    fn restore_session_preserves_outline_scroll_for_outline_view() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let file_path = dir.path().join("outline_scroll_restore.rs");
-        let mut content = String::new();
-        for idx in 0..40 {
-            content.push_str(&format!("fn outline_symbol_{idx}() {{}}\n"));
-        }
-        std::fs::write(&file_path, content).expect("write outline scroll fixture");
-
-        let mut app = App::test_new();
-        app.open_file(&file_path);
-        app.sidebar_view = SidebarView::Outline;
-        app.update_outline();
-        app.outline_scroll = 25;
-        let session = app.build_session();
-
-        let mut restored = App::test_new();
-        restored.restore_session(&session);
-        wait_for_session_restore(&mut restored);
-
-        assert_eq!(restored.sidebar_view, SidebarView::Outline);
-        assert_eq!(restored.outline_scroll, 25);
+        let mut saved = serde_json::to_value(app.build_session()).unwrap();
+        saved["sidebar_view"] = serde_json::json!("outline");
+        saved["outline_scroll"] = serde_json::json!(25);
+        saved["show_explorer"] = serde_json::json!(true);
+        app.restore_session(&serde_json::from_value(saved).unwrap());
+        assert_eq!(app.sidebar_view, SidebarView::Explorer);
+        assert_eq!(app.activity_bar_selected, 0);
+        assert!(app.show_explorer);
     }
 
     #[test]

@@ -55,8 +55,10 @@ fn disabled_startup_and_session_restore_do_not_schedule_git_work() {
     assert_no_git_jobs(&app);
     assert_eq!(app.source_control_repository_state, State::Disabled);
     assert!(app.source_control_cancel.is_cancelled());
-    let root = app.source_control_root().to_owned();
-    assert!(app.discover_repo_at(&root).is_none());
+    app.commit_details.data.files = vec![crate::commit_details::CommitFile::new('M', "file.txt")];
+    let notices = app.notification_history.len();
+    app.open_source_control_commit_details_file_diff(0);
+    assert_eq!(app.notification_history.len(), notices);
 }
 
 #[test]

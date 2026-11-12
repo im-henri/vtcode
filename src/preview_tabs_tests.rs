@@ -33,6 +33,80 @@ fn open_search_result(app: &mut App, path: &std::path::Path, line: usize, col: u
 }
 
 #[test]
+fn opening_a_file_places_its_tab_after_the_active_tab() {
+    for open in [
+        App::open_file as fn(&mut App, &std::path::Path),
+        App::open_file_preview,
+        App::open_file_from_search,
+    ] {
+        let (directory, mut app) = workspace();
+        let path = |name| directory.path().join(name);
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            app.open_file(&path(name));
+        }
+        app.open_file(&path("b.txt"));
+        open(&mut app, &path("d.txt"));
+        wait_for_files(&mut app);
+
+        assert_eq!(app.active_tab, 2);
+        assert_eq!(app.tab_mru_order, [2, 1, 3, 0]);
+        let order = |app: &App| app.tabs.iter().map(|tab| tab.editor.navigation_id).collect::<Vec<_>>();
+        let before = order(&app);
+        assert_eq!(
+            app.tabs.iter().map(|tab| tab.editor.file_name()).collect::<Vec<_>>(),
+            ["a.txt", "b.txt", "d.txt", "c.txt"]
+        );
+        app.open_file(&path("a.txt"));
+        assert_eq!(app.active_tab, 0);
+        assert_eq!(order(&app), before);
+    }
+}
+
+#[test]
+fn replacing_a_preview_keeps_the_new_tab_adjacent_and_the_last_edit_addressable() {
+    let (directory, mut app) = workspace();
+    app.open_file_preview(&directory.path().join("a.txt"));
+    app.open_file(&directory.path().join("b.txt"));
+    let last_edit = directory.path().join("c.txt");
+    app.open_file(&last_edit);
+    wait_for_files(&mut app);
+    app.editor_mut().unwrap().set_cursor(0, 3);
+    app.record_edit_position();
+    app.open_file(&directory.path().join("b.txt"));
+    app.open_file_preview(&directory.path().join("d.txt"));
+
+    assert_eq!(app.active_tab, 1);
+    assert!(app.tabs[1].preview);
+    assert_eq!(app.tab_mru_order, [1, 0, 2]);
+    assert_eq!(
+        app.tabs.iter().map(|tab| tab.editor.file_name()).collect::<Vec<_>>(),
+        ["b.txt", "d.txt", "c.txt"]
+    );
+    app.execute_palette_command("goto_last_edit");
+    assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&last_edit));
+    assert_eq!(app.editor().unwrap().cursor_col, 3);
+}
+
+#[test]
+fn opening_inside_a_named_tab_group_keeps_the_group_together() {
+    let (directory, mut app) = workspace();
+    let path = |name| directory.path().join(name);
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        app.open_file(&path(name));
+    }
+    app.desks.selected_tabs.extend(app.tabs[..2].iter().map(|tab| tab.editor.navigation_id));
+    app.group_selected_tabs("Work", None);
+    let group = app.tab_group(&app.tabs[0]).unwrap().id;
+    app.open_file(&path("a.txt"));
+    app.open_file(&path("d.txt"));
+
+    assert_eq!(app.active_tab, 1);
+    assert_eq!(app.tabs[1].editor.file_name(), "d.txt");
+    assert!(app.tabs[..3].iter().all(|tab| app.tab_group(tab).is_some_and(|named| named.id == group)));
+    assert!(app.tab_group(&app.tabs[3]).is_none());
+}
+
+#[test]
 fn workspace_search_results_follow_the_preview_setting_and_replace_loading_previews() {
     for enabled in [false, true] {
         let (directory, mut app) = workspace();

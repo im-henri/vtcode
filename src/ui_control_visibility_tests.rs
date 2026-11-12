@@ -2169,15 +2169,15 @@ fn gradient_tabs_preserve_file_icons_with_scrolling_pins_modified_markers_and_cl
 }
 
 #[test]
-fn file_icon_palette_and_symbol_theme_roles_reach_tabs_breadcrumbs_outline_and_file_picker() {
-    use crate::app::{ActivePane, SymbolItem, Tab};
+fn file_and_symbol_icon_roles_reach_tabs_breadcrumbs_and_pickers() {
+    use crate::app::{SymbolItem, Tab};
     let mut app = App::test_new();
     app.colors = theme_with_icon_and_scrollbar_roles().to_theme_colors();
     let mut editor = crate::editor::Editor::new();
     editor.file_path = Some(app.explorer.root.join("example.py"));
     app.tabs.push(Tab::new_file(editor));
     app.active_tab = 0;
-    app.outline_items = ["function", "struct", "module"]
+    app.symbol_list_items = ["function", "struct", "module"]
         .into_iter()
         .enumerate()
         .map(|(line, kind)| SymbolItem {
@@ -2189,36 +2189,31 @@ fn file_icon_palette_and_symbol_theme_roles_reach_tabs_breadcrumbs_outline_and_f
             file_path: None,
         })
         .collect();
-    app.active_pane = ActivePane::Explorer;
-    app.outline_selected = 0;
+    app.filter_symbol_items();
     let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
     terminal
         .draw(|frame| {
             crate::ui_chrome_tabs::draw_tab_bar(frame, &app, Rect::new(0, 0, 100, 1));
             crate::ui_chrome_tabs::draw_breadcrumb(frame, &mut app, Rect::new(0, 1, 100, 1));
-            crate::ui_chrome::draw_outline(frame, &app, Rect::new(0, 3, 100, 8));
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
     let icon = find_cell(buffer, "Py");
     assert_eq!(buffer[icon].fg, Color::Rgb(55, 118, 171));
-    let symbol_text = find_cell(buffer, "sample_function");
-    assert_eq!(
-        buffer[symbol_text].fg,
-        app.colors.ui.readable_foreground(
-            app.colors.ui.fg_breadcrumb_focus,
-            app.colors.ui.bg_breadcrumb,
-            4.5
-        )
-    );
-    for (glyph, expected) in [
-        ("ƒ", Color::Rgb(187, 255, 153)),
-        (" S ", Color::Rgb(255, 187, 221)),
-        (" M ", Color::Rgb(153, 221, 255)),
+    terminal
+        .draw(|frame| {
+            crate::ui_quick_picker::draw(frame, &mut app, crate::ui_quick_picker::Kind::Symbols)
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    for (name, expected, selected) in [
+        ("sample_function", Color::Rgb(187, 255, 153), true),
+        ("sample_struct", Color::Rgb(255, 187, 221), false),
+        ("sample_module", Color::Rgb(153, 221, 255), false),
     ] {
-        let (x, y) = find_cell(buffer, glyph);
-        let x = x + u16::from(glyph.starts_with(' '));
-        assert_eq!(buffer[(x, y)].fg, expected);
+        let (x, y) = find_cell(buffer, name);
+        let icon = &buffer[(x - 2, y)];
+        assert_eq!(icon.fg, app.colors.ui.quick_icon_color(expected, icon.bg, selected));
     }
     snapshot(buffer, "independent icon roles");
     app.quick_open_results = vec![app.explorer.root.join("example.py")];
@@ -2247,7 +2242,7 @@ fn file_icon_palette_and_symbol_theme_roles_reach_tabs_breadcrumbs_outline_and_f
 }
 
 fn sidebar_list_app() -> App {
-    use crate::app::{SymbolItem, Tab};
+    use crate::app::Tab;
     use crate::explorer::{FileEntry, GitStatus};
     let mut app = App::test_new();
     let mut editor = crate::editor::Editor::new();
@@ -2275,18 +2270,6 @@ fn sidebar_list_app() -> App {
     app.explorer_multi_selected = vec![app.explorer.entries[0].path.clone()].into();
     app.explorer_selection_anchor = None;
     app.hovered_explorer = None;
-    app.outline_items = ["selected_symbol", "hovered_symbol", "ordinary_symbol"]
-        .into_iter()
-        .enumerate()
-        .map(|(line, name)| SymbolItem {
-            name: name.into(),
-            kind: "function",
-            line,
-            tab_index: None,
-            file_name: None,
-            file_path: None,
-        })
-        .collect();
     app.mouse_row = u16::MAX;
     app.mouse_col = u16::MAX;
     app
@@ -2419,33 +2402,6 @@ fn sidebar_lists_compose_selection_hover_and_decorations_on_the_sidebar() {
             ColorLayer::rgba(221, 255, 204, 224).over(cell.bg).unwrap()
         );
 
-        app.sidebar_view = SidebarView::Outline;
-        app.outline_hovered = Some(1);
-        terminal
-            .draw(|frame| crate::ui_chrome::draw_outline(frame, &app, frame.area()))
-            .unwrap();
-        let buffer = terminal.backend().buffer();
-        let selected = &buffer[find_cell(buffer, "selected_symbol")];
-        assert_eq!(selected.bg, fill.over(sidebar).unwrap());
-        assert_eq!(selected.fg, text.over(selected.bg).unwrap());
-        let hovered = &buffer[find_cell(buffer, "hovered_symbol")];
-        assert_eq!(
-            hovered.bg,
-            ColorLayer::rgba(80, 56, 72, 192).over(sidebar).unwrap()
-        );
-        assert_eq!(
-            hovered.fg,
-            ColorLayer::rgba(221, 255, 204, 224)
-                .over(hovered.bg)
-                .unwrap()
-        );
-        let ordinary = &buffer[find_cell(buffer, "ordinary_symbol")];
-        assert_eq!(ordinary.bg, sidebar);
-        assert_eq!(
-            ordinary.fg,
-            ColorLayer::rgba(221, 238, 255, 192).over(sidebar).unwrap()
-        );
-        snapshot(buffer, &format!("outline list selection {active}"));
     }
 }
 
@@ -2568,18 +2524,6 @@ fn sidebar_list_rows_remain_readable_across_themes_and_focus_states() {
                 &mut failures,
                 &app.colors.ui,
                 &["open.py", "selected.rs"],
-            );
-            app.sidebar_view = SidebarView::Outline;
-            app.outline_hovered = Some(1);
-            terminal
-                .draw(|frame| crate::ui_chrome::draw_outline(frame, &app, frame.area()))
-                .unwrap();
-            check_region(
-                terminal.backend().buffer(),
-                Rect::new(0, 0, 80, 4),
-                &format!("{} Outline, active={active}", theme.name),
-                &mut failures,
-                &app.colors.ui,
             );
         }
     }
@@ -5326,22 +5270,10 @@ fn translucent_scrollbar_roles_compose_on_the_owning_surface_in_each_state() {
 }
 
 #[test]
-fn outline_and_search_text_remain_readable_across_installed_theme_surfaces() {
+fn search_text_remains_readable_across_installed_theme_surfaces() {
     let mut app = App::test_new();
     app.mouse_col = u16::MAX;
     app.mouse_row = u16::MAX;
-    app.outline_items = ["function", "struct", "module"]
-        .into_iter()
-        .enumerate()
-        .map(|(line, kind)| crate::app::SymbolItem {
-            name: format!("sample_{kind}"),
-            kind,
-            line,
-            tab_index: None,
-            file_name: None,
-            file_path: None,
-        })
-        .collect();
     app.global_search_query = "needle".into();
     app.global_search_results = (0..2)
         .map(|line| crate::app::GlobalSearchResult {
@@ -5364,16 +5296,6 @@ fn outline_and_search_text_remain_readable_across_installed_theme_surfaces() {
                 crate::app::ActivePane::Editor
             };
             let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
-            terminal
-                .draw(|frame| crate::ui_chrome::draw_outline(frame, &app, frame.area()))
-                .unwrap();
-            check_region(
-                terminal.backend().buffer(),
-                Rect::new(3, 1, 97, 3),
-                &format!("{} outline, focus={focused}", theme.name),
-                &mut failures,
-                &app.colors.ui,
-            );
             terminal
                 .draw(|frame| crate::ui_search_dialog::draw_global_search(frame, &mut app))
                 .unwrap();

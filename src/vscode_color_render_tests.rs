@@ -244,19 +244,19 @@ fn imported_workbench_layers_match_upstream_roles_on_different_surfaces() {
             ),
             (ui.fg_minimap_info, "minimap.infoHighlight", ui.bg_minimap),
             (
-                ui.fg_minimap_added,
-                "minimapGutter.addedBackground",
-                ui.bg_minimap,
+                ui.fg_gutter_added,
+                "editorGutter.addedBackground",
+                colors.bg_dark,
             ),
             (
-                ui.fg_minimap_modified,
-                "minimapGutter.modifiedBackground",
-                ui.bg_minimap,
+                ui.fg_gutter_modified,
+                "editorGutter.modifiedBackground",
+                colors.bg_dark,
             ),
             (
-                ui.fg_minimap_deleted,
-                "minimapGutter.deletedBackground",
-                ui.bg_minimap,
+                ui.fg_gutter_deleted,
+                "editorGutter.deletedBackground",
+                colors.bg_dark,
             ),
             (
                 ui.bg_minimap_slider,

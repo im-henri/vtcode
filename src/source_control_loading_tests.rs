@@ -574,7 +574,13 @@ fn compact_activity_bars_keep_the_unknown_count_beside_the_label() {
             app.source_control_repository_state = State::Available;
             app.source_control_files = (0..count).map(|index| GitFileChange { path: format!("file-{index}"), ..change() }).collect();
             terminal.draw(|frame| crate::ui_chrome::draw_activity_bar(frame, &app, bar)).unwrap();
-            assert!(text(terminal.backend().buffer(), region).contains(if count == 1 { "1" } else { "+" }));
+            let expected = if region.height < 3 && count > 9 {
+                "+".into()
+            } else {
+                count.to_string()
+            };
+            let rendered = text(terminal.backend().buffer(), region);
+            assert!(rendered.contains(&expected), "{height}: {rendered}");
         }
         app.source_control_repository_state = State::Loading;
     }

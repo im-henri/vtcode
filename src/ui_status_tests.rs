@@ -1046,13 +1046,13 @@ fn activity_navigation_keeps_settings_reachable_in_short_terminals() {
     for height in 1..=30 {
         let area = Rect::new(3, 2, 4, height);
         let items = crate::ui_chrome::activity_item_regions(area);
-        assert_eq!(items.last().unwrap().1, 6);
+        assert_eq!(items.last().unwrap().1, crate::ui_chrome::ACTIVITY_SETTINGS_INDEX);
         assert_eq!(items.last().unwrap().0.bottom(), area.bottom());
         let mut end = area.y;
         for (item, _) in &items {
             assert!(item.height > 0 && item.y >= end && item.bottom() <= area.bottom());
             end = item.bottom();
         }
-        assert_eq!(items.len(), height.min(7) as usize);
+        assert_eq!(items.len(), usize::from(height).min(crate::ui_chrome::ACTIVITY_SETTINGS_INDEX + 1));
     }
 }

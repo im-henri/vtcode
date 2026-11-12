@@ -17,6 +17,9 @@ pub struct InlineChunk {
 pub struct FileReview {
     pub path: PathBuf,
     pub text: Arc<str>,
+    /// Whether the working file has a text preview, including an empty file.
+    #[serde(default)]
+    pub has_text: bool,
     pub chunks: Vec<InlineChunk>,
 }
 
@@ -77,15 +80,16 @@ impl Journal {
                     .ok()
                     .and_then(|path| {
                         // Bound the preview independently of the file renderer.
-                        if path.metadata().ok()?.len() > TEXT_LIMIT {
+                        let metadata = path.metadata().ok()?;
+                        if !metadata.is_file() || metadata.len() > TEXT_LIMIT {
                             return None;
                         }
-                        fs::read_to_string(path).ok()
-                    })
-                    .unwrap_or_default();
+                        fs::read_to_string(path).ok().filter(|text| !text.contains('\0'))
+                    });
                 FileReview {
                     path: self.root.join(&edit.path),
-                    text: text.into(),
+                    has_text: text.is_some(),
+                    text: text.unwrap_or_default().into(),
                     chunks: Vec::new(),
                 }
             });

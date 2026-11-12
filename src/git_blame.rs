@@ -938,8 +938,7 @@ impl App {
                 .insert(editor.navigation_id, snapshot.document);
             let mut tab = crate::app::Tab::new_file(editor);
             tab.kind = TabKind::GitRevision;
-            self.tabs.push(tab);
-            self.active_tab = self.tabs.len() - 1;
+            self.active_tab = self.insert_tab_after_active(tab);
         }
         self.active_pane = crate::app::ActivePane::Editor;
         self.terminal_panel_focused = false;

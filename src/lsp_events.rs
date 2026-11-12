@@ -85,11 +85,6 @@ pub(crate) enum LspEvent {
         request_id: i64,
         highlights: Vec<DocumentHighlight>,
     },
-    /// Response to document symbol request
-    DocumentSymbolResponse {
-        request_id: i64,
-        symbols: Vec<SymbolInformation>,
-    },
     /// Response to folding range request
     FoldingRangeResponse {
         request_id: i64,
@@ -368,27 +363,10 @@ impl LspManager {
                             self.document_highlights_dirty = true;
                         }
                     }
-                    LspEvent::DocumentSymbolResponse {
-                        request_id,
-                        symbols,
-                    } => {
-                        if self.active_document_symbol_id == Some(request_id)
-                            && self
-                                .document_symbol_request
-                                .as_ref()
-                                .is_some_and(|request| request.client_idx == client_idx)
-                        {
-                            self.active_document_symbol_id = None;
-                            self.document_symbol_response_target =
-                                self.document_symbol_request.clone();
-                            self.document_symbols = symbols;
-                            self.document_symbols_dirty = true;
-                        }
-                    }
                     LspEvent::FoldingRangeResponse { request_id, ranges } => {
                         if self.active_folding_range_id == Some(request_id)
                             && self
-                                .document_symbol_request
+                                .passive_document
                                 .as_ref()
                                 .is_none_or(|request| request.client_idx == client_idx)
                         {
@@ -428,7 +406,7 @@ impl LspManager {
                     LspEvent::CodeLensResponse { request_id, lenses } => {
                         if self.active_code_lens_id == Some(request_id)
                             && self
-                                .document_symbol_request
+                                .passive_document
                                 .as_ref()
                                 .is_none_or(|request| request.client_idx == client_idx)
                         {
@@ -462,7 +440,7 @@ impl LspManager {
                     LspEvent::DocumentLinkResponse { request_id, links } => {
                         if self.active_document_links_id == Some(request_id)
                             && self
-                                .document_symbol_request
+                                .passive_document
                                 .as_ref()
                                 .is_none_or(|request| request.client_idx == client_idx)
                         {
@@ -501,7 +479,7 @@ impl LspManager {
             // Client indices change below. Retire handles before rebuilding,
             // so a surviving server cannot inherit another server's request ID.
             self.cancel_inlay_hint_request();
-            self.cancel_document_symbol_request();
+            self.cancel_passive_document_feedback();
             self.cancel_document_highlight();
             let mut live = Vec::with_capacity(self.clients.len());
             for client in self.clients.drain(..) {

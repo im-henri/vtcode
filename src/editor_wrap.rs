@@ -1144,6 +1144,22 @@ impl Editor {
             .flatten()
     }
 
+    /// The minimap compresses source lines, so a wrapped continuation does
+    /// not extend its highlighted range into the next source line.
+    pub(crate) fn minimap_source_rows(&self, screen_rows: usize) -> usize {
+        let Some(offsets) = self.overview_wrap_offsets().filter(|_| screen_rows > 0) else {
+            return screen_rows;
+        };
+        let end = self.wrap_scroll_offset.saturating_add(screen_rows);
+        let last = end.min(offsets.total).saturating_sub(1);
+        offsets.line_for_row(last).map_or(screen_rows, |(line, _)| {
+            self.visible_row_for_line(line)
+                .saturating_sub(self.visible_scroll_offset())
+                .saturating_add(1)
+                .saturating_add(end.saturating_sub(offsets.total))
+        })
+    }
+
     pub(crate) fn overview_total_rows(&self) -> usize {
         self.overview_wrap_offsets().map_or_else(|| self.visible_line_count(), |offsets| offsets.total)
     }

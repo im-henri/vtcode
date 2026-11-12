@@ -270,7 +270,10 @@ fn overview(
                         diagnostic_lines: diagnostics,
                         diagnostic_index: Some(&diagnostic_index),
                         change_index: Some(&change_index),
-                        diff_changes: Some(changes),
+                        diff_changes: Some(crate::ui_editor_minimap::MinimapDiffChanges {
+                            lines: changes,
+                            staged: false,
+                        }),
                         colors,
                         hovered: true,
                         active: false,
@@ -359,6 +362,71 @@ fn minimap_and_scrollbar_match_a_document_with_hidden_lines_removed() {
             );
         }
     }
+}
+
+#[test]
+fn change_on_the_last_visible_line_is_inside_the_minimap_and_scrollbar_viewports() {
+    let mut app = App::test_new();
+    let mut editor = editor(1392);
+    editor.word_wrap = false;
+    editor.folded_ranges.insert(10, 110);
+    editor.viewport_height = 55;
+    editor.set_visible_scroll_offset(900);
+    let mut status = vec![' '; editor.line_count()];
+    status[editor.line_for_visible_row(954)] = 'U';
+    editor.set_git_line_status(status);
+    app.tabs = vec![Tab::new_file(editor)];
+    app.active_tab = 0;
+    app.show_minimap = true;
+    app.sticky_scroll = false;
+    app.scroll_past_end = true;
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 55)).unwrap();
+    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area())).unwrap();
+    let buffer = terminal.backend().buffer();
+    let gutter = app.gutter_area.unwrap();
+    let change_column = crate::ui_editor_highlight::change_gutter_column(gutter).unwrap();
+    let change_color = app.colors.ui.fg_gutter_modified;
+    assert_eq!(buffer[(change_column, gutter.bottom() - 1)].fg, change_color);
+
+    let minimap = app.minimap_area.unwrap();
+    let marker_y = (minimap.y..minimap.bottom())
+        .find(|&y| buffer[(minimap.right() - 1, y)].bg == change_color)
+        .unwrap();
+    assert_eq!(buffer[(minimap.x, marker_y)].symbol(), "▁");
+
+    let bar = app.scrollbar_area.unwrap();
+    let (_, thumb) = app.colors.ui.scrollbar_colors(app.colors.ui.bg_overview, false, false);
+    let markers: Vec<_> = (bar.y..bar.bottom())
+        .filter(|&y| buffer[(bar.right() - 1, y)].fg == app.colors.ui.fg_overview_modified)
+        .collect();
+    assert!(!markers.is_empty());
+    assert!(markers.iter().all(|&y| buffer[(bar.x, y)].bg == thumb));
+}
+
+#[test]
+fn wrapped_minimap_covers_the_displayed_source_lines_and_preserves_a_continuation_on_grab() {
+    let mut app = App::test_new();
+    let long_line = format!("{}\n", "x".repeat(31));
+    let text = long_line.repeat(4) + &"short\n".repeat(5);
+    let mut editor = Editor::test_with_text(&text);
+    editor.word_wrap = true;
+    editor.word_wrap_column = 10;
+    editor.wrap_scroll_offset = 1;
+    app.tabs = vec![Tab::new_file(editor)];
+    app.active_tab = 0;
+    app.show_minimap = true;
+    app.sticky_scroll = false;
+    app.scroll_past_end = false;
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 12)).unwrap();
+    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area())).unwrap();
+    let minimap = app.minimap_area.unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(minimap.x, minimap.y + 3)].symbol(), "▁");
+    assert_eq!(buffer[(minimap.x, minimap.y + 4)].bg, app.colors.ui.bg_minimap);
+    crate::mouse_selection::handle_editor_area_left_click(&mut app, minimap.x, minimap.y, KeyModifiers::NONE);
+    assert_eq!(app.editor().unwrap().wrap_scroll_offset, 1);
 }
 
 #[test]

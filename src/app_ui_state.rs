@@ -268,7 +268,6 @@ impl App {
         self.hovered_search_toggle = None;
         self.hovered_gutter_line = None;
         self.hovered_editor_pos = None;
-        self.outline_hovered = None;
     }
 
     pub(crate) fn sync_activity_bar_selection(&mut self) {
@@ -277,7 +276,6 @@ impl App {
             SidebarView::Search => 1,
             SidebarView::SourceControl => 2,
             SidebarView::Extensions => 4,
-            SidebarView::Outline => 5,
             SidebarView::Remote => 3,
             SidebarView::Settings => usize::MAX,
         };
@@ -1612,7 +1610,7 @@ impl App {
 
     pub(crate) fn record_edit_position(&mut self) {
         if let Some(ed) = self.editor() {
-            self.last_edit_position = Some((self.active_tab, ed.cursor_line, ed.cursor_col));
+            self.last_edit_position = Some((ed.navigation_id, ed.cursor_line, ed.cursor_col));
             self.last_edit_time = std::time::Instant::now();
         }
     }
@@ -1735,7 +1733,6 @@ mod tests {
         app.hovered_search_toggle = Some(2);
         app.hovered_gutter_line = Some(10);
         app.hovered_editor_pos = Some((1, 2));
-        app.outline_hovered = Some(3);
 
         app.reset_hover_states();
 
@@ -1763,7 +1760,6 @@ mod tests {
         assert_eq!(app.hovered_search_toggle, None);
         assert_eq!(app.hovered_gutter_line, None);
         assert_eq!(app.hovered_editor_pos, None);
-        assert_eq!(app.outline_hovered, None);
     }
 
     // ── open_palette ─────────────────────────────────────────────────
@@ -1915,8 +1911,8 @@ mod tests {
         if app.editor().is_some() {
             app.record_edit_position();
             assert!(app.last_edit_position.is_some());
-            let (tab, _line, _col) = app.last_edit_position.unwrap();
-            assert_eq!(tab, app.active_tab);
+            let (view, _line, _col) = app.last_edit_position.unwrap();
+            assert_eq!(view, app.editor().unwrap().navigation_id);
         }
     }
 

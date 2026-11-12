@@ -138,6 +138,8 @@ struct Snapshot {
 struct Review {
     path: RemotePath,
     text: Option<std::sync::Arc<str>>,
+    #[serde(default)]
+    has_text: Option<bool>,
     chunks: Vec<native::InlineChunk>,
 }
 #[derive(Serialize, Deserialize)]
@@ -411,6 +413,7 @@ fn snapshot(entry: &mut Entry, known: Option<u64>) -> io::Result<Snapshot> {
             Ok(Review {
                 path,
                 text: (!reused).then_some(file.text),
+                has_text: Some(file.has_text),
                 chunks: file.chunks,
             })
         })
@@ -497,6 +500,7 @@ impl Journal {
                         .ok_or("Missing cached checkpoint preview")?;
                     Ok(native::FileReview {
                         path,
+                        has_text: review.has_text.unwrap_or_else(|| !text.is_empty() && !text.contains('\0')),
                         text,
                         chunks: review.chunks,
                     })

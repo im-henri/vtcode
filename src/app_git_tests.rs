@@ -863,6 +863,9 @@ fn binary_files_do_not_enter_commit_diff_views() {
         app.commit_details.data.files = vec![crate::commit_details::CommitFile::new('M', "file.txt")];
         let original_tabs = app.tabs.len();
         app.open_source_control_commit_details_file_diff(0);
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            app.status_message == crate::app_ui_state::BINARY_DIFF_MESSAGE
+        });
         assert_eq!(app.tabs.len(), original_tabs);
         assert!(!app.should_render_diff_for_active_editor());
         assert!(app.compare_diff_lines.is_empty());
@@ -1065,6 +1068,28 @@ fn source_control_diff_refresh_handles_worktree_edits_deletion_and_recreation() 
 
 #[test]
 fn source_control_staged_and_unstaged_diffs_use_separate_revisions_and_tabs() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let assert_minimap = |app: &mut App, staged| {
+        app.show_minimap = true;
+        app.scroll_past_end = false;
+        let (color, symbol) = if staged {
+            (app.colors.ui.fg_gutter_modified_secondary, "•")
+        } else {
+            (app.colors.ui.fg_gutter_modified, " ")
+        };
+        for draw in [
+            crate::ui_diff_display::draw_inline_diff,
+            crate::ui_diff_display::draw_side_by_side_diff,
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(200, 14)).unwrap();
+            terminal.draw(|frame| draw(frame, app, frame.area())).unwrap();
+            let minimap = app.minimap_area.unwrap();
+            let cell = &terminal.backend().buffer()[(minimap.right() - 1, minimap.y + 1)];
+            assert_eq!((cell.bg, cell.symbol()), (color, symbol));
+        }
+    };
+
     let head = "first\noriginal\nlast\n";
     let index = "first\nstaged\nlast\n";
     let worktree = "first\nunstaged\nlast\nextra\n";
@@ -1120,6 +1145,7 @@ fn source_control_staged_and_unstaged_diffs_use_separate_revisions_and_tabs() {
     );
     let staged_labels = crate::app::DiffLabels::new("HEAD (last commit)", "Index (staged)");
     assert_eq!(app.diff_labels.as_ref(), Some(&staged_labels));
+    assert_minimap(&mut app, true);
     let staged_cache = app.diff_render_cache.clone();
 
     app.open_source_control_diff_tab(&path, false, false);
@@ -1141,6 +1167,7 @@ fn source_control_staged_and_unstaged_diffs_use_separate_revisions_and_tabs() {
         app.compare_diff_lines,
         crate::app::compute_file_diff(index, worktree)
     );
+    assert_minimap(&mut app, false);
 
     app.open_source_control_diff_tab(&path, false, true);
     assert_eq!(app.active_tab, staged_tab);
@@ -2331,6 +2358,7 @@ fn commit_diff_keeps_diff_target_paths_for_marker_refresh_guard() {
     app.commit_details.data.files = vec![crate::commit_details::CommitFile::new('M', "file.txt")];
 
     app.open_source_control_commit_details_file_diff(0);
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| app.should_render_diff_for_active_editor());
 
     assert_eq!(app.compare_base_path, None);
     // Git expands Windows short-name aliases in the repository workdir.
@@ -2354,7 +2382,9 @@ fn commit_diff_keeps_diff_target_paths_for_marker_refresh_guard() {
 
     for mode in [crate::app::DiffMode::Inline, crate::app::DiffMode::SideBySide] {
         app.execute_palette_command("toggle_diff_layout");
+        let previous = app.active_diff_tab_id();
         app.open_source_control_commit_details_file_diff(0);
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| app.active_diff_tab_id() != previous);
         assert!(app.diff_mode == mode);
     }
 
@@ -2381,6 +2411,7 @@ fn commit_diff_refresh_preserves_parent_snapshot_content() {
     app.commit_details.data.files = vec![crate::commit_details::CommitFile::new('M', "file.txt")];
 
     app.open_source_control_commit_details_file_diff(0);
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| app.should_render_diff_for_active_editor());
     app.refresh_compare_diff();
 
     assert_eq!(app.compare_base_content.as_deref(), Some("before\n"));

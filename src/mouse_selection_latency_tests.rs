@@ -135,6 +135,40 @@ fn horizontal_selection_reaches_the_latest_queued_endpoint_in_one_frame() {
 }
 
 #[test]
+fn drag_batch_applies_a_short_lines_horizontal_reveal_before_the_next_hit() {
+    let (mut app, mut terminal) = fixture(false);
+    let editor = app.editor_mut().unwrap();
+    let start = editor.rope.line_to_char(4);
+    let end = start + editor.line_len(4);
+    editor.rope.remove(start..end);
+    editor.invalidate_rope_caches();
+    editor.horizontal_scroll = 120;
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let area = app.code_area.unwrap();
+    crate::mouse::handle_mouse(
+        &mut app,
+        pointer(MouseEventKind::Down(MouseButton::Left), area.x + 5, area.y + 3),
+    );
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut pump = TerminalEventPump::from_receiver(receiver);
+    for (col, row) in [(10, 3), (8, 4), (12, 3)] {
+        sender.send(Ok(Event::Mouse(pointer(
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + col,
+            area.y + row,
+        )))).unwrap();
+    }
+    while pump.has_pending_event() {
+        assert!(send_drag(&mut pump, &mut app));
+    }
+    let editor = app.editor().unwrap();
+    assert_eq!(editor.horizontal_scroll, 0);
+    assert_eq!((editor.cursor_line, editor.cursor_col), (3, 12));
+    assert_eq!(editor.selection_anchor, Some((3, 125)));
+}
+
+#[test]
 fn holding_the_right_edge_extends_selection_to_the_end_of_an_unwrapped_line() {
     use std::time::Duration;
 
@@ -303,6 +337,7 @@ fn repeated_selection_cells_do_not_redraw_and_stale_carets_are_still_corrected()
 fn drag_endpoint_coalescing_preserves_every_input_and_geometry_boundary() {
     use crossterm::event::{KeyCode, KeyEvent};
     let area = ratatui::layout::Rect::new(10, 5, 100, 20);
+    let in_area = |sample: MouseEvent| area.contains((sample.column, sample.row).into());
     let drag = pointer(MouseEventKind::Drag(MouseButton::Left), 30, 8);
     for boundary in [
         Event::Mouse(pointer(MouseEventKind::Up(MouseButton::Left), 50, 8)),
@@ -328,7 +363,7 @@ fn drag_endpoint_coalescing_preserves_every_input_and_geometry_boundary() {
         sender.send(Ok(boundary.clone())).unwrap();
         sender.send(Ok(Event::Mouse(drag))).unwrap();
         assert_eq!(
-            pump.latest_selection_drag(drag, area, 1_024),
+            pump.latest_selection_drag(drag, 1_024, in_area),
             (MouseEvent { column: 70, ..drag }, 2)
         );
         assert_eq!(pump.try_recv().unwrap(), Some(boundary));
@@ -339,7 +374,7 @@ fn drag_endpoint_coalescing_preserves_every_input_and_geometry_boundary() {
     sender
         .send(Err(std::io::Error::other("selection input error")))
         .unwrap();
-    assert_eq!(pump.latest_selection_drag(drag, area, 1_024), (drag, 1));
+    assert_eq!(pump.latest_selection_drag(drag, 1_024, in_area), (drag, 1));
     assert_eq!(
         pump.try_recv().unwrap_err().to_string(),
         "selection input error"

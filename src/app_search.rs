@@ -1743,16 +1743,6 @@ impl App {
         self.quick_open_cancel_token = Some(token);
     }
 
-    pub(crate) fn build_symbol_list(&mut self) {
-        self.request_source_symbols(crate::source_symbols::Destination::Picker(
-            self.symbol_list_workspace,
-        ));
-    }
-
-    pub(crate) fn update_outline(&mut self) {
-        self.request_source_symbols(crate::source_symbols::Destination::Outline);
-    }
-
     pub(crate) fn filter_symbol_items(&mut self) {
         let query = self.symbol_list_query.to_lowercase();
         self.symbol_list_filtered.clear();

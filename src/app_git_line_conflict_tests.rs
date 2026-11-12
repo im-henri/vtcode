@@ -117,8 +117,7 @@ fn assert_sparse_conflict_markers(app: &mut App) {
     app.sticky_scroll = false;
     app.cursor_visible = false;
     app.colors.ui.fg_gutter_added = Color::Rgb(1, 2, 3);
-    app.colors.ui.fg_minimap_added = Color::Rgb(10, 11, 12);
-    app.colors.ui.fg_minimap_modified = Color::Rgb(4, 5, 6);
+    app.colors.ui.fg_gutter_modified = Color::Rgb(4, 5, 6);
     app.colors.ui.fg_overview_added = Color::Rgb(13, 14, 15);
     app.colors.ui.fg_overview_modified = Color::Rgb(7, 8, 9);
     let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
@@ -147,15 +146,25 @@ fn assert_sparse_conflict_markers(app: &mut App) {
         assert_eq!(marker.symbol(), if changed { "┃" } else { " " });
         assert_eq!(marker.fg == app.colors.ui.fg_gutter_added, changed);
     }
-    for (area, colors) in [
-        (app.minimap_area.unwrap(), [app.colors.ui.fg_minimap_added, app.colors.ui.fg_minimap_modified]),
+    for (area, colors, minimap) in [
+        (
+            app.minimap_area.unwrap(),
+            [app.colors.ui.fg_gutter_added, app.colors.ui.fg_gutter_modified],
+            true,
+        ),
         (
             app.scrollbar_area.unwrap(),
             [app.colors.ui.fg_overview_added, app.colors.ui.fg_overview_modified],
+            false,
         ),
     ] {
         let colored = (area.y..area.bottom())
-            .filter(|&y| (area.x..area.right()).any(|x| colors.contains(&buffer[(x, y)].fg)))
+            .filter(|&y| {
+                (area.x..area.right()).any(|x| {
+                    let cell = &buffer[(x, y)];
+                    colors.contains(&if minimap { cell.bg } else { cell.fg })
+                })
+            })
             .count();
         assert!(
             colored > 0 && colored < usize::from(area.height) / 2,

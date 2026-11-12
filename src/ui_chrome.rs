@@ -8,9 +8,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::explorer::{GitStatus, GitStatusSummary};
@@ -470,9 +470,9 @@ const ACTIVITY_LABEL_EXPLORER: ActivityLabel = ActivityLabel(["EXPL", "ORER", ""
 const ACTIVITY_LABEL_SEARCH: ActivityLabel = ActivityLabel(["SEAR", "CH", ""]);
 const ACTIVITY_LABEL_SOURCE_CONTROL: ActivityLabel = ActivityLabel(["SRC", "CTRL", ""]);
 const ACTIVITY_LABEL_EXTENSIONS: ActivityLabel = ActivityLabel(["", "EXTS", ""]);
-const ACTIVITY_LABEL_OUTLINE: ActivityLabel = ActivityLabel(["OUTL", "INE", ""]);
 const ACTIVITY_LABEL_REMOTE: ActivityLabel = ActivityLabel(["REMO", "TE", ""]);
 const ACTIVITY_LABEL_SETTINGS: ActivityLabel = ActivityLabel(["SETT", "INGS", ""]);
+pub(crate) const ACTIVITY_SETTINGS_INDEX: usize = 5;
 
 fn git_status_color(status: GitStatus, colors: &crate::app_theme::ThemeColors, surface: Color) -> Color {
     let badge = match status {
@@ -1637,157 +1637,13 @@ pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &mut App) {
     app.menu_dropdown_inner = Some(inner);
 }
 
-pub(crate) fn draw_outline(f: &mut Frame, app: &App, area: Rect) {
-    let sidebar_bg = app.colors.bg_sidebar;
-    let focused = app.active_pane == crate::app::ActivePane::Explorer
-        && app.sidebar_view == crate::app::SidebarView::Outline;
-    f.render_widget(Paragraph::new("").style(Style::default().bg(sidebar_bg)), area);
-
-    let header_area = Rect::new(area.x, area.y, area.width, 1);
-    let outline_header_hovered = app.mouse_row == header_area.y
-        && app.mouse_col >= header_area.x && app.mouse_col < header_area.x + header_area.width;
-    let header_style = app.colors.ui.toolbar_layer_style(app.colors.ui.section_foreground, app.colors.ui.bg_section,
-        outline_header_hovered, false, false).add_modifier(Modifier::BOLD);
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            " Outline",
-            header_style,
-        )).style(header_style),
-        header_area,
-    );
-
-    if area.height < 2 { return; }
-    let list_area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-    let items = &app.outline_items;
-
-    if items.is_empty() {
-        f.render_widget(
-            Paragraph::new(Span::styled(
-                if app.editor().is_none() {
-                    " Open a file to see symbols"
-                } else if app.source_symbol_work.outline_pending() {
-                    " Reading source symbols…"
-                } else {
-                    " No symbols found"
-                },
-                Style::default().fg(app.colors.ui.description_color(sidebar_bg)).bg(sidebar_bg),
-            )).wrap(Wrap { trim: true }),
-            Rect::new(list_area.x, list_area.y, list_area.width, list_area.height.min(3)),
-        );
-        return;
-    }
-
-    // Reserve 1 column for scrollbar if content overflows
-    let total_items = items.len();
-    let needs_scrollbar = total_items > list_area.height as usize && list_area.width > 5;
-    let (entry_area, sb_area) = if needs_scrollbar {
-        (
-            Rect::new(list_area.x, list_area.y, list_area.width.saturating_sub(1), list_area.height),
-            Some(Rect::new(list_area.x + list_area.width.saturating_sub(1), list_area.y, 1, list_area.height)),
-        )
-    } else {
-        (list_area, None)
-    };
-    let visible = entry_area.height as usize;
-    let render_width = entry_area.width;
-
-    let scroll = app.outline_scroll;
-    let mut styles = rustc_hash::FxHashMap::default();
-    let mut line_info_buf = String::with_capacity(8);
-    for (i, item) in items.iter().enumerate().skip(scroll).take(visible) {
-        let y = entry_area.y.saturating_add((i - scroll) as u16);
-        let is_selected = i == app.outline_selected;
-
-        let kind_icon = match item.kind {
-            "function" => " ƒ ",
-            "struct" | "class" => " S ",
-            "enum" => " E ",
-            "trait" | "interface" => " I ",
-            "impl" => " ⊕ ",
-            "module" => " M ",
-            "constant" | "static" => " C ",
-            "type" => " T ",
-            _ => " · ",
-        };
-        let hovered = app.outline_hovered == Some(i);
-        // Contrast calculations depend on kind and interaction state, not on
-        // the symbol name. Resolve each distinct visible style once per frame.
-        let (row_style, icon_style, detail_style) = *styles.entry((item.kind, is_selected, hovered))
-            .or_insert_with(|| {
-                let row = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                    sidebar_bg, is_selected, focused, hovered);
-                let bg = row.bg.unwrap_or(sidebar_bg);
-                let color = app.colors.ui.list_icon_color(app.colors.ui.symbol_color(item.kind, bg),
-                    bg, is_selected, focused);
-                let color = app.colors.ui.readable_foreground(color, bg, if kind_icon.is_ascii() { 4.5 } else { 3.0 });
-                (row, Style::default().fg(color).bg(bg),
-                    Style::default().fg(app.colors.ui.description_color(bg)).bg(bg))
-            });
-
-        let max_name = (render_width as usize).saturating_sub(4);
-        let name_display = if UnicodeWidthStr::width(item.name.as_str()) > max_name {
-            let mut truncated = String::with_capacity(max_name);
-            let mut w = 0;
-            for ch in item.name.chars() {
-                let cw = ch.width().unwrap_or(0);
-                if w + cw + 1 > max_name { break; }
-                truncated.push(ch);
-                w += cw;
-            }
-            truncated.push('…');
-            Cow::Owned(truncated)
-        } else {
-            Cow::Borrowed(item.name.as_str())
-        };
-        line_info_buf.clear();
-        let _ = write!(line_info_buf, ":{}", item.line + 1); // Error OK: write to String buffer is infallible in practice
-
-        let text_width = (UnicodeWidthStr::width(kind_icon)
-            + UnicodeWidthStr::width(name_display.as_ref())
-            + line_info_buf.len()) as u16;
-        let mut spans = vec![
-            Span::styled(kind_icon, icon_style),
-            Span::styled(name_display, row_style),
-            Span::styled(line_info_buf.as_str(), detail_style),
-        ];
-        let fill = render_width.saturating_sub(text_width);
-        if fill > 0 {
-            spans.push(Span::styled(crate::helpers::spaces(fill as usize), row_style));
-        }
-        f.render_widget(Paragraph::new(Line::from(spans)).style(row_style), Rect::new(entry_area.x, y, render_width, 1));
-    }
-
-    // Draw scrollbar if content overflows
-    if let Some(sb) = sb_area {
-        let height = sb.height as usize;
-        let thumb_size = ((visible as f64 / total_items as f64) * height as f64).max(1.0) as usize;
-        let thumb_size = thumb_size.min(height);
-        let max_scroll = total_items.saturating_sub(visible);
-        let thumb_pos = if max_scroll > 0 {
-            ((scroll as f64 / max_scroll as f64) * (height - thumb_size) as f64) as usize
-        } else {
-            0
-        };
-        let hovered = sb.contains((app.mouse_col, app.mouse_row).into());
-        let (track_color, thumb_color) = app.colors.ui.scrollbar_colors(sidebar_bg, hovered, false);
-        for i in 0..height {
-            let in_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
-            let color = if in_thumb { thumb_color } else { track_color };
-            if let Some(cell) = f.buffer_mut().cell_mut((sb.x, sb.y + i as u16)) {
-                cell.set_symbol("▐").set_style(Style::default().fg(color).bg(track_color));
-            }
-        }
-    }
-}
-
 pub(crate) fn activity_item_regions(area: Rect) -> Vec<(Rect, usize)> {
     if area.is_empty() { return Vec::new(); }
-    let primary: &[usize] = &[0, 1, 2, 3, 4, 5];
-    let height = (area.height / (primary.len() as u16 + 1)).clamp(1, 3);
-    let visible = primary.len().min(area.height.saturating_sub(height) as usize / height as usize);
-    let mut regions: Vec<_> = primary.iter().take(visible).enumerate().map(|(position, &index)|
-        (Rect::new(area.x, area.y + position as u16 * height, area.width, height), index)).collect();
-    regions.push((Rect::new(area.x, area.bottom() - height, area.width, height), 6));
+    let height = (area.height / (ACTIVITY_SETTINGS_INDEX as u16 + 1)).clamp(1, 3);
+    let visible = ACTIVITY_SETTINGS_INDEX.min(usize::from((area.height - height) / height));
+    let mut regions: Vec<_> = (0..visible).map(|index|
+        (Rect::new(area.x, area.y + index as u16 * height, area.width, height), index)).collect();
+    regions.push((Rect::new(area.x, area.bottom() - height, area.width, height), ACTIVITY_SETTINGS_INDEX));
     regions
 }
 
@@ -1799,10 +1655,10 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
             0 => ACTIVITY_LABEL_EXPLORER, 1 => ACTIVITY_LABEL_SEARCH,
             2 => ACTIVITY_LABEL_SOURCE_CONTROL, 4 => ACTIVITY_LABEL_EXTENSIONS,
             3 => ACTIVITY_LABEL_REMOTE,
-            5 => ACTIVITY_LABEL_OUTLINE, 6 => ACTIVITY_LABEL_SETTINGS,
+            ACTIVITY_SETTINGS_INDEX => ACTIVITY_LABEL_SETTINGS,
             _ => continue,
         };
-        let active = if index == 6 { app.settings_editor_active || app.settings_active }
+        let active = if index == ACTIVITY_SETTINGS_INDEX { app.settings_editor_active || app.settings_active }
             else { app.sidebar_is_visible() && app.activity_bar_selected == index };
         let hovered = app.hovered_activity == Some(index);
         let cell_bg = if active { app.colors.ui.bg_activity_active.over(bg).unwrap_or(bg) } else { bg };
@@ -2302,8 +2158,7 @@ mod tests {
         assert!(row(9).contains("REMO"));
         assert!(row(10).contains("TE"));
         assert!(row(13).contains("EXTS"));
-        assert!(row(15).contains("OUTL"));
-        assert!(row(16).contains("INE"));
+        assert!((15..18).all(|y| row(y).trim().is_empty()));
         assert!((0..18).all(|y| !row(y).contains("RUN")));
         assert!(row(18).contains("SETT"));
         assert!(row(19).contains("INGS"), "settings action stays at the bottom");
@@ -2312,9 +2167,9 @@ mod tests {
     #[test]
     fn vanilla_activity_bar_uses_available_compact_height_for_settings() {
         let app = App::test_new();
-        let mut terminal = Terminal::new(TestBackend::new(6, 18)).expect("test terminal");
+        let mut terminal = Terminal::new(TestBackend::new(6, 17)).expect("test terminal");
         terminal
-            .draw(|frame| draw_activity_bar(frame, &app, Rect::new(0, 0, 6, 18)))
+            .draw(|frame| draw_activity_bar(frame, &app, frame.area()))
             .expect("compact activity bar draw");
 
         let row = |y| {
@@ -2326,11 +2181,8 @@ mod tests {
         assert!(row(6).contains("REMO"));
         assert!(row(7).contains("TE"));
         assert!(row(8).contains("EXTS"));
-        assert!(row(10).contains("OUTL"));
-        assert!(row(11).contains("INE"));
-        assert!((0..18).all(|y| !row(y).contains("CHAT")));
-        assert!(row(16).contains("SETT"));
-        assert!(row(17).contains("INGS"));
+        assert!(row(15).contains("SETT"));
+        assert!(row(16).contains("INGS"));
     }
 
     #[test]
@@ -2340,7 +2192,6 @@ mod tests {
             ACTIVITY_LABEL_SEARCH,
             ACTIVITY_LABEL_SOURCE_CONTROL,
             ACTIVITY_LABEL_EXTENSIONS,
-            ACTIVITY_LABEL_OUTLINE,
             ACTIVITY_LABEL_REMOTE,
             ACTIVITY_LABEL_SETTINGS,
         ] {
@@ -2408,7 +2259,3 @@ mod tests {
         assert!(matches!(constraints[4], Constraint::Fill(weight) if weight > 0));
     }
 }
-
-#[cfg(test)]
-#[path = "ui_outline_performance_tests.rs"]
-mod outline_performance_tests;

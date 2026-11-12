@@ -12,7 +12,6 @@ pub(crate) enum Region {
     Menu,
     Activity,
     Explorer,
-    Outline,
 }
 
 impl Region {
@@ -20,19 +19,14 @@ impl Region {
         match self {
             Self::Menu => 0,
             Self::Activity => 1,
-            Self::Explorer | Self::Outline => 2,
+            Self::Explorer => 2,
         }
     }
 }
 
-struct Scene {
-    region: Region,
-    cells: Buffer,
-}
-
 #[derive(Default)]
 pub(crate) struct Cache {
-    scenes: [Option<Scene>; 3],
+    scenes: [Option<Buffer>; 3],
     valid: u8,
     enabled: bool,
     #[cfg(test)]
@@ -70,10 +64,9 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, area: Rect, region: Region)
         && app.rendering_animation_frame
         && cache.valid & (1 << slot) != 0
         && let Some(scene) = cache.scenes[slot].as_ref()
-        && scene.region == region
-        && scene.cells.area == area
+        && scene.area == area
     {
-        copy_area(&scene.cells, frame.buffer_mut(), area);
+        copy_area(scene, frame.buffer_mut(), area);
         #[cfg(test)]
         {
             cache.replays += 1;
@@ -85,19 +78,14 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, area: Rect, region: Region)
         Region::Menu => crate::ui_chrome::draw_menu_bar(frame, app, area),
         Region::Activity => crate::ui_chrome::draw_activity_bar(frame, app, area),
         Region::Explorer => crate::ui_chrome::draw_explorer(frame, app, area),
-        Region::Outline => crate::ui_chrome::draw_outline(frame, app, area),
     }
     let cache = &mut app.animation_frame_cache.chrome;
     if eligible && app.rendering_animation_frame {
         // Capture lazily on the first cosmetic tick. Typing, scrolling, and
         // quiet enabled effects must not pay for copying unused chrome.
-        let scene = cache.scenes[slot].get_or_insert_with(|| Scene {
-            region,
-            cells: Buffer::empty(area),
-        });
-        scene.region = region;
-        scene.cells.resize(area);
-        copy_area(frame.buffer_mut(), &mut scene.cells, area);
+        let scene = cache.scenes[slot].get_or_insert_with(|| Buffer::empty(area));
+        scene.resize(area);
+        copy_area(frame.buffer_mut(), scene, area);
         cache.valid |= 1 << slot;
     } else if !eligible {
         cache.scenes[slot] = None;

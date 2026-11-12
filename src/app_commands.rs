@@ -857,9 +857,9 @@ impl App {
             "format_selection" => { self.request_format(true, false); }
             "configure_formatter" => { self.open_formatter_settings(None); }
             "goto_last_edit" => {
-                if let Some((tab_idx, line, col)) = self.last_edit_position {
-                    if tab_idx < self.tabs.len() {
-                        self.active_tab = tab_idx;
+                if let Some((view, line, col)) = self.last_edit_position {
+                    if let Some(index) = self.tabs.iter().position(|tab| tab.editor.navigation_id == view) {
+                        self.active_tab = index;
                         if let Some(ed) = self.editor_mut() {
                             ed.clear_selection();
                             ed.set_cursor(line, col);

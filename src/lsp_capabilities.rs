@@ -34,7 +34,6 @@ const PROVIDERS: &[(&str, &str)] = &[
         "textDocument/documentHighlight",
         "/documentHighlightProvider",
     ),
-    ("textDocument/documentSymbol", "/documentSymbolProvider"),
     ("textDocument/foldingRange", "/foldingRangeProvider"),
     ("textDocument/selectionRange", "/selectionRangeProvider"),
     (

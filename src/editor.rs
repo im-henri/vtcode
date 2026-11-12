@@ -1751,8 +1751,25 @@ impl Editor {
 
     pub(crate) fn reveal_find_cursor_column(&mut self) {
         // Find selects through the caret, so its text can end at the left edge.
+        if self.cursor_col == self.horizontal_scroll || self.cursor_column_is_hidden() {
+            self.reveal_cursor_column();
+        }
+    }
+
+    /// Reveal a hidden caret column after placing it with the pointer.
+    pub(crate) fn reveal_mouse_cursor_column(&mut self) {
+        if !self.word_wrap
+            && !self.bg_loading
+            && self.diff_display_rows.is_none()
+            && self.cursor_column_is_hidden()
+        {
+            self.reveal_cursor_column();
+        }
+    }
+
+    fn cursor_column_is_hidden(&self) -> bool {
         // A glyph before the caret occupying the last cell puts the caret offscreen.
-        if self.cursor_col <= self.horizontal_scroll
+        self.cursor_col < self.horizontal_scroll
             || self
                 .source_column_at_cell(
                     self.cursor_line,
@@ -1761,9 +1778,6 @@ impl Editor {
                     self.viewport_width.saturating_sub(1),
                 )
                 .1
-        {
-            self.reveal_cursor_column();
-        }
     }
 
     fn reveal_cursor_column(&mut self) {
@@ -1785,6 +1799,11 @@ impl Editor {
         if !self.bg_loading {
             self.ensure_visible();
         }
+    }
+
+    pub(crate) fn set_mouse_cursor(&mut self, line: usize, col: usize) {
+        self.set_cursor_without_scrolling(line, col);
+        self.reveal_mouse_cursor_column();
     }
 
     pub(crate) fn apply_pending_file_navigation(&mut self) {

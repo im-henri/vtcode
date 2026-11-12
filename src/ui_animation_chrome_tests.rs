@@ -82,7 +82,7 @@ fn cached_chrome_preserves_cells_and_targets_across_semantic_changes() {
                 app.tabs[0].editor.modified = true;
             }
             6 => {
-                app.sidebar_view = SidebarView::Outline;
+                app.sidebar_view = SidebarView::Search;
             }
             7 => {
                 app.show_explorer = false;

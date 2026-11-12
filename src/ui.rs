@@ -571,9 +571,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             crate::app::SidebarView::Extensions => {
                 ui_helpers::draw_extensions_sidebar(f, app, sidebar_area);
             }
-            crate::app::SidebarView::Outline => {
-                draw_static_chrome(f, app, sidebar_area, ChromeRegion::Outline);
-            }
             crate::app::SidebarView::Remote => crate::ui_remote_targets::draw_sidebar(f, app, sidebar_area),
         }
         crate::ui_loading::draw_sidebar(f, app, sidebar_area);

@@ -127,7 +127,6 @@ fn moving_into_code_clears_chrome_hover_once() {
     let area = app.code_area.unwrap();
     app.hovered_tab_scroll_right = true;
     app.hovered_terminal_sidebar_toggle = true;
-    app.outline_hovered = Some(1);
     let (_sender, receiver) = std::sync::mpsc::channel();
     let mut pump = TerminalEventPump::from_receiver(receiver);
     assert!(handle_mouse_input(
@@ -136,7 +135,6 @@ fn moving_into_code_clears_chrome_hover_once() {
         pointer(MouseEventKind::Moved, area.x + 3, area.y + 2)
     ));
     assert!(!app.hovered_tab_scroll_right && !app.hovered_terminal_sidebar_toggle);
-    assert!(app.outline_hovered.is_none());
     assert!(!handle_mouse_input(
         &mut app,
         &mut pump,

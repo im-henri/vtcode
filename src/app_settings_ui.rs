@@ -451,7 +451,7 @@ impl App {
             "panel_height" => "Set the bottom panel height.",
             "sidebar_pos" => "Choose whether the sidebar is on the left or right side.",
             "zen" => "Toggle zen mode to reduce UI chrome.",
-            "activity_bar" => "Show the Activity Bar used to switch between Explorer, Search, Source Control, and Outline.",
+            "activity_bar" => "Show the Activity Bar for Explorer, Search, Source Control, Remote, Extensions, and Settings.",
             "indent_rainbow" => "Color indentation levels for easier nesting visibility.",
             "color_preview" => "Show inline color swatches for hex, rgb(), and rgba() color values.",
             "bracket_pair_colorization" => "Color matching bracket pairs by nesting depth.",

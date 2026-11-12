@@ -1318,29 +1318,6 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
     }
-    // Add current symbol name if available (find enclosing symbol at cursor line via binary search)
-    let cursor_line = app.editor().map_or(0, |ed| ed.cursor_line);
-    let pos = app.outline_items.partition_point(|s| s.line <= cursor_line);
-    let symbol_name = if pos > 0 {
-        Some(&app.outline_items[pos - 1].name)
-    } else {
-        None
-    };
-    if let Some(sym) = symbol_name {
-        spans.push(Span::styled(
-            " › ",
-            Style::default()
-                .fg(app.colors.ui.fg_breadcrumb)
-                .bg(app.colors.ui.bg_breadcrumb),
-        ));
-        spans.push(Span::styled(
-            sym.as_str(),
-            Style::default()
-                .fg(app.colors.ui.readable_foreground(app.colors.ui.fg_breadcrumb_focus, app.colors.ui.bg_breadcrumb, 4.5))
-                .bg(app.colors.ui.bg_breadcrumb),
-        ));
-    }
-
     let total_used: usize = spans
         .iter()
         .map(|s| UnicodeWidthStr::width(s.content.as_ref()))

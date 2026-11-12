@@ -263,12 +263,16 @@ fn complete_group(
                 let utf16 = placeholder.editor.pending_cursor_utf16;
                 let center = placeholder.editor.pending_cursor_center;
                 let selection = placeholder.editor.pending_navigation_selection;
+                let review = placeholder.editor.ai_review.requested_navigation;
                 let editor = &mut tabs[target].editor;
                 if cursor.is_some() {
                     editor.pending_cursor_position = cursor;
                     editor.pending_cursor_utf16 = utf16;
                     editor.pending_cursor_center = center;
                     editor.pending_navigation_selection = selection;
+                }
+                if review.is_some() {
+                    editor.ai_review.requested_navigation = review;
                 }
                 if !editor.bg_loading {
                     editor.apply_pending_file_navigation();

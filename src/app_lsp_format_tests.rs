@@ -119,7 +119,7 @@ fn a_parked_workspace_finishes_format_on_save_without_requesting_ui_features() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     assert!(!app.workspaces.parked[0].app.workspace_visible);
     assert!(!server.take_messages().iter().any(|message| matches!(message["method"].as_str(),
-        Some("textDocument/documentSymbol" | "textDocument/inlayHint" | "textDocument/semanticTokens/full"))));
+        Some("textDocument/foldingRange" | "textDocument/inlayHint" | "textDocument/semanticTokens/full"))));
 }
 
 #[test]

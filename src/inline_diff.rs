@@ -289,27 +289,45 @@ impl InlineDiffScroll {
             (area.y, area.height)
         };
         let track = track as usize;
-        let (max_scroll, thumb) =
-            scrollbar_thumb(total, visible, track, if horizontal { 2 } else { 1 });
-        let travel = track.saturating_sub(thumb);
-        let top = offset
-            .saturating_mul(travel)
-            .checked_div(max_scroll)
-            .unwrap_or(0);
+        if track == 0 {
+            return;
+        }
+        let (max_scroll, thumb) = scrollbar_thumb(total, visible, track, 2);
+        let viewport = if horizontal {
+            let top = offset
+                .saturating_mul(track - thumb)
+                .checked_div(max_scroll)
+                .unwrap_or(0);
+            top..top + thumb
+        } else {
+            crate::ui_editor_minimap::scrollbar_viewport(total, visible, *offset, track, false)
+        };
         let relative = position.saturating_sub(start) as usize;
         if begin {
-            if (top..top + thumb).contains(&relative) {
-                *grab = relative - top;
+            if viewport.contains(&relative) {
+                *grab = relative - viewport.start;
                 return;
             }
-            *grab = thumb / 2;
+            *grab = viewport.len() / 2;
         }
-        *offset = relative
-            .saturating_sub(*grab)
-            .min(travel)
-            .saturating_mul(max_scroll)
-            .checked_div(travel)
-            .unwrap_or(0);
+        let position = relative.saturating_sub(*grab);
+        if horizontal {
+            let travel = track - thumb;
+            *offset = position
+                .min(travel)
+                .saturating_mul(max_scroll)
+                .checked_div(travel)
+                .unwrap_or(0);
+        } else {
+            let last = crate::ui_editor_minimap::scrollbar_viewport(
+                total, visible, max_scroll, track, false,
+            ).start;
+            *offset = if position >= last {
+                max_scroll
+            } else {
+                (position as u128 * total as u128).div_ceil(track as u128) as usize
+            };
+        }
         self.sync_editor(editor);
     }
 }

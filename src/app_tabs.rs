@@ -415,7 +415,7 @@ impl App {
             let mut tab = self.clone_desk_tab(source);
             tab.editor.pending_reopen_view = saved_view;
             tab.editor.restore_reopen_view();
-            self.push_previewable_tab(tab, preview);
+            self.open_previewable_tab(tab, preview);
             self.active_pane = ActivePane::Editor;
             self.touch_tab_mru(self.active_tab);
             self.sync_diff_tab();
@@ -454,7 +454,7 @@ impl App {
         #[cfg(windows)]
         let preview = preview && !deferred_preview;
         self.status_message = format!("Loading: {}...", self.display_path(&open_path));
-        self.push_previewable_tab(Tab::new_file(editor), preview);
+        self.open_previewable_tab(Tab::new_file(editor), preview);
         self.active_pane = ActivePane::Editor;
         self.refresh_source_control_for_navigation();
 
@@ -793,15 +793,43 @@ impl App {
         self.visible_highlight_cancel_token = Some(token);
     }
 
+    pub(crate) fn insert_tab_after_active(&mut self, tab: Tab) -> usize {
+        let index = self.active_tab.saturating_add(1).min(self.tabs.len());
+        // Inserting between two members must keep the named group contiguous.
+        if let Some(group) = self.tabs.get(self.active_tab).and_then(|tab| self.tab_group(tab))
+            && self.tabs.get(index).and_then(|tab| self.tab_group(tab)).is_some_and(|next| next.id == group.id)
+        {
+            self.desks.membership.insert(tab.editor.navigation_id, group.id);
+        }
+        if index < self.tabs.len() {
+            let shift = |old: usize| old.saturating_add(usize::from(old >= index));
+            for recent in &mut self.tab_mru_order {
+                *recent = shift(*recent);
+            }
+            self.tab_scroll_offset = shift(self.tab_scroll_offset);
+            if self.dragging_tab_source_group.unwrap_or(self.active_group) == self.active_group {
+                self.dragging_tab = self.dragging_tab.map(shift);
+            }
+            if self.tab_context_active {
+                self.tab_context_tab = shift(self.tab_context_tab);
+            }
+            self.hovered_tab = None;
+            self.hovered_tab_close_btn = false;
+            self.clear_tab_tooltip();
+        }
+        self.tab_scroll_manual_anchor = None;
+        self.tabs.insert(index, tab);
+        index
+    }
+
     /// File and diff browsing share one replaceable preview in each group.
-    pub(crate) fn push_previewable_tab(&mut self, mut tab: Tab, preview: bool) {
+    pub(crate) fn open_previewable_tab(&mut self, mut tab: Tab, preview: bool) {
         self.promote_modified_preview_tabs();
         tab.preview = preview && self.enable_preview_tabs && !tab.has_unsaved_changes();
         let preview = tab.preview;
         // Add first so replacing a group's only tab cannot close the group.
         // Normal close handling releases document and diff cache ownership.
-        self.tabs.push(tab);
-        self.active_tab = self.tabs.len() - 1;
+        self.active_tab = self.insert_tab_after_active(tab);
         self.touch_tab_mru(self.active_tab);
         if preview {
             self.replace_other_preview_tab();
@@ -1001,8 +1029,7 @@ impl App {
         self.start_empty_window_document_services();
         self.record_navigation();
         let editor = self.new_editor();
-        self.tabs.push(Tab::new_file(editor));
-        self.active_tab = self.tabs.len() - 1;
+        self.active_tab = self.insert_tab_after_active(Tab::new_file(editor));
         self.active_pane = ActivePane::Editor;
         self.touch_tab_mru(self.active_tab);
         self.status_message = String::from("New file");
@@ -1338,7 +1365,7 @@ impl App {
         editor.word_wrap = false;
         editor.horizontal_scroll = 0;
         editor.language_override = Some("Markdown".into());
-        self.tabs.push(Tab {
+        let preview_idx = self.insert_tab_after_active(Tab {
             editor,
             pinned: false,
             preview: false,
@@ -1347,8 +1374,6 @@ impl App {
             file_search: Default::default(),
             terminal_idx: None,
         });
-        let preview_idx = self.tabs.len() - 1;
-
         self.markdown_preview = true;
         self.activate_markdown_preview_tab(preview_idx);
         self.notify("Markdown preview opened");
@@ -1527,12 +1552,8 @@ impl App {
         self.global_search_replace_visible = false;
         self.symbol_list_active = false;
         self.source_symbol_work.cancel_picker();
-        self.source_symbol_work.cancel_outline();
         self.symbol_list_items.clear();
         self.symbol_list_filtered.clear();
-        self.outline_items.clear();
-        self.outline_scroll = 0;
-        self.outline_selected = 0;
         self.navigation = Default::default();
         self.closed_tab_paths.clear();
         self.closed_file_views.clear();

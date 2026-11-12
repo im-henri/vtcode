@@ -393,19 +393,21 @@ impl TerminalEventPump {
     }
 
     /// Interior character selection depends on the latest endpoint within the
-    /// viewport. Consume only queued samples; edge drags retain every
-    /// auto-scroll step, and all other input keeps its original ordering.
+    /// viewport. Keep samples that can scroll the viewport in order.
     fn latest_selection_drag(
         &mut self,
         mut mouse: crossterm::event::MouseEvent,
-        area: ratatui::layout::Rect,
         limit: usize,
+        can_coalesce: impl Fn(crossterm::event::MouseEvent) -> bool,
     ) -> (crossterm::event::MouseEvent, usize) {
         let mut consumed = 1;
+        if !can_coalesce(mouse) {
+            return (mouse, consumed);
+        }
         while consumed < limit {
             let Some(next) = self.next_matching_mouse(|next|
                 next.kind == mouse.kind && next.modifiers == mouse.modifiers
-                    && area.contains((next.column, next.row).into()))
+                    && can_coalesce(next))
             else { break; };
             mouse = next;
             consumed += 1;
@@ -776,7 +778,19 @@ pub(crate) fn handle_mouse_input(
     let started = std::time::Instant::now();
     for processed in 1..=MAX_SCROLL_BATCH {
         if let Some(area) = selection_area {
-            let (latest, consumed) = pump.latest_selection_drag(mouse, area, selection_budget);
+            let editor = app.editor().expect("selection drag has an active editor");
+            let panned = !editor.word_wrap && editor.horizontal_scroll > 0;
+            let (latest, consumed) = pump.latest_selection_drag(mouse, selection_budget, |next| {
+                if !area.contains((next.column, next.row).into()) {
+                    return false;
+                }
+                // Landing past a short line's end can pan left even away from the edge.
+                !panned || {
+                    let screen_row = usize::from(next.row - area.y);
+                    let line = crate::mouse_drag::unwrapped_pointer_line(editor, screen_row);
+                    editor.line_len(line) >= editor.horizontal_scroll
+                }
+            });
             mouse = latest;
             selection_budget -= consumed;
         } else {

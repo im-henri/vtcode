@@ -480,41 +480,6 @@ fn test_parameter_label_offsets_short_input_is_safe() {
     assert_eq!(LspClient::parameter_label_offsets(&[4, 9]), (4, 9));
 }
 
-#[test]
-fn test_parse_document_symbol_nested_response_without_panicking() {
-    let json = r#"{
-            "jsonrpc": "2.0",
-            "id": 32,
-            "result": [
-                {
-                    "name": "main",
-                    "kind": 12,
-                    "range": {
-                        "start": {"line": 0, "character": 0},
-                        "end": {"line": 4, "character": 1}
-                    },
-                    "selectionRange": {
-                        "start": {"line": 0, "character": 3},
-                        "end": {"line": 0, "character": 7}
-                    }
-                }
-            ]
-        }"#;
-    let event =
-        LspClient::parse_message(json, &test_pending(32, "textDocument/documentSymbol")).unwrap();
-    match event {
-        LspEvent::DocumentSymbolResponse {
-            request_id,
-            symbols,
-        } => {
-            assert_eq!(request_id, 32);
-            assert_eq!(symbols.len(), 1);
-            assert_eq!(symbols[0].name, "main");
-        }
-        _ => panic!("Expected DocumentSymbolResponse event"),
-    }
-}
-
 // ── File pattern matching tests ──────────────────────────────
 
 #[test]
@@ -830,9 +795,6 @@ fn rust_analyzer_linux_feature_round_trip() {
     assert!(manager.request_signature_help(&path, 4, 21));
     wait(&mut manager, "signature help", |m| m.signature_help.is_some());
     assert!(manager.signature_help.is_some());
-    assert!(manager.request_document_symbol(&path));
-    wait(&mut manager, "outline", |m| m.document_symbols_dirty);
-    assert!(manager.document_symbols.iter().any(|symbol| symbol.name == "caller"));
     assert!(manager.request_semantic_tokens_full(&path));
     wait(&mut manager, "semantic tokens", |m| m.semantic_tokens_dirty);
     assert!(manager.semantic_tokens_response.as_ref().is_some_and(|tokens| !tokens.data.is_empty()));

@@ -219,6 +219,7 @@ fn open_blame_commit_tab(remote_mode: bool) {
     assert_eq!(app.commit_details.query, "other");
     if !remote_mode {
         app.open_source_control_commit_details_file_diff(0);
+        app.wait_for_background(Duration::from_secs(5), |app| !app.is_commit_details_tab());
         assert_eq!(app.editor().unwrap().rope.to_string(), committed);
         assert_eq!(app.compare_base_content.as_deref(), Some(SOURCE));
         assert_eq!(app.diff_target_path.as_ref().unwrap().canonicalize().unwrap(), repo_root.join("example.c").canonicalize().unwrap());
@@ -1051,6 +1052,7 @@ fn blame_ai_review_virtual_rows_have_no_misattributed_authors() {
     app.chat.rollback.inline_reviews = Arc::new(vec![FileReview {
         path,
         text: SOURCE.into(),
+        has_text: true,
         chunks: vec![
             InlineChunk {
                 edit: 1,

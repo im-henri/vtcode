@@ -149,39 +149,11 @@ pub(crate) fn handle_editor_area_left_click(
         {
             app.active_pane = ActivePane::Editor;
             app.dragging_minimap = true;
-            app.minimap_drag_start = None;
-            let mut drag_start = None;
-            if let Some(ed) = app.editor_mut() {
-                let total_lines = ed.visible_line_count();
-                let minimap_height = minimap_area.height as usize;
-                if minimap_height > 0 && total_lines > 0 {
-                    let click_row = (row - minimap_area.y) as usize;
-                    let layout = crate::ui_editor_minimap::MinimapLayout::new(
-                        total_lines,
-                        ed.visible_scroll_offset(),
-                        ed.viewport_height,
-                        minimap_height,
-                        ed.scroll_past_end,
-                    );
-                    ed.set_visible_scroll_offset(layout.click_scroll(click_row));
-                    drag_start = Some((click_row, ed.visible_scroll_offset()));
-                    if ed.word_wrap {
-                        let wrap_row = ed.wrapped_row_for_position(
-                            ed.scroll_offset,
-                            0,
-                            ed.effective_wrap_width(),
-                        );
-                        ed.set_wrap_scroll_offset(wrap_row);
-                    }
-                } else {
-                    // Still consume the click to prevent click-through.
-                    ed.scroll_offset = 0;
-                    if ed.word_wrap {
-                        ed.set_wrap_scroll_offset(0);
-                    }
-                }
-            }
-            app.minimap_drag_start = drag_start;
+            app.minimap_drag_start = app.editor_mut().map(|editor| {
+                crate::ui_editor_minimap::MinimapDrag::begin(
+                    editor, (row - minimap_area.y) as usize, minimap_area.height as usize,
+                )
+            });
             return;
         }
     }
@@ -266,12 +238,13 @@ pub(crate) fn handle_editor_area_left_click(
                     ed.cursor_line = clicked_line;
                     ed.cursor_col = clamped_col;
                     ed.desired_col = None;
+                    ed.reveal_mouse_cursor_column();
                 } else if ctrl_held {
                     // Ctrl+Click: go to definition (like VS Code)
                     ed.extra_cursors.clear();
                     ed.extra_cursor_anchors.clear();
                     ed.clear_selection();
-                    ed.set_cursor_without_scrolling(clicked_line, clicked_col);
+                    ed.set_mouse_cursor(clicked_line, clicked_col);
                 } else if alt_held {
                     // Alt+Click: add a new cursor or remove the one already here.
                     ed.toggle_extra_cursor((clicked_line, clicked_col));
@@ -283,6 +256,7 @@ pub(crate) fn handle_editor_area_left_click(
                             ed.clear_selection();
                             ed.set_cursor_without_scrolling(clicked_line, clicked_col);
                             ed.select_line();
+                            ed.reveal_mouse_cursor_column();
                             let line_end = ed.line_len(clicked_line);
                             new_mc_anchor =
                                 Some(Some((clicked_line, 0, clicked_line, line_end)));
@@ -298,6 +272,7 @@ pub(crate) fn handle_editor_area_left_click(
                             } else {
                                 ed.select_word_at_cursor();
                             }
+                            ed.reveal_mouse_cursor_column();
                             new_mc_anchor = Some(Some(ed.selection_range().unwrap_or(
                                 (clicked_line, clicked_col, clicked_line, clicked_col),
                             )));
@@ -314,7 +289,7 @@ pub(crate) fn handle_editor_area_left_click(
                                 ed.extra_cursors.clear();
                                 ed.extra_cursor_anchors.clear();
                                 ed.clear_selection();
-                                ed.set_cursor_without_scrolling(clicked_line, clicked_col);
+                                ed.set_mouse_cursor(clicked_line, clicked_col);
                                 ed.selection_anchor =
                                     Some((ed.cursor_line, ed.cursor_col));
                             }
@@ -619,7 +594,7 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             if let Some(ed) = app.editor_mut() {
                 let (clicked_line, clicked_col) =
                     crate::mouse_drag::code_area_to_buffer_pos(ed, code_area, col, row);
-                ed.set_cursor_without_scrolling(clicked_line, clicked_col);
+                ed.set_mouse_cursor(clicked_line, clicked_col);
             }
             app.context_menu_active = true;
             app.context_menu_items = App::build_context_menu();

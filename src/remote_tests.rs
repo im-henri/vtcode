@@ -1630,6 +1630,9 @@ fn remote_source_control_diff_refresh_uses_remote_worktree_and_index() {
 
 #[test]
 fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::{Terminal, backend::TestBackend};
+
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
     repo.config()
@@ -1671,6 +1674,25 @@ fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
     assert_eq!(diff.prepared.base_content.as_ref(), "");
     let mut app = app_for_workspace(&workspace);
     app.source_control_enabled = true;
+    app.open_commit_details(workspace.view_root.clone(), details);
+    app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.loading);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let card = app.commit_details.review.visible[0];
+    assert!(app.commit_details.review.collapsed.contains(&card.file));
+    crate::mouse::handle_mouse(&mut app, MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: card.open.x + 1,
+        row: card.open.y,
+        modifiers: KeyModifiers::NONE,
+    });
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.active_diff_tab_id().is_some() && !app.is_commit_details_tab()
+    });
+    assert_eq!(app.diff_target_path.as_ref(), Some(&key));
+    assert_eq!(app.editor().unwrap().rope.to_string(), original);
+    assert!(app.editor().unwrap().read_only);
+    assert!(app.should_render_diff_for_active_editor());
     app.open_file(&key);
     app.wait_for_background(Duration::from_secs(10), |app| {
         app.editor().is_some_and(|e| !e.bg_loading)

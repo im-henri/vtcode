@@ -79,16 +79,21 @@ fn assert_overview(app: &mut App, changed: bool) {
     app.sticky_scroll = false;
     app.cursor_visible = false;
     app.colors.ui.fg_gutter_added = Color::Rgb(1, 2, 3);
-    app.colors.ui.fg_minimap_added = Color::Rgb(4, 5, 6);
     app.colors.ui.fg_overview_added = Color::Rgb(7, 8, 9);
     let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
     terminal
         .draw(|frame| crate::ui_editor::draw_editor(frame, app, frame.area()))
         .unwrap();
     let buffer = terminal.backend().buffer();
+    let minimap = app.minimap_area.unwrap();
+    assert_eq!(
+        (minimap.y..minimap.bottom())
+            .any(|y| buffer[(minimap.right() - 1, y)].bg == app.colors.ui.fg_gutter_added),
+        changed,
+        "minimap"
+    );
     for (area, color) in [
         (app.gutter_area.unwrap(), app.colors.ui.fg_gutter_added),
-        (app.minimap_area.unwrap(), app.colors.ui.fg_minimap_added),
         (
             app.scrollbar_area.unwrap(),
             app.colors.ui.fg_overview_added,

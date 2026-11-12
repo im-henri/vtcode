@@ -16,7 +16,7 @@ use crate::editor::Editor;
 use crate::ui_editor_highlight::{draw_horizontal_scrollbar, draw_minimap_separator, HScrollbarParams};
 use crate::ui_editor::refresh_cached_editor_diagnostics;
 use crate::ui_editor_minimap::{
-    MinimapParams, ScrollbarParams, draw_mapped_scrollbar, draw_minimap,
+    MinimapDiffChanges, MinimapParams, ScrollbarParams, draw_mapped_scrollbar, draw_minimap,
 };
 
 #[cfg(test)]
@@ -1864,7 +1864,10 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                 diagnostic_lines: diag_lines,
                 diagnostic_index: Some(&app.cached_diagnostic_index),
                 change_index: Some(&app.cached_editor_change_index),
-                diff_changes: Some(diff_cache.target_changes.as_slice()),
+                diff_changes: Some(MinimapDiffChanges {
+                    lines: &diff_cache.target_changes,
+                    staged: app.diff_tabs.staged_for_tab(&app.tabs[app.active_tab]) == Some(true),
+                }),
                 colors: app.colors,
                 hovered: app.hovered_minimap,
                 active: app.dragging_minimap,

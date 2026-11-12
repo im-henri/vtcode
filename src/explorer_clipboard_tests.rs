@@ -445,7 +445,7 @@ fn clipboard_keys_in_other_sidebars_and_explorer_controls_cannot_edit_hidden_cod
         SidebarView::Search,
         SidebarView::SourceControl,
         SidebarView::Extensions,
-        SidebarView::Outline,
+        SidebarView::Remote,
         SidebarView::Settings,
     ] {
         let (_directory, mut app) = fixture(true);

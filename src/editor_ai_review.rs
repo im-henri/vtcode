@@ -99,6 +99,7 @@ pub(crate) struct ReviewView {
     chunks: Vec<InlineChunk>,
     order: Vec<usize>,
     selected: Option<(u64, usize)>,
+    pub(crate) requested_navigation: Option<(u64, usize)>,
     advance_requested: Option<ReviewAdvance>,
     extras: Vec<Extra>,
     highlights: Vec<Range<usize>>,
@@ -924,7 +925,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             code,
             inline_blame,
         );
-        let editor = &app.tabs[app.active_tab].editor;
+        let editor = &mut app.tabs[app.active_tab].editor;
+        if code.height > 0 && !editor.bg_loading && !editor.load_failed
+            && let Some(file) = file.as_ref()
+            && let Some(chunk) = view.requested_navigation.take()
+        {
+            view.navigate(editor, file, generation, chunk);
+        }
         if previous_view
             == (
                 editor.scroll_offset,
@@ -1510,6 +1517,7 @@ mod tests {
         app.chat.rollback.inline_reviews = std::sync::Arc::new(vec![FileReview {
             path,
             text: after.into(),
+            has_text: true,
             chunks: vec![InlineChunk {
                 edit: 42,
                 index: 0,

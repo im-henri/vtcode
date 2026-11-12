@@ -172,14 +172,7 @@ pub(super) fn draw_scrollbar_reference(
         .min(total_lines.saturating_sub(1))
         .saturating_mul(height)
         / total_lines;
-    let thumb_size = ((visible_lines as u128 * height as u128 / total_lines as u128) as usize)
-        .max(1).min(height);
-    let max_scroll = total_lines.saturating_sub(visible_lines);
-    let thumb_pos = if max_scroll > 0 {
-        (scroll.min(max_scroll) as u128 * (height - thumb_size) as u128 / max_scroll as u128) as usize
-    } else {
-        0
-    };
+    let viewport = scrollbar_viewport(total_lines, visible_lines, scroll, height, false);
 
     let (track, thumb) = colors
         .ui
@@ -191,7 +184,7 @@ pub(super) fn draw_scrollbar_reference(
             .saturating_mul(total_lines)
             .div_ceil(height)
             .min(total_lines);
-        let in_thumb = i >= thumb_pos && i < thumb_pos + thumb_size;
+        let in_thumb = viewport.contains(&i);
         let (query_start, query_end) =
             source_to_display.map_or((source_start, source_end), |mapping| {
                 (

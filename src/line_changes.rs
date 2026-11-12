@@ -112,15 +112,6 @@ pub(crate) enum ChangeKind {
 }
 
 impl ChangeKind {
-    pub(crate) const fn symbol(self) -> &'static str {
-        match self {
-            Self::Added => "+",
-            Self::Removed => "−",
-            Self::Replaced => "±",
-            Self::Modified | Self::Unsaved => "┃",
-        }
-    }
-
     pub(crate) const fn description(self) -> &'static str {
         match self {
             Self::Added => "added lines",
@@ -176,6 +167,11 @@ impl LineChanges {
 
     pub(crate) const fn git(staged: char, unstaged: char) -> Self {
         Self(Self::kind_bits(staged) << Self::STAGED_SHIFT | Self::kind_bits(unstaged))
+    }
+
+    pub(crate) const fn as_staged_diff(self) -> Self {
+        let kinds = self.0 & Self::KIND_MASK;
+        Self((self.0 & !Self::KIND_MASK) | (kinds << Self::STAGED_SHIFT))
     }
 
     const fn kind(bits: u16) -> Option<ChangeKind> {

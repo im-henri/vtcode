@@ -303,12 +303,16 @@ pub(crate) fn code_area_to_buffer_pos(
             ed.effective_wrap_width(),
         );
     }
-    let line = (screen_row < ed.viewport_height)
-        .then(|| ed.visible_line_at(ed.scroll_offset, screen_row))
-        .flatten()
-        .unwrap_or_else(|| ed.line_count().saturating_sub(1));
+    let line = unwrapped_pointer_line(ed, screen_row);
     let col = ed.source_column_at_cell(line, ed.horizontal_scroll, ed.line_len(line), screen_col).0;
     (line, col)
+}
+
+pub(crate) fn unwrapped_pointer_line(editor: &crate::editor::Editor, screen_row: usize) -> usize {
+    (screen_row < editor.viewport_height)
+        .then(|| editor.visible_line_at(editor.scroll_offset, screen_row))
+        .flatten()
+        .unwrap_or_else(|| editor.line_count().saturating_sub(1))
 }
 
 /// Shared block/column selection drag logic (used by both middle-drag and Alt+Shift left-drag).
@@ -763,39 +767,14 @@ pub(crate) fn handle_left_drag(
     // Drag started on minimap keeps control of scroll until mouse up.
     if app.dragging_minimap {
         let drag_start = app.minimap_drag_start;
-        if let Some(minimap_area) = app.minimap_area {
-            if let Some(ed) = app.editor_mut() {
-                let total_lines = ed.visible_line_count();
-                let minimap_height = minimap_area.height as usize;
-                if minimap_height > 0 && total_lines > 0 {
-                    let clamped_row = row
-                        .max(minimap_area.y)
-                        .min(minimap_area.y + minimap_area.height.saturating_sub(1));
-                    let rel_row = (clamped_row - minimap_area.y) as usize;
-                    let (start_row, start_scroll) = drag_start.unwrap_or((rel_row, ed.visible_scroll_offset()));
-                    let layout = crate::ui_editor_minimap::MinimapLayout::new(
-                        total_lines,
-                        start_scroll,
-                        ed.viewport_height,
-                        minimap_height,
-                        ed.scroll_past_end,
-                    );
-                    ed.set_visible_scroll_offset(layout.drag_scroll(start_row, rel_row));
-                    if ed.word_wrap {
-                        let wrap_row = ed.wrapped_row_for_position(
-                            ed.scroll_offset,
-                            0,
-                            ed.effective_wrap_width(),
-                        );
-                        ed.set_wrap_scroll_offset(wrap_row);
-                    }
-                } else {
-                    ed.scroll_offset = 0;
-                    if ed.word_wrap {
-                        ed.set_wrap_scroll_offset(0);
-                    }
-                }
-            }
+        if let Some(area) = app.minimap_area.filter(|area| area.height > 0)
+            && let Some(editor) = app.editor_mut()
+        {
+            let rel_row = row.saturating_sub(area.y).min(area.height - 1) as usize;
+            let drag = drag_start.unwrap_or_else(|| {
+                crate::ui_editor_minimap::MinimapDrag::new(editor, rel_row, area.height as usize)
+            });
+            drag.drag(editor, rel_row);
         }
         return;
     }
@@ -917,6 +896,9 @@ pub(crate) fn handle_left_drag(
                 } else {
                     ed.set_cursor_without_scrolling(drag_line, drag_col);
                 }
+                let scroll = ed.horizontal_scroll;
+                ed.reveal_mouse_cursor_column();
+                repeat_scroll &= ed.horizontal_scroll == scroll;
             }
             app.editor_selection_scroll_at =
                 repeat_scroll.then(|| Instant::now() + SELECTION_SCROLL_INTERVAL);
@@ -1145,7 +1127,7 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
                     ed.extra_cursors.clear();
                     ed.extra_cursor_anchors.clear();
                     ed.clear_selection();
-                    ed.set_cursor_without_scrolling(clicked_line, clicked_col);
+                    ed.set_mouse_cursor(clicked_line, clicked_col);
                 }
             }
         }
@@ -1667,7 +1649,7 @@ mod tests {
             ed.scroll_past_end = scroll_past_end;
             crate::mouse_selection::handle_editor_area_left_click(&mut app, 95, 2, KeyModifiers::NONE);
             assert!(app.dragging_minimap);
-            assert_eq!(app.minimap_drag_start, Some((0, 0)));
+            assert!(app.minimap_drag_start.is_some());
 
             handle_left_drag(&mut app, 95, 41, 95, 40, KeyModifiers::NONE);
             let max_scroll = 10_000 - if scroll_past_end { 1 } else { 30 };

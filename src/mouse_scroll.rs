@@ -206,8 +206,6 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
                 }
             } else if app.sidebar_view == crate::app::SidebarView::Extensions {
                 app.extensions_scroll = app.extensions_scroll.saturating_sub(spd);
-            } else if app.sidebar_view == crate::app::SidebarView::Outline {
-                app.outline_scroll = app.outline_scroll.saturating_sub(spd);
             } else if !crate::ui_chrome::scroll_open_editors(app, exp_area, row, false) {
                 app.explorer.scroll_up(spd);
             }
@@ -310,9 +308,6 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
                 let visible = usize::from(app.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT).max(1);
                 let max = app.filtered_extension_indices().len().saturating_sub(visible);
                 app.extensions_scroll = app.extensions_scroll.saturating_add(spd).min(max);
-            } else if app.sidebar_view == crate::app::SidebarView::Outline {
-                let max = app.outline_items.len().saturating_sub(1);
-                app.outline_scroll = (app.outline_scroll + spd).min(max);
             } else if !crate::ui_chrome::scroll_open_editors(app, exp_area, row, true) {
                 app.explorer.scroll_down(spd);
             }

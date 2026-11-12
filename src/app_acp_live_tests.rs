@@ -100,8 +100,11 @@ fn completed_writes_and_shell_watcher_events_refresh_inline_controls_during_a_re
     );
     assert!(!app.chat.rollback.reviewing());
     let first = app.editor_file_review(&path).unwrap().chunks[0].edit;
-    let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
-    draw_review_file(&mut app, &mut terminal);
+    app.chat.visible = true;
+    let mut terminal = Terminal::new(TestBackend::new(130, 32)).unwrap();
+    let review_file = ChatAction::ReviewFile(PathBuf::from("a.txt"));
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert!(app.chat.hits.iter().any(|hit| hit.action == review_file));
     let frame: String = terminal
         .backend()
         .buffer()
@@ -140,6 +143,8 @@ fn completed_writes_and_shell_watcher_events_refresh_inline_controls_during_a_re
         vtcode::acp::rollback::Decision::Accepted
     );
     assert_eq!(app.editor_file_review(&path).unwrap().chunks.len(), 1);
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert!(app.chat.hits.iter().any(|hit| hit.action == review_file));
     app.chat
         .session_mut()
         .unwrap()

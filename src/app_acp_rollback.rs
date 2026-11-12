@@ -14,7 +14,7 @@ use std::{
 };
 use vtcode::acp::{
     AgentConfig, ChatEntry, Command, protocol as p,
-    rollback::{FileReview, Selection},
+    rollback::{Decision, FileReview, Selection},
 };
 #[path = "app_acp_journal.rs"]
 mod journal;
@@ -1290,6 +1290,67 @@ impl App {
         });
     }
 
+    pub(super) fn review_chat_diff(&mut self, path: &Path) -> bool {
+        let relative = if crate::remote::workspace::is_view_key(path) {
+            self.chat.rollback.relative(path)
+        } else if let Some(workspace) = &self.remote_workspace {
+            workspace
+                .target_key(&path.to_string_lossy())
+                .ok()
+                .and_then(|path| self.chat.rollback.relative(&path))
+        } else if path.is_relative() {
+            Some(path.to_path_buf())
+        } else {
+            self.chat.rollback.relative(path)
+        };
+        relative.is_some_and(|path| self.review_chat_file(&path))
+    }
+
+    pub(super) fn review_chat_file(&mut self, relative: &Path) -> bool {
+        let selection = Selection::File(relative.to_path_buf());
+        let Some(chunks) = self
+            .chat
+            .session()
+            .and_then(|session| session.rollback.pending_chunks(&selection).ok())
+        else {
+            return false;
+        };
+        let first = chunks[0];
+        let path = self.chat.rollback.root.join(relative);
+        if self
+            .chat
+            .rollback
+            .file_review(&path)
+            .is_some_and(|file| file.has_text)
+        {
+            self.open_file(&path);
+            if let Some(tab) = self.tabs.get_mut(self.active_tab)
+                && tab.kind == TabKind::File
+                && tab.editor.file_path.as_deref()
+                    .is_some_and(|other| Self::same_open_path(other, &path))
+                && !tab.editor.load_failed
+                && tab.editor.encoding != "Binary"
+            {
+                tab.editor.ai_review.requested_navigation = Some(first);
+                self.chat.files.dismiss();
+                self.chat.picker = None;
+                if self.workbench_body_area.is_some_and(|area| area.width == 0) {
+                    self.chat.visible = false;
+                }
+                return true;
+            }
+        }
+        // A deleted or non-text file still has journal chunks and can be
+        // reviewed even when there is no live text buffer to open.
+        let picker = if let &[(id, index)] = chunks.as_slice() {
+            Picker::ChangeChunk(id, index)
+        } else {
+            Picker::ChangedFile(relative.to_path_buf())
+        };
+        self.chat_action(ChatAction::Picker(picker));
+        true
+    }
+
     pub(super) fn review_chat_change(&mut self, id: u64) {
         if self.chat.rollback.busy() {
             return;
@@ -1360,7 +1421,8 @@ impl App {
     pub(super) fn build_rollback_choices(&mut self, picker: &Picker) -> bool {
         if !matches!(
             picker,
-            Picker::Changes
+            Picker::Unreviewed
+                | Picker::Changes
                 | Picker::ChangedFile(_)
                 | Picker::Change(_)
                 | Picker::ChangeChunk(_, _)
@@ -1405,6 +1467,25 @@ impl App {
             }
         } else {
             match picker {
+                Picker::Unreviewed => {
+                    let files = summary.pending_files();
+                    if files.is_empty() {
+                        add(
+                            "No unreviewed files".into(),
+                            String::new(),
+                            ChatAction::DismissPicker,
+                        );
+                    }
+                    let root = &self.chat.rollback.root;
+                    for (path, count) in files {
+                        let unit = if count == 1 { "chunk" } else { "chunks" };
+                        add(
+                            crate::app_chat_files::file_label(&root.join(path), root),
+                            format!("{count} pending {unit}"),
+                            ChatAction::ReviewFile(path.to_path_buf()),
+                        );
+                    }
+                }
                 Picker::Changes => {
                     if summary.can_undo {
                         add(
@@ -1431,7 +1512,8 @@ impl App {
                             ChatAction::RetryCheckpoint,
                         );
                     }
-                    let pending: usize = summary.edits.iter().map(|e| e.pending()).sum();
+                    let files = summary.pending_files();
+                    let pending: usize = files.values().sum();
                     if pending > 0 {
                         add(
                             format!("Accept all {pending} chunks"),
@@ -1449,23 +1531,11 @@ impl App {
                         "Restore files to before a user message".into(),
                         ChatAction::Picker(Picker::Checkpoints),
                     );
-                    let paths: BTreeSet<_> = summary
-                        .edits
-                        .iter()
-                        .filter(|e| e.pending() > 0)
-                        .map(|e| e.path.clone())
-                        .collect();
-                    for path in paths {
-                        let count: usize = summary
-                            .edits
-                            .iter()
-                            .filter(|e| e.path == path)
-                            .map(|e| e.pending())
-                            .sum();
+                    for (path, count) in files {
                         add(
                             format!("● {}", path.display()),
                             format!("{count} pending chunks"),
-                            ChatAction::Picker(Picker::ChangedFile(path)),
+                            ChatAction::Picker(Picker::ChangedFile(path.to_path_buf())),
                         );
                     }
                     if pending == 0 {
@@ -1518,10 +1588,8 @@ impl App {
                         resolve(Selection::Edit(*id), false),
                     );
                     if let Some(edit) = summary.edits.iter().find(|e| e.id == *id) {
-                        for (i, chunk) in
-                            edit.chunks.iter().enumerate().filter(|(_, c)| {
-                                c.decision == vtcode::acp::rollback::Decision::Pending
-                            })
+                        for (i, chunk) in edit.chunks.iter().enumerate()
+                            .filter(|(_, chunk)| chunk.decision == Decision::Pending)
                         {
                             add(
                                 format!(
@@ -1537,21 +1605,35 @@ impl App {
                     }
                 }
                 Picker::ChangeChunk(id, i) => {
-                    add(
-                        format!("Review change · chunk {}", i + 1),
-                        "Chunk order follows the saved diff".into(),
-                        ChatAction::ReviewChange(*id),
-                    );
-                    add(
-                        "Accept chunk".into(),
-                        String::new(),
-                        resolve(Selection::Chunk(*id, *i), true),
-                    );
-                    add(
-                        "Decline chunk".into(),
-                        String::new(),
-                        resolve(Selection::Chunk(*id, *i), false),
-                    );
+                    let pending = summary.edits.iter()
+                        .find(|edit| edit.id == *id)
+                        .and_then(|edit| edit.chunks.get(*i).map(|chunk| (edit, chunk)))
+                        .filter(|(_, chunk)| chunk.decision == Decision::Pending);
+                    if let Some((edit, chunk)) = pending {
+                        let root = &self.chat.rollback.root;
+                        let label = crate::app_chat_files::file_label(&root.join(&edit.path), root);
+                        add(
+                            "Review saved diff".into(),
+                            format!("{label} · line {} · {}", chunk.line, chunk.preview),
+                            ChatAction::ReviewChange(*id),
+                        );
+                        add(
+                            "Accept chunk".into(),
+                            label.clone(),
+                            resolve(Selection::Chunk(*id, *i), true),
+                        );
+                        add(
+                            "Reject chunk".into(),
+                            edit.conflict.clone().unwrap_or(label),
+                            resolve(Selection::Chunk(*id, *i), false),
+                        );
+                    } else {
+                        add(
+                            "No pending chunk".into(),
+                            String::new(),
+                            ChatAction::DismissPicker,
+                        );
+                    }
                 }
                 Picker::Checkpoints => {
                     for cp in &summary.checkpoints {

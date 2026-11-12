@@ -2,7 +2,7 @@
 //! locally; larger scans yield between bounded batches on the existing CPU
 //! pool. No file reads, retained source cache, or idle timer are involved.
 use crate::{
-    app::{App, SidebarView, SymbolItem},
+    app::{App, SymbolItem},
     background::{BackgroundResult, BackgroundTaskSender, CancellationToken},
 };
 use std::{
@@ -19,28 +19,15 @@ const SYNC_LINES: usize = 2048;
 const BATCH_LINES: usize = 2048;
 const BATCH_TIME: Duration = Duration::from_millis(3);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Destination {
-    Picker(bool),
-    Outline,
-}
-
 #[derive(Default)]
 pub(crate) struct State {
     serial: u64,
     picker: Option<(u64, CancellationToken)>,
-    outline: Option<(u64, CancellationToken)>,
     picker_work: crate::background::latest::LatestWork,
-    outline_work: crate::background::latest::LatestWork,
 }
 impl State {
     pub fn picker_pending(&self) -> bool {
         self.picker.as_ref().is_some_and(|(_, c)| !c.is_cancelled())
-    }
-    pub fn outline_pending(&self) -> bool {
-        self.outline
-            .as_ref()
-            .is_some_and(|(_, c)| !c.is_cancelled())
     }
     pub fn cancel_picker(&mut self) {
         if let Some((_, c)) = self.picker.take() {
@@ -48,17 +35,10 @@ impl State {
         }
         self.picker_work.cancel();
     }
-    pub fn cancel_outline(&mut self) {
-        if let Some((_, c)) = self.outline.take() {
-            c.cancel();
-        }
-        self.outline_work.cancel();
-    }
 }
 impl Drop for State {
     fn drop(&mut self) {
         self.cancel_picker();
-        self.cancel_outline();
     }
 }
 
@@ -96,9 +76,9 @@ struct Source {
 pub(crate) struct Reply {
     serial: u64,
     group: usize,
-    destination: Destination,
+    workspace: bool,
     keys: Vec<Key>,
-    pub rows: Vec<SymbolItem>,
+    rows: Vec<SymbolItem>,
 }
 struct Builder {
     reply: Reply,
@@ -181,14 +161,9 @@ fn continue_scan(
 }
 
 impl App {
-    pub(crate) fn request_source_symbols(&mut self, destination: Destination) {
-        match destination {
-            Destination::Picker(_) => self.source_symbol_work.cancel_picker(),
-            Destination::Outline => self.source_symbol_work.cancel_outline(),
-        }
-        if destination == Destination::Outline && self.lsp_outline_available {
-            return;
-        }
+    pub(crate) fn build_symbol_list(&mut self) {
+        self.source_symbol_work.cancel_picker();
+        let workspace = self.symbol_list_workspace;
         self.source_symbol_work.serial = self.source_symbol_work.serial.wrapping_add(1);
         let serial = self.source_symbol_work.serial;
         let cancel = CancellationToken::new();
@@ -197,21 +172,18 @@ impl App {
         let mut sources = Vec::new();
         let mut keys = Vec::new();
         for (tab, entry) in self.tabs.iter().enumerate() {
-            if destination != Destination::Picker(true) && tab != self.active_tab {
+            if !workspace && tab != self.active_tab {
                 continue;
             }
             let editor = &entry.editor;
             bytes = bytes.saturating_add(editor.rope.len_bytes());
             lines = lines.saturating_add(editor.rope.len_lines());
             let key = Key::from_tab(tab, editor);
-            let file_name = matches!(destination, Destination::Picker(_))
-                .then(|| {
-                    key.path
-                        .as_ref()
-                        .and_then(|p| p.file_name())
-                        .map(|p| p.to_string_lossy().into_owned())
-                })
-                .flatten();
+            let file_name = key
+                .path
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned());
             sources.push(Source {
                 tab,
                 rope: editor.rope.clone(),
@@ -219,14 +191,11 @@ impl App {
             });
             keys.push(key);
         }
-        let rows = match destination {
-            Destination::Picker(_) => std::mem::take(&mut self.symbol_list_items),
-            Destination::Outline => std::mem::take(&mut self.outline_items),
-        };
+        let rows = std::mem::take(&mut self.symbol_list_items);
         let reply = Reply {
             serial,
             group: self.active_group,
-            destination,
+            workspace,
             keys,
             rows: Vec::new(),
         };
@@ -237,14 +206,8 @@ impl App {
             line: 0,
             prefix: String::new(),
         };
-        let pending = Some((serial, cancel.clone()));
-        match destination {
-            Destination::Picker(_) => {
-                self.source_symbol_work.picker = pending;
-                self.update_symbol_filter();
-            }
-            Destination::Outline => self.source_symbol_work.outline = pending,
-        }
+        self.source_symbol_work.picker = Some((serial, cancel.clone()));
+        self.update_symbol_filter();
         if bytes <= SYNC_BYTES && lines <= SYNC_LINES && rows.len() <= SYNC_LINES {
             // The same streaming parser handles both paths; only scheduling
             // differs. Tiny documents need no background round trip.
@@ -283,18 +246,12 @@ impl App {
                     );
                 }),
             };
-            match destination {
-                Destination::Picker(_) => self.source_symbol_work.picker_work.replace(pool, job),
-                Destination::Outline => self.source_symbol_work.outline_work.replace(pool, job),
-            }
+            self.source_symbol_work.picker_work.replace(pool, job);
         }
     }
 
     pub(crate) fn apply_source_symbols(&mut self, reply: Reply) -> bool {
-        let pending = match reply.destination {
-            Destination::Picker(_) => &mut self.source_symbol_work.picker,
-            Destination::Outline => &mut self.source_symbol_work.outline,
-        };
+        let pending = &mut self.source_symbol_work.picker;
         if pending
             .as_ref()
             .is_none_or(|(serial, cancel)| *serial != reply.serial || cancel.is_cancelled())
@@ -302,15 +259,7 @@ impl App {
             return false;
         }
         pending.take();
-        let visible = match reply.destination {
-            Destination::Picker(workspace) => {
-                self.symbol_list_active && self.symbol_list_workspace == workspace
-            }
-            Destination::Outline => {
-                self.sidebar_view == SidebarView::Outline && !self.lsp_outline_available
-            }
-        };
-        if !visible {
+        if !self.symbol_list_active || self.symbol_list_workspace != reply.workspace {
             return false;
         }
         let current = self.active_group == reply.group
@@ -319,32 +268,17 @@ impl App {
                     .get(key.tab)
                     .is_some_and(|tab| key.matches(&tab.editor))
             })
-            && match reply.destination {
-                Destination::Picker(true) => self.tabs.len() == reply.keys.len(),
-                _ => reply
-                    .keys
-                    .first()
-                    .is_none_or(|key| key.tab == self.active_tab),
+            && if reply.workspace {
+                self.tabs.len() == reply.keys.len()
+            } else {
+                reply.keys.first().is_none_or(|key| key.tab == self.active_tab)
             };
         if !current {
-            self.request_source_symbols(reply.destination);
+            self.build_symbol_list();
             return true;
         }
-        match reply.destination {
-            Destination::Picker(_) => {
-                self.symbol_list_items = reply.rows;
-                self.filter_symbol_items();
-            }
-            Destination::Outline => {
-                self.outline_items = reply.rows;
-                self.outline_scroll = self
-                    .outline_scroll
-                    .min(self.outline_items.len().saturating_sub(1));
-                self.outline_selected = self
-                    .outline_selected
-                    .min(self.outline_items.len().saturating_sub(1));
-            }
-        }
+        self.symbol_list_items = reply.rows;
+        self.filter_symbol_items();
         true
     }
 }
@@ -426,7 +360,7 @@ const SOURCE_INITIALS: [bool; 128] = {
     initials
 };
 
-/// Share the outline/picker fallback parser without building visibility-prefix
+/// Parse picker fallback symbols without building visibility-prefix
 /// strings for every pattern on every line of a potentially large document.
 pub(crate) fn source_symbol(line: &str) -> Option<(&str, &'static str)> {
     let line = line.trim();

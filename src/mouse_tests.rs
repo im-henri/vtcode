@@ -435,7 +435,7 @@ fn activity_item_hit_test_rejects_rows_outside_the_bar() {
     assert_eq!(activity_item_at(area, 8), Some(2));
     assert_eq!(activity_item_at(area, 11), Some(3));
     assert_eq!(activity_item_at(area, 14), Some(4));
-    assert_eq!(activity_item_at(area, 17), Some(5));
+    assert_eq!(activity_item_at(area, 17), None);
     assert_eq!(activity_item_at(area, 20), None);
     assert_eq!(activity_item_at(area, 25), Some(ACTIVITY_SETTINGS_INDEX));
 

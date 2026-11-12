@@ -237,6 +237,7 @@ impl App {
         // A commit, discard, checkout or remote operation that has already
         // started must finish normally; only optional readers are cancelled.
         self.source_control_cancel.cancel();
+        self.commit_details.cancel_open_diff();
         self.source_control_file_click = None;
         self.source_control_file_hover.clear_target();
         self.repositories.loading_root = None;

@@ -97,6 +97,81 @@ fn clicks_double_clicks_and_alt_clicks_hit_the_painted_word_after_indentation() 
 }
 
 #[test]
+fn clicks_on_short_unwrapped_lines_reveal_the_caret_without_vertical_scrolling() {
+    let text = format!(
+        "{}{}\n\n\t界short\n{}",
+        "above\n".repeat(10),
+        "x".repeat(300),
+        "below\n".repeat(20),
+    );
+    for large in [false, true] {
+        let mut app = fixture(&text, 4, false);
+        app.cursor_blinking = false;
+        app.editor_mut().unwrap().large_file_mode = large;
+        draw(&mut app, 80);
+
+        for (line, modifiers) in [(11, KeyModifiers::NONE), (12, KeyModifiers::SHIFT)] {
+            let editor = app.editor_mut().unwrap();
+            editor.typewriter_mode = true;
+            editor.set_cursor(10, 180);
+            editor.set_visible_scroll_offset(4);
+            let pan = editor.horizontal_scroll;
+            let scroll = editor.scroll_offset;
+            let end = editor.line_len(line);
+            assert!(pan > end);
+            draw(&mut app, 80);
+            let area = app.code_area.unwrap();
+            let row = area.y + (line - scroll) as u16;
+            let at = (area.x + 20, row);
+
+            mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), modifiers);
+            let editor = app.editor().unwrap();
+            assert_eq!((editor.cursor_line, editor.cursor_col), (line, end));
+            assert_eq!(editor.scroll_offset, scroll);
+            assert_eq!(editor.horizontal_scroll, end.saturating_sub(4));
+            let column = editor.cell_at_source_column(line, editor.horizontal_scroll, end);
+            let buffer = draw(&mut app, 80);
+            assert_eq!(buffer[(area.x + column as u16, row)].bg, app.colors.bg_cursor);
+            mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), modifiers);
+        }
+    }
+}
+
+#[test]
+fn click_at_the_left_edge_of_a_panned_line_keeps_the_text_in_place() {
+    let mut app = fixture(&"x".repeat(300), 4, false);
+    app.editor_mut().unwrap().horizontal_scroll = 100;
+    draw(&mut app, 80);
+    let area = app.code_area.unwrap();
+    let at = (area.x, area.y);
+    mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
+    let editor = app.editor().unwrap();
+    assert_eq!((editor.cursor_col, editor.horizontal_scroll), (100, 100));
+}
+
+#[test]
+fn double_click_reveals_a_word_end_beyond_the_right_edge() {
+    let word = "x".repeat(300);
+    let mut app = fixture(&word, 4, false);
+    app.cursor_blinking = false;
+    draw(&mut app, 80);
+    let area = app.code_area.unwrap();
+    let at = (area.x + 6, area.y);
+    for _ in 0..2 {
+        mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
+        mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
+    }
+    let editor = app.editor().unwrap();
+    assert_eq!(editor.selected_text().as_deref(), Some(word.as_str()));
+    assert_eq!(editor.cursor_col, word.len());
+    assert!(editor.horizontal_scroll > 0);
+    let column = editor.cell_at_source_column(0, editor.horizontal_scroll, editor.cursor_col);
+    assert!(column < usize::from(area.width));
+    let buffer = draw(&mut app, 80);
+    assert_eq!(buffer[(area.x + column as u16, area.y)].bg, app.colors.bg_cursor);
+}
+
+#[test]
 fn drag_and_shift_selection_use_the_same_tab_mapping_as_clicks() {
     for wrapped in [false, true] {
         let mut app = fixture("\t  TARGET tail\n", 4, wrapped);

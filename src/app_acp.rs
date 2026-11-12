@@ -52,6 +52,7 @@ pub(crate) enum Picker {
     Commands,
     Permissions,
     Attachments,
+    Unreviewed,
     Changes,
     ChangedFile(PathBuf),
     Change(u64),
@@ -98,6 +99,7 @@ pub(crate) enum ChatAction {
     Attach,
     RemoveAttachment(usize),
     AttachmentPage(bool),
+    ReviewFilesPage(usize),
     ChooseFile(usize),
     LoadById,
     Switch(p::SessionId),
@@ -114,6 +116,7 @@ pub(crate) enum ChatAction {
     ToggleEntry(usize),
     Copy(usize),
     Review(std::sync::Arc<p::Diff>),
+    ReviewFile(PathBuf),
     OpenFile(PathBuf, Option<u32>),
     Terminal(String),
     StopTerminal(String),
@@ -245,6 +248,7 @@ pub(crate) struct AgentState {
     pub input_history: TextInputHistory,
     pub input_goal: Option<usize>,
     pub files: crate::app_chat_files::ChatFiles,
+    pub review_files_scroll: usize,
     pub terminal_input: Option<String>,
     pub terminal_views: crate::app_chat_terminals::TerminalViews,
     pub terminal_areas: Vec<(String, Rect)>,
@@ -345,6 +349,7 @@ impl Default for AgentState {
             input_history: Default::default(),
             input_goal: None,
             files: Default::default(),
+            review_files_scroll: 0,
             terminal_input: None,
             terminal_views: Default::default(),
             terminal_areas: Vec::new(),
@@ -1730,6 +1735,7 @@ impl App {
                         .min(self.chat.files.attached.len().saturating_sub(3))
                 };
             }
+            ChatAction::ReviewFilesPage(offset) => self.chat.review_files_scroll = offset,
             ChatAction::ChooseFile(index) => self.choose_chat_file(index),
             ChatAction::LoadById => {
                 self.chat.auxiliary_input();
@@ -1939,10 +1945,15 @@ impl App {
                 }
             }
             ChatAction::Review(diff) => {
-                self.open_acp_diff(&diff);
-                if self.workbench_body_area.is_some_and(|a| a.width == 0) {
-                    self.chat.visible = false;
+                if !self.review_chat_diff(&diff.path) {
+                    self.open_acp_diff(&diff);
+                    if self.workbench_body_area.is_some_and(|a| a.width == 0) {
+                        self.chat.visible = false;
+                    }
                 }
+            }
+            ChatAction::ReviewFile(path) => {
+                self.review_chat_file(&path);
             }
             ChatAction::OpenFile(path, line) => {
                 self.open_chat_location(&path, line);
@@ -2447,7 +2458,7 @@ impl App {
                     );
                 }
             }
-            Picker::Changes | Picker::ChangedFile(_) | Picker::Change(_) | Picker::ChangeChunk(_, _) | Picker::Checkpoints | Picker::Restore(_) => unreachable!(),
+            Picker::Unreviewed | Picker::Changes | Picker::ChangedFile(_) | Picker::Change(_) | Picker::ChangeChunk(_, _) | Picker::Checkpoints | Picker::Restore(_) => unreachable!(),
         }
         self.chat.choices = choices;
         self.chat.picker = Some(picker);

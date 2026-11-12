@@ -677,7 +677,6 @@ impl App {
             "SourceControl" => SidebarView::SourceControl,
             "Settings" => SidebarView::Settings,
             "Extensions" => SidebarView::Extensions,
-            "Outline" => SidebarView::Outline,
             _ => SidebarView::Explorer,
         };
         self.show_panel = layout.panel && !self.zen_mode;

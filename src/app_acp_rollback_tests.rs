@@ -867,6 +867,144 @@ fn chat_rollback_buttons_resolve_chunks_and_clear_file_markers() {
 }
 
 #[test]
+fn unreviewed_file_opens_inline_review_and_stays_until_its_last_decision() {
+    use crate::text_input::TextInputId;
+
+    let (root, _data, mut app, _) = seeded();
+    let relative = PathBuf::from("a.txt");
+    let path = root.path().join(&relative);
+    let context = root.path().join("context.txt");
+    app.chat.files.attached.push(context.clone());
+    let edit = app.chat.session().unwrap().rollback.edits[0].id;
+    let action = ChatAction::ReviewFile(relative);
+    let mut terminal = Terminal::new(TestBackend::new(130, 42)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let mut files = app.chat.hits.iter().filter(|hit| hit.action == action);
+    let hit = files.next().unwrap();
+    assert!(files.next().is_none());
+    let attachment = app.chat.hits.iter()
+        .find(|hit| hit.action == ChatAction::OpenFile(context.clone(), None)).unwrap();
+    let input = app.text_input_area(TextInputId::Chat).unwrap();
+    assert!(attachment.area.bottom() < hit.area.y && hit.area.bottom() < input.y);
+    let row: String = (hit.area.x..hit.area.right())
+        .map(|x| terminal.backend().buffer()[(x, hit.area.y)].symbol())
+        .collect();
+    assert!(row.contains("a.txt") && row.contains("2 chunks"));
+
+    assert!(app.handle_chat_mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: hit.area.x,
+        row: hit.area.y,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    }));
+    assert_eq!(app.tabs[app.active_tab].kind, TabKind::File);
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading)
+    });
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&path));
+    assert_eq!(app.editor().unwrap().cursor_line, 0);
+    click_editor_review(&mut app, Some((edit, 0)), true);
+    assert_eq!(app.chat.session().unwrap().rollback.edits[0].pending(), 1);
+
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let hit = app.chat.hits.iter().find(|hit| hit.action == action).unwrap();
+    let row: String = (hit.area.x..hit.area.right())
+        .map(|x| terminal.backend().buffer()[(x, hit.area.y)].symbol())
+        .collect();
+    assert!(row.contains("1 chunk"));
+
+    // The tool's review link uses the same file and jumps to the remaining chunk.
+    let diff = p::Diff::new(path.clone(), "FIRST\nkeep\nLAST\n");
+    app.chat_action(ChatAction::Review(Arc::new(diff)));
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.tabs[app.active_tab].kind, TabKind::File);
+    assert_eq!(app.editor().unwrap().cursor_line, 2);
+    click_editor_review(&mut app, Some((edit, 1)), false);
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert!(!app.chat.hits.iter().any(|hit| matches!(hit.action,
+        ChatAction::ReviewFile(_) | ChatAction::Picker(Picker::Unreviewed)
+    )));
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "FIRST\nkeep\nlast\n");
+}
+
+#[test]
+fn unreviewed_files_page_by_conversation_and_keep_non_text_chunks_reviewable() {
+    use crate::text_input::TextInputId;
+
+    let (root, _data, mut app, _) = seeded();
+    let deleted = root.path().join("b.txt");
+    let binary = root.path().join("c.bin");
+    std::fs::write(&deleted, "deleted text\n").unwrap();
+    let other = p::SessionId::new("other");
+    app.chat.sessions.insert(other.clone(), Session::new(other.clone()));
+    let journal = app.chat.rollback.journal.clone().unwrap();
+    {
+        let mut journal = journal.lock().unwrap();
+        journal.begin("", "chat", "more files", BTreeSet::new()).unwrap();
+        std::fs::remove_file(&deleted).unwrap();
+        std::fs::write(&binary, [0, 255, 1]).unwrap();
+        std::fs::write(root.path().join("d.txt"), "").unwrap();
+        std::fs::write(root.path().join("a.txt"), "FIRST\nkeep\nLAST\nextra\n").unwrap();
+        journal.finish(BTreeSet::new()).unwrap();
+        journal.begin("", "other", "change another file", BTreeSet::new()).unwrap();
+        std::fs::write(root.path().join("other.txt"), "other conversation\n").unwrap();
+        journal.finish(BTreeSet::new()).unwrap();
+        app.chat.rollback.inline_reviews = Arc::new(journal.inline_reviews());
+    }
+    app.refresh_chat_rollback();
+    let mut terminal = Terminal::new(TestBackend::new(40, 20)).unwrap();
+    let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+        terminal.draw(|f| crate::ui_chat::draw(f, app, f.area())).unwrap();
+    };
+    let file_action = |name: &str| ChatAction::ReviewFile(PathBuf::from(name));
+    draw(&mut terminal, &mut app);
+    assert!(app.chat.hits.iter().any(|hit| hit.action == file_action("a.txt")));
+    assert!(!app.chat.hits.iter().any(|hit| hit.action == file_action("d.txt")));
+    let page = app.chat.hits.iter().find(|hit| matches!(hit.action, ChatAction::ReviewFilesPage(_)))
+        .unwrap().action.clone();
+    app.chat_action(page);
+    draw(&mut terminal, &mut app);
+    assert!(app.chat.hits.iter().any(|hit| hit.action == file_action("d.txt")));
+
+    app.chat_action(ChatAction::Switch(other));
+    draw(&mut terminal, &mut app);
+    assert_eq!(app.chat.hits.iter().filter(|hit| matches!(hit.action, ChatAction::ReviewFile(_)))
+        .map(|hit| hit.action.clone()).collect::<Vec<_>>(), vec![file_action("other.txt")]);
+    app.chat_action(ChatAction::Switch(p::SessionId::new("chat")));
+    draw(&mut terminal, &mut app);
+    assert!(app.chat.hits.iter().any(|hit| hit.action == file_action("d.txt")));
+
+    let mut compact = Terminal::new(TestBackend::new(36, 12)).unwrap();
+    draw(&mut compact, &mut app);
+    assert!(app.text_input_area(TextInputId::Chat).is_some_and(|area| area.height >= 2));
+    assert!(app.chat.hits.iter().any(|hit| hit.action == ChatAction::Picker(Picker::Unreviewed)));
+    app.chat_action(ChatAction::Picker(Picker::Unreviewed));
+    assert_eq!(app.chat.choices.len(), 4);
+    assert_eq!(app.chat.choices[0].action, file_action("a.txt"));
+    assert_eq!(app.chat.choices[0].detail, "3 pending chunks");
+
+    for (name, accept) in [("b.txt", false), ("c.bin", true)] {
+        let choice = app.chat.choices.iter().position(|choice| choice.action == file_action(name)).unwrap();
+        app.chat_action(ChatAction::Pick(choice));
+        let Some(Picker::ChangeChunk(id, index)) = app.chat.picker else {
+            panic!("{name} must open its chunk review");
+        };
+        let decision = app.chat.choices.iter().position(|choice| {
+            choice.action == ChatAction::Resolve(Selection::Chunk(id, index), accept)
+        }).unwrap();
+        app.chat_action(ChatAction::Pick(decision));
+        settle(&mut app);
+        assert!(app.chat.error.is_none(), "{:?}", app.chat.error);
+        app.chat_action(ChatAction::Picker(Picker::Unreviewed));
+        assert!(!app.chat.choices.iter().any(|choice| choice.action == file_action(name)));
+    }
+    assert_eq!(std::fs::read_to_string(&deleted).unwrap(), "deleted text\n");
+    assert_eq!(std::fs::read(&binary).unwrap(), [0, 255, 1]);
+    assert!(app.editor_file_review(&root.path().join("d.txt")).unwrap().has_text);
+}
+
+#[test]
 fn chat_rollback_protects_unsaved_split_buffers_and_pending_saves() {
     let (root, _data, mut app, _) = seeded();
     let path = root.path().join("a.txt");

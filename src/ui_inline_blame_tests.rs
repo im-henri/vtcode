@@ -414,6 +414,7 @@ fn inline_blame_hover_follows_source_rows_when_ai_review_inserts_virtual_rows() 
     app.chat.rollback.inline_reviews = Arc::new(vec![FileReview {
         path: app.editor().unwrap().file_path.clone().unwrap(),
         text: text.into(),
+        has_text: true,
         chunks: vec![InlineChunk {
             edit: 1,
             index: 0,

@@ -11,6 +11,7 @@ pub(super) struct ChatView {
     input_goal: Option<usize>,
     attachments: Vec<PathBuf>,
     attachment_scroll: usize,
+    review_files_scroll: usize,
     terminal_input: Option<String>,
     terminal_views: crate::app_chat_terminals::TerminalViews,
     loading_id: bool,
@@ -59,6 +60,7 @@ impl ChatState {
         // in a different tab. Only attachments belong to the saved view.
         swap(&mut self.files.attached, &mut view.attachments);
         swap(&mut self.files.scroll, &mut view.attachment_scroll);
+        swap(&mut self.review_files_scroll, &mut view.review_files_scroll);
         swap(&mut self.terminal_input, &mut view.terminal_input);
         swap(&mut self.terminal_views, &mut view.terminal_views);
         swap(&mut self.loading_id, &mut view.loading_id);

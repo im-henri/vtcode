@@ -8,14 +8,11 @@ fn app_with(text: &str) -> App {
     app.tabs = vec![Tab::new_file(editor)];
     app.active_tab = 0;
     app.symbol_list_active = true;
-    app.sidebar_view = SidebarView::Outline;
     app
 }
 
 fn finish(app: &mut App) {
-    app.wait_for_background(Duration::from_secs(10), |app| {
-        !app.source_symbol_work.picker_pending() && !app.source_symbol_work.outline_pending()
-    });
+    app.wait_for_background(Duration::from_secs(10), |app| !app.source_symbol_work.picker_pending());
 }
 
 #[test]
@@ -107,7 +104,7 @@ fn pending_picker_uses_latest_query_and_cannot_replace_closed_or_newer_targets()
     assert!(!app.apply_source_symbols(Reply {
         serial,
         group: 0,
-        destination: Destination::Picker(false),
+        workspace: false,
         keys: vec![key],
         rows: vec![]
     }));
@@ -115,7 +112,7 @@ fn pending_picker_uses_latest_query_and_cannot_replace_closed_or_newer_targets()
 }
 
 #[test]
-fn stale_editor_results_restart_and_lsp_outline_results_take_precedence() {
+fn stale_picker_results_restart_against_the_current_editor() {
     let mut app = app_with(&"fn before() {}\n".repeat(10_000));
     app.build_symbol_list();
     app.symbol_list_query = "after".into();
@@ -124,34 +121,6 @@ fn stale_editor_results_restart_and_lsp_outline_results_take_precedence() {
     finish(&mut app);
     assert_eq!(app.symbol_list_items[0].name, "after");
     assert_eq!(app.symbol_list_filtered, [0]);
-    app.tabs[0].editor = Editor::test_with_text(&"fn fallback() {}\n".repeat(10_000));
-    app.update_outline();
-    assert!(app.source_symbol_work.outline_pending());
-    app.lsp_outline_available = true;
-    app.outline_items = vec![SymbolItem {
-        name: "from_lsp".into(),
-        kind: "function",
-        line: 0,
-        tab_index: Some(0),
-        file_name: None,
-        file_path: None,
-    }];
-    finish(&mut app);
-    assert_eq!(app.outline_items[0].name, "from_lsp");
-}
-
-#[test]
-fn outline_scroll_is_clamped_when_async_results_arrive_not_when_they_are_requested() {
-    let mut app = app_with(&format!(
-        "{}fn last() {{}}\n",
-        "// ordinary line\n".repeat(10_000)
-    ));
-    app.outline_scroll = 25;
-    app.update_outline();
-    assert_eq!(app.outline_scroll, 25);
-    finish(&mut app);
-    assert_eq!(app.outline_items[0].name, "last");
-    assert_eq!(app.outline_scroll, 0);
 }
 
 #[test]

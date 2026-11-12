@@ -1528,7 +1528,6 @@ pub enum SidebarView {
     SourceControl,
     Settings,
     Extensions,
-    Outline,
     Remote,
 }
 

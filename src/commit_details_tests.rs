@@ -85,6 +85,7 @@ fn commit_inspector_rename_diff_uses_original_path_even_from_nested_workspace() 
     app.explorer.root = dir.path().join("nested");
     app.commit_details.data = data;
     app.open_source_control_commit_details_file_diff(0);
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| app.should_render_diff_for_active_editor());
     assert_eq!(
         app.compare_base_content.as_deref(),
         Some("first\nsecond\nthird\nfourth\n")
@@ -159,6 +160,7 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
                 modifiers: KeyModifiers::NONE,
             },
         );
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.is_commit_details_tab());
         let diff_tab = app.active_tab;
         terminal
             .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -393,6 +395,9 @@ fn commit_inspector_diff_keeps_distant_context_and_checks_both_revision_sizes() 
 
 #[test]
 fn commit_inspector_card_action_opens_the_pinned_historical_diff() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use std::time::Duration;
+
     let dir = tempfile::tempdir().unwrap();
     let repo = Repository::init(dir.path()).unwrap();
     std::fs::write(dir.path().join("hello.txt"), "committed content\n").unwrap();
@@ -401,19 +406,34 @@ fn commit_inspector_card_action_opens_the_pinned_historical_diff() {
     let mut app = App::test_new();
     app.explorer.root = dir.path().to_path_buf();
     app.commit_details.active = true;
+    app.commit_details.root = Some(dir.path().to_owned());
     app.commit_details.data = load(dir.path(), &id.to_string()).unwrap();
     app.commit_details.diff_file = Some(0);
     let mut tab = Tab::new_file(crate::editor::Editor::new());
     tab.kind = TabKind::CommitDetails;
     tab.editor.read_only = true;
     app.tabs.push(tab);
+    app.active_pane = ActivePane::Editor;
     app.commit_details.query = "hello".into();
     app.commit_details.query_cursor = 5;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 34)).unwrap();
-    terminal.draw(|frame| crate::ui_commit_details::draw(frame, &mut app)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
     let open = app.commit_details.review.visible[0].open;
     assert_eq!(app.tabs.len(), 1);
-    crate::ui_commit_details::click(&mut app, open.x + 1, open.y);
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: open.x + 1,
+        row: open.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    crate::mouse::handle_mouse(&mut app, click);
+    assert!(app.commit_details.opening_diff.is_some());
+    // A completed read must not open a tab after focus has moved elsewhere.
+    app.active_pane = ActivePane::Explorer;
+    app.wait_for_background(Duration::from_secs(5), |app| app.commit_details.opening_diff.is_none());
+    assert_eq!(app.tabs.len(), 1);
+    crate::mouse::handle_mouse(&mut app, click);
+    app.wait_for_background(Duration::from_secs(5), |app| !app.is_commit_details_tab());
     assert!(app.commit_details.active);
     assert_eq!(app.tabs.len(), 2);
     assert!(

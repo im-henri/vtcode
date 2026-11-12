@@ -26,8 +26,8 @@ mod plain_runs;
 #[path = "ui_editor_source_lines.rs"]
 mod source_lines;
 use crate::ui_editor_minimap::{
-    ChangeLineIndex, DiagnosticLineIndex, MinimapParams, ScrollbarParams, draw_minimap,
-    draw_editor_scrollbar, scrollbar_change_rows_indexed,
+    ChangeLineIndex, DiagnosticLineIndex, MinimapDiffChanges, MinimapParams, ScrollbarParams,
+    draw_editor_scrollbar, draw_minimap, scrollbar_change_rows_indexed,
 };
 
 /// Lines beyond cursor distance before focus-mode dimming begins.
@@ -1571,6 +1571,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         // immutable index must be prepared from that same source.
         .filter(|_| !bounded_render_mode)
         .map(|cache| cache.target_changes.as_slice());
+    let minimap_diff = diff_changes.map(|lines| MinimapDiffChanges {
+        lines,
+        staged: app.diff_tabs.staged_for_tab(&app.tabs[app.active_tab]) == Some(true),
+    });
     // Prepare the same row geometry used by the overview before querying its
     // retained marker cache (including after resizing or folding).
     {
@@ -2568,12 +2572,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     area: minimap_area,
                     editor,
                     scroll: editor.scroll_offset,
-                    visible_lines,
+                    visible_lines: editor.minimap_source_rows(visible_lines),
                     search_matches: &file_search.search_matches,
                     diagnostic_lines: diag_lines,
                     diagnostic_index: Some(&app.cached_diagnostic_index),
                     change_index: Some(&app.cached_editor_change_index),
-                    diff_changes,
+                    diff_changes: minimap_diff,
                     colors: app.colors,
                     hovered: app.hovered_minimap,
                     active: app.dragging_minimap,
@@ -3779,7 +3783,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 diagnostic_lines: diag_lines,
                 diagnostic_index: Some(&app.cached_diagnostic_index),
                 change_index: Some(&app.cached_editor_change_index),
-                diff_changes,
+                diff_changes: minimap_diff,
                 colors: app.colors,
                 hovered: app.hovered_minimap,
                 active: app.dragging_minimap,
@@ -4647,6 +4651,8 @@ mod tests {
             app.tabs.push(Tab::new_file(editor));
             app.sticky_scroll = false;
             app.show_breadcrumbs = false;
+            app.show_minimap = true;
+            app.scroll_past_end = false;
             app.show_line_numbers = true;
             app.relative_line_numbers = false;
             let mut terminal = Terminal::new(TestBackend::new(100, 14)).unwrap();
@@ -4656,6 +4662,8 @@ mod tests {
             assert_eq!(gutter.width, number_width + 2);
             let marker_col = change_gutter_column(gutter).unwrap();
             assert_eq!(marker_col, gutter.x + number_width);
+            let minimap = app.minimap_area.unwrap();
+            let minimap_col = minimap.right() - 1;
             let buffer = terminal.backend().buffer();
             let added = app.colors.ui.fg_gutter_added;
             let removed = app.colors.ui.fg_gutter_deleted;
@@ -4678,10 +4686,18 @@ mod tests {
                 assert_eq!(cell.fg, color);
                 assert_eq!(cell.bg, buffer[(marker_col - 1, y)].bg);
                 assert_eq!(buffer[(marker_col - 1, y)].symbol(), (offset + 1).to_string());
+                let cell = &buffer[(minimap_col, minimap.y + offset)];
+                let symbol = if (3..=5).contains(&offset) { "•" } else { " " };
+                assert_eq!((cell.bg, cell.symbol()), (color, symbol));
             }
             let overlap = &buffer[(marker_col, gutter.y + 6)];
             assert_eq!(overlap.symbol(), "▐");
             assert_eq!((overlap.bg, overlap.fg), (staged_removed, added));
+            let y = minimap.y + 6;
+            let staged = &buffer[(minimap_col - 1, y)];
+            let working = &buffer[(minimap_col, y)];
+            assert_eq!((staged.bg, staged.symbol()), (staged_removed, "•"));
+            assert_eq!((working.bg, working.symbol()), (added, " "));
             assert_eq!(buffer[(marker_col, gutter.y + 8)].symbol(), " ");
 
             app.hovered_gutter_line = Some(6);
@@ -4822,18 +4838,15 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let minimap_area = app.minimap_area.expect("minimap area");
         let scrollbar_area = app.scrollbar_area.expect("scrollbar area");
-        let has_modified_marker = |area: Rect, foreground: Color| {
-            (area.top()..area.bottom()).any(|y| {
-                (area.left()..area.right()).any(|x| {
-                    buffer
-                        .cell((x, y))
-                        .is_some_and(|cell| cell.fg == foreground)
-                })
+        assert!((minimap_area.top()..minimap_area.bottom()).any(|y| {
+            let cell = &buffer[(minimap_area.right() - 1, y)];
+            cell.bg == app.colors.ui.fg_gutter_modified && cell.symbol() == " "
+        }));
+        assert!((scrollbar_area.top()..scrollbar_area.bottom()).any(|y| {
+            (scrollbar_area.left()..scrollbar_area.right()).any(|x| {
+                buffer[(x, y)].fg == app.colors.ui.fg_overview_modified
             })
-        };
-
-        assert!(has_modified_marker(minimap_area, app.colors.ui.fg_minimap_modified));
-        assert!(has_modified_marker(scrollbar_area, app.colors.ui.fg_overview_modified));
+        }));
     }
 
     #[test]

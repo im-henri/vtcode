@@ -996,6 +996,41 @@ impl App {
         self.create_snapshot_diff_tab();
     }
 
+    pub(crate) fn open_commit_snapshot_diff(
+        &mut self,
+        snapshot: crate::commit_details::CommitDiff,
+        file: &str,
+    ) {
+        let crate::commit_details::CommitDiff { path, target, labels, prepared } = snapshot;
+        let language = self.language_override_for_path(&path);
+        let limit = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
+        self.new_snapshot_diff_tab();
+        if let Some(editor) = self.editor_mut() {
+            editor.file_path = Some(path.clone());
+            editor.language_override = language;
+            editor.file_size = target.len_bytes() as u64;
+            editor.rope = target;
+            editor.saved_rope = Some(editor.rope.clone());
+            editor.update_large_file_mode(limit);
+            editor.syntax_dirty_from = Some(0);
+            editor.syntax_dirty_through = Some(editor.rope.len_lines());
+            editor.detect_indentation();
+        }
+        let parent = labels.base.strip_suffix(" (parent)").unwrap_or("∅");
+        let commit = labels.target.strip_suffix(" (commit)").unwrap_or(&labels.target);
+        self.diff_tab_label = Some(format!("{file} ({parent} ↔ {commit})"));
+        self.diff_labels = Some(labels);
+        self.diff_target_path = Some(path);
+        self.diff_mode = self.preferred_diff_mode;
+        self.compare_base_content = Some(prepared.base_content);
+        self.apply_prepared_compare_diff(
+            prepared.diff_lines,
+            prepared.render_cache,
+            prepared.target_line_markers,
+        );
+        self.scroll_to_first_diff_change();
+    }
+
     /// Create the view without attempting another save of its source document.
     pub(crate) fn create_snapshot_diff_tab(&mut self) {
         self.push_nav_history();
@@ -1007,7 +1042,7 @@ impl App {
         let mut tab = Tab::new_file(self.new_editor());
         tab.kind = TabKind::Diff(id);
         tab.editor.read_only = true;
-        self.push_previewable_tab(tab, self.enable_preview_tabs);
+        self.open_previewable_tab(tab, self.enable_preview_tabs);
         self.diff_tabs.owner = Some(id);
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;
@@ -1095,7 +1130,7 @@ impl App {
             });
             let mut tab = Tab::new_file(editor);
             tab.kind = TabKind::Diff(self.diff_tabs.next_id);
-            self.push_previewable_tab(tab, self.enable_preview_tabs);
+            self.open_previewable_tab(tab, self.enable_preview_tabs);
             if let Some(cached) = cached {
                 let id = self.active_diff_tab_id().unwrap();
                 self.diff_tabs.views.insert(id, cached.view);
@@ -1168,7 +1203,7 @@ impl App {
         let id = self.diff_tabs.next_id;
         let mut tab = Tab::new_file(editor);
         tab.kind = TabKind::Diff(id);
-        self.push_previewable_tab(tab, self.enable_preview_tabs);
+        self.open_previewable_tab(tab, self.enable_preview_tabs);
         self.clear_diff_state();
         self.diff_tabs.owner = Some(id);
         self.diff_tabs.blame_revisions.insert(id, (history.previous_revision, history.revision));
@@ -1200,7 +1235,7 @@ impl App {
         let id = self.diff_tabs.next_id;
         let mut tab = Tab::new_file(editor);
         tab.kind = TabKind::Diff(id);
-        self.push_previewable_tab(tab, self.enable_preview_tabs);
+        self.open_previewable_tab(tab, self.enable_preview_tabs);
         self.clear_diff_state();
         self.diff_tabs.owner = Some(id);
         self.compare_base_content = Some(diff.old_text.clone().unwrap_or_default().into());

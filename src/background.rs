@@ -407,6 +407,10 @@ pub enum BackgroundResult {
     GitLogPage(crate::git_history::HistoryPage),
     CommitDetails(crate::commit_details::DetailsResult),
     CommitDiff(crate::commit_details::DiffResult),
+    OpenCommitDiff {
+        request: CancellationToken,
+        result: crate::commit_details::DiffResult,
+    },
     /// Visible Explorer entries rebuilt away from the terminal event loop.
     ExplorerRefreshed {
         generation: u64,

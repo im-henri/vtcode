@@ -63,7 +63,6 @@ impl App {
         let changed = visible != self.sidebar_is_visible();
         if changed {
             self.reset_hover_states();
-            self.outline_hovered = None;
             self.mouse_hover_changed = true;
         }
         changed

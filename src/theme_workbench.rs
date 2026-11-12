@@ -325,9 +325,6 @@ pub(crate) struct WorkbenchColors {
     pub fg_minimap_info: Color,
     pub fg_minimap_find: Color,
     pub bg_minimap_selection: Color,
-    pub fg_minimap_added: Color,
-    pub fg_minimap_modified: Color,
-    pub fg_minimap_deleted: Color,
     pub bg_minimap_slider: Color,
     pub bg_minimap_slider_hover: Color,
     pub bg_minimap_slider_active: Color,
@@ -1004,21 +1001,6 @@ impl WorkbenchColors {
             bg_minimap_selection: get(
                 "minimap.selectionHighlight",
                 base.bg_selection,
-                minimap,
-            ),
-            fg_minimap_added: get(
-                "minimapGutter.addedBackground",
-                gutter_added,
-                minimap,
-            ),
-            fg_minimap_modified: get(
-                "minimapGutter.modifiedBackground",
-                gutter_modified,
-                minimap,
-            ),
-            fg_minimap_deleted: get(
-                "minimapGutter.deletedBackground",
-                gutter_deleted,
                 minimap,
             ),
             bg_minimap_slider: minimap_slider(
@@ -2020,9 +2002,6 @@ impl Default for WorkbenchColors {
             fg_minimap_info: Color::Reset,
             fg_minimap_find: Color::Reset,
             bg_minimap_selection: Color::Reset,
-            fg_minimap_added: Color::Reset,
-            fg_minimap_modified: Color::Reset,
-            fg_minimap_deleted: Color::Reset,
             bg_minimap_slider: Color::Reset,
             bg_minimap_slider_hover: Color::Reset,
             bg_minimap_slider_active: Color::Reset,

@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap as CssColorMap;
 use std::sync::LazyLock;
 
 use crate::ui::hsl_to_rgb;
-use crate::line_changes::{ChangeKind, LineChanges};
+use crate::line_changes::ChangeKind;
 
 pub(crate) fn syntax_font_modifiers(font: crate::textmate::FontStyle) -> Modifier {
     use crate::textmate::FontStyle;
@@ -18,7 +18,6 @@ pub(crate) fn syntax_font_modifiers(font: crate::textmate::FontStyle) -> Modifie
 #[derive(Clone, Copy)]
 pub(crate) enum ChangeSurface {
     Gutter { staged: bool },
-    Minimap,
     Scrollbar,
 }
 
@@ -30,45 +29,17 @@ impl ChangeSurface {
             Self::Gutter { staged: true } => (
                 ui.fg_gutter_added_secondary, ui.fg_gutter_deleted_secondary, ui.fg_gutter_modified_secondary,
             ),
-            Self::Minimap => (ui.fg_minimap_added, ui.fg_minimap_deleted, ui.fg_minimap_modified),
             Self::Scrollbar => (ui.fg_overview_added, ui.fg_overview_deleted, ui.fg_overview_modified),
         };
         match kind {
             ChangeKind::Added => added,
             ChangeKind::Unsaved => match self {
                 Self::Gutter { .. } => modified,
-                _ => added,
+                Self::Scrollbar => added,
             },
             ChangeKind::Removed => removed,
             ChangeKind::Replaced | ChangeKind::Modified => modified,
         }
-    }
-
-    pub(crate) fn marker(
-        self, kind: ChangeKind, staged: bool, bg: Color, colors: &crate::app_theme::ThemeColors,
-    ) -> Style {
-        let color = self.color(kind, colors);
-        if staged {
-            let ink = ensure_contrast(bg, color, 4.5, &[
-                colors.fg_text, Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255),
-            ]);
-            Style::default().fg(ink).bg(color)
-        } else {
-            Style::default().fg(color).bg(bg)
-        }
-    }
-
-    pub(crate) fn primary_marker(
-        self, changes: LineChanges, bg: Color, colors: &crate::app_theme::ThemeColors,
-    ) -> (&'static str, Style) {
-        let Some(kind) = changes.primary() else { return (" ", Style::default().bg(bg)); };
-        let staged = changes.staged();
-        let working = changes.working().is_some();
-        let mut style = self.marker(kind, staged.is_some() && !working, bg, colors);
-        if let Some(staged) = staged.filter(|_| working) {
-            style = style.add_modifier(Modifier::UNDERLINED).underline_color(self.color(staged, colors));
-        }
-        (kind.symbol(), style)
     }
 }
 
@@ -77,7 +48,9 @@ pub(crate) fn overview_marker_color(
     status: char,
     colors: &crate::app_theme::ThemeColors,
 ) -> Option<Color> {
-    LineChanges::from(status).summary().map(|kind| ChangeSurface::Scrollbar.color(kind, colors))
+    crate::line_changes::LineChanges::from(status)
+        .summary()
+        .map(|kind| ChangeSurface::Scrollbar.color(kind, colors))
 }
 
 /// TextMate token colors can also carry alpha. Ignoring it makes translucent

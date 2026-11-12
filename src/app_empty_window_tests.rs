@@ -378,23 +378,6 @@ fn no_folder_settings_cannot_select_an_invisible_folder_scope() {
 }
 
 #[test]
-fn no_file_outline_explains_what_to_open() {
-    let mut app = empty();
-    app.sidebar_view = crate::app::SidebarView::Outline;
-    let mut terminal = Terminal::new(TestBackend::new(110, 28)).unwrap();
-    terminal
-        .draw(|frame| crate::ui::draw(frame, &mut app))
-        .unwrap();
-    let text = screen(&terminal);
-    assert!(text.contains("Open a file to see symbols"));
-    assert!(!text.contains("No symbols found"));
-    crate::ui_control_visibility_tests::snapshot(
-        terminal.backend().buffer(),
-        "No folder - outline",
-    );
-}
-
-#[test]
 fn extensions_load_only_when_requested_and_are_not_reported_missing_while_loading() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = empty();

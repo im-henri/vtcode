@@ -516,7 +516,7 @@ mod tests {
             crate::app::SidebarView::SourceControl,
             crate::app::SidebarView::Settings,
             crate::app::SidebarView::Extensions,
-            crate::app::SidebarView::Outline,
+            crate::app::SidebarView::Remote,
         ] {
             let mut app = rename_app("module.py", false);
             app.sidebar_view = sidebar;

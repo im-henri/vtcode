@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::app::{ActivePane, App, GitCommitReference, Tab, TabKind};
-use crate::background::BackgroundResult;
+use crate::background::{BackgroundResult, CancellationToken};
 
 #[cfg(test)]
 #[path = "commit_details_tests.rs"]
@@ -101,6 +101,7 @@ pub(crate) struct CommitDetails {
     pub diff_error: Option<String>,
     pub diff_file: Option<usize>,
     pub diff_loading: bool,
+    opening_diff: Option<OpenDiff>,
     pub diff_expanded: bool,
     pub diff_context: DiffContext,
     pub context_draft: Option<String>,
@@ -112,6 +113,12 @@ pub(crate) struct CommitDetails {
     pub last_divider_click: Option<(Divider, std::time::Instant)>,
     pub visible: bool,
     pub review: crate::commit_review::Review,
+}
+
+struct OpenDiff {
+    file: usize,
+    from_inspector: bool,
+    request: CancellationToken,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +137,12 @@ impl Default for DiffContext {
 }
 
 impl CommitDetails {
+    pub(crate) fn cancel_open_diff(&mut self) {
+        if let Some(open) = self.opening_diff.take() {
+            open.request.cancel();
+        }
+    }
+
     pub fn expire_copy_feedback(&mut self, now: std::time::Instant) -> bool {
         if self
             .copy_feedback
@@ -256,7 +269,8 @@ pub(crate) fn read_diff(
 ) -> Result<DiffContents, String> {
     let repo = git2::Repository::discover(root).map_err(|error| error.to_string())?;
     let commit = repo
-        .find_commit(git2::Oid::from_str(hash).map_err(|error| error.to_string())?)
+        .revparse_single(hash)
+        .and_then(|object| object.peel_to_commit())
         .map_err(|error| error.to_string())?;
     let tree = commit.tree().map_err(|error| error.to_string())?;
     let parent = if commit.parent_count() > 0 {
@@ -466,6 +480,7 @@ impl App {
     }
 
     pub(crate) fn reset_commit_details(&mut self) {
+        self.commit_details.cancel_open_diff();
         self.clear_commit_review_files();
         self.clear_commit_diff_view();
         self.commit_details = CommitDetails {
@@ -570,6 +585,7 @@ impl App {
             && self.commit_details.root.as_ref() == Some(&root) {
             return;
         }
+        self.commit_details.cancel_open_diff();
         self.clear_commit_review_files();
         self.clear_commit_diff_view();
         self.commit_details = CommitDetails {
@@ -594,6 +610,7 @@ impl App {
 
     pub(crate) fn load_commit_details(&mut self) {
         if !self.source_control_enabled { return; }
+        self.commit_details.cancel_open_diff();
         self.commit_details.review.pending = None;
         self.commit_details.loading = true;
         self.commit_details.error = None;
@@ -693,15 +710,55 @@ impl App {
             self.commit_details.diff_loading = true;
         }
         let file = self.commit_details.data.files[index].clone();
+        self.load_commit_file_diff(index, file, None);
+    }
+
+    pub(crate) fn open_source_control_commit_details_file_diff(&mut self, index: usize) {
+        if !self.source_control_enabled
+            || self.commit_details.loading
+            || self.commit_details.error.is_some()
+        {
+            return;
+        }
+        let Some(file) = self.commit_details.data.files.get(index).cloned() else {
+            return;
+        };
+        if self.commit_details.opening_diff.as_ref().is_some_and(|open| open.file == index) {
+            return;
+        }
+        self.commit_details.cancel_open_diff();
+        let request = CancellationToken::new();
+        self.commit_details.opening_diff = Some(OpenDiff {
+            file: index,
+            from_inspector: self.is_commit_details_tab(),
+            request: request.clone(),
+        });
+        self.notify("Opening commit diff…");
+        self.load_commit_file_diff(index, file, Some(request));
+    }
+
+    fn load_commit_file_diff(
+        &mut self,
+        index: usize,
+        file: CommitFile,
+        open: Option<CancellationToken>,
+    ) {
         let root = self.commit_details_root().to_owned();
         let generation = self.commit_details.generation;
         let hash = self.commit_details.data.hash.clone();
-        let limit = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
+        // An explicit open can show a file larger than the inline preview limit.
+        let limit = if open.is_some() {
+            u64::MAX
+        } else {
+            self.large_file_threshold_mb.saturating_mul(1024 * 1024)
+        };
         let sender = self.source_control_sender();
         let remote = self.remote_workspace.clone();
         let log = self.git_output();
         self.background.spawn("commit-diff", move || {
-            if sender.is_cancelled() { return; }
+            if sender.is_cancelled() || open.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                return;
+            }
             let operation = remote.is_none().then(|| crate::git_output::native(&log, "Read commit diff", &root));
             let result = match remote {
                 Some(remote) => remote.commit_diff(&root, hash, file, limit).map_err(|error| error.to_string()),
@@ -710,13 +767,55 @@ impl App {
             if let Some(operation) = &operation {
                 operation.result(&result, |_| "Commit diff prepared".into());
             }
-            let _ = sender.send(BackgroundResult::CommitDiff(DiffResult {
+            if open.as_ref().is_some_and(CancellationToken::is_cancelled) {
+                return;
+            }
+            let result = DiffResult {
                 root,
                 generation,
                 file: index,
                 result,
-            }));
+            };
+            let _ = sender.send(match open {
+                Some(request) => BackgroundResult::OpenCommitDiff { request, result },
+                None => BackgroundResult::CommitDiff(result),
+            });
         });
+    }
+
+    pub(crate) fn apply_open_commit_diff(
+        &mut self,
+        request: CancellationToken,
+        result: DiffResult,
+    ) -> bool {
+        let Some(open) = self.commit_details.opening_diff.as_ref()
+            .filter(|open| open.request.same_task(&request))
+        else {
+            return false;
+        };
+        let from_inspector = open.from_inspector;
+        self.commit_details.opening_diff = None;
+        if result.generation != self.commit_details.generation
+            || !self.commit_details_root_matches(&result.root)
+            || (from_inspector && !crate::ui_commit_details::focused(self))
+        {
+            return false;
+        }
+        let Some(file) = self.commit_details.data.files.get(result.file) else {
+            return false;
+        };
+        match result.result {
+            Ok(diff) => {
+                let path = file.path.clone();
+                self.open_commit_snapshot_diff(diff, &path);
+                self.notify(format!("Opened commit diff: {path}"));
+            }
+            Err(error) => {
+                self.status_message = error.clone();
+                self.notify_error(error);
+            }
+        }
+        true
     }
 
     pub(crate) fn apply_commit_diff(&mut self, result: DiffResult) -> bool {

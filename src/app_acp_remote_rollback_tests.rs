@@ -306,7 +306,9 @@ fn remote_checkpoint_previews_are_cached_and_preserve_case_and_created_file_dele
     app.chat.rollback.inline_reviews = Arc::new(journal.inline_reviews());
     drop(journal);
     app.refresh_chat_rollback();
-    app.open_file(&path);
+    assert!(app.editor_file_review(&path).unwrap().has_text);
+    app.chat_action(ChatAction::ReviewFile(PathBuf::from("Created.txt")));
+    assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&path));
     app.wait_for_background(Duration::from_secs(10), |app| {
         app.editor().is_some_and(|e| !e.bg_loading)
     });

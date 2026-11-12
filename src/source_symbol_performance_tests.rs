@@ -1,7 +1,7 @@
 //! Opt-in measurements over a frozen copy of the actual vtcode source corpus.
 use super::*;
 use crate::{
-    app::{SidebarView, Tab},
+    app::Tab,
     editor::Editor,
 };
 use std::{
@@ -126,26 +126,9 @@ fn benchmark_vtcode_source_symbols() {
         dispatch.sort_unstable();
         ready.sort_unstable();
         apply.sort_unstable();
-        app.symbol_list_active = false;
-        app.sidebar_view = SidebarView::Outline;
-        let outline_count = selected[0]
-            .1
-            .lines()
-            .filter(|line| super::source_symbol(line).is_some_and(|(name, _)| !name.is_empty()))
-            .count();
-        app.outline_items.clear();
-        let started = Instant::now();
-        app.update_outline();
-        let outline_dispatch = started.elapsed();
-        while app.outline_items.len() != outline_count {
-            assert!(started.elapsed() < Duration::from_secs(30));
-            app.poll_background_results();
-            std::thread::yield_now();
-        }
         let report = serde_json::json!({"case":case,"files":selected.len(),"bytes":selected.iter().map(|(_,s)|s.len()).sum::<usize>(),
             "symbols":count,"digest":format!("{:016x}",expected_digest.unwrap()),"samples":9,
-            "dispatchMedianNs":dispatch[4],"readyMedianNs":ready[4],"longestApplyMedianNs":apply[4],
-            "outlineDispatchNs":outline_dispatch.as_nanos() as u64,"outlineReadyNs":started.elapsed().as_nanos() as u64});
+            "dispatchMedianNs":dispatch[4],"readyMedianNs":ready[4],"longestApplyMedianNs":apply[4]});
         eprintln!("{report}");
         reports.push(report);
     }

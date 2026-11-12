@@ -188,7 +188,7 @@ pub(crate) struct App {
     pub dragging_v_scrollbar: bool,
     pub dragging_h_scrollbar: bool,
     pub dragging_minimap: bool,
-    pub minimap_drag_start: Option<(usize, usize)>, // (pointer row, visible scroll row)
+    pub(crate) minimap_drag_start: Option<crate::ui_editor_minimap::MinimapDrag>,
     pub(crate) settings_scrollbar_drag: Option<crate::settings_layout::Drag>,
     /// Text-field hit maps rebuilt from the actual rendered viewport each frame.
     pub text_input_regions: Vec<crate::text_input::TextInputRegion>,
@@ -396,10 +396,6 @@ pub(crate) struct App {
     pub symbol_list_selected: usize,
     pub symbol_list_workspace: bool,
     pub(crate) source_symbol_work: crate::source_symbols::State,
-    pub outline_items: Vec<SymbolItem>,
-    pub outline_scroll: usize,
-    pub outline_selected: usize,
-    pub outline_hovered: Option<usize>,
     pub closed_tab_paths: std::collections::VecDeque<(PathBuf, usize, usize)>,
     pub(crate) closed_file_views: rustc_hash::FxHashMap<PathBuf, crate::editor_view_state::ViewState>,
     pub dragging_tab: Option<usize>,
@@ -640,7 +636,7 @@ pub(crate) struct App {
     pub semantic_theme_colors: Option<crate::semantic_theme::SemanticTheme>,
     pub focus_mode: bool,
     pub sidebar_right: bool,
-    pub last_edit_position: Option<(usize, usize, usize)>, // (tab_idx, line, col)
+    pub last_edit_position: Option<(u64, usize, usize)>, // (navigation_id, line, col)
     pub last_edit_time: std::time::Instant,
     pub show_word_count: bool,
     pub show_color_preview: bool,
@@ -787,7 +783,7 @@ pub(crate) struct App {
     pub(crate) menu_dropdown_scroll: usize,
     pub(crate) menu_rendered: Option<usize>,
     // Activity bar
-    pub activity_bar_selected: usize, // 0=Explorer, 1=Search, 2=SourceControl, 3=Remote, 4=Extensions, 5=Outline, usize::MAX=None
+    pub activity_bar_selected: usize, // 0=Explorer, 1=Search, 2=SourceControl, 3=Remote, 4=Extensions, usize::MAX=None
     pub activity_bar_area: Option<ratatui::layout::Rect>,
     pub(crate) empty_folder: crate::ui_empty_folder::State,
     pub menu_bar_area: Option<ratatui::layout::Rect>,
@@ -943,10 +939,6 @@ pub(crate) struct App {
     /// Scalar cursor corresponding to the manager's UTF-16 highlight request.
     /// Avoid converting unchanged long lines on every idle/animation frame.
     pub(crate) lsp_highlight_last_cursor: (usize, usize),
-    /// Last content version when LSP document symbols were requested for outline
-    pub lsp_outline_last_version: u64,
-    /// Whether LSP document symbols are available (to skip regex fallback)
-    pub lsp_outline_available: bool,
     /// Last content version when LSP folding ranges were requested
     pub lsp_folding_last_version: u64,
     /// LSP folding ranges stored as (start_line, end_line) pairs
@@ -1433,10 +1425,6 @@ impl App {
             symbol_list_selected: 0,
             symbol_list_workspace: false,
             source_symbol_work: Default::default(),
-            outline_items: Vec::new(),
-            outline_scroll: 0,
-            outline_selected: 0,
-            outline_hovered: None,
             closed_tab_paths: std::collections::VecDeque::new(),
             closed_file_views: Default::default(),
             dragging_tab: None,
@@ -1892,8 +1880,6 @@ impl App {
             lsp_document_highlights: Vec::new(),
             lsp_document_multiline_highlights: Vec::new(),
             lsp_highlight_last_cursor: (usize::MAX, usize::MAX),
-            lsp_outline_last_version: u64::MAX,
-            lsp_outline_available: false,
             lsp_folding_last_version: u64::MAX,
             lsp_folding_ranges: Vec::new(),
             lsp_selection_ranges: Vec::new(),
@@ -2337,6 +2323,9 @@ impl App {
                 }
                 crate::background::BackgroundResult::CommitDiff(result) => {
                     has_visual_changes |= self.apply_commit_diff(result);
+                }
+                crate::background::BackgroundResult::OpenCommitDiff { request, result } => {
+                    has_visual_changes |= self.apply_open_commit_diff(request, result);
                 }
                 crate::background::BackgroundResult::GitRemoteOp {
                     op,
@@ -3090,14 +3079,6 @@ impl App {
                         self.start_pending_git_compare_for_path(&path);
                         if !loaded_large_file_mode {
                             self.refresh_compare_diff();
-                        }
-                        if self.sidebar_view == crate::app::SidebarView::Outline
-                            && self.editor().is_some_and(|editor| {
-                                editor.file_path.as_deref() == Some(path.as_path())
-                                    && !editor.large_file_mode
-                            })
-                        {
-                            self.update_outline();
                         }
                     }
                     if self.editor().and_then(|editor| editor.file_path.as_deref())

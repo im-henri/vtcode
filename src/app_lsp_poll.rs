@@ -63,18 +63,10 @@ fn request_passive_document_feedback(app: &mut App, historical: bool) {
     if app.lsp_manager.last_notified_version.get(path) != Some(&version) {
         return;
     }
-    let Some(client) = app.lsp_manager.clients.iter().find(|client| {
-        client.initialized && !client.server_dead && client.handles_file(path) && client.is_file_open(path)
-    }) else { return; };
-    let folding_supported = client.supports_request("textDocument/foldingRange");
-    let lenses_supported = client.supports_request("textDocument/codeLens");
-    let links_supported = client.supports_request("textDocument/documentLink");
+    let Some(client_idx) = app.lsp_manager.document_feedback_client(path) else {
+        return;
+    };
     let quiet = app.last_edit_time.elapsed() >= LSP_EDIT_QUIET_PERIOD;
-    let new_document = app
-        .lsp_manager
-        .document_symbol_request
-        .as_ref()
-        .is_none_or(|request| !request.matches(path, version, None));
     if app.show_inlay_hints && (quiet || app.lsp_inlay_hint_last_version == version) {
         let (start, end) = inlay_range(editor, app.lsp_manager.inlay_hint_request.as_ref());
         if app.lsp_manager.request_inlay_hints(path, start, end) {
@@ -82,34 +74,36 @@ fn request_passive_document_feedback(app: &mut App, historical: bool) {
             app.lsp_inlay_hint_last_version = version;
         }
     }
-    if quiet && app.lsp_manager.request_document_symbol(path) {
-        app.lsp_outline_last_version = version;
+    if !quiet {
+        return;
     }
-    if quiet {
-        if (new_document || app.lsp_folding_last_version != version)
-            && (!folding_supported || app.lsp_manager.request_folding_range(path))
-        {
-            app.lsp_folding_last_version = version;
-        }
-        if app.show_code_lenses
-            && (new_document || app.lsp_code_lens_last_version != version)
-            && (!lenses_supported || app.lsp_manager.request_code_lens(path))
-        {
-            app.lsp_code_lens_last_version = version;
-        }
-        if (new_document || app.lsp_document_links_last_version != version)
-            && (!links_supported || app.lsp_manager.request_document_links(path))
-        {
-            app.lsp_document_links_last_version = version;
-        }
+    let client = &app.lsp_manager.clients[client_idx];
+    let folding_supported = client.supports_request("textDocument/foldingRange");
+    let lenses_supported = client.supports_request("textDocument/codeLens");
+    let links_supported = client.supports_request("textDocument/documentLink");
+    let new_document = app.lsp_manager.track_passive_document(path, version, client_idx);
+    if (new_document || app.lsp_folding_last_version != version)
+        && (!folding_supported || app.lsp_manager.request_folding_range(path))
+    {
+        app.lsp_folding_last_version = version;
+    }
+    if app.show_code_lenses
+        && (new_document || app.lsp_code_lens_last_version != version)
+        && (!lenses_supported || app.lsp_manager.request_code_lens(path))
+    {
+        app.lsp_code_lens_last_version = version;
+    }
+    if (new_document || app.lsp_document_links_last_version != version)
+        && (!links_supported || app.lsp_manager.request_document_links(path))
+    {
+        app.lsp_document_links_last_version = version;
     }
 }
 
-fn feedback_response_is_current(
+fn inlay_response_is_current(
     app: &App,
     target: &crate::lsp::DocumentFeedbackRequest,
     historical: bool,
-    inlay: bool,
 ) -> bool {
     !historical
         && app.editor().is_some_and(|editor| {
@@ -119,7 +113,7 @@ fn feedback_response_is_current(
                     target.matches(
                         path,
                         editor.content_version,
-                        inlay.then(|| inlay_range(editor, app.lsp_manager.inlay_hint_request.as_ref())),
+                        Some(inlay_range(editor, app.lsp_manager.inlay_hint_request.as_ref())),
                     )
                 })
         })
@@ -149,7 +143,7 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
     if !app.workspace_visible {
         // Keep protocol replies and user-requested document operations live.
         // Presentation replies remain in the manager until this workspace is
-        // visible; no outline construction, token decoding or passive requests.
+        // visible, deferring token decoding and passive requests.
         app.lsp_manager.poll_until(deadline);
         *needs_redraw |= app.poll_lsp_format_request();
         apply_pending_document_edits(app, needs_redraw);
@@ -309,7 +303,7 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
                 .lsp_manager
                 .inlay_hint_response_target
                 .take()
-                .is_some_and(|target| feedback_response_is_current(app, &target, historical, true));
+                .is_some_and(|target| inlay_response_is_current(app, &target, historical));
         if is_current {
             let mut mapped: Vec<_> = hints
                 .into_iter()
@@ -434,66 +428,6 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             .collect();
         app.lsp_document_highlights = mapped;
         *needs_redraw = true;
-    }
-    // Process document symbol responses for outline
-    if app.lsp_manager.document_symbols_dirty {
-        app.lsp_manager.document_symbols_dirty = false;
-        let symbols = std::mem::take(&mut app.lsp_manager.document_symbols);
-        let is_current = app
-            .lsp_manager
-            .document_symbol_response_target
-            .take()
-            .is_some_and(|target| feedback_response_is_current(app, &target, historical, false));
-        if is_current {
-            if !symbols.is_empty() {
-                app.lsp_outline_available = true;
-                app.source_symbol_work.cancel_outline();
-                app.outline_items.clear();
-                for sym in &symbols {
-                    let kind = match sym.kind {
-                        lsp_types::SymbolKind::FILE => "file",
-                        lsp_types::SymbolKind::MODULE => "module",
-                        lsp_types::SymbolKind::NAMESPACE => "namespace",
-                        lsp_types::SymbolKind::PACKAGE => "module",
-                        lsp_types::SymbolKind::CLASS => "class",
-                        lsp_types::SymbolKind::METHOD => "function",
-                        lsp_types::SymbolKind::PROPERTY => "property",
-                        lsp_types::SymbolKind::FIELD => "field",
-                        lsp_types::SymbolKind::CONSTRUCTOR => "function",
-                        lsp_types::SymbolKind::ENUM => "enum",
-                        lsp_types::SymbolKind::INTERFACE => "interface",
-                        lsp_types::SymbolKind::FUNCTION => "function",
-                        lsp_types::SymbolKind::VARIABLE => "variable",
-                        lsp_types::SymbolKind::CONSTANT => "constant",
-                        lsp_types::SymbolKind::STRING => "string",
-                        lsp_types::SymbolKind::NUMBER => "number",
-                        lsp_types::SymbolKind::BOOLEAN => "boolean",
-                        lsp_types::SymbolKind::ARRAY => "array",
-                        lsp_types::SymbolKind::OBJECT => "object",
-                        lsp_types::SymbolKind::KEY => "key",
-                        lsp_types::SymbolKind::NULL => "null",
-                        lsp_types::SymbolKind::ENUM_MEMBER => "enum",
-                        lsp_types::SymbolKind::STRUCT => "struct",
-                        lsp_types::SymbolKind::EVENT => "event",
-                        lsp_types::SymbolKind::OPERATOR => "operator",
-                        lsp_types::SymbolKind::TYPE_PARAMETER => "type",
-                        _ => "symbol",
-                    };
-                    app.outline_items.push(crate::app::SymbolItem {
-                        name: sym.name.clone(),
-                        kind,
-                        line: sym.location.range.start.line as usize,
-                        tab_index: Some(app.active_tab),
-                        file_name: None,
-                        file_path: None,
-                    });
-                }
-                app.outline_items.sort_by_key(|item| item.line);
-                *needs_redraw = true;
-            } else {
-                app.lsp_outline_available = false;
-            }
-        }
     }
     // Process workspace symbol responses
     if app.lsp_manager.workspace_symbols_dirty {

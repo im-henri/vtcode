@@ -86,6 +86,17 @@ pub struct Summary {
 }
 
 impl Summary {
+    pub fn pending_files(&self) -> BTreeMap<&Path, usize> {
+        let mut files = BTreeMap::new();
+        for edit in &self.edits {
+            let pending = edit.pending();
+            if pending > 0 {
+                *files.entry(edit.path.as_path()).or_default() += pending;
+            }
+        }
+        files
+    }
+
     /// Bind an accept action to the pending chunks currently shown in a chat.
     /// Later checkpoint captures must not expand an already queued action.
     pub fn pending_chunks(&self, selection: &Selection) -> Result<Vec<(u64, usize)>> {

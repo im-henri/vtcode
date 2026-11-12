@@ -362,53 +362,6 @@ impl LspClient {
                             });
                         }
                     }
-                    Some("textDocument/documentSymbol") => {
-                        if result.is_null() {
-                            return Some(LspEvent::DocumentSymbolResponse {
-                                request_id: id,
-                                symbols: Vec::new(),
-                            });
-                        }
-                        // Try DocumentSymbol[] first (hierarchical), flatten to SymbolInformation
-                        if let Ok(doc_symbols) = serde_json::from_value::<DocumentSymbolResponse>(result) {
-                            let mut flat_symbols = Vec::new();
-                            match doc_symbols {
-                                DocumentSymbolResponse::Flat(symbols) => {
-                                    flat_symbols = symbols;
-                                }
-                                DocumentSymbolResponse::Nested(symbols) => {
-                                    fn flatten_doc_symbols(symbols: &[DocumentSymbol], uri: &Url, out: &mut Vec<SymbolInformation>) {
-                                        for sym in symbols {
-                                            // SymbolInformation is deprecated in lsp_types but still the common
-                                            // denominator returned by document/symbol and workspace/symbol responses.
-                                            #[allow(deprecated)]
-                                            out.push(SymbolInformation {
-                                                name: sym.name.clone(),
-                                                kind: sym.kind,
-                                                tags: sym.tags.clone(),
-                                                deprecated: sym.deprecated,
-                                                location: Location {
-                                                    uri: uri.clone(),
-                                                    range: sym.selection_range,
-                                                },
-                                                container_name: None,
-                                            });
-                                            if let Some(ref children) = sym.children {
-                                                flatten_doc_symbols(children, uri, out);
-                                            }
-                                        }
-                                    }
-                                    if let Ok(dummy_uri) = Url::parse("file:///") {
-                                        flatten_doc_symbols(&symbols, &dummy_uri, &mut flat_symbols);
-                                    }
-                                }
-                            }
-                            return Some(LspEvent::DocumentSymbolResponse {
-                                request_id: id,
-                                symbols: flat_symbols,
-                            });
-                        }
-                    }
                     Some("textDocument/foldingRange") => {
                         if result.is_null() {
                             return Some(LspEvent::FoldingRangeResponse {
@@ -973,54 +926,6 @@ mod tests {
                 assert!(edits.is_empty());
             }
             other => panic!("Expected FormatResponse with empty edits, got {other:?}"),
-        }
-    }
-
-    // ── parse_message: document symbol ────────────────────────────
-
-    #[test]
-    fn parse_document_symbol_flat_response() {
-        #[allow(deprecated)]
-        let json = r#"{
-            "jsonrpc": "2.0",
-            "id": 60,
-            "result": [
-                {
-                    "name": "MyStruct",
-                    "kind": 23,
-                    "location": {
-                        "uri": "file:///src/lib.rs",
-                        "range": {
-                            "start": {"line": 0, "character": 0},
-                            "end": {"line": 5, "character": 1}
-                        }
-                    }
-                },
-                {
-                    "name": "my_func",
-                    "kind": 12,
-                    "location": {
-                        "uri": "file:///src/lib.rs",
-                        "range": {
-                            "start": {"line": 7, "character": 0},
-                            "end": {"line": 10, "character": 1}
-                        }
-                    }
-                }
-            ]
-        }"#;
-        let pending = make_pending(&[(60, "textDocument/documentSymbol")]);
-        let event = LspClient::parse_message(json, &pending).unwrap();
-        match event {
-            LspEvent::DocumentSymbolResponse { request_id, symbols } => {
-                assert_eq!(request_id, 60);
-                assert_eq!(symbols.len(), 2);
-                assert_eq!(symbols[0].name, "MyStruct");
-                assert_eq!(symbols[0].kind, SymbolKind::STRUCT);
-                assert_eq!(symbols[1].name, "my_func");
-                assert_eq!(symbols[1].kind, SymbolKind::FUNCTION);
-            }
-            other => panic!("Expected DocumentSymbolResponse, got {other:?}"),
         }
     }
 

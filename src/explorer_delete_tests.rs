@@ -239,7 +239,7 @@ fn delete_without_explicit_multi_selection_keeps_the_single_file_behavior() {
 #[test]
 fn delete_cannot_act_on_the_file_selection_behind_other_or_hidden_sidebars() {
     for sidebar in [
-        SidebarView::Outline,
+        SidebarView::Search,
         SidebarView::Settings,
         SidebarView::Explorer,
     ] {

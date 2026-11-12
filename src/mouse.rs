@@ -3,13 +3,12 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use crate::app::{ActivePane, App, TerminalDock};
 use unicode_width::UnicodeWidthStr;
+use crate::ui_chrome::ACTIVITY_SETTINGS_INDEX;
 use crate::ui_chrome_tabs::TabBarHits;
 #[cfg(test)]
 use crate::ui_chrome_tabs::tab_display_name;
 #[cfg(test)]
 pub(crate) use crate::ui_chrome_tabs::tab_render_width;
-
-const ACTIVITY_SETTINGS_INDEX: usize = 6;
 
 #[path = "mouse_explorer_context.rs"]
 mod explorer_context;
@@ -414,7 +413,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 || app.hovered_terminal_plus
                 || app.hovered_terminal_tab.is_some()
                 || app.hovered_terminal_close.is_some()
-                || app.hovered_terminal_sidebar_toggle || app.outline_hovered.is_some()
+                || app.hovered_terminal_sidebar_toggle
                 || app.terminal_sidebar.handle.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
                 || app.hovered_problem_row.is_some()
                 || app.hovered_scrollbar
@@ -672,23 +671,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 app.hovered_explorer = None;
             }
         }
-        // Outline hover
-        if let Some(exp_area) = app.explorer_area {
-            if app.sidebar_view == crate::app::SidebarView::Outline
-                && col >= exp_area.x && col < exp_area.x + exp_area.width
-                && row > exp_area.y && row < exp_area.y + exp_area.height
-            {
-                let rel_row = (row - exp_area.y - 1) as usize;
-                let idx = app.outline_scroll + rel_row;
-                if idx < app.outline_items.len() {
-                    app.outline_hovered = Some(idx);
-                } else {
-                    app.outline_hovered = None;
-                }
-            } else if app.sidebar_view == crate::app::SidebarView::Outline {
-                app.outline_hovered = None;
-            }
-        }
         // Gutter hover - detect line for blame tooltip
         if let Some(gutter) = app.gutter_area {
             if col >= gutter.x && col < gutter.x + gutter.width
@@ -908,16 +890,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     app.show_explorer = false;
                                 } else {
                                     app.open_extensions_sidebar();
-                                }
-                            }
-                            5 => {
-                                // Outline: toggle sidebar view
-                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Outline {
-                                    app.show_explorer = false;
-                                } else {
-                                    app.show_explorer = true;
-                                    app.sidebar_view = crate::app::SidebarView::Outline;
-                                    app.update_outline();
                                 }
                             }
                             _ => {}
@@ -1821,27 +1793,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     // Handle extensions sidebar clicks
                     if app.sidebar_view == crate::app::SidebarView::Extensions {
                         crate::ui_extensions::handle_click(app, col, row);
-                        return;
-                    }
-
-                    // Handle outline sidebar clicks
-                    if app.sidebar_view == crate::app::SidebarView::Outline {
-                        app.active_pane = ActivePane::Explorer;
-                        if row > exp_area.y {
-                            let clicked_idx = app.outline_scroll + (row - exp_area.y - 1) as usize;
-                            if clicked_idx < app.outline_items.len() {
-                                app.outline_selected = clicked_idx;
-                                let line = app.outline_items[clicked_idx].line;
-                                app.push_nav_history();
-                                if let Some(ed) = app.editor_mut() {
-                                    ed.clear_selection();
-                                    ed.set_cursor(line, 0);
-                                    ed.desired_col = None;
-                                    ed.selection_anchor = None;
-                                    ed.ensure_visible();
-                                }
-                            }
-                        }
                         return;
                     }
 

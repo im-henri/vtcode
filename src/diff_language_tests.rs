@@ -708,7 +708,9 @@ fn agent_and_commit_snapshot_diffs_inherit_extensionless_file_language() {
     let oid = commit_fixture_files(path.parent().unwrap(), &["script"], "update");
     app.commit_details.data.hash = oid.to_string();
     app.commit_details.data.files = vec![crate::commit_details::CommitFile::new('M', "script")];
+    let previous = app.active_diff_tab_id();
     app.open_source_control_commit_details_file_diff(0);
+    app.wait_for_background(Duration::from_secs(5), |app| app.active_diff_tab_id() != previous);
     let diff_path = app.editor().unwrap().file_path.as_ref().unwrap();
     assert_eq!(diff_path, &path);
     assert!(App::same_open_path(diff_path, &path));

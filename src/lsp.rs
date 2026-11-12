@@ -656,10 +656,6 @@ impl LspClient {
                     document_highlight: Some(DocumentHighlightClientCapabilities {
                         dynamic_registration: Some(false),
                     }),
-                    document_symbol: Some(DocumentSymbolClientCapabilities {
-                        dynamic_registration: Some(false),
-                        ..Default::default()
-                    }),
                     folding_range: Some(FoldingRangeClientCapabilities {
                         dynamic_registration: Some(false),
                         ..Default::default()
@@ -1031,14 +1027,8 @@ pub(crate) struct LspManager {
     pub(crate) highlight_request: Option<(DocumentFeedbackRequest, (u32, u32))>,
     /// True when document_highlights were just updated (needs processing)
     pub document_highlights_dirty: bool,
-    /// Pending document symbol response (flattened to SymbolInformation)
-    pub document_symbols: Vec<SymbolInformation>,
-    /// ID of the active document symbol request
-    pub active_document_symbol_id: Option<i64>,
-    pub(crate) document_symbol_request: Option<DocumentFeedbackRequest>,
-    pub(crate) document_symbol_response_target: Option<DocumentFeedbackRequest>,
-    /// True when document_symbols were just updated
-    pub document_symbols_dirty: bool,
+    /// Document and client shared by folding ranges, code lenses, and links.
+    pub(crate) passive_document: Option<DocumentFeedbackRequest>,
     /// Pending folding range response from LSP
     pub folding_ranges: Vec<FoldingRange>,
     /// ID of the active folding range request
@@ -1228,11 +1218,7 @@ impl LspManager {
             active_highlight_id: None,
             highlight_request: None,
             document_highlights_dirty: false,
-            document_symbols: Vec::new(),
-            active_document_symbol_id: None,
-            document_symbol_request: None,
-            document_symbol_response_target: None,
-            document_symbols_dirty: false,
+            passive_document: None,
             folding_ranges: Vec::new(),
             active_folding_range_id: None,
             folding_ranges_dirty: false,
@@ -1817,11 +1803,7 @@ impl LspManager {
             return true;
         }
         self.cancel_inlay_hint_request();
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.initialized && !c.server_dead && c.handles_file(path) && c.is_file_open(path))
-        {
+        if let Some(idx) = self.document_feedback_client(path) {
             self.inlay_hint_request = Some(DocumentFeedbackRequest {
                 target: crate::background::LspDocumentTarget {
                     path: path.to_path_buf(),
@@ -1900,41 +1882,36 @@ impl LspManager {
         }) { self.cancel_document_highlight(); }
     }
 
-    /// Request document symbols for outline
-    pub(crate) fn request_document_symbol(&mut self, path: &Path) -> bool {
-        let Some(version) = self.last_notified_version.get(path).copied() else {
+    pub(crate) fn document_feedback_client(&self, path: &Path) -> Option<usize> {
+        self.clients.iter().position(|client| {
+            client.initialized
+                && !client.server_dead
+                && client.handles_file(path)
+                && client.is_file_open(path)
+        })
+    }
+
+    pub(crate) fn track_passive_document(
+        &mut self,
+        path: &Path,
+        version: u64,
+        client_idx: usize,
+    ) -> bool {
+        if self.passive_document.as_ref().is_some_and(|request| {
+            request.matches(path, version, None) && request.client_idx == client_idx
+        }) {
             return false;
-        };
-        if self
-            .document_symbol_request
-            .as_ref()
-            .is_some_and(|request| request.matches(path, version, None))
-        {
-            return true;
         }
-        self.cancel_document_symbol_request();
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.initialized && !c.server_dead && c.handles_file(path) && c.is_file_open(path))
-        {
-            self.document_symbol_request = Some(DocumentFeedbackRequest {
-                target: crate::background::LspDocumentTarget {
-                    path: path.to_path_buf(),
-                    content_version: version,
-                },
-                range: None,
-                client_idx: idx,
-            });
-            if !self.clients[idx].supports_request("textDocument/documentSymbol") {
-                return true;
-            }
-            if let Ok(id) = self.clients[idx].request_document_symbol(path) {
-                self.active_document_symbol_id = Some(id);
-                return true;
-            }
-        }
-        false
+        self.cancel_passive_document_feedback();
+        self.passive_document = Some(DocumentFeedbackRequest {
+            target: crate::background::LspDocumentTarget {
+                path: path.to_path_buf(),
+                content_version: version,
+            },
+            range: None,
+            client_idx,
+        });
+        true
     }
 
     pub(crate) fn cancel_inlay_hint_request(&mut self) {
@@ -1951,10 +1928,9 @@ impl LspManager {
         self.inlay_hints.clear();
     }
 
-    pub(crate) fn cancel_document_symbol_request(&mut self) {
-        let request = self.document_symbol_request.take();
+    pub(crate) fn cancel_passive_document_feedback(&mut self) {
+        let request = self.passive_document.take();
         let obsolete = [
-            self.active_document_symbol_id.take(),
             self.active_folding_range_id.take(),
             self.active_code_lens_id.take(),
             self.active_document_links_id.take(),
@@ -1966,11 +1942,6 @@ impl LspManager {
                 }
             }
         }
-        self.document_symbol_response_target = None;
-        self.document_symbols_dirty = false;
-        self.document_symbols.clear();
-        // These requests share the outline's document snapshot and are only
-        // reissued after synchronization. Suppress late previous-file replies.
         self.folding_ranges_dirty = false;
         self.code_lenses_dirty = false;
         self.document_links_dirty = false;
@@ -1988,11 +1959,11 @@ impl LspManager {
             self.cancel_inlay_hint_request();
         }
         if self
-            .document_symbol_request
+            .passive_document
             .as_ref()
             .is_some_and(|request| request.target.path == path)
         {
-            self.cancel_document_symbol_request();
+            self.cancel_passive_document_feedback();
         }
     }
 
@@ -2011,11 +1982,11 @@ impl LspManager {
         if !keep_inlay {
             self.cancel_inlay_hint_request();
         }
-        let keep_symbols = self.document_symbol_request.as_ref().is_none_or(|request| {
+        let keep_passive = self.passive_document.as_ref().is_none_or(|request| {
             document.is_some_and(|(path, version)| request.matches(path, version, None))
         });
-        if !keep_symbols {
-            self.cancel_document_symbol_request();
+        if !keep_passive {
+            self.cancel_passive_document_feedback();
         }
     }
 
@@ -2043,20 +2014,6 @@ impl LspManager {
                     self.inlay_hint_response_target = self.inlay_hint_request.clone();
                     self.inlay_hints.clear();
                     self.inlay_hints_dirty = true;
-                }
-                return false;
-            }
-            "textDocument/documentSymbol" => {
-                if self.active_document_symbol_id == Some(id)
-                    && self
-                        .document_symbol_request
-                        .as_ref()
-                        .is_some_and(|request| request.client_idx == client_idx)
-                {
-                    self.active_document_symbol_id = None;
-                    self.document_symbol_response_target = self.document_symbol_request.clone();
-                    self.document_symbols.clear();
-                    self.document_symbols_dirty = true;
                 }
                 return false;
             }
@@ -2118,11 +2075,7 @@ impl LspManager {
 
     /// Request folding ranges for a file
     pub(crate) fn request_folding_range(&mut self, path: &Path) -> bool {
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.handles_file(path) && c.is_file_open(path))
-        {
+        if let Some(idx) = self.document_feedback_client(path) {
             if let Ok(id) = self.clients[idx].request_folding_range(path) {
                 self.active_folding_range_id = Some(id);
                 return true;
@@ -2209,11 +2162,7 @@ impl LspManager {
 
     /// Request code lenses for a file
     pub(crate) fn request_code_lens(&mut self, path: &Path) -> bool {
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.handles_file(path) && c.is_file_open(path))
-        {
+        if let Some(idx) = self.document_feedback_client(path) {
             if let Ok(id) = self.clients[idx].request_code_lens(path) {
                 self.active_code_lens_id = Some(id);
                 return true;
@@ -2282,11 +2231,7 @@ impl LspManager {
 
     /// Request document links for a file
     pub(crate) fn request_document_links(&mut self, path: &Path) -> bool {
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.handles_file(path) && c.is_file_open(path))
-        {
+        if let Some(idx) = self.document_feedback_client(path) {
             if let Ok(id) = self.clients[idx].request_document_links(path) {
                 self.active_document_links_id = Some(id);
                 return true;
@@ -2348,7 +2293,7 @@ impl LspManager {
     /// Shut down all clients
     pub(crate) fn shutdown_all(&mut self) {
         self.cancel_inlay_hint_request();
-        self.cancel_document_symbol_request();
+        self.cancel_passive_document_feedback();
         for client in &mut self.clients {
             let _ = client.shutdown(); // Error OK: best-effort cleanup during server removal
         }

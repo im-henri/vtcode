@@ -279,17 +279,6 @@ impl LspClient {
         self.send_request("textDocument/documentHighlight", Some(serde_json::to_value(&params).map_err(|e| e.to_string())?))
     }
 
-    /// Request document symbols for outline
-    pub(crate) fn request_document_symbol(&mut self, path: &Path) -> Result<i64, String> {
-        let uri = Url::from_file_path(path).map_err(|_| "Invalid file path")?;
-        let params = lsp_types::DocumentSymbolParams {
-            text_document: TextDocumentIdentifier { uri },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-        };
-        self.send_request("textDocument/documentSymbol", Some(serde_json::to_value(&params).map_err(|e| e.to_string())?))
-    }
-
     /// Request folding ranges for a file
     pub(crate) fn request_folding_range(&mut self, path: &Path) -> Result<i64, String> {
         let uri = Url::from_file_path(path).map_err(|_| "Invalid file path")?;
