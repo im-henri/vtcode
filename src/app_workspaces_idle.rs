@@ -130,13 +130,14 @@ impl App {
         self.background.pause_file_watcher();
         if let Some(remote) = &self.remote_workspace {
             let _ = remote.client.notify(crate::remote::Command::PauseWatch);
+            self.pause_remote_git_history();
         }
         self.completion_index.set_workspace_suspended(true);
         self.lsp_manager.retain_document_feedback(None, None);
         self.lsp_manager.retain_document_highlight(None);
         self.lsp_manager.cancel_completion_resolve();
-        // Finite reads already requested can finish. Preserve their results and
-        // sleeping Git history cursors; starting new passive work stays gated.
+        // Finite reads already requested can finish. Keep their results and
+        // local history cursors while deferring new passive work.
     }
 
     pub(super) fn resume_workspace_observation(&mut self) {
@@ -180,6 +181,7 @@ impl App {
         }
         if work.history { self.refresh_git_log_async(); }
         else if work.more_history { self.load_more_git_history(); }
+        else { self.resume_visible_git_history(); }
         if work.branch { self.refresh_git_branch_async(); }
         if work.lines { self.refresh_git_line_status_async(); }
         self.sync_diff_tab();

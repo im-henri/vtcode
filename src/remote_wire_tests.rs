@@ -112,6 +112,24 @@ fn search_progress_queue_errors_keep_the_request_id_in_the_wire_frame() {
 }
 
 #[test]
+fn history_page_queue_error_keeps_the_history_id_and_offset() {
+    let page = serde_json::from_value(serde_json::json!({ "offset": 200, "result": { "Ok": [[], false] } })).unwrap();
+    let mut queue = OutputQueue { bytes: MAX_MESSAGE * 2, ..OutputQueue::default() };
+    queue.push(Response { id: 0, result: Ok(Reply::HistoryPage { history: 7, page }) }).unwrap();
+    let mut bytes = Vec::new();
+    queue.step(&mut bytes, 42).unwrap();
+    let (id, data) = Decoder::new('S', 42).line(&bytes).unwrap().unwrap();
+    assert_ne!(id & EVENT_ID, 0);
+    let response: Response = serde_json::from_slice(&data).unwrap();
+    assert_eq!(response.id, 0);
+    let Reply::HistoryPage { history, page } = response.result.unwrap() else { panic!() };
+    assert_eq!(history, 7);
+    let page = serde_json::to_value(page).unwrap();
+    assert_eq!(page["offset"], 200);
+    assert!(page["result"]["Err"].as_str().unwrap().contains("queue is full"));
+}
+
+#[test]
 fn search_progress_batches_finish_before_their_terminal_reply_without_blocking_other_requests() {
     let mut entropy = 7u64;
     let text = (0..40_000).map(|_| {

@@ -276,6 +276,86 @@ fn headless_workspace_watchers_pause_and_resume_on_the_shared_transport() {
 }
 
 #[test]
+fn remote_git_history_loads_and_pages_across_five_open_folders() {
+    let fixture = tempfile::tempdir().unwrap();
+    let base = git2::Repository::init(fixture.path().join("base")).unwrap();
+    let tree = base
+        .find_tree(base.index().unwrap().write_tree().unwrap())
+        .unwrap();
+    let signature = git2::Signature::now("History Test", "history@example.test").unwrap();
+    let mut parent = None;
+    let mut expected = Vec::new();
+    for index in 0..=crate::git_history::PAGE_SIZE {
+        let parents: Vec<_> = parent.iter().collect();
+        let id = base.commit(None, &signature, &signature, &format!("Commit {index}"), &tree, &parents)
+            .unwrap();
+        parent = Some(base.find_commit(id).unwrap());
+        expected.push(id.to_string());
+    }
+    let head = base.find_reference("HEAD").unwrap();
+    base.reference(head.symbolic_target().unwrap(), parent.unwrap().id(), false, "fixture")
+        .unwrap();
+    expected.reverse();
+
+    let first = remote::workspace::Workspace::new(headless_connection(fixture.path()));
+    let wake = crate::background::UiWake::default();
+    first.client.set_wake(wake.clone());
+    let folders: Vec<_> = (0..5)
+        .map(|index| {
+            let name = format!("clone-{index}");
+            git2::Repository::clone(base.path().to_str().unwrap(), fixture.path().join(&name)).unwrap();
+            first.open_workspace(&first.target_key(&name).unwrap()).unwrap()
+        })
+        .collect();
+    let make_app = |folder: &remote::workspace::Workspace| {
+        let mut app = App::new_startup(folder.view_root.clone(), wake.clone());
+        app.remote_workspace = Some(folder.clone());
+        app.source_control_enabled = true;
+        app
+    };
+    let check_first_page = |app: &mut App| {
+        app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_log_running);
+        assert!(app.git_history.error.is_none(), "{:?}", app.git_history.error);
+        assert_eq!(app.git_log.len(), crate::git_history::PAGE_SIZE);
+        assert!(app.git_history.has_more);
+    };
+
+    let mut app = make_app(&folders[0]);
+    app.refresh_git_log_async();
+    check_first_page(&mut app);
+    app.git_log_scroll = 70;
+    app.git_log_selected = 75;
+    for folder in &folders[1..] {
+        app.insert_workspace(make_app(folder));
+        app.refresh_git_log_async();
+        check_first_page(&mut app);
+    }
+    assert!(app.switch_workspace(0));
+    assert!(app.git_history_waiting_to_resume());
+    assert!(!app.bg_git_log_running);
+    assert_eq!((app.git_log_scroll, app.git_log_selected), (70, 75));
+    app.load_more_git_history();
+    app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_log_running);
+    assert!(app.git_history.error.is_none(), "{:?}", app.git_history.error);
+    assert!(!app.git_history.has_more);
+    assert_eq!(
+        app.git_log.iter().map(|commit| commit.full_hash.as_str()).collect::<Vec<_>>(),
+        expected
+    );
+
+    // Abandon pages and start them again without waiting for the transport.
+    // Queued starts from the old folder must not consume the replacement's slot.
+    let last = app.workspaces.next_id;
+    for id in [last, 0].into_iter().cycle().take(12) {
+        assert!(app.switch_workspace(id));
+        app.refresh_git_log_async();
+    }
+    check_first_page(&mut app);
+    assert!(first.client.connected());
+    first.client.call(Command::Shutdown).unwrap();
+}
+
+#[test]
 fn hidden_language_servers_drain_replies_without_requesting_ui_feedback() {
     let a = Project::new();
     let b = Project::new();

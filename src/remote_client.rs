@@ -40,6 +40,11 @@ struct Pending {
     git_progress_budget: Option<usize>,
 }
 
+struct HistoryReceiver {
+    pages: mpsc::SyncSender<history::Page>,
+    started: bool,
+}
+
 /// Own a newly allocated server handle until a worker actually accepts it.
 /// Dropping a cancelled/timed-out receiver also drops its queued delivery.
 struct Delivery {
@@ -158,7 +163,8 @@ struct Shared {
     resized: Mutex<HashMap<u64, (u16, u16)>>,
     watches: Mutex<HashMap<Option<String>, WatchState>>,
     workspace_changes: Mutex<HashMap<String, watch::Batch>>,
-    histories: Mutex<HashMap<u64, mpsc::SyncSender<history::Page>>>,
+    histories: Mutex<HashMap<u64, HistoryReceiver>>,
+    history_closes: Mutex<Vec<u64>>,
     binary_pages: Arc<Mutex<binary::Pages>>,
     binary_closed: Mutex<std::collections::HashSet<u64>>,
     text_closed: Mutex<std::collections::HashSet<u64>>,
@@ -195,6 +201,15 @@ impl Shared {
             operation.error(error);
         }
     }
+    fn start_history(&self, id: u64) -> Option<Vec<u64>> {
+        let mut histories = self.histories.lock().unwrap();
+        let receiver = histories.get_mut(&id)?;
+        receiver.started = true;
+        // Send earlier closes before this start. Hold the registration lock
+        // while draining so this cursor's own close can only follow it.
+        Some(std::mem::take(&mut *self.history_closes.lock().unwrap()))
+    }
+
     fn fail(&self, error: String) {
         if self.closed.swap(true, Ordering::AcqRel) { return; }
         *self.failure.lock().unwrap() = Some(error.clone());
@@ -344,6 +359,7 @@ impl Client {
             watches: Mutex::default(),
             workspace_changes: Mutex::default(),
             histories: Mutex::default(),
+            history_closes: Mutex::default(),
             binary_pages: Arc::default(),
             binary_closed: Mutex::default(),
             text_closed: Mutex::default(),
@@ -415,21 +431,32 @@ impl Client {
                             Err(error) => return Err(error),
                         };
                         if let Some(operation) = &operation { operation.stage("Sending request"); }
-                        let sent = wire::write_interleaved(&mut writer, 'C', session, request.id, &data, |writer| {
-                            if request.id == 0 { return Ok(()); }
-                            write_controls(writer, &output_shared, &input, session)?;
-                            let batch = std::mem::take(&mut *output_shared.credits.lock().unwrap());
-                            for (process, bytes) in batch {
-                                let credit = Request { id: 0, workspace: None, command: Command::ProcessCredit { process, bytes } };
-                                wire::write_message(writer, 'C', session, 0, &wire::encode(&credit)?)?;
-                            }
-                            let batch = std::mem::take(&mut *output_shared.killed.lock().unwrap());
-                            for process in batch {
-                                let kill = Request { id: 0, workspace: None, command: Command::ProcessKill { process } };
-                                wire::write_message(writer, 'C', session, 0, &wire::encode(&kill)?)?;
-                            }
-                            Ok(())
-                        });
+                        let sent = if let Command::HistoryStart { history, .. } = request.command {
+                            let Some(closes) = output_shared.start_history(history) else {
+                                output_shared.stop(request.id, &io::ErrorKind::Interrupted.into());
+                                return Ok(());
+                            };
+                            write_history_closes(&mut writer, closes, session)?;
+                            // Keep the start ahead of its close even if a path
+                            // needs several frames and the folder closes mid-write.
+                            wire::write_message(&mut writer, 'C', session, request.id, &data)
+                        } else {
+                            wire::write_interleaved(&mut writer, 'C', session, request.id, &data, |writer| {
+                                if request.id == 0 { return Ok(()); }
+                                write_controls(writer, &output_shared, &input, session)?;
+                                let batch = std::mem::take(&mut *output_shared.credits.lock().unwrap());
+                                for (process, bytes) in batch {
+                                    let credit = Request { id: 0, workspace: None, command: Command::ProcessCredit { process, bytes } };
+                                    wire::write_message(writer, 'C', session, 0, &wire::encode(&credit)?)?;
+                                }
+                                let batch = std::mem::take(&mut *output_shared.killed.lock().unwrap());
+                                for process in batch {
+                                    let kill = Request { id: 0, workspace: None, command: Command::ProcessKill { process } };
+                                    wire::write_message(writer, 'C', session, 0, &wire::encode(&kill)?)?;
+                                }
+                                Ok(())
+                            })
+                        };
                         if let Some(operation) = &operation {
                             if let Err(error) = &sent { operation.error(error); }
                             else if request.id == 0 { operation.notification_sent(); }
@@ -544,8 +571,8 @@ impl Client {
                                 input_shared.wake.lock().unwrap().notify();
                             }
                             Reply::HistoryPage { history, page } => {
-                                if let Some(sender) = input_shared.histories.lock().unwrap().get(&history) {
-                                    sender.try_send(page).map_err(io::Error::other)?;
+                                if let Some(receiver) = input_shared.histories.lock().unwrap().get(&history) {
+                                    receiver.pages.try_send(page).map_err(io::Error::other)?;
                                 }
                             }
                             _ => return Err(io::Error::other("Invalid remote event")),
@@ -850,17 +877,24 @@ impl Client {
             .remove(&self.hello().root_uri)
     }
     pub(super) fn register_history(&self) -> io::Result<(u64, mpsc::Receiver<history::Page>)> {
+        if !self.connected() {
+            return Err(io::Error::new(io::ErrorKind::NotConnected, "SSH connection is closed"));
+        }
         let mut histories = self.0.shared.histories.lock().unwrap();
         if histories.len() >= 4 {
             return Err(io::Error::other("Remote history stream limit reached"));
         }
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::sync_channel(1);
-        histories.insert(id, sender);
+        histories.insert(id, HistoryReceiver { pages: sender, started: false });
         Ok((id, receiver))
     }
-    pub(super) fn unregister_history(&self, id: u64) {
-        self.0.shared.histories.lock().unwrap().remove(&id);
+    pub(crate) fn close_history(&self, id: u64) {
+        let mut histories = self.0.shared.histories.lock().unwrap();
+        if histories.remove(&id).is_some_and(|receiver| receiver.started) && self.connected() {
+            self.0.shared.history_closes.lock().unwrap().push(id);
+            let _ = self.0.sender.try_send(None);
+        }
     }
     pub(crate) fn notify(&self, command: Command) -> io::Result<()> {
         if !self.connected() {
@@ -1540,12 +1574,22 @@ impl Client {
     }
 }
 
+fn write_history_closes(writer: &mut impl Write, closes: Vec<u64>, session: u64) -> io::Result<()> {
+    for history in closes {
+        let request = Request { id: 0, workspace: None, command: Command::HistoryClose { history } };
+        wire::write_message(writer, 'C', session, 0, &wire::encode(&request)?)?;
+    }
+    Ok(())
+}
+
 fn write_controls(
     writer: &mut impl Write,
     shared: &Shared,
     input: &mpsc::Receiver<Request>,
     session: u64,
 ) -> io::Result<()> {
+    let history_closes = std::mem::take(&mut *shared.history_closes.lock().unwrap());
+    write_history_closes(writer, history_closes, session)?;
     let watches = std::mem::take(&mut *shared.watches.lock().unwrap());
     for (root, state) in watches {
         let request = Request { id: 0, workspace: root, command: state.command() };

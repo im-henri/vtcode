@@ -106,16 +106,22 @@ pub(crate) struct GitHistory {
     pub has_more: bool,
     pub error: Option<String>,
     control: Option<HistoryControl>,
+    paused: bool,
+    replace_on_resume: bool,
 }
 
 struct HistoryControl {
     requests: mpsc::Sender<()>,
     cancel: CancellationToken,
+    remote: Option<crate::remote::history::Handle>,
 }
 
 impl Drop for HistoryControl {
     fn drop(&mut self) {
         self.cancel.cancel();
+        if let Some(remote) = &self.remote {
+            remote.close();
+        }
     }
 }
 
@@ -124,6 +130,12 @@ pub(crate) struct HistoryPage {
     pub generation: u64,
     pub offset: usize,
     pub result: Result<(Vec<GitCommitInfo>, bool), String>,
+}
+
+impl HistoryPage {
+    pub(crate) fn publish(self, sender: &crate::background::BackgroundResultSender) -> bool {
+        sender.send(BackgroundResult::GitLogPage(self)).is_ok()
+    }
 }
 
 fn serve_history(
@@ -140,7 +152,7 @@ fn serve_history(
         if let Some(operation) = operation.take() {
             operation.result(&result, |(commits, more)| format!("{} commits; more={more}", commits.len()));
         }
-        sender.send(BackgroundResult::GitLogPage(HistoryPage { root: view_root.clone(), generation, offset, result })).is_ok()
+        HistoryPage { root: view_root.clone(), generation, offset, result }.publish(&sender)
     });
 }
 
@@ -238,13 +250,31 @@ impl App {
         self.git_history.generation = self.git_history.generation.wrapping_add(1);
         self.git_history.has_more = false;
         self.git_history.error = None;
+        self.git_history.paused = false;
         self.bg_git_log_running = false;
     }
 
     pub(crate) fn suspend_remote_git_history(&mut self) -> bool {
-        let was_requested = self.git_history.control.is_some();
+        let was_requested = self.git_history.control.is_some() || self.git_history.paused;
         self.invalidate_git_history();
         was_requested
+    }
+
+    pub(crate) fn pause_remote_git_history(&mut self) {
+        if self.remote_workspace.is_none() || self.git_history.control.take().is_none() {
+            return;
+        }
+        // Keep the pages already accepted and ignore late replies from the
+        // released cursor.
+        self.git_history.generation = self.git_history.generation.wrapping_add(1);
+        self.git_history.paused = true;
+        self.bg_git_log_running = false;
+    }
+
+    pub(crate) fn resume_visible_git_history(&mut self) {
+        if self.git_history.paused && self.git_log.is_empty() {
+            self.load_more_git_history();
+        }
     }
 
     pub(crate) fn clear_git_history(&mut self) {
@@ -259,25 +289,46 @@ impl App {
         if self.repositories.discovered && self.repositories.active.is_none() { return; }
         if self.defer_git_work(crate::app_workspaces::GitWork::History) { return; }
         self.invalidate_git_history();
+        self.git_history.replace_on_resume = true;
+        self.start_git_history(None);
+    }
+
+    fn start_git_history(&mut self, cached: Option<crate::remote::history::CachedHistory>) {
         let root = self.source_control_root().to_owned();
         let generation = self.git_history.generation;
+        let remote = match self.remote_workspace.as_ref()
+            .map(|remote| crate::remote::history::Stream::register(remote, &root))
+            .transpose()
+        {
+            Ok(remote) => remote,
+            Err(error) => {
+                let target = self.display_path(&root);
+                self.git_output().operation("remote Git", "Read history", &target).error(&error);
+                self.set_git_history_error(error.to_string());
+                return;
+            }
+        };
         let (requests, receiver) = mpsc::channel();
         let cancel = CancellationToken::new();
         self.git_history.control = Some(HistoryControl {
             requests,
             cancel: cancel.clone(),
+            remote: remote.as_ref().map(|stream| stream.handle.clone()),
         });
         self.git_history.has_more = true;
         let sender = self.background.sender.clone();
-        let remote = self.remote_workspace.clone();
         let log = self.git_output();
         // This worker sleeps on its request channel between pages, so it must
         // not occupy the shared pool or keep the editor's idle loop awake.
-        self.background.spawn_untracked("git-history", move || {
-            match remote {
-                Some(remote) => crate::remote::history::serve_local(remote, root, generation, receiver, cancel, sender),
-                None => serve_history(root, generation, receiver, cancel, sender, log),
-            }
+        self.background.spawn_untracked("git-history", move || match remote {
+            Some(stream) => stream.serve(
+                crate::remote::history::Read {
+                    root, generation, cached, requests: receiver, cancel,
+                },
+                sender,
+                log,
+            ),
+            None => serve_history(root, generation, receiver, cancel, sender, log),
         });
         self.load_more_git_history();
     }
@@ -286,18 +337,30 @@ impl App {
         if self.bg_git_log_running || !self.git_history.has_more {
             return;
         }
-        let Some(control) = self.git_history.control.as_ref() else {
-            return;
-        };
         if !self.workspace_visible {
             self.defer_git_work(crate::app_workspaces::GitWork::MoreHistory);
             return;
         }
+        if self.git_history.paused {
+            if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
+                return;
+            }
+            self.git_history.paused = false;
+            let cached = if self.git_history.replace_on_resume {
+                None
+            } else {
+                crate::remote::history::CachedHistory::from_commits(&self.git_log)
+            };
+            self.start_git_history(cached);
+            return;
+        }
+        let Some(control) = self.git_history.control.as_ref() else {
+            return;
+        };
         if control.requests.send(()).is_ok() {
             self.bg_git_log_running = true;
         } else {
-            self.git_history.has_more = false;
-            self.git_history.error = Some("History loader stopped".into());
+            self.set_git_history_error("History loader stopped".into());
         }
     }
 
@@ -316,6 +379,20 @@ impl App {
         self.git_history.has_more || self.bg_git_log_running || self.git_history.error.is_some()
     }
 
+    pub(crate) fn git_history_waiting_to_resume(&self) -> bool {
+        self.git_history.paused
+    }
+
+    fn set_git_history_error(&mut self, error: String) {
+        let error = crate::remote::diagnostics::plain(error.as_bytes());
+        let error = if error.is_empty() { "Git history could not be read".into() } else { error };
+        self.notify_error(format!("Could not load Git history: {error}"));
+        self.git_history.error = Some(error);
+        self.git_history.has_more = false;
+        self.git_history.replace_on_resume = false;
+        self.git_history.control = None;
+    }
+
     pub(crate) fn apply_git_history_page(&mut self, page: HistoryPage) -> bool {
         if page.root != self.source_control_root() || page.generation != self.git_history.generation {
             return false;
@@ -324,6 +401,7 @@ impl App {
             return false;
         }
         self.bg_git_log_running = false;
+        self.git_history.replace_on_resume = false;
         match page.result {
             Ok((commits, has_more)) => {
                 if page.offset == 0 {
@@ -343,12 +421,7 @@ impl App {
                     self.git_history.control = None;
                 }
             }
-            Err(error) => {
-                self.notify_error(format!("Could not load Git history: {error}"));
-                self.git_history.error = Some(error);
-                self.git_history.has_more = false;
-                self.git_history.control = None;
-            }
+            Err(error) => self.set_git_history_error(error),
         }
         true
     }

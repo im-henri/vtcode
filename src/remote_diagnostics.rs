@@ -354,7 +354,7 @@ impl Attempt {
     }
 }
 
-fn plain(bytes: &[u8]) -> String {
+pub(crate) fn plain(bytes: &[u8]) -> String {
     struct Text {
         value: String,
         truncated: bool,

@@ -247,6 +247,20 @@ pub(crate) struct OutputQueue {
     frame: String,
     interactive_turns: u8,
 }
+
+impl Response {
+    fn fail_encoding(&mut self, request: u64, message: String) {
+        // History pages are unsolicited events. An error reply with ID zero
+        // would disconnect the transport and lose the page's failure reason.
+        if let Ok(Reply::HistoryPage { page, .. }) = &mut self.result {
+            page.fail(message);
+        } else {
+            self.id = request;
+            self.result = Err(message.into());
+        }
+    }
+}
+
 impl OutputQueue {
     pub(crate) fn available_slots(&self) -> usize {
         256usize.saturating_sub(self.packets.len())
@@ -287,31 +301,26 @@ impl OutputQueue {
         let interactive = matches!(response.result, Ok(Reply::ProcessData { .. }
             | Reply::ProcessEnd { .. } | Reply::ProcessInputConsumed { .. }));
         let search = matches!(response.result, Ok(Reply::SearchProgress { .. } | Reply::Search { .. }));
-        let mut response_id = response.id;
         let failure_id = match order { Some(Order::Request(id)) => id, _ => response.id };
-        let mut data = encode(&response).or_else(|error| {
-            response_id = failure_id;
-            encode(&Response {
-                id: response_id,
-                result: Err(error.into()),
-            })
-        })?;
+        let mut response = response;
+        let mut data = match encode(&response) {
+            Ok(data) => data,
+            Err(error) => {
+                response.fail_encoding(failure_id, error.to_string());
+                encode(&response)?
+            }
+        };
         if data.len() > (MAX_MESSAGE * 2).saturating_sub(self.bytes) {
-            response_id = failure_id;
-            data = encode(&Response {
-                id: response_id,
-                result: Err(
-                    "Remote transfer queue is full; retry after current transfers finish".into(),
-                ),
-            })?;
+            response.fail_encoding(failure_id, "Remote transfer queue is full; retry after current transfers finish".into());
+            data = encode(&response)?;
         }
         self.bytes += data.len();
-        let event = response_id == 0;
+        let event = response.id == 0;
         let id = if event {
             self.next_event = self.next_event.wrapping_add(1) & !EVENT_ID;
             EVENT_ID | self.next_event
         } else {
-            response_id
+            response.id
         };
         self.packets.push_back(Packet {
             id,

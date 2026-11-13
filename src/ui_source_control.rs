@@ -118,7 +118,10 @@ pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifie
         KeyCode::Char('f') if modifiers.is_empty() => { app.execute_git_command("git_filter_changes"); }
         KeyCode::Char('r') | KeyCode::F(5) => { app.repositories.rescan = true; app.refresh_source_control_async(); app.refresh_git_log_async(); }
         KeyCode::Enter => {
-            if app.sc_graph_focused { app.open_source_control_commit_details(app.git_log_selected); }
+            if app.sc_graph_focused && app.git_history.error.is_some() && app.git_log.is_empty() {
+                app.refresh_git_log_async();
+            }
+            else if app.sc_graph_focused { app.open_source_control_commit_details(app.git_log_selected); }
             else if app.source_control_file_visible(app.source_control_selected) { app.open_source_control_diff(app.source_control_selected); }
         }
         KeyCode::Char(' ') if !app.sc_graph_focused => {
@@ -1066,6 +1069,19 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
         || app.sc_context_active || app.context_menu_active || app.menu_active || app.palette.active
         || crate::ui_modal::active(app).is_some() { return; }
     let point = (app.mouse_col, app.mouse_row).into();
+    if let Some(error) = app.git_history.error.as_deref()
+        && let Some(area) = graph_error_row(app).filter(|area| area.contains(point))
+    {
+        let mut lines = crate::ui_markdown::wrap_help_lines(
+            error.lines().map(|line| Line::raw(line.to_owned())).collect(),
+            usize::from(f.area().width.min(80).saturating_sub(4)).max(1),
+        );
+        lines.truncate(11);
+        lines.push(Line::raw("Click to retry · Full details in Output → Git"));
+        crate::ui_widgets::Tooltip::hover(lines, &app.colors)
+            .max_width(80).render(f, area.x, area.y);
+        return;
+    }
     if let Some((area, index, _, _)) = app.git_operation_ui.buttons.iter().find(|(area, _, _, _)| area.contains(point)) {
         let mut lines = Vec::new();
         if let Some(state) = app.current_git_operation() {
@@ -1133,6 +1149,24 @@ pub(crate) fn draw_file_tooltip(f: &mut Frame, app: &App) {
         ),
     };
     tooltip.prefer_below().render(f, area.x, area.y);
+}
+
+fn graph_error_row(app: &App) -> Option<Rect> {
+    if app.source_control_repository_state != crate::app::SourceControlRepositoryState::Available
+        || app.sc_graph_collapsed || app.repositories.discovered && !app.repositories.expanded
+    {
+        return None;
+    }
+    let area = app.source_control_detail_area()?;
+    let (changes, graph) = source_control_split_heights(area.height, false, app.sc_graph_height);
+    let row = app.git_log.len().checked_sub(app.git_log_scroll)?;
+    let visible = usize::from(graph.saturating_sub(1));
+    (row < visible).then(|| Rect::new(
+        area.x,
+        area.y + changes + 1 + row as u16,
+        area.width.saturating_sub(u16::from(app.git_log.len() + 1 > visible)),
+        1,
+    ))
 }
 
 fn draw_sc_graph_panel(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1255,14 +1289,28 @@ fn draw_sc_graph_panel(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     if app.git_history_has_footer() && scroll + lines.len() == app.git_log.len() && lines.len() < visible {
-        let message = if app.git_history.error.is_some() {
-            "  Load failed — click to retry"
+        let line = if let Some(error) = &app.git_history.error {
+            let reason = error.lines().find(|line| !line.trim().is_empty()).unwrap_or(error);
+            let retry = " Retry ";
+            let reserve = if content_area.width >= 24 { retry.len() } else { 0 };
+            let budget = usize::from(content_area.width.saturating_sub(2)).saturating_sub(reserve);
+            let reason = if reason.width() > budget && budget > 0 {
+                format!("{}…", truncate_to_width(reason, budget - 1))
+            } else {
+                truncate_to_width(reason, budget)
+            };
+            let style = Style::default().fg(app.colors.ui.error_text_color(bg)).bg(bg);
+            let mut line = Line::from(Span::styled(format!("  {reason}"), style));
+            if reserve > 0 {
+                line.spans.push(Span::styled(retry, style.add_modifier(Modifier::UNDERLINED)));
+            }
+            line
+        } else if app.git_history_waiting_to_resume() {
+            Line::from(Span::styled("  Scroll to load more history", Style::default().fg(app.colors.ui.description_color(bg))))
         } else {
-            "  Loading history…"
+            Line::from(Span::styled("  Loading history…", Style::default().fg(app.colors.ui.description_color(bg))))
         };
-        let foreground = if app.git_history.error.is_some() { app.colors.ui.error_text_color(bg) }
-            else { app.colors.ui.description_color(bg) };
-        lines.push(Line::from(Span::styled(message, Style::default().fg(foreground).bg(bg))));
+        lines.push(line);
     }
     f.render_widget(
         Paragraph::new(lines).style(Style::default().bg(bg)),
@@ -1965,20 +2013,43 @@ mod tests {
     fn graph_distinguishes_loading_errors_and_empty_history() {
         let mut app = App::test_new();
         app.sc_graph_collapsed = false;
-        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(48, 8)).unwrap();
         for (loading, error, expected) in [
             (true, None, "Loading history"),
-            (false, Some("Read failed".to_string()), "Load failed — click to retry"),
+            (false, Some("Git could not read object abcd123".to_string()), "Git could not read object abcd123"),
             (false, None, "No commit history"),
         ] {
             app.bg_git_log_running = loading;
             app.git_history.error = error;
             terminal.draw(|frame| {
-                draw_sc_graph_panel(frame, &mut app, Rect::new(0, 0, 40, 8));
+                draw_sc_graph_panel(frame, &mut app, Rect::new(0, 0, 48, 8));
             }).unwrap();
             let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
             assert!(text.contains(expected), "{text}");
             if loading { assert!(!text.contains("No commit history")); }
+            if app.git_history.error.is_some() { assert!(text.contains("Retry")); }
         }
+    }
+
+    #[test]
+    fn graph_hover_shows_the_error_detail_that_does_not_fit_in_the_sidebar() {
+        let mut app = App::test_new();
+        app.show_explorer = true;
+        app.sidebar_view = crate::app::SidebarView::SourceControl;
+        app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
+        app.git_history.error = Some("Could not read the requested Git history page\nObject abcd123 is missing".into());
+        let sidebar = Rect::new(70, 1, 30, 18);
+        app.explorer_area = Some(sidebar);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw_source_control_sidebar(frame, &mut app, sidebar)).unwrap();
+        let row = graph_error_row(&app).unwrap();
+        app.mouse_col = row.x + 2;
+        app.mouse_row = row.y;
+        terminal.draw(|frame| {
+            draw_source_control_sidebar(frame, &mut app, sidebar);
+            draw_action_tooltip(frame, &app);
+        }).unwrap();
+        let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains("Object abcd123 is missing"), "{text}");
     }
 }
