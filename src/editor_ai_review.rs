@@ -3,6 +3,7 @@
 use crate::{
     app::{ActivePane, App, TabKind},
     editor::{Editor, WrappedRowInfo},
+    merge_conflict_ui::{self, CONFLICT_MARKER},
 };
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -82,6 +83,7 @@ pub(crate) struct ReviewView {
     pub(crate) merge_hits: Vec<crate::merge_conflict_ui::Hit>,
     merge_index: Option<Arc<crate::merge_conflicts::Index>>,
     merge_editor: bool,
+    exact_wrap: bool,
     pub navigation_hits: Vec<ReviewNavigationHit>,
     pub area: Rect,
     code: Rect,
@@ -310,6 +312,12 @@ impl ReviewView {
         } else {
             code.width.max(1) as usize
         };
+        let base_total = if wrapped {
+            editor.wrapped_total_rows(width)
+        } else {
+            editor.visible_line_count()
+        };
+        let exact_wrap = wrapped && editor.wrap_layout_ready(width);
         let content_changed = self
             .snapshot
             .as_ref()
@@ -334,6 +342,7 @@ impl ReviewView {
             || content_changed
             || self.width != width
             || self.wrapped != wrapped
+            || self.exact_wrap != exact_wrap
             || self.folds != editor.folded_ranges;
         let source_scroll = if closing_visible_blame {
             base_for_line(editor, previous_inline.unwrap().line, wrapped, width)
@@ -422,11 +431,6 @@ impl ReviewView {
                     });
                 }
             }
-            let base_total = if wrapped {
-                editor.wrapped_total_rows(width)
-            } else {
-                editor.visible_line_count()
-            };
             if let Some(inline) = inline_blame {
                 let base = if wrapped {
                     editor.wrapped_row_for_position(
@@ -477,6 +481,7 @@ impl ReviewView {
             self.inline_blame = inline_blame;
             self.width = width;
             self.wrapped = wrapped;
+            self.exact_wrap = exact_wrap;
             self.folds = editor.folded_ranges.clone();
         } else if self.source_top != Some(source_scroll)
             && self.cursor == Some((editor.cursor_line, editor.cursor_col))
@@ -1014,6 +1019,15 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             match extra.kind {
                 ExtraKind::Merge { line, offset, footer } => {
                     clear_review_row(f, Rect::new(paint.x, y, paint.width, 1), app.colors.bg_editor);
+                    if offset == 0
+                        && !footer
+                        && let Some(x) = crate::ui_editor_highlight::change_gutter_column(gutter)
+                    {
+                        let color = merge_conflict_ui::marker_color(&app.colors, app.colors.bg_editor);
+                        f.buffer_mut()[(x, y)]
+                            .set_symbol(CONFLICT_MARKER)
+                            .set_style(merge_conflict_ui::marker_badge(&app.colors, color));
+                    }
                     crate::merge_conflict_ui::draw_actions(f, app, Rect::new(code.x, y, code.width, 1),
                         line, offset, footer, &mut view.merge_hits);
                 }
@@ -1193,42 +1207,69 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             Some((area, line))
         });
     }
-    if let Some(scrollbar) = app.scrollbar_area {
-        let (maximum, thumb) = crate::inline_diff::scrollbar_thumb(
-            view.total,
-            code.height as usize,
-            scrollbar.height as usize,
-            1,
-        );
+    if let Some(scrollbar) = app.scrollbar_area.filter(|area| !area.is_empty()) {
+        let editor = &app.tabs[app.active_tab].editor;
+        let height = scrollbar.height as usize;
+        let (maximum, thumb) =
+            crate::inline_diff::scrollbar_thumb(view.total, code.height as usize, height, 1);
         let top = view
             .row
-            .saturating_mul((scrollbar.height as usize).saturating_sub(thumb))
+            .saturating_mul(height.saturating_sub(thumb))
             .checked_div(maximum)
             .unwrap_or(0);
-        for row in 0..scrollbar.height as usize {
-            // The source renderer already painted Git/unsaved change markers.
-            // Keep them when adapting the thumb to virtual conflict/review rows.
-            if !app.cached_overview_change_rows.row(row).changes().is_empty() {
+        let (track_bg, thumb_bg) = app.colors.ui.scrollbar_colors(
+            app.colors.ui.bg_overview,
+            app.hovered_scrollbar,
+            app.dragging_v_scrollbar,
+        );
+        for row in 0..height {
+            let in_thumb = (top..top + thumb).contains(&row);
+            let y = scrollbar.y + row as u16;
+            let navigation_bg = if in_thumb { thumb_bg } else { track_bg };
+            let has_conflict = view.merge_index.as_ref().is_some_and(|index| {
+                // The scrollbar uses review rows, including the inline controls.
+                let visual = crate::ui_editor_minimap::scrollbar_row_span(row, height, view.total);
+                let base = view.source(visual.start)..view.source(visual.end - 1) + 1;
+                merge_conflict_ui::has_conflict(
+                    index,
+                    editor.overview_source_range(base, view.wrapped),
+                    editor.merge_conflicts.had_conflicts,
+                )
+            });
+            if view.merge_index.is_some() && scrollbar.width > 1 {
+                let cell = &mut f.buffer_mut()[(scrollbar.x, y)];
+                cell.set_bg(navigation_bg);
+                if matches!(cell.symbol(), " " | "█") {
+                    cell.set_fg(navigation_bg);
+                }
+            }
+            if has_conflict {
+                crate::ui_editor_minimap::draw_scrollbar_conflict(
+                    f,
+                    scrollbar,
+                    row,
+                    &app.colors,
+                    track_bg,
+                    navigation_bg,
+                );
                 continue;
             }
-            f.render_widget(
-                Paragraph::new(if (top..top + thumb).contains(&row) {
-                    "┃"
+            // The source renderer already painted Git/unsaved change markers.
+            // Keep them when adapting the thumb to virtual conflict/review rows.
+            let cell = &mut f.buffer_mut()[(scrollbar.right() - 1, y)];
+            if !app.cached_overview_change_rows.row(row).changes().is_empty() {
+                if view.merge_index.is_some() && scrollbar.width == 1 && cell.symbol() != "━" {
+                    cell.set_bg(navigation_bg);
+                }
+                continue;
+            }
+            cell.set_symbol(if in_thumb { "┃" } else { "│" })
+                .set_fg(app.colors.fg_dim)
+                .set_bg(if view.merge_index.is_some() && scrollbar.width == 1 {
+                    navigation_bg
                 } else {
-                    "│"
-                })
-                .style(
-                    Style::default()
-                        .fg(app.colors.fg_dim)
-                        .bg(app.colors.bg_editor),
-                ),
-                Rect::new(
-                    scrollbar.right().saturating_sub(1),
-                    scrollbar.y + row as u16,
-                    1,
-                    1,
-                ),
-            );
+                    app.colors.bg_editor
+                });
         }
     }
     if let Some(toolbar) = toolbar {

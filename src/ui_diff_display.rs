@@ -1509,6 +1509,7 @@ fn draw_inline_scrollbar(
     params: ScrollbarParams,
     cache: &crate::app::DiffRenderCache,
     wrap: &crate::diff_wrap::Layout,
+    editor: &crate::editor::Editor,
 ) {
     #[cfg(test)]
     if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) && !wrap.enabled() {
@@ -1537,7 +1538,7 @@ fn draw_inline_scrollbar(
         );
         return;
     }
-    draw_mapped_scrollbar(f, params, cache.inline_target_text_rows(), |row| wrap.logical_boundary(row));
+    draw_mapped_scrollbar(f, params, cache.inline_target_text_rows(), wrap, Some(editor));
 }
 
 pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1823,6 +1824,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         },
         &diff_cache,
         &app.diff_inline_scroll.wrap,
+        editor,
     );
     if let Some(horizontal_area) = horizontal_area {
         // The scrollbar covers only the text viewport. Paint the reserved

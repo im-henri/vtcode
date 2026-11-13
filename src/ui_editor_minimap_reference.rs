@@ -35,6 +35,7 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
     let view_start_row = layout.view_start;
     let view_end_row = layout.view_end;
     let selection_lines = editor.selection_range().map(|(sl, _, el, _)| (sl, el));
+    let conflicts = editor.merge_conflicts.current(&editor.rope);
 
     // Pre-build a pool of spaces for padding instead of " ".repeat() per row
     let spaces_pool: &str = &crate::helpers::spaces(width.max(1));
@@ -88,7 +89,14 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
                     editor.line_for_visible_row(source), width, editor.tab_size);
                 for (cell, &glyph) in raster.iter_mut().zip(&glyphs) { cell.add(glyph, dots); }
             }
-            let markers = minimap_row_markers(changes, diag_severity, has_search_match, width, bg, &colors);
+            let has_conflict = conflicts.is_some_and(|index| {
+                merge_conflict_ui::has_conflict(
+                    index, source_line..row_end_line, editor.merge_conflicts.had_conflicts,
+                )
+            });
+            let markers = minimap_row_markers(
+                changes, diag_severity, has_search_match, has_conflict, width, bg, &colors,
+            );
             let row_bg = markers.background;
             let content_width = width - markers.width;
             let mut batch_style = Style::default().bg(row_bg);

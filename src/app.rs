@@ -3961,7 +3961,7 @@ impl App {
                                 review.region = region;
                                 review.scroll = 0;
                             }
-                            tab.editor.merge_conflicts.had_conflicts |= index.has_markers();
+                            tab.editor.merge_conflicts.had_conflicts |= !index.regions.is_empty();
                             tab.editor.merge_conflicts.index = Some(index.clone());
                             has_visual_changes = true;
                         }

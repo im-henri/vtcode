@@ -109,7 +109,10 @@ fn assert_sparse_conflict_markers(app: &mut App) {
         assert_eq!(editor.line_diff_status(region.start), 'U');
         assert_eq!(editor.line_diff_status(region.end), 'U');
     }
-    app.editor_mut().unwrap().merge_conflicts.index = Some(Arc::new(index));
+    app.prepare_visible_merge_conflicts();
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        !app.editor().unwrap().merge_conflicts.pending
+    });
 
     // Exercise the actual inline conflict renderer, including its virtual rows.
     app.show_minimap = true;
@@ -146,6 +149,23 @@ fn assert_sparse_conflict_markers(app: &mut App) {
         assert_eq!(marker.symbol(), if changed { "┃" } else { " " });
         assert_eq!(marker.fg == app.colors.ui.fg_gutter_added, changed);
     }
+    let action = editor.ai_review.merge_hits.iter()
+        .find(|hit| hit.line == start && hit.action == "current").unwrap();
+    assert_eq!(buffer[(marker_col, action.area.y)].symbol(), "!");
+
+    let minimap = app.minimap_area.unwrap();
+    let scrollbar = app.scrollbar_area.unwrap();
+    let conflict_rows = |area: ratatui::layout::Rect, x| {
+        (area.y..area.bottom()).filter(|&y| buffer[(x, y)].symbol() == "!").collect::<Vec<_>>()
+    };
+    let minimap_rows = conflict_rows(minimap, minimap.right() - 2);
+    let scrollbar_rows = conflict_rows(scrollbar, scrollbar.right() - 1);
+    for rows in [&minimap_rows, &scrollbar_rows] {
+        assert_eq!(rows.chunk_by(|a, b| *a + 1 == *b).count(), 2, "{rows:?}");
+        assert!(rows[0] > code.y && rows.last().unwrap() < &code.bottom());
+    }
+    assert!(minimap_rows.last().unwrap() > &(code.y + code.height / 2));
+    assert!(scrollbar_rows.last().unwrap() > &(code.y + code.height / 2));
     for (area, colors, minimap) in [
         (
             app.minimap_area.unwrap(),
@@ -175,34 +195,40 @@ fn assert_sparse_conflict_markers(app: &mut App) {
 }
 
 #[test]
-fn unmerged_file_has_sparse_gutter_minimap_and_scrollbar_markers_locally_and_remotely() {
+fn unmerged_file_has_sparse_gutter_minimap_and_scrollbar_markers_locally() {
+    check_unmerged_file_markers(false);
+}
+
+#[test]
+fn unmerged_file_has_sparse_gutter_minimap_and_scrollbar_markers_remotely() {
+    check_unmerged_file_markers(true);
+}
+
+fn check_unmerged_file_markers(remote: bool) {
     let (directory, repo, _) = merged_repository();
     let original_index = std::fs::read(repo.path().join("index")).unwrap();
     let text = std::fs::read_to_string(directory.path().join("file.txt")).unwrap();
-    for remote in [false, true] {
-        let mut app = App::new_deferred(directory.path().to_path_buf());
-        let path = if remote {
-            let workspace = crate::remote::workspace::Workspace::new(
-                crate::remote::tests::connection(directory.path(), Arc::default(), Arc::default()),
-            );
-            let key =
-                workspace.view_key(&crate::remote::RemotePath::new(b"file.txt".to_vec()).unwrap());
-            workspace.client.set_wake(app.background.wake_handle());
-            app.remote_workspace = Some(workspace);
-            key
-        } else {
-            directory.path().join("file.txt")
-        };
-        let mut editor = Editor::test_with_text(&text);
-        editor.file_path = Some(path);
-        editor.saved_rope = Some(editor.rope.clone());
-        app.tabs = vec![Tab::new_file(editor)];
-        app.active_tab = 0;
-        app.source_control_enabled = true;
-        app.sc_visibility.untracked = false;
-        refresh(&mut app);
-        assert_sparse_conflict_markers(&mut app);
-    }
+    let mut app = App::new_deferred(directory.path().to_path_buf());
+    let path = if remote {
+        let workspace = crate::remote::workspace::Workspace::new(
+            crate::remote::tests::connection(directory.path(), Arc::default(), Arc::default()),
+        );
+        let key = workspace.view_key(&crate::remote::RemotePath::new(b"file.txt".to_vec()).unwrap());
+        workspace.client.set_wake(app.background.wake_handle());
+        app.remote_workspace = Some(workspace);
+        key
+    } else {
+        directory.path().join("file.txt")
+    };
+    let mut editor = Editor::test_with_text(&text);
+    editor.file_path = Some(path);
+    editor.saved_rope = Some(editor.rope.clone());
+    app.tabs = vec![Tab::new_file(editor)];
+    app.active_tab = 0;
+    app.source_control_enabled = true;
+    app.sc_visibility.untracked = false;
+    refresh(&mut app);
+    assert_sparse_conflict_markers(&mut app);
     assert_eq!(
         std::fs::read(repo.path().join("index")).unwrap(),
         original_index

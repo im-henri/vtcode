@@ -188,6 +188,7 @@ fn scan(rope: &Rope, lines: Range<usize>, output: &mut Vec<Marker>) {
 pub(crate) struct Index {
     pub source: Rope,
     markers: Vec<Marker>,
+    section_markers: Vec<usize>,
     pub regions: Vec<Region>,
     #[cfg(test)]
     pub scanned_lines: usize,
@@ -222,9 +223,15 @@ impl Index {
             );
         }
         let regions = regions(&markers);
+        // A bare equals-sign divider can also be a Markdown heading underline.
+        let section_markers = markers.iter()
+            .filter(|marker| marker.kind != Kind::Divider)
+            .map(|marker| marker.line)
+            .collect();
         Self {
             source,
             markers,
+            section_markers,
             regions,
             #[cfg(test)]
             scanned_lines: new.len(),
@@ -240,6 +247,22 @@ impl Index {
             .copied()
             .filter(|region| line <= region.end)
     }
+
+    pub(crate) fn conflicts_in_range(&self, lines: &Range<usize>) -> bool {
+        if lines.is_empty() {
+            return false;
+        }
+        let first = self.regions.partition_point(|region| region.end < lines.start);
+        self.regions
+            .get(first)
+            .is_some_and(|region| region.start < lines.end)
+    }
+
+    pub(crate) fn section_markers_in_range(&self, lines: &Range<usize>) -> bool {
+        let first = self.section_markers.partition_point(|&line| line < lines.start);
+        self.section_markers.get(first).is_some_and(|&line| line < lines.end)
+    }
+
     pub fn has_markers(&self) -> bool {
         !self.markers.is_empty()
     }

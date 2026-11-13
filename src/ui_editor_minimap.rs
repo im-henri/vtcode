@@ -1,5 +1,6 @@
 use rustc_hash::FxHashMap;
 use crate::line_changes::LineChanges;
+use crate::merge_conflict_ui::{self, CONFLICT_MARKER, marker_badge, marker_color};
 use crate::ui_colors::{ChangeSurface, ensure_contrast};
 use std::ops::Range;
 
@@ -205,7 +206,7 @@ fn minimap_row_changes(p: MinimapParams<'_>, start: usize, end: usize) -> LineCh
 
 struct MinimapRowMarkers {
     background: Color,
-    cells: [(&'static str, Style); 3],
+    cells: [(&'static str, Style); 6],
     width: usize,
 }
 
@@ -213,6 +214,7 @@ fn minimap_row_markers(
     changes: LineChanges,
     diagnostic: Option<u8>,
     has_search_match: bool,
+    has_conflict: bool,
     width: usize,
     bg: Color,
     colors: &crate::app_theme::ThemeColors,
@@ -224,18 +226,18 @@ fn minimap_row_markers(
         .staged()
         .map(|kind| ChangeSurface::Gutter { staged: true }.color(kind, colors));
     let change_color = working.or(staged);
-    let background = if has_search_match {
+    let mut background = if has_search_match {
         dim_color(colors.ui.fg_minimap_find, 100, bg)
     } else {
         change_color.map_or(bg, |color| dim_color(color, 56, bg))
     };
     // The viewport border skips bold cells to keep markers visible.
     let marker_style = |bg| Style::default().bg(bg).add_modifier(Modifier::BOLD);
-    let mut cells = [(" ", Style::default().bg(background)); 3];
+    let mut cells = [(" ", Style::default().bg(background)); 6];
     let mut count = 0;
     if let Some(severity) = diagnostic {
         let style = marker_style(background).fg(diagnostic_marker_color(severity, colors));
-        count = if change_color.is_some() { 1 } else { cells.len() };
+        count = if change_color.is_some() { 1 } else { 3 };
         cells[..count].fill(("█", style));
     }
     if let Some(color) = staged {
@@ -251,6 +253,16 @@ fn minimap_row_markers(
     if let Some(color) = working {
         cells[count] = (" ", marker_style(color));
         count += 1;
+    }
+    if has_conflict && width > 0 {
+        let badge_width = if width >= 3 { 3 } else { 1 };
+        let color = marker_color(colors, bg);
+        let style = marker_badge(colors, color);
+        background = dim_color(color, 75, background);
+        count = count.min(width - badge_width);
+        cells[count..count + badge_width].fill((" ", style));
+        cells[count + badge_width / 2] = (CONFLICT_MARKER, style);
+        count += badge_width;
     }
     MinimapRowMarkers {
         background,
@@ -655,6 +667,7 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
     let view_start_row = layout.view_start;
     let view_end_row = layout.view_end;
     let selection_lines = editor.selection_range().map(|(sl, _, el, _)| (sl, el));
+    let conflicts = editor.merge_conflicts.current(&editor.rope);
     let mut cache = editor.minimap_cache.borrow_mut();
     cache.synchronize(&editor.rope, width, editor.tab_size);
 
@@ -694,7 +707,14 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         };
 
         if source_line < total_lines {
-            let markers = minimap_row_markers(changes, diag_severity, has_search_match, width, bg, &colors);
+            let has_conflict = conflicts.is_some_and(|index| {
+                merge_conflict_ui::has_conflict(
+                    index, source_line..row_end_line, editor.merge_conflicts.had_conflicts,
+                )
+            });
+            let markers = minimap_row_markers(
+                changes, diag_severity, has_search_match, has_conflict, width, bg, &colors,
+            );
             let row_bg = markers.background;
             let content_width = width - markers.width;
             let highlight = if has_search_match {
@@ -778,13 +798,49 @@ pub(crate) fn scrollbar_viewport(
         ..(end as u128 * height as u128).div_ceil(total as u128) as usize
 }
 
-#[cfg(test)]
-pub(crate) fn draw_scrollbar(f: &mut Frame, p: ScrollbarParams) {
-    draw_scrollbar_with_mapping(f, p, None, None);
+/// Visual rows touched by a terminal cell, including a line compressed down
+/// to a fraction of the cell.
+pub(crate) fn scrollbar_row_span(row: usize, height: usize, total: usize) -> Range<usize> {
+    let total = total.max(1);
+    let start = row as u128 * total as u128 / height as u128;
+    let end = ((row + 1) as u128 * total as u128).div_ceil(height as u128);
+    start as usize..end as usize
 }
 
-pub(crate) fn draw_editor_scrollbar(f: &mut Frame, p: ScrollbarParams, editor: &crate::editor::Editor) {
-    draw_scrollbar_with_mapping(f, p, None, Some(editor));
+pub(crate) fn draw_scrollbar_conflict(
+    f: &mut Frame,
+    area: Rect,
+    row: usize,
+    colors: &crate::app_theme::ThemeColors,
+    track: Color,
+    navigation: Color,
+) {
+    if let Some(cell) = f.buffer_mut().cell_mut((area.right() - 1, area.y + row as u16)) {
+        let style = if area.width > 1 {
+            marker_badge(colors, marker_color(colors, track))
+        } else {
+            Style::new()
+                .fg(marker_color(colors, navigation))
+                .bg(navigation)
+                .add_modifier(Modifier::BOLD)
+        };
+        cell.reset();
+        cell.set_symbol(CONFLICT_MARKER).set_style(style);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn draw_scrollbar(f: &mut Frame, p: ScrollbarParams) {
+    draw_scrollbar_with_mapping(f, p, None, None, false);
+}
+
+pub(crate) fn draw_editor_scrollbar(
+    f: &mut Frame,
+    p: ScrollbarParams,
+    editor: &crate::editor::Editor,
+    wrapped: bool,
+) {
+    draw_scrollbar_with_mapping(f, p, None, Some(editor), wrapped);
 }
 
 /// Query original source indexes without projecting every provider item into
@@ -795,9 +851,10 @@ pub(crate) fn draw_mapped_scrollbar(
     f: &mut Frame,
     p: ScrollbarParams,
     source_to_display: &[usize],
-    logical_boundary: impl Fn(usize) -> usize,
+    wrap: &crate::diff_wrap::Layout,
+    editor: Option<&crate::editor::Editor>,
 ) {
-    draw_scrollbar_with_mapping(f, p, Some((source_to_display, &logical_boundary)), None);
+    draw_scrollbar_with_mapping(f, p, Some((source_to_display, wrap)), editor, false);
 }
 
 /// Navigation and overview markers share the existing scrollbar width. Wide
@@ -868,8 +925,9 @@ fn scrollbar_row_cells(
 fn draw_scrollbar_with_mapping(
     f: &mut Frame,
     p: ScrollbarParams,
-    source_to_display: Option<(&[usize], &dyn Fn(usize) -> usize)>,
+    source_to_display: Option<(&[usize], &crate::diff_wrap::Layout)>,
     editor: Option<&crate::editor::Editor>,
+    wrapped: bool,
 ) {
     let ScrollbarParams {
         area,
@@ -887,10 +945,28 @@ fn draw_scrollbar_with_mapping(
     } = p;
     let height = area.height as usize;
     let width = area.width as usize;
-    if height == 0 || total_lines <= visible_lines {
+    if area.is_empty() {
+        return;
+    }
+    // The editor review view paints conflicts after inserting its virtual rows.
+    // A comparison owns its display geometry here instead.
+    let conflicts = editor.and_then(|editor| {
+        let index = editor.merge_conflicts.current(&editor.rope)?;
+        let had_conflicts = editor.merge_conflicts.had_conflicts;
+        let show_conflicts = if index.regions.is_empty() {
+            had_conflicts && index.section_markers_in_range(&(0..editor.line_count()))
+        } else {
+            source_to_display.is_some()
+        };
+        show_conflicts.then_some((editor, index, had_conflicts))
+    });
+    let scrollable = total_lines > visible_lines;
+    if !scrollable {
         f.buffer_mut()
             .set_style(area, Style::default().bg(colors.ui.bg_overview));
-        return;
+        if conflicts.is_none() {
+            return;
+        }
     }
 
     // Search and diagnostic vectors are sorted by line. Query one source range
@@ -899,32 +975,48 @@ fn draw_scrollbar_with_mapping(
     let cursor_row = cursor_line
         .min(total_lines.saturating_sub(1))
         .saturating_mul(height)
-        / total_lines;
+        / total_lines.max(1);
     let viewport = scrollbar_viewport(
         total_lines,
         visible_lines,
         scroll,
         height,
-        editor.is_some_and(|editor| editor.scroll_past_end),
+        source_to_display.is_none() && editor.is_some_and(|editor| editor.scroll_past_end),
     );
 
     let (track, thumb) = colors
         .ui
         .scrollbar_colors(colors.ui.bg_overview, hovered, active);
-    let buffer = f.buffer_mut();
     for i in 0..height {
+        let in_thumb = viewport.contains(&i);
+        let has_conflict = conflicts.is_some_and(|(editor, index, had_conflicts)| {
+            let rows = scrollbar_row_span(i, height, total_lines);
+            let lines = if let Some((mapping, wrap)) = source_to_display {
+                let first = wrap.row_at(rows.start).logical;
+                let last = wrap.row_at(rows.end - 1).logical;
+                mapping.partition_point(|&row| row < first)..mapping.partition_point(|&row| row <= last)
+            } else {
+                editor.overview_source_range(rows, wrapped)
+            };
+            merge_conflict_ui::has_conflict(index, lines, had_conflicts)
+        });
+        if !scrollable {
+            if has_conflict {
+                draw_scrollbar_conflict(f, area, i, &colors, track, if in_thumb { thumb } else { track });
+            }
+            continue;
+        }
         let source_start = i.saturating_mul(total_lines).div_ceil(height);
         let source_end = (i + 1)
             .saturating_mul(total_lines)
             .div_ceil(height)
             .min(total_lines);
-        let in_thumb = viewport.contains(&i);
         let (query_start, query_end) =
             source_to_display.map_or_else(|| editor.map_or((source_start, source_end), |editor| {
                 (editor.overview_source_boundary(source_start), editor.overview_source_boundary(source_end))
-            }), |(mapping, logical_boundary)| {
-                let start = logical_boundary(source_start);
-                let end = logical_boundary(source_end);
+            }), |(mapping, wrap)| {
+                let start = wrap.logical_boundary(source_start);
+                let end = wrap.logical_boundary(source_end);
                 (
                     mapping.partition_point(|&row| row < start),
                     mapping.partition_point(|&row| row < end),
@@ -977,11 +1069,21 @@ fn draw_scrollbar_with_mapping(
             None
         };
         let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, change, &colors, track, thumb);
+        let buffer = f.buffer_mut();
         for column in 0..width {
             let (symbol, style) = cells[usize::from(column >= width / 2)];
             if let Some(cell) = buffer.cell_mut((area.x + column as u16, area.y + i as u16)) {
                 cell.set_char(symbol).set_style(style);
             }
+        }
+        if has_conflict {
+            let surface = if in_thumb { thumb } else { track };
+            let navigation_bg = if width == 1 && is_cursor {
+                colors.ui.readable_foreground(colors.bg_cursor, surface, 3.0)
+            } else {
+                surface
+            };
+            draw_scrollbar_conflict(f, area, i, &colors, track, navigation_bg);
         }
     }
 }
@@ -1026,14 +1128,14 @@ mod tests {
         for theme in [crate::app_theme::EditorTheme::Dark, crate::app_theme::EditorTheme::Light] {
             let colors = theme.colors();
             let overlap = LineChanges::git('D', 'A');
-            let markers = minimap_row_markers(overlap, Some(2), false, 12, colors.ui.bg_minimap, &colors);
+            let markers = minimap_row_markers(overlap, Some(2), false, false, 12, colors.ui.bg_minimap, &colors);
             assert_eq!(markers.width, 3);
-            assert_eq!(markers.cells.map(|(symbol, _)| symbol), ["█", "•", " "]);
+            assert_eq!(markers.cells[..markers.width].iter().map(|cell| cell.0).collect::<Vec<_>>(), ["█", "•", " "]);
             assert_eq!(markers.cells[0].1.fg, Some(colors.ui.fg_minimap_warning));
             assert_eq!(markers.cells[1].1.bg, Some(colors.ui.fg_gutter_deleted_secondary));
             assert_eq!(markers.cells[2].1.bg, Some(colors.ui.fg_gutter_added));
 
-            let replacement = minimap_row_markers(LineChanges::git('M', ' '), None, false, 12, colors.ui.bg_minimap, &colors);
+            let replacement = minimap_row_markers(LineChanges::git('M', ' '), None, false, false, 12, colors.ui.bg_minimap, &colors);
             assert_eq!(replacement.width, 1);
             assert_eq!(replacement.cells[0].0, "•");
             assert_eq!(replacement.cells[0].1.bg, Some(colors.ui.fg_gutter_modified_secondary));
@@ -1168,7 +1270,7 @@ mod tests {
         );
         let mut colors = test_colors();
         colors.ui.fg_gutter_deleted = Color::Rgb(20, 40, 60);
-        let markers = minimap_row_markers('D'.into(), None, false, 3, surface, &colors);
+        let markers = minimap_row_markers('D'.into(), None, false, false, 3, surface, &colors);
         assert_eq!(markers.background, Color::Rgb(192, 200, 208));
         assert_eq!(markers.width, 1);
         assert_eq!(markers.cells[0].1.bg, Some(Color::Rgb(20, 40, 60)));
@@ -1223,7 +1325,7 @@ mod tests {
             ('X', false),
         ] {
             assert_eq!(
-                minimap_row_markers(status.into(), None, false, 3, Color::Black, &colors).width > 0,
+                minimap_row_markers(status.into(), None, false, false, 3, Color::Black, &colors).width > 0,
                 expected,
                 "{status:?}"
             );

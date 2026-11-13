@@ -1326,6 +1326,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             active: app.dragging_v_scrollbar,
         },
         editor,
+        false,
     );
 
     if show_h_scrollbar {
@@ -2561,6 +2562,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 active: app.dragging_v_scrollbar,
             },
             editor,
+            true,
         );
         if minimap_sep_width > 0 {
             draw_minimap_separator(f, minimap_sep_area, app.colors.ui.fg_overview_border, app.colors.bg_editor);
@@ -3810,6 +3812,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             active: app.dragging_v_scrollbar,
         },
         &app.tabs[app.active_tab].editor,
+        false,
     );
 
     // Draw horizontal scrollbar

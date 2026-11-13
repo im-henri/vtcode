@@ -157,6 +157,125 @@ fn merge_conflict_inline_buttons_act_on_their_own_region_and_support_undo() {
 }
 
 #[test]
+fn merge_conflict_overview_tracks_resolution_and_undo_with_or_without_a_minimap() {
+    use crate::app_theme::EditorTheme;
+    use crate::ui_colors::contrast_ratio;
+
+    let filler = format!("ordinary heading\n=======\n{}", "ordinary line\n".repeat(46));
+    let wrapped_conflict = TEXT.replace("current value", &"current value ".repeat(12));
+    for (name, theme) in [("dark", EditorTheme::Dark), ("light", EditorTheme::Light)] {
+        for show_minimap in [true, false] {
+            let mut app = app();
+            let mut editor = Editor::test_with_text(&format!("{wrapped_conflict}{filler}{TEXT}{filler}"));
+            editor.word_wrap = !show_minimap;
+            editor.word_wrap_column = 24;
+            editor.saved_rope = Some(editor.rope.clone());
+            app.tabs[0] = Tab::new_file(editor);
+            app.show_minimap = show_minimap;
+            app.colors = theme.colors();
+
+            let check = |app: &mut App, expected: usize| {
+                app.prepare_visible_merge_conflicts();
+                finish(app, |app| !app.editor().unwrap().merge_conflicts.pending);
+                let buffer = paint(app, 120, 32);
+                let scrollbar = app.scrollbar_area.unwrap();
+                assert_eq!(scrollbar.width, if show_minimap { 1 } else { 2 });
+                let mut lanes = vec![(scrollbar, scrollbar.right() - 1)];
+                if show_minimap {
+                    let minimap = app.minimap_area.unwrap();
+                    lanes.push((minimap, minimap.right() - 2));
+                }
+                for (area, x) in lanes {
+                    let rows: Vec<_> = (area.y..area.bottom())
+                        .filter(|&y| buffer[(x, y)].symbol() == "!")
+                        .collect();
+                    assert_eq!(
+                        rows.chunk_by(|a, b| *a + 1 == *b).count(),
+                        expected,
+                        "{rows:?}"
+                    );
+                    for y in rows {
+                        let cell = &buffer[(x, y)];
+                        assert!(cell.modifier.contains(Modifier::BOLD));
+                        assert!(contrast_ratio(cell.fg, cell.bg).unwrap() >= 4.5);
+                    }
+                }
+                if expected == 2 && show_minimap {
+                    crate::ui_control_visibility_tests::snapshot(&buffer, &format!("Conflict overview {name}"));
+                }
+            };
+
+            check(&mut app, 2);
+            app.merge_action("current", Some(1));
+            check(&mut app, 1);
+            let editor = app.editor().unwrap();
+            let second = editor.merge_conflicts.current(&editor.rope).unwrap().regions[0].start;
+            app.merge_action("incoming", Some(second));
+            check(&mut app, 0);
+            app.editor_mut().unwrap().undo();
+            check(&mut app, 1);
+        }
+    }
+}
+
+#[test]
+fn merge_conflict_overview_uses_wrapped_diff_rows_in_both_compare_layouts() {
+    use crate::app::{DiffMode, compute_file_diff};
+
+    let filler = "ordinary line\n".repeat(36);
+    let conflict = TEXT.replace("current value", &"current value ".repeat(80));
+    let target = format!("{filler}{conflict}{filler}");
+    let base = format!("{}{filler}base text\n{filler}", "deleted line\n".repeat(60));
+    for (name, mode) in [("inline", DiffMode::Inline), ("side by side", DiffMode::SideBySide)] {
+        let mut app = app();
+        let mut editor = Editor::test_with_text(&target);
+        editor.word_wrap = true;
+        editor.word_wrap_column = 24;
+        editor.saved_rope = Some(editor.rope.clone());
+        app.tabs[0] = Tab::new_file(editor);
+        app.diff_mode = mode;
+        app.show_minimap = true;
+        app.compare_base_content = Some(base.clone().into());
+        app.set_compare_diff_lines(compute_file_diff(&base, &target));
+        indexed(&mut app);
+
+        let mut terminal = Terminal::new(TestBackend::new(240, 32)).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                if mode == DiffMode::Inline {
+                    crate::ui_diff_display::draw_inline_diff(frame, &mut app, area);
+                } else {
+                    crate::ui_diff_display::draw_side_by_side_diff(frame, &mut app, area);
+                }
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let editor = app.editor().unwrap();
+        let region = editor.merge_conflicts.current(&editor.rope).unwrap().regions[0];
+        let cache = &app.diff_render_cache;
+        let mapping = if mode == DiffMode::Inline {
+            cache.inline_target_text_rows()
+        } else {
+            cache.aligned_target_rows()
+        };
+        let scroll = &app.diff_inline_scroll;
+        let start = scroll.wrap.first_row(mapping[region.start]);
+        let end = scroll.wrap.first_row(mapping[region.end] + 1);
+        let bar = app.scrollbar_area.unwrap();
+        let total = scroll.row_count();
+        let height = usize::from(bar.height);
+        let expected = start * height / total..(end * height).div_ceil(total);
+        let actual: Vec<_> = (0..height)
+            .filter(|&row| buffer[(bar.right() - 1, bar.y + row as u16)].symbol() == "!")
+            .collect();
+        assert_eq!(actual, expected.collect::<Vec<_>>(), "{name}");
+        let minimap = app.minimap_area.unwrap();
+        assert!((minimap.y..minimap.bottom()).any(|y| buffer[(minimap.right() - 2, y)].symbol() == "!"));
+    }
+}
+
+#[test]
 fn merge_conflict_stale_buttons_cannot_resolve_a_shifted_conflict() {
     let mut app = app();
     paint(&mut app, 100, 26);
@@ -970,8 +1089,10 @@ fn merge_conflict_visible_analysis_skips_hidden_tabs_and_paint_never_queues_work
 #[test]
 fn merge_conflict_partial_manual_edits_are_not_reported_as_resolved() {
     let mut app = app();
+    app.show_minimap = true;
     app.merge_action("merge_editor", Some(1));
     let editor = app.editor_mut().unwrap();
+    editor.merge_conflicts.had_conflicts = true;
     let range = crate::merge_conflicts::line_chars(&editor.rope, 7..8);
     editor.rope.remove(range);
     editor.content_version += 1;
@@ -979,6 +1100,9 @@ fn merge_conflict_partial_manual_edits_are_not_reported_as_resolved() {
     let buffer = paint(&mut app, 120, 30);
     assert!(text(&buffer).contains("Conflict markers remain"));
     assert!(!text(&buffer).contains("All conflicts resolved"));
+    for (area, offset) in [(app.minimap_area.unwrap(), 2), (app.scrollbar_area.unwrap(), 1)] {
+        assert!((area.y..area.bottom()).any(|y| buffer[(area.right() - offset, y)].symbol() == "!"));
+    }
 }
 
 #[cfg(unix)]

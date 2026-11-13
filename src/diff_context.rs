@@ -294,7 +294,8 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
             active: app.dragging_v_scrollbar,
         },
         mapping,
-        |row| scroll.wrap.logical_boundary(row),
+        &scroll.wrap,
+        Some(editor),
     );
 }
 

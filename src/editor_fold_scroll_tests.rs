@@ -301,6 +301,7 @@ fn overview(
                         active: false,
                     },
                     editor,
+                    editor.word_wrap,
                 );
             }
         })

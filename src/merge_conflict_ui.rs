@@ -2,16 +2,57 @@
 //! Every decision edits the existing shared result document.
 use crate::{
     app::{ActivePane, App, TabKind},
+    app_theme::ThemeColors,
     merge_conflicts::{Index, Review},
+    ui_colors::ensure_contrast,
 };
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     widgets::Paragraph,
 };
 use ropey::Rope;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
+
+pub(crate) const CONFLICT_MARKER: &str = "!";
+const MARKER_CONTRAST: [Color; 2] = [Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255)];
+
+pub(crate) fn marker_color(colors: &ThemeColors, surface: Color) -> Color {
+    use crate::{app_theme::lerp_color, ui_colors::contrast_ratio};
+
+    let color = colors
+        .ui
+        .git_conflict
+        .over(surface)
+        .unwrap_or(colors.fg_warning);
+    if contrast_ratio(color, surface).is_none_or(|ratio| ratio >= 4.5) {
+        return color;
+    }
+    // Keep the conflict hue recognizable as the scrollbar thumb moves over it.
+    let end = ensure_contrast(color, surface, 4.5, &MARKER_CONTRAST);
+    let mut low = 0;
+    let mut high = 16;
+    while high - low > 1 {
+        let middle = (low + high) / 2;
+        let blend = lerp_color(color, end, middle as f32 / 16.0);
+        if contrast_ratio(blend, surface).is_some_and(|ratio| ratio >= 4.5) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    lerp_color(color, end, high as f32 / 16.0)
+}
+
+pub(crate) fn marker_badge(colors: &ThemeColors, background: Color) -> Style {
+    let ink = ensure_contrast(colors.bg_editor, background, 4.5, &MARKER_CONTRAST);
+    Style::new().fg(ink).bg(background).add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn has_conflict(index: &Index, lines: Range<usize>, had_conflicts: bool) -> bool {
+    index.conflicts_in_range(&lines) || had_conflicts && index.section_markers_in_range(&lines)
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Hit {

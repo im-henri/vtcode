@@ -1183,6 +1183,23 @@ impl Editor {
         }
         self.line_for_visible_row(row)
     }
+
+    /// Source lines covered by a visual interval, including continuations
+    /// and any hidden lines represented by a fold header.
+    pub(crate) fn overview_source_range(
+        &self,
+        rows: std::ops::Range<usize>,
+        wrapped: bool,
+    ) -> std::ops::Range<usize> {
+        if wrapped && let Some(offsets) = self.overview_wrap_offsets() {
+            let start = offsets
+                .line_for_row(rows.start)
+                .map_or(self.line_count(), |(line, _)| line);
+            start..self.overview_source_boundary(rows.end)
+        } else {
+            self.line_for_visible_row(rows.start)..self.line_for_visible_row(rows.end)
+        }
+    }
 }
 
 #[cfg(test)]
