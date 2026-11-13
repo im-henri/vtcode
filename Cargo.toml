@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 ratatui = "0.30"
 crossterm = "0.29"
+encoding_rs = "0.8"
 # Native TextMate tokenizer; bundled grammar sources live in grammars/.
 irosashi = "=0.3.0"
 # Validate installed patterns with the tokenizer's own Oniguruma engine.

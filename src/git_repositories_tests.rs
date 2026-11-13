@@ -444,7 +444,6 @@ fn stale_repository_reads_and_commit_completion_cannot_modify_another_repository
             root: fixture.root.clone(),
             message: "outer commit".into(),
         },
-        false,
     );
     assert_eq!(app.source_control_commit_msg, "inner draft");
     app.select_source_control_repository(&fixture.root);
@@ -664,7 +663,7 @@ fn initial_discovery_keeps_requests_bound_to_the_same_workspace_despite_path_ali
     assert!(app.current_repository_matches(&request.root));
     // An initial activation must retain the existing draft as well as its identity.
     assert_eq!(app.source_control_commit_msg, request.message);
-    app.finish_repository_commit(&request, false);
+    app.finish_repository_commit(&request);
     assert!(app.source_control_commit_msg.is_empty());
     let other = tempfile::tempdir().unwrap();
     app.explorer.root = other.path().to_owned();
@@ -692,7 +691,6 @@ fn late_reads_and_commit_completion_remain_safe_after_closing_every_repository()
             root: fixture.root.clone(),
             message: "completed commit".into(),
         },
-        false,
     );
     app.open_repository_picker();
     app.context_menu_selected = app

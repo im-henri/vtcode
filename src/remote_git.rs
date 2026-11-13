@@ -518,6 +518,14 @@ impl workspace::Workspace {
         };
         Ok(data)
     }
+    pub(crate) fn git_amend_message(&self, root: &Path) -> io::Result<crate::git_amend::CommitMessage> {
+        let repo = self.remote_path(root)?;
+        let Reply::GitAmendMessage(message) = self.client.call(Command::GitAmendMessage { repo })?
+        else {
+            return Err(io::Error::other("Invalid amend message reply"));
+        };
+        Ok(message)
+    }
     pub(crate) fn commit_diff(
         &self,
         root: &Path,

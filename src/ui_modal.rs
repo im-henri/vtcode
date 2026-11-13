@@ -158,6 +158,7 @@ fn sync(app: &mut App, kind: Kind) {
                 Kind::SaveError if app.save_conflict.is_some() => 1,
                 Kind::FormattingError => 1,
                 Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete => 1,
+                Kind::Close if app.confirm_close_is_amend() => 1,
                 Kind::ExitBackup => 1,
                 Kind::Discard => 1,
                 Kind::GitOperationConfirm => 1,
@@ -233,6 +234,7 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         },
         Kind::Rename | Kind::RenameTerminal => vec!["Rename", "Cancel"],
         Kind::Goto => vec!["Go to line", "Cancel"],
+        Kind::Close if app.confirm_close_is_amend() => vec!["Abort amend", "Keep editing"],
         Kind::Close => vec!["Save & close", "Don't save", "Cancel"],
         Kind::Delete => vec!["Delete", "Cancel"],
         Kind::Move => vec!["Move", "Cancel"],
@@ -892,6 +894,13 @@ fn copy(app: &App, kind: Kind) -> Copy {
             help: "Enter a line or line:column. Escape restores your original position.".into(),
             field: "Line : column",
         },
+        Kind::Close if app.confirm_close_is_amend() => Copy {
+            title: "Abort Amend?",
+            message: "Closing this tab will abort the amend and discard the draft.".into(),
+            context: Vec::new(),
+            help: String::new(),
+            field: "",
+        },
         Kind::Close => Copy {
             title: "Unsaved Changes",
             message: "Save your changes before closing?".into(),
@@ -1088,7 +1097,7 @@ fn path_tail(value: &str, width: usize) -> String {
     format!("…{tail}")
 }
 
-fn wrapped_height(value: &str, width: u16) -> u16 {
+pub(crate) fn wrapped_height(value: &str, width: u16) -> u16 {
     let width = usize::from(width.max(1));
     let mut lines = 0usize;
     // Preserve hard breaks and blank rows before measuring soft wrapping.
@@ -1418,7 +1427,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             app.register_text_input(id, hit);
         }
     }
-    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) || app.modal.overwrite.is_some();
+    let abort_amend = kind == Kind::Close && app.confirm_close_is_amend();
+    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) || abort_amend || app.modal.overwrite.is_some();
     text(
         f,
         rows[4],
@@ -1450,6 +1460,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         );
         let selected = app.modal.focus == i + usize::from(has_input);
         let destructive = (matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) && i == 0)
+            || (abort_amend && i == 0)
             || (kind == Kind::SaveError && app.save_conflict.is_some() && i == 0)
             || (matches!(kind, Kind::Close | Kind::Exit) && i == 1 && i + 1 < labels.len());
         let disabled = (kind == Kind::ThemeInstall && app.install_prompt_running() && i == 0)

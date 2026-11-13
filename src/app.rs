@@ -758,7 +758,7 @@ pub(crate) struct App {
     pub sc_graph_height: u16,
     pub resizing_sc_graph: bool,
     pub sc_graph_click_start: Option<(u16, u16)>,
-    pub sc_amend_mode: bool,
+    pub(crate) amend_commits: rustc_hash::FxHashMap<u64, crate::git_amend::Draft>,
     pub(crate) git_operation_ui: crate::ui_git_operation::Ui,
     pub git_log: Vec<GitCommitInfo>,
     pub(crate) git_history: crate::git_history::GitHistory,
@@ -1751,7 +1751,7 @@ impl App {
             sc_graph_height: 10,
             resizing_sc_graph: false,
             sc_graph_click_start: None,
-            sc_amend_mode: false,
+            amend_commits: Default::default(),
             git_operation_ui: Default::default(),
             git_log: Vec::new(),
             git_history: crate::git_history::GitHistory::default(),
@@ -2318,6 +2318,9 @@ impl App {
                 crate::background::BackgroundResult::CommitDetails(result) => {
                     has_visual_changes |= self.apply_commit_details(result);
                 }
+                crate::background::BackgroundResult::AmendCommitMessage { view, result } => {
+                    has_visual_changes |= self.apply_amend_message(view, result);
+                }
                 crate::background::BackgroundResult::HunkPeek(result) => {
                     has_visual_changes |= self.apply_hunk_preview(result);
                 }
@@ -2360,6 +2363,9 @@ impl App {
                 }
                 crate::background::BackgroundResult::GitActionDone { action, result } => {
                     self.bg_git_action_running = false;
+                    if action == "amend" {
+                        self.finish_amend(&result);
+                    }
                     let hunk_succeeded = result.is_ok();
                     if matches!(action, "rebase" | "cherry-pick") && self.git_operation_ui.pending {
                         self.git_operation_ui.pending = false;
@@ -2379,9 +2385,7 @@ impl App {
                                 continue;
                             }
                             if let Some(request) = &outcome.clear_commit_message {
-                                self.finish_repository_commit(request, outcome.leave_amend_mode);
-                            } else if outcome.leave_amend_mode {
-                                self.sc_amend_mode = false;
+                                self.finish_repository_commit(request);
                             }
                             if outcome.close_branch_picker {
                                 self.git_branch_dialog = Default::default();

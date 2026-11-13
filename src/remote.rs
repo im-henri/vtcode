@@ -60,8 +60,8 @@ pub(crate) mod wire;
 #[path = "remote_workspace.rs"]
 pub(crate) mod workspace;
 
-// PauseWatch retains coverage and buffers changes without passive remote work.
-pub(crate) const VERSION: u32 = 30;
+// Amend drafts read and validate the exact branch and commit on the server.
+pub(crate) const VERSION: u32 = 31;
 /// Per-message/queue memory budget, not a file size limit. Larger documents use
 /// remote_text's bounded pipeline instead of a document-sized JSON allocation.
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -471,6 +471,9 @@ pub(crate) enum Command {
         repo: RemotePath,
         hash: String,
     },
+    GitAmendMessage {
+        repo: RemotePath,
+    },
     CommitDiff {
         repo: RemotePath,
         hash: String,
@@ -733,6 +736,7 @@ pub(crate) enum Reply {
     GitBranches(Vec<crate::app::GitBranchPickerItem>),
     GitNetwork(git::NetworkResult),
     CommitDetails(crate::commit_details::CommitData),
+    GitAmendMessage(crate::git_amend::CommitMessage),
     CommitDiff(git::CommitDiff),
     HunkSources(hunk::Sources),
     Formatted(String),

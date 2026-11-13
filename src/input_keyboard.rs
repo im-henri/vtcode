@@ -1317,6 +1317,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         && app.shortcut_default_overridden((key.modifiers, key.code), None) {
         return false;
     }
+    if crate::ui_git_amend::handle_key(app, key) { return false; }
     match app.active_pane {
         ActivePane::Explorer => input::handle_explorer_key(app, key.code, key.modifiers),
         ActivePane::Editor => input::handle_editor_key(app, key.code, key.modifiers),

@@ -111,7 +111,6 @@ pub(crate) struct View {
     selected: usize,
     scroll: usize,
     collapsed: [bool; Group::ALL.len()],
-    amend: bool,
 }
 
 #[derive(Clone)]
@@ -570,7 +569,6 @@ impl App {
         swap(&mut self.sc_staged_collapsed, &mut view.collapsed[Group::Staged as usize]);
         swap(&mut self.sc_changes_collapsed, &mut view.collapsed[Group::Unstaged as usize]);
         swap(&mut self.sc_untracked_collapsed, &mut view.collapsed[Group::Untracked as usize]);
-        swap(&mut self.sc_amend_mode, &mut view.amend);
     }
 
     pub(crate) fn select_source_control_repository(&mut self, root: &Path) {
@@ -1026,16 +1024,12 @@ impl App {
     pub(crate) fn finish_repository_commit(
         &mut self,
         request: &crate::app_git::GitCommitRequest,
-        amended: bool,
     ) {
         if self.current_repository_matches(&request.root) {
             if request.message == self.source_control_commit_msg {
                 self.source_control_commit_msg.clear();
                 self.source_control_commit_cursor = 0;
                 self.source_control_commit_selection_anchor = None;
-            }
-            if amended {
-                self.sc_amend_mode = false;
             }
         } else if let Some(repo) = self.repositories.entries.iter_mut().find(|repo| {
             repo.root == request.root
@@ -1047,9 +1041,6 @@ impl App {
                 repo.view.message.clear();
                 repo.view.cursor = 0;
                 repo.view.anchor = None;
-            }
-            if amended {
-                repo.view.amend = false;
             }
         }
     }

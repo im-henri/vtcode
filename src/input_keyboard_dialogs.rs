@@ -22,12 +22,10 @@ pub(crate) fn handle_commit_input_key(app: &mut App, key: crossterm::event::KeyE
             app.sc_graph_focused = key.code == KeyCode::BackTab || shift;
         }
         KeyCode::Enter if ctrl && shift => {
-            app.sc_amend_mode = true;
             app.git_amend_commit();
             app.source_control_input_mode = false;
         }
         KeyCode::Enter if ctrl => {
-            app.sc_amend_mode = false;
             app.git_commit();
             app.source_control_input_mode = false;
         }

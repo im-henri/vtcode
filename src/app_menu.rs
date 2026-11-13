@@ -639,8 +639,9 @@ impl App {
             || self.diff_selection_owns_cursor();
         let has_file = has_editor && self.editor().is_some_and(|e| e.file_path.is_some());
         let has_tabs = !self.tabs.is_empty();
-        let can_undo = has_editor && self.editor().is_some_and(|e| e.can_undo());
-        let can_redo = has_editor && self.editor().is_some_and(|e| e.can_redo());
+        let can_edit = has_editor || !output && self.amend_tab_is_active();
+        let can_undo = can_edit && self.editor().is_some_and(|e| e.can_undo());
+        let can_redo = can_edit && self.editor().is_some_and(|e| e.can_redo());
 
         if output {
             match cmd_id {
@@ -667,21 +668,21 @@ impl App {
             "copy" => if self.focused_terminal_index().is_some() {
                 !self.focused_terminal_has_selection()
             } else { !has_selection && !self.has_diff_selection() },
-            "paste" => self.focused_terminal_index().is_none() && (!has_editor || is_read_only),
+            "paste" => self.focused_terminal_index().is_none() && (!can_edit || is_read_only),
             "delete_line" | "duplicate_line" | "duplicate_line_up" | "move_line_up" | "move_line_down"
             | "indent" | "outdent" | "toggle_comment" | "toggle_block_comment" | "join_lines"
-            | "format_document" | "rename_symbol"
             | "transform_uppercase" | "transform_lowercase" | "transform_titlecase" => {
-                !has_editor || is_read_only
+                !can_edit || is_read_only
             }
+            "format_document" | "rename_symbol" => !has_editor || is_read_only,
             // Selection
             "select_all" | "select_line" | "expand_selection" | "shrink_selection"
             | "select_inside_brackets" | "select_inside_quotes"
-            | "select_next_occurrence" | "select_all_occurrences" => !has_editor,
-            "add_cursor_above" | "add_cursor_below" | "add_cursors_line_ends" => !has_editor,
+            | "select_next_occurrence" | "select_all_occurrences" => !can_edit,
+            "add_cursor_above" | "add_cursor_below" | "add_cursors_line_ends" => !can_edit,
             // View
             "toggle_diff_layout" => !self.should_render_diff_for_active_editor(),
-            "toggle_word_wrap" => !has_editor,
+            "toggle_word_wrap" => !can_edit,
             "split_editor" | "split_editor_down" => !has_tabs,
             "find" => !has_editor && !output,
             "find_replace" => !has_editor,

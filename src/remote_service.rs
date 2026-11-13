@@ -530,6 +530,11 @@ impl Service {
                     .map(Reply::CommitDetails)
                     .map_err(io::Error::other)
             }
+            Command::GitAmendMessage { repo } => {
+                crate::git_amend::read_message(&repo.resolve(&self.root)?)
+                    .map(Reply::GitAmendMessage)
+                    .map_err(io::Error::other)
+            }
             Command::HunkSources {
                 file,
                 repository,
@@ -1471,6 +1476,7 @@ fn serve_service(
             | Command::GitFileStats { .. }
             | Command::GitBranches { .. }
             | Command::CommitDetails { .. }
+            | Command::GitAmendMessage { .. }
             | Command::CommitDiff { .. }
             | Command::HunkSources { .. }
             | Command::HunkAction(_)

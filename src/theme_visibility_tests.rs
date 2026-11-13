@@ -592,7 +592,6 @@ fn native_source_control_actions_follow_hover_with_readable_colors() {
                 crate::app::SourceControlRepositoryState::Available;
             app.show_explorer = true;
             app.source_control_input_mode = true;
-            app.sc_amend_mode = true;
             app.source_control_commit_msg = "Improve button colors".into();
             app.sc_graph_collapsed = true;
             app.mouse_col = 60;

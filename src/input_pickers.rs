@@ -249,6 +249,14 @@ pub(crate) fn handle_context_menu_key(app: &mut App, code: KeyCode) -> bool {
 
 pub(crate) fn handle_confirm_close_key(app: &mut App, code: KeyCode) {
     let idx = app.confirm_close_tab;
+    if app.confirm_close_is_amend() {
+        match code {
+            KeyCode::Char('y' | 'Y') => app.abort_amend(app.tabs[idx].editor.navigation_id),
+            KeyCode::Esc | KeyCode::Char('n' | 'N') => app.confirm_close_active = false,
+            _ => {}
+        }
+        return;
+    }
     if matches!(code, KeyCode::Char('y' | 'Y' | 'n' | 'N'))
         && app.tabs.get(idx).is_some_and(|tab| app.tab_operation_pending(tab))
     {

@@ -325,7 +325,6 @@ pub struct GitActionOutcome {
     /// Clear only the submitted message in its original workspace.
     pub(crate) clear_commit_message: Option<crate::app_git::GitCommitRequest>,
     pub(crate) stage_all_commit_request: Option<crate::app_git::GitCommitRequest>,
-    pub leave_amend_mode: bool,
     pub close_branch_picker: bool,
 }
 
@@ -406,6 +405,10 @@ pub enum BackgroundResult {
     /// One bounded page from the current Git history traversal.
     GitLogPage(crate::git_history::HistoryPage),
     CommitDetails(crate::commit_details::DetailsResult),
+    AmendCommitMessage {
+        view: u64,
+        result: Result<(crate::git_amend::Target, ropey::Rope), String>,
+    },
     CommitDiff(crate::commit_details::DiffResult),
     OpenCommitDiff {
         request: CancellationToken,

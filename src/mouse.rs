@@ -292,6 +292,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         return;
     }
     if crate::ui_search_dialog::handle_vtcomplete_mouse(app, mouse) { return; }
+    if crate::ui_git_amend::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
     if crate::ui_inline_blame::handle_mouse(app, mouse) { return; }
     if crate::terminal_sidebar::begin_resize(app, mouse) { return; }
     if crate::terminal_scrollbar::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
@@ -1662,7 +1663,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if app.bg_git_action_running || app.bg_git_remote_running {
                                 return;
                             }
-                            app.sc_amend_mode = amend;
                             if amend {
                                 app.git_amend_commit();
                             } else {

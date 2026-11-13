@@ -53,7 +53,7 @@ fn queue_editor_layout(
 ) {
     if !matches!(
         tab.kind,
-        TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
+        TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails | TabKind::AmendCommit
     ) {
         return;
     }

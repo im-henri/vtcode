@@ -550,6 +550,7 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             &action.file,
         ),
         Command::CommitDetails { repo, .. } => path("Read commit details", repo),
+        Command::GitAmendMessage { repo } => path("Read amend message", repo),
         Command::CommitDiff { file, .. } => Some(("Read commit diff", field(&file.path))),
         Command::Format { path: p, text, .. } => Some((
             "Format file",

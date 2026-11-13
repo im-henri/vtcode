@@ -1551,6 +1551,7 @@ pub enum TabKind {
     File,
     GitRevision,
     CommitDetails,
+    AmendCommit,
     Diff(u64),
     MarkdownPreview,
     Settings,
@@ -1628,6 +1629,10 @@ impl Tab {
     /// Custom file editors participate in the same unsaved-change protection.
     pub(crate) fn has_unsaved_changes(&self) -> bool {
         matches!(self.kind, TabKind::File | TabKind::ExtensionView) && self.editor.modified
+    }
+
+    pub(crate) fn needs_close_confirmation(&self) -> bool {
+        self.kind == TabKind::AmendCommit || self.has_unsaved_changes()
     }
 
     /// Create a new file tab with default settings.

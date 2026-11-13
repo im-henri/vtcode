@@ -1533,6 +1533,7 @@ impl App {
         self.clear_transient_editor_state();
         self.clear_diff_state();
         self.diff_tabs = Default::default();
+        self.amend_commits.clear();
         self.clear_file_search_results();
         self.clear_global_search();
         self.search_history = Default::default();
@@ -1787,7 +1788,7 @@ impl App {
         let pin_len: usize = if tab.pinned { "📌".width() } else { 0 };
         let icon_len = match tab.kind {
             TabKind::File | TabKind::GitRevision if crate::ui_chrome_tabs::tab_icon(tab).is_empty() => 0,
-            TabKind::File | TabKind::GitRevision | TabKind::CommitDetails => 2,
+            TabKind::File | TabKind::GitRevision | TabKind::CommitDetails | TabKind::AmendCommit => 2,
             _ => 0,
         };
         let deleted_prefix_len: usize = if tab.kind == TabKind::File && tab.editor.disk_unavailable

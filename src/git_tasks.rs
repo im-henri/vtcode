@@ -18,6 +18,7 @@ pub(crate) enum Task<P = String> {
     Init,
     TrustRepository,
     Amend {
+        target: crate::git_amend::Target,
         /// None preserves the complete message of the commit being amended.
         message: Option<String>,
     },
@@ -61,7 +62,7 @@ impl<P> Task<P> {
             Self::UnstageAll => Task::UnstageAll,
             Self::Init => Task::Init,
             Self::TrustRepository => Task::TrustRepository,
-            Self::Amend { message } => Task::Amend { message },
+            Self::Amend { target, message } => Task::Amend { target, message },
             Self::Stash {
                 stash_message,
                 label,
@@ -89,43 +90,7 @@ pub(crate) fn execute<P: AsRef<Path>>(
 ) -> Result<GitActionOutcome, String> {
     match task {
         Task::Operation(action) => crate::git_operation::execute(root, action),
-        Task::Amend { message } => {
-            let root = root.to_path_buf();
-            let repo = git2::Repository::open(&root).map_err(|error| error.to_string())?;
-            if crate::git_operation::read(&repo)?.is_some() {
-                return Err("Use Continue in Source Control to finish the current Git operation.".into());
-            }
-            let sig = repo
-                .signature()
-                .or_else(|_| git2::Signature::now("VTCode User", "user@vtcode.dev"))
-                .map_err(|error| error.to_string())?;
-            let head_commit = repo
-                .head()
-                .and_then(|head| head.peel_to_commit())
-                .map_err(|error| error.to_string())?;
-            let mut index = repo.index().map_err(|error| error.to_string())?;
-            let tree_oid = index.write_tree().map_err(|error| error.to_string())?;
-            let tree = repo
-                .find_tree(tree_oid)
-                .map_err(|error| error.to_string())?;
-            head_commit
-                .amend(
-                    Some("HEAD"),
-                    Some(&sig),
-                    Some(&sig),
-                    None,
-                    message.as_deref(),
-                    Some(&tree),
-                )
-                .map_err(|error| error.to_string())?;
-            Ok(crate::background::GitActionOutcome {
-                message: format!("Amended: {}", message.as_deref().unwrap_or_else(|| head_commit.summary().unwrap_or("commit"))),
-                refresh_log: true,
-                clear_commit_message: Some(crate::app_git::GitCommitRequest { root, message: message.unwrap_or_default() }),
-                leave_amend_mode: true,
-                ..Default::default()
-            })
-        }
+        Task::Amend { target, message } => crate::git_amend::execute(root, target, message.as_deref()),
         Task::Stash {
             stash_message,
             label,
@@ -349,31 +314,30 @@ impl App {
         self.queue_git_task_at(root, worker, action, task);
     }
 
-    fn queue_git_task_at(&mut self, key: std::path::PathBuf, worker: &'static str, action: &'static str, task: Task) {
+    pub(crate) fn queue_git_task_at(&mut self, key: std::path::PathBuf, worker: &'static str, action: &'static str, task: Task) -> bool {
         self.git_output();
         let Some(remote) = self.remote_workspace.clone() else {
-            self.run_git_action_at_async(key, worker, action, move |root| execute(&root, task));
-            return;
+            return self.run_git_action_at_async(key, worker, action, move |root| execute(&root, task));
         };
         if !self.source_control_enabled {
-            return;
+            return false;
         }
         if self.bg_git_action_running || self.bg_git_remote_running {
             self.notify("Another git operation is already running");
-            return;
+            return false;
         }
         if !matches!(task, Task::Init | Task::TrustRepository)
             && self.repositories.discovered
             && self.repositories.active.is_none()
         {
             self.notify("Open a Git repository in Source Control first");
-            return;
+            return false;
         }
         let repo = match remote.remote_path(&key) {
             Ok(repo) => repo,
             Err(error) => {
                 self.notify_error(error.to_string());
-                return;
+                return false;
             }
         };
         let task = match task
@@ -382,7 +346,7 @@ impl App {
             Ok(task) => task,
             Err(error) => {
                 self.notify_error(format!("Invalid remote Git path: {error}"));
-                return;
+                return false;
             }
         };
         self.bg_git_action_running = true;
@@ -407,6 +371,7 @@ impl App {
                 .map_err(|error| error.to_string());
             let _ = sender.send(BackgroundResult::GitActionDone { action, result });
         });
+        true
     }
 }
 

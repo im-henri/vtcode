@@ -1388,14 +1388,13 @@ mod tests {
                 };
                 for (button, is_amend) in [(commit, false), (amend, true)] {
                     for x in [button.x, button.right() - 1] {
-                        app.sc_amend_mode = !is_amend;
                         click(&mut app, x, button.y);
-                        assert_eq!(
-                            app.sc_amend_mode, is_amend,
-                            "sidebar_right={sidebar_right}, width={width}, x={x}"
-                        );
                         assert!(!app.bg_git_action_running);
-                        if !is_amend {
+                        if is_amend {
+                            assert!(app.amend_tab_is_active(),
+                                "sidebar_right={sidebar_right}, width={width}, x={x}");
+                            app.force_close_tab(app.active_tab);
+                        } else {
                             assert_eq!(
                                 crate::ui_modal::active(&app),
                                 Some(crate::ui_modal::Kind::StageAllCommit),
@@ -1412,22 +1411,17 @@ mod tests {
                     for remote in [false, true] {
                         app.bg_git_action_running = !remote;
                         app.bg_git_remote_running = remote;
-                        app.sc_amend_mode = !is_amend;
                         click(&mut app, button.x, button.y);
-                        assert_eq!(app.sc_amend_mode, !is_amend, "busy clicks must be ignored");
+                        assert!(!app.amend_tab_is_active(), "busy clicks must be ignored");
+                        assert!(app.sc_stage_all_commit_request.is_none());
                         app.bg_git_action_running = false;
                         app.bg_git_remote_running = false;
                     }
                 }
                 assert_eq!(amend.x - commit.right(), 1);
-                for previous in [false, true] {
-                    app.sc_amend_mode = previous;
-                    click(&mut app, commit.right(), commit.y);
-                    assert_eq!(
-                        app.sc_amend_mode, previous,
-                        "the gap must not trigger an action"
-                    );
-                }
+                click(&mut app, commit.right(), commit.y);
+                assert!(!app.amend_tab_is_active(), "the gap must not trigger an action");
+                assert!(app.sc_stage_all_commit_request.is_none());
                 terminal
                     .draw(|frame| {
                         draw_source_control_sidebar(frame, &mut app, Rect::new(4, 2, width, 4))

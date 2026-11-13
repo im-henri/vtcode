@@ -363,6 +363,9 @@ fn apply_area_gradient_reference(
 
 pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.git_operation_ui.buttons.clear();
+    for draft in app.amend_commits.values_mut() {
+        draft.buttons = None;
+    }
     app.acknowledge_focused_terminal_completion();
     app.viewport_area = f.area();
     app.begin_copy_animation_frame(std::time::Instant::now());

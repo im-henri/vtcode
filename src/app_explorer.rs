@@ -594,6 +594,10 @@ impl App {
     }
 
     pub(crate) fn execute_save_as(&mut self) {
+        if self.amend_tab_is_active() {
+            self.save_as_active = false;
+            return;
+        }
         if self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::GitRevision) {
             self.save_as_active = false;
             self.notify("Historical versions are read-only. Open the working file to edit.");

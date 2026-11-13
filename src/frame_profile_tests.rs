@@ -750,10 +750,10 @@ fn remote_connection(root: &std::path::Path, traffic: &Traffic, one_way: Duratio
     server.set_nodelay(true).unwrap();
     let root = root.to_owned();
     let down = Counted { stream: server.try_clone().unwrap(), bytes: traffic.down_bytes.clone(),
-        messages: traffic.down_messages.clone(), marker: b"VTCR30S:", delay: one_way };
+        messages: traffic.down_messages.clone(), marker: b"VTCR31S:", delay: one_way };
     std::thread::spawn(move || { let _ = crate::remote::service::serve(&root, server, down); });
     let up = Counted { stream: stream.try_clone().unwrap(), bytes: traffic.up_bytes.clone(),
-        messages: traffic.up_messages.clone(), marker: b"VTCR30C:", delay: one_way };
+        messages: traffic.up_messages.clone(), marker: b"VTCR31C:", delay: one_way };
     crate::remote::client::Client::connect(stream, up).unwrap()
 }
 

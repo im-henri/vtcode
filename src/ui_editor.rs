@@ -1353,6 +1353,10 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
 }
 
 pub(crate) fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.amend_tab_is_active() {
+        crate::ui_git_amend::draw(f, app, area);
+        return;
+    }
     if app.git_compare_pending_for_active_editor() {
         crate::ui_loading::draw_diff(f, app, area);
         return;

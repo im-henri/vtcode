@@ -542,17 +542,17 @@ impl App {
         worker_name: &'static str,
         action: &'static str,
         job: impl FnOnce(PathBuf) -> Result<crate::background::GitActionOutcome, String> + Send + 'static,
-    ) {
-        if !self.source_control_enabled { return; }
+    ) -> bool {
+        if !self.source_control_enabled { return false; }
         if !matches!(action, "initialize repository" | "trust repository")
             && self.repositories.discovered && self.repositories.active.is_none()
         {
             self.notify("Open a Git repository in Source Control first");
-            return;
+            return false;
         }
         if self.bg_git_action_running || self.bg_git_remote_running {
             self.notify("Another git operation is already running");
-            return;
+            return false;
         }
         self.bg_git_action_running = true;
         self.status_message = format!("Git {action}...");
@@ -573,6 +573,7 @@ impl App {
             // so they cannot clear the new workspace's draft.
             let _ = sender.send(crate::background::BackgroundResult::GitActionDone { action, result });
         });
+        true
     }
 
     /// Rapid navigation must not repeatedly walk the whole working tree.
@@ -1649,6 +1650,7 @@ impl App {
     }
 
     pub(crate) fn save_current_file(&mut self) {
+        if self.amend_tab_is_active() { return; }
         if self.editor().is_some_and(|editor| self.pending_paste_document() == Some(editor.save_identity)) {
             self.notify_warn("Paste is still being prepared; save after it finishes or cancel it first");
             return;
@@ -2039,19 +2041,6 @@ impl App {
             // Error OK: receiver dropped means no listener
             let _ = sender.send(crate::background::BackgroundResult::GitLineDiff { file_path, status });
         });
-    }
-
-    pub(crate) fn git_amend_commit(&mut self) {
-        if !self.source_control_commit_msg.is_empty() && self.source_control_commit_msg.trim().is_empty() {
-            self.notify("Commit message cannot be empty");
-            return;
-        }
-        if !self.source_control_files.iter().any(|file| file.staged) {
-            self.notify("No staged changes to commit");
-            return;
-        }
-        let message = (!self.source_control_commit_msg.is_empty()).then(|| self.source_control_commit_msg.clone());
-        self.queue_git_task("git-amend", "amend", crate::git_tasks::Task::Amend { message });
     }
 
     pub(crate) fn git_stash_save(&mut self) {

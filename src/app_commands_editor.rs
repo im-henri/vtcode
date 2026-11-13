@@ -487,6 +487,7 @@ impl App {
                 }
             }
             "toggle_read_only" => {
+                if self.amend_tab_is_active() { return true; }
                 if let Some(ed) = self.editor_mut() {
                     ed.set_read_only(!ed.read_only);
                     let state = if ed.read_only { "enabled" } else { "disabled" };

@@ -1542,7 +1542,11 @@ fn remote_branch_stash_amend_and_push_share_the_native_repository_implementation
     action(crate::git_tasks::Task::StashPop);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "two\n");
     action(crate::git_tasks::Task::StageAll);
+    let Reply::GitAmendMessage(draft) = client.call(Command::GitAmendMessage {
+        repo: RemotePath::default(),
+    }).unwrap() else { panic!() };
     action(crate::git_tasks::Task::Amend {
+        target: draft.target,
         message: Some("amended remotely".into()),
     });
     assert_eq!(

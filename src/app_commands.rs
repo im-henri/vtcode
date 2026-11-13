@@ -257,6 +257,7 @@ impl App {
             }
             "tab_close_all" => self.close_all_tabs(),
             "save_as" => {
+                if self.amend_tab_is_active() { return true; }
                 if self.editor().is_some_and(|editor| self.pending_paste_document() == Some(editor.save_identity)) {
                     self.notify_warn("Paste is still being prepared; Save As after it finishes or cancel it first");
                     return true;

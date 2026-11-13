@@ -37,6 +37,19 @@ impl ClosedTab {
 }
 
 impl App {
+    pub(crate) fn tab_location(&self, view: u64) -> Option<(usize, usize)> {
+        let position = |tabs: &[Tab]| tabs.iter().position(|tab| tab.editor.navigation_id == view);
+        if let Some(index) = position(&self.tabs) {
+            return Some((self.active_group, index));
+        }
+        self.groups.iter().enumerate().filter(|(group, _)| *group != self.active_group)
+            .find_map(|(group, state)| position(&state.tabs).map(|index| (group, index)))
+    }
+
+    pub(crate) fn confirm_close_is_amend(&self) -> bool {
+        self.tabs.get(self.confirm_close_tab).is_some_and(|tab| tab.kind == TabKind::AmendCommit)
+    }
+
     pub(crate) fn close_remote_connection_tabs(&mut self, id: u64) {
         let kind = TabKind::RemoteConnection(id);
         let plan = std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group)).map(|group| {
@@ -60,7 +73,14 @@ impl App {
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };
-        if tab.pinned {
+        if tab.kind == TabKind::AmendCommit {
+            if self.amend_commits.get(&tab.editor.navigation_id).is_some_and(|draft| draft.submitting) {
+                self.notify("Amend is already in progress.");
+            } else {
+                self.confirm_close_active = true;
+                self.confirm_close_tab = idx;
+            }
+        } else if tab.pinned {
             self.notify("Tab is pinned — unpin first");
         } else if self.tab_operation_pending(tab) {
             self.notify("Wait for the current save or extension operation before closing this tab");
@@ -86,7 +106,7 @@ impl App {
             if tab.pinned || !matches(idx) {
                 continue;
             }
-            if tab.has_unsaved_changes() || self.tab_operation_pending(tab) {
+            if tab.needs_close_confirmation() || self.tab_operation_pending(tab) {
                 return (close, Some(idx));
             }
             close.push(idx);
@@ -106,6 +126,21 @@ impl App {
         }
     }
 
+    pub(crate) fn force_close_tab_view(&mut self, view: u64) {
+        if let Some((group, index)) = self.tab_location(view) {
+            let confirming = self.tabs.get(self.confirm_close_tab)
+                .filter(|tab| self.confirm_close_active && tab.editor.navigation_id != view)
+                .map(|tab| tab.editor.navigation_id);
+            self.close_tab_batch(vec![(group, vec![index])]);
+            if let Some((group, index)) = confirming.and_then(|id| self.tab_location(id))
+                && group == self.active_group
+            {
+                self.confirm_close_active = true;
+                self.confirm_close_tab = index;
+            }
+        }
+    }
+
     pub(crate) fn close_saved_tabs_matching(&mut self, matches: impl Fn(usize) -> bool) {
         let close = self
             .tabs
@@ -115,7 +150,7 @@ impl App {
             .filter_map(|(index, tab)| {
                 (matches(index)
                     && !tab.pinned
-                    && !tab.has_unsaved_changes()
+                    && !tab.needs_close_confirmation()
                     && !self.tab_operation_pending(tab))
                 .then_some(index)
             })
@@ -125,7 +160,7 @@ impl App {
 
     fn saved_tab_closes(&self, include_active: bool) -> Vec<(usize, Vec<usize>)> {
         let eligible = |tab: &Tab| {
-            !tab.pinned && !tab.has_unsaved_changes() && !self.tab_operation_pending(tab)
+            !tab.pinned && !tab.needs_close_confirmation() && !self.tab_operation_pending(tab)
         };
         let mut plan = Vec::new();
         if include_active {
@@ -203,7 +238,7 @@ impl App {
             let mut indices = Vec::new();
             for (index, tab) in tabs.iter().enumerate().rev() {
                 if !views.contains(&tab.editor.navigation_id) || tab.pinned { continue; }
-                if tab.has_unsaved_changes() || self.tab_operation_pending(tab) {
+                if tab.needs_close_confirmation() || self.tab_operation_pending(tab) {
                     deferred.get_or_insert(tab.editor.navigation_id);
                 } else {
                     indices.push(index);
@@ -218,12 +253,7 @@ impl App {
         let count = self.close_tab_batch(plan);
         if notify { self.notify(format!("Closed {count} saved tabs")); }
         if let Some(id) = deferred {
-            let target = std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group))
-                .find_map(|group| {
-                    let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
-                    tabs.iter().position(|tab| tab.editor.navigation_id == id).map(|index| (group, index))
-                });
-            if let Some((group, index)) = target {
+            if let Some((group, index)) = self.tab_location(id) {
                 if group != self.active_group { self.switch_group(group); }
                 self.close_tab(index);
             }
@@ -330,6 +360,7 @@ impl App {
                 }
                 TabKind::Settings => self.settings_editor_active = false,
                 TabKind::CommitDetails if !still_open => self.reset_commit_details(),
+                TabKind::AmendCommit => { self.amend_commits.remove(&tab.navigation_id); }
                 TabKind::Diff(id) if !still_open => self.forget_diff_tab(id),
                 TabKind::MarkdownPreview => preview_closed = true,
                 _ => {}

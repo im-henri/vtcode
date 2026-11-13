@@ -235,6 +235,8 @@ mod remote;
 mod remote_targets;
 mod app_remote_targets;
 mod ui_remote_targets;
+mod git_amend;
+mod ui_git_amend;
 mod git_tasks;
 mod git_operation;
 mod ui_git_operation;
