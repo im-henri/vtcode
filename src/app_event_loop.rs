@@ -2064,6 +2064,26 @@ mod tests {
     }
 
     #[test]
+    fn hunk_copy_feedback_schedules_one_visible_expiry_then_returns_to_idle() {
+        let mut app = crate::app::App::test_new();
+        app.workspace_watcher_active = true;
+        app.idle_quiescent = true;
+        let mut peek = crate::ui_hunk_peek::HunkPeek::from_texts("old\n", "new\n", 0, 4).unwrap();
+        peek.record_copy_feedback(true, std::time::Instant::now());
+        let deadline = peek.copy_feedback_deadline().unwrap();
+        app.hunk_peek = Some(peek);
+        assert_eq!(next_event_wait(&app, false, false), None);
+        app.hunk_popup_active = true;
+        assert!(next_event_wait(&app, false, false)
+            .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(3)));
+        app.terminal_has_focus = false;
+        assert_eq!(next_event_wait(&app, false, false), None);
+        app.terminal_has_focus = true;
+        assert!(app.hunk_peek.as_mut().unwrap().expire_copy_feedback(deadline));
+        assert_eq!(next_event_wait(&app, false, false), None);
+    }
+
+    #[test]
     fn terminal_completion_deadlines_finish_and_do_not_poll_in_the_background() {
         let mut app = crate::app::App::test_new();
         app.workspace_watcher_active = true;
@@ -3058,6 +3078,11 @@ fn next_event_wait(
     {
         include(feedback.expires_at.saturating_duration_since(std::time::Instant::now()));
     }
+    if app.terminal_has_focus && app.hunk_popup_active
+        && let Some(deadline) = app.hunk_peek.as_ref().and_then(|peek| peek.copy_feedback_deadline())
+    {
+        include(deadline.saturating_duration_since(std::time::Instant::now()));
+    }
     if app.terminal_has_focus
         && (app.background.activity.details_open || (app.show_status_bar && !app.zen_mode))
         && let Some(activity_wait) = app.background.activity.next_wait(std::time::Instant::now())
@@ -3802,6 +3827,11 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         }
         if app.commit_details.expire_copy_feedback(std::time::Instant::now())
             && app.commit_details.visible
+        {
+            needs_redraw = true;
+        }
+        if app.hunk_peek.as_mut().is_some_and(|peek| peek.expire_copy_feedback(std::time::Instant::now()))
+            && app.hunk_popup_active
         {
             needs_redraw = true;
         }

@@ -16,18 +16,22 @@ fn render(app: &mut App) -> Terminal<TestBackend> {
     terminal
 }
 
-fn action(app: &mut App, label: &str) {
+fn action_area(app: &App, label: &str) -> Rect {
     let index = buttons(app)
         .iter()
         .position(|(_, action)| *action == label)
         .unwrap();
     let layout = input_layout(app);
     let area = button_rect(app, layout.panel, index, buttons(app));
-    let area = if area.is_empty() {
+    if area.is_empty() {
         let peek = app.hunk_peek.as_ref().unwrap();
         quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S'))
             .find(|action| action.hunk == peek.selected && action.button == index).unwrap().area
-    } else { area };
+    } else { area }
+}
+
+fn action(app: &mut App, label: &str) {
+    let area = action_area(app, label);
     mouse(
         app,
         MouseEventKind::Down(MouseButton::Left),
@@ -96,6 +100,62 @@ fn copy_old_lines_button_uses_active_hunk_and_keeps_preview_open() {
         action(&mut app, "Copy Old Lines");
         assert_eq!(crate::clipboard::get_text().unwrap(), "last_old();\n");
         assert!(app.hunk_popup_active);
+    }
+}
+
+#[test]
+fn copy_old_lines_shows_result_in_place_and_restores_the_button_on_expiry() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let rendered_text = |terminal: &Terminal<TestBackend>, rect: Rect| {
+        (rect.x..rect.right())
+            .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+            .collect::<String>()
+    };
+    for width in [14, 84] {
+        for copied in [false, true] {
+            let mut app = app_with_peek();
+            app.code_area.as_mut().unwrap().width = width - 6;
+            app.hunk_popup_file = Some(format!("{}.rs", "long_filename_".repeat(8)).into());
+            let before = render(&mut app);
+            let button = action_area(&app, "Copy Old Lines");
+            let original = rendered_text(&before, button);
+            if copied {
+                action(&mut app, "Copy Old Lines");
+                assert_eq!(crate::clipboard::get_text().unwrap(), "let old = 1;\nremoved();\n");
+            } else {
+                selection::copy_with(&mut app, true, |text| {
+                    assert_eq!(text, "let old = 1;\nremoved();\n");
+                    Err(arboard::Error::Unknown { description: "clipboard busy".into() })
+                });
+                assert_eq!(app.notification_history.last().unwrap().1, crate::app::NotifyLevel::Error);
+            }
+            let after = render(&mut app);
+            assert_eq!(action_area(&app, "Copy Old Lines"), button);
+            let expected = match (copied, button.width >= 6) {
+                (true, true) => "Copied",
+                (false, true) => "Failed",
+                (true, false) => "✓",
+                (false, false) => "!",
+            };
+            assert_eq!(rendered_text(&after, button).trim(), expected);
+            let layout = input_layout(&app);
+            let title = Rect::new(layout.panel.x, layout.panel.y + 1, layout.panel.width, 1);
+            if !layout.quick_actions.is_empty() {
+                let message = if copied { "Copied old lines" } else { "Could not copy old lines" };
+                assert!(rendered_text(&after, title).contains(message));
+                let revert_only = matches!(app.hunk_popup_status, 'N' | 'S');
+                let peek = app.hunk_peek.as_ref().unwrap();
+                let other = quick_actions(peek, layout, revert_only)
+                    .find(|action| action.hunk == 1 && action.area.x == button.x)
+                    .unwrap().area;
+                assert_eq!(rendered_text(&after, other).trim(), "⧉");
+            }
+            let peek = app.hunk_peek.as_mut().unwrap();
+            assert!(peek.expire_copy_feedback(peek.copy_feedback_deadline().unwrap()));
+            let expired = render(&mut app);
+            assert_eq!(rendered_text(&expired, button), original);
+            assert!(app.hunk_popup_active);
+        }
     }
 }
 
@@ -294,6 +354,7 @@ fn pure_additions_disable_old_copy_and_empty_selection_never_copies_underlying_e
         .unwrap();
     assert!(!button_enabled(&app, index));
     action(&mut app, "Copy Old Lines");
+    assert!(app.hunk_peek.as_ref().unwrap().copy_feedback_deadline().is_none());
     for code in [KeyCode::Char('c'), KeyCode::Char('x')] {
         keyboard(&mut app, code, KeyModifiers::CONTROL);
     }

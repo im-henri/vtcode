@@ -266,7 +266,15 @@ pub(super) fn drag(app: &mut App, layout: PeekLayout, column: u16, row: u16) {
 }
 
 pub(super) fn copy(app: &mut App, old: bool) {
-    let Some(peek) = app.hunk_peek.as_ref() else {
+    copy_with(app, old, |text| crate::clipboard::set_text(text));
+}
+
+pub(super) fn copy_with(
+    app: &mut App,
+    old: bool,
+    write_clipboard: impl FnOnce(&str) -> Result<(), arboard::Error>,
+) {
+    let Some(peek) = app.hunk_peek.as_mut() else {
         return;
     };
     let Some(text) = (if old {
@@ -276,7 +284,11 @@ pub(super) fn copy(app: &mut App, old: bool) {
     }) else {
         return;
     };
-    match crate::clipboard::set_text(&text) {
+    let copied = write_clipboard(&text);
+    if old {
+        peek.record_copy_feedback(copied.is_ok(), Instant::now());
+    }
+    match copied {
         Ok(()) => app.notify(if old {
             "Copied old lines"
         } else {

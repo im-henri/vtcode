@@ -4,12 +4,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph, Wrap},
 };
 use similar::DiffableStr;
+use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -89,6 +90,51 @@ struct ScrollDrag {
     grab_offset: usize,
 }
 
+#[derive(Clone, Copy)]
+struct CopyFeedback {
+    hunk: usize,
+    copied: bool,
+    expires_at: Instant,
+}
+
+impl CopyFeedback {
+    fn message(self) -> &'static str {
+        if self.copied { "Copied old lines" } else { "Could not copy old lines" }
+    }
+
+    fn style(self, style: Style, surface: Color, colors: &crate::app_theme::ThemeColors) -> Style {
+        let background = style.bg.unwrap_or(surface);
+        let foreground = if self.copied {
+            colors.ui.readable_foreground(colors.fg_success, background, 4.5)
+        } else {
+            colors.ui.error_text_color(background)
+        };
+        style.fg(foreground).add_modifier(Modifier::BOLD)
+    }
+
+    fn draw_button(
+        self,
+        f: &mut Frame,
+        area: Rect,
+        style: Style,
+        surface: Color,
+        colors: &crate::app_theme::ThemeColors,
+    ) {
+        let label = match (self.copied, area.width >= 6) {
+            (true, true) => "Copied",
+            (false, true) => "Failed",
+            (true, false) => "✓",
+            (false, false) => "!",
+        };
+        f.render_widget(
+            Paragraph::new(label)
+                .alignment(Alignment::Center)
+                .style(self.style(style, surface, colors)),
+            area,
+        );
+    }
+}
+
 pub(crate) struct HunkPeek {
     pub source: GitFilePatch,
     pub unsaved: Option<UnsavedHunkSnapshot>,
@@ -108,6 +154,7 @@ pub(crate) struct HunkPeek {
     hovered: Option<HoverTarget>,
     selection: selection::Selection,
     context_menu: Option<context::Menu>,
+    copy_feedback: Option<CopyFeedback>,
 }
 
 fn range_start(start: usize, count: usize) -> usize {
@@ -331,6 +378,32 @@ impl HunkPeek {
             hovered: None,
             selection: selection::Selection::default(),
             context_menu: None,
+            copy_feedback: None,
+        }
+    }
+
+    pub(crate) fn record_copy_feedback(&mut self, copied: bool, now: Instant) {
+        self.copy_feedback = Some(CopyFeedback {
+            hunk: self.selected,
+            copied,
+            expires_at: now + Duration::from_secs(if copied { 3 } else { 5 }),
+        });
+    }
+
+    fn copy_feedback_for(&self, hunk: usize) -> Option<CopyFeedback> {
+        self.copy_feedback.filter(|feedback| feedback.hunk == hunk)
+    }
+
+    pub(crate) fn copy_feedback_deadline(&self) -> Option<Instant> {
+        self.copy_feedback.map(|feedback| feedback.expires_at)
+    }
+
+    pub(crate) fn expire_copy_feedback(&mut self, now: Instant) -> bool {
+        if self.copy_feedback_deadline().is_some_and(|deadline| now >= deadline) {
+            self.copy_feedback = None;
+            true
+        } else {
+            false
         }
     }
 
@@ -834,6 +907,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let Some(peek) = &mut app.hunk_peek else {
         return;
     };
+    peek.expire_copy_feedback(Instant::now());
     peek.layout = Some(layout);
     peek.scroll = peek
         .scroll
@@ -891,6 +965,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let actions = buttons(app);
+    let copy_button = actions.iter().position(|(_, label)| *label == "Copy Old Lines");
     let first = button_rect(app, area, 0, actions);
     let title_area = Rect::new(area.x, area.y + 1, first.x.saturating_sub(area.x), 1);
     let filename = preview_filename(app.hunk_popup_file.as_deref());
@@ -904,8 +979,14 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let hovered = button_at(app, area, app.mouse_col, app.mouse_row);
     let quick_hovered = quick_action_at(app, layout, app.mouse_col, app.mouse_row);
     let focus = hovered.or(peek.focused_button);
+    let current_copy_feedback = peek.copy_feedback_for(peek.selected);
+    let title_feedback = if let Some(action) = quick_hovered {
+        peek.copy_feedback_for(action.hunk).filter(|_| Some(action.button) == copy_button)
+    } else {
+        current_copy_feedback.filter(|_| focus.is_none() || focus == copy_button)
+    };
     let mut detail = if let Some(action) = quick_hovered {
-        let label = if actions[action.button].1 == "Copy Old Lines" {
+        let label = if Some(action.button) == copy_button {
             "Copy Old Lines"
         } else if app.hunk_popup_status == 'S' {
             "Unstage Hunk"
@@ -946,22 +1027,31 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
     let (title_bg, title_fg, title_dim) = colors.ui.peek_title_colors(bg);
     let title_style = normal.bg(title_bg).fg(title_fg);
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
+    let title = if let Some(feedback) = title_feedback {
+        Line::styled(format!(" {}", feedback.message()), feedback.style(title_style, title_bg, &colors))
+    } else {
+        Line::from(vec![
             Span::styled(format!(" {filename}"), title_style.add_modifier(Modifier::BOLD)),
             Span::styled(detail, title_style.fg(title_dim)),
-        ]))
-        .style(title_style),
+        ])
+    };
+    f.render_widget(
+        Paragraph::new(title).style(title_style),
         title_area,
     );
     for (index, _) in actions.iter().enumerate() {
         let foreground = if button_enabled(app, index) { title_fg } else { title_dim };
         let style = colors.ui.toolbar_style(foreground, title_bg, hovered == Some(index),
             peek.focused_button == Some(index), false).remove_modifier(Modifier::DIM);
-        f.render_widget(
-            Paragraph::new(format!(" {} ", button_label(area, index, actions))).style(style),
-            button_rect(app, area, index, actions),
-        );
+        let button_area = button_rect(app, area, index, actions);
+        if Some(index) == copy_button && let Some(feedback) = current_copy_feedback {
+            feedback.draw_button(f, button_area, style, title_bg, &colors);
+        } else {
+            f.render_widget(
+                Paragraph::new(format!(" {} ", button_label(area, index, actions))).style(style),
+                button_area,
+            );
+        }
     }
     let body = layout.body;
     let rows = &peek.rows;
@@ -1014,7 +1104,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
     selection::draw(f, peek, layout, &colors);
     for action in quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S')) {
-        let copy = actions[action.button].1 == "Copy Old Lines";
+        let copy = Some(action.button) == copy_button;
         let stage = !matches!(app.hunk_popup_status, 'N' | 'S') && action.button == 0;
         let fg = if (!copy && peek.hunks[action.hunk].action_line.is_none())
             || !button_enabled_for_hunk(app, action.button, action.hunk) {
@@ -1030,7 +1120,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             fg, bg, quick_hovered == Some(action),
             peek.selected == action.hunk && peek.focused_button == Some(action.button), false,
         ).add_modifier(Modifier::BOLD).remove_modifier(Modifier::DIM);
-        f.render_widget(Paragraph::new(if copy { " ⧉ " } else if stage { " + " } else { " − " }).style(style), action.area);
+        if copy && let Some(feedback) = peek.copy_feedback_for(action.hunk) {
+            feedback.draw_button(f, action.area, style, bg, &colors);
+        } else {
+            f.render_widget(Paragraph::new(if copy { " ⧉ " } else if stage { " + " } else { " − " }).style(style), action.area);
+        }
     }
     let vertical_hovered = layout.vertical.contains((app.mouse_col, app.mouse_row).into());
     let (vertical_track, vertical_thumb) = colors.ui.scrollbar_colors(bg, vertical_hovered, peek.drag.is_some_and(|drag| !drag.horizontal));
