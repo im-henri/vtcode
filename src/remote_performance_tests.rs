@@ -245,37 +245,79 @@ fn transfer_cleanup_survives_a_full_file_worker_queue() {
 }
 
 #[test]
-fn a_git_status_scan_waiting_for_progress_delivery_cannot_block_staging() {
+fn a_stalled_git_status_scan_cannot_block_another_workspace_or_staging() {
+    use crate::background::CancellationToken;
     use std::sync::mpsc;
     let root = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
     git2::Repository::init(root.path()).unwrap();
+    git2::Repository::init(other.path()).unwrap();
     std::fs::write(root.path().join("file.txt"), "stage this\n").unwrap();
-    // A rendezvous output keeps status in flight after its first metadata
-    // reply. No timing assumption about filesystem speed is needed.
-    let (output, responses) = mpsc::sync_channel(0);
-    let mut git = LazyActor::new("test-git", Service::new(root.path()).unwrap(), output.clone(), Arc::default());
-    let mut status = LazyActor::new("test-git-status", Service::new(root.path()).unwrap(), output, Arc::default());
-    let cancel = crate::background::CancellationToken::new();
-    let command = Command::GitStatus { known: None, parent_open: false, closed: Vec::new(), include_untracked: true,
-        changed: None, revalidate: false, progress: Some(git::StatusProgressOptions { preferred: None }) };
-    git_actor_for(&command, &mut git, &mut status).unwrap()
-        .enqueue(Request { id: 1, workspace: None, command }, Some(cancel.clone())).unwrap();
-    let first = responses.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert!(matches!(first.result, Ok(Reply::GitStatusProgress { progress: git::StatusProgress::Repository { .. }, .. })));
-    let command = Command::GitAction { repo: RemotePath::default(), task: crate::git_tasks::Task::StageAll };
-    git_actor_for(&command, &mut git, &mut status).unwrap()
-        .enqueue(Request { id: 2, workspace: None, command }, None).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let staged = loop {
-        if git2::Repository::open(root.path()).unwrap().index().unwrap().get_path(Path::new("file.txt"), 0).is_some() { break true; }
-        if Instant::now() >= deadline { break false; }
-        std::thread::sleep(Duration::from_millis(5));
+    std::fs::write(other.path().join("other.txt"), "independent\n").unwrap();
+    // Hold only the first status worker at progress delivery. No timing
+    // assumption about the filesystem is needed to simulate a blocked scan.
+    let (held_output, held_responses) = mpsc::sync_channel(0);
+    let (output, responses) = mpsc::sync_channel(8);
+    let cancels = Cancellations::default();
+    let service = || Service::new(root.path()).unwrap();
+    let default_workspace = service().hello(42).root_uri;
+    let mut git = LazyActor::new("test-git", service(), output.clone(), cancels.clone());
+    let mut status = GitStatusActors {
+        workers: [
+            LazyActor::new("test-git-status", service(), held_output, cancels.clone()),
+            LazyActor::new("test-git-status-2", service(), output, cancels.clone()),
+        ],
+        pending: Default::default(),
+        default_workspace: default_workspace.clone(),
     };
+    let mut enqueue_status = |id, workspace, progress| {
+        let request = Request {
+            id,
+            workspace,
+            command: Command::GitStatus {
+                known: None,
+                parent_open: false,
+                closed: Vec::new(),
+                include_untracked: true,
+                changed: None,
+                revalidate: false,
+                progress,
+            },
+        };
+        let cancel = CancellationToken::new();
+        cancels.lock().unwrap().insert(id, cancel.clone());
+        status.get(&request).unwrap().enqueue(request, Some(cancel.clone())).unwrap();
+        cancel
+    };
+    let cancel = enqueue_status(1, None, Some(git::StatusProgressOptions { preferred: None }));
+    enqueue_status(2, Some(default_workspace), None);
+    let other_workspace = Service::new(other.path()).unwrap().hello(42).root_uri;
+    enqueue_status(3, Some(other_workspace), None);
+    let command = Command::GitAction { repo: RemotePath::default(), task: crate::git_tasks::Task::StageAll };
+    git.get().unwrap().enqueue(Request { id: 4, workspace: None, command }, None).unwrap();
+    let receive = |responses: &mpsc::Receiver<Response>| responses.recv_timeout(Duration::from_secs(10)).unwrap();
+    let mut results = [receive(&responses), receive(&responses)];
+    results.sort_by_key(|response| response.id);
+    assert!(matches!(&results[0], Response { id: 3, result: Ok(Reply::GitStatus { scans, .. }) }
+        if scans.len() == 1 && scans[0].files.iter().any(|file| file.path.0 == b"other.txt")));
+    assert_eq!(results[1].id, 4);
+    assert!(results[1].result.is_ok());
+    let first = receive(&held_responses);
+    assert!(matches!(first.result, Ok(Reply::GitStatusProgress {
+        request: 1, progress: git::StatusProgress::Repository { .. },
+    })));
     cancel.cancel();
-    drop(responses);
-    drop(git.drain_on_disconnect());
-    drop(status.drain_on_disconnect());
-    assert!(staged, "Source Control must stage files while repository discovery is still in flight");
+    loop {
+        let reply = receive(&held_responses);
+        if reply.id == 1 {
+            assert_eq!(reply.result.unwrap_err().into_io().kind(), io::ErrorKind::Interrupted);
+            break;
+        }
+        assert_eq!(reply.id, 0);
+    }
+    let retry = receive(&held_responses);
+    assert!(matches!(retry, Response { id: 2, result: Ok(Reply::GitStatus { scans, .. }) }
+        if scans.len() == 1 && scans[0].files.iter().any(|file| file.path.0 == b"file.txt" && file.staged)));
 }
 
 #[test]

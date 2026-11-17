@@ -1131,7 +1131,13 @@ fn serve_service(
     let mut git = new_service();
     git.histories = Some(history::Manager::new(output.clone()));
     let mut git = LazyActor::new("headless-git", git, output.clone(), cancels.clone());
-    let mut git_status = LazyActor::new("headless-git-status", new_service(), output.clone(), cancels.clone());
+    let mut git_status = GitStatusActors {
+        workers: ["headless-git-status", "headless-git-status-2"].map(|name| {
+            LazyActor::new(name, new_service(), output.clone(), cancels.clone())
+        }),
+        pending: Default::default(),
+        default_workspace: hello.root_uri,
+    };
     let mut network = LazyActor::new(
         "headless-git-network",
         new_service(),
@@ -1469,8 +1475,8 @@ fn serve_service(
             | Command::ProcessCredit { .. }
             | Command::ProcessResize { .. }
             | Command::ProcessKill { .. } => processes.get()?,
-            Command::GitStatus { .. }
-            | Command::GitAction { .. }
+            Command::GitStatus { .. } => git_status.get(&request)?,
+            Command::GitAction { .. }
             | Command::GitSources { .. }
             | Command::GitDiffSources { .. }
             | Command::GitFileStats { .. }
@@ -1486,7 +1492,7 @@ fn serve_service(
             | Command::BlameLineSnapshot { .. }
             | Command::HistoryStart { .. }
             | Command::HistoryNext { .. }
-            | Command::HistoryClose { .. } => git_actor_for(&request.command, &mut git, &mut git_status)?,
+            | Command::HistoryClose { .. } => git.get()?,
             Command::GitNetwork { .. } => network.get()?,
             Command::Files { .. } => index.get()?,
             Command::Explorer(_) => explorer.get()?,
@@ -1520,10 +1526,38 @@ fn serve_service(
 type Cancellations =
     std::sync::Arc<std::sync::Mutex<HashMap<u64, crate::background::CancellationToken>>>;
 
-// Status/discovery is read-only and may traverse a large workspace. It must
-// not hold up the serial queue that validates and applies Git mutations.
-fn git_actor_for<'a>(command: &Command, git: &'a mut LazyActor, status: &'a mut LazyActor) -> io::Result<&'a Actor> {
-    if matches!(command, Command::GitStatus { .. }) { status.get() } else { git.get() }
+// Keep status off the Git mutation queue. A second worker lets another folder
+// scan while the first is stalled, without running overlapping status reads
+// for a single workspace or spawning a new thread on each retry.
+struct GitStatusActors {
+    workers: [LazyActor; 2],
+    pending: [Vec<(String, u64)>; 2],
+    default_workspace: String,
+}
+
+impl GitStatusActors {
+    fn get(&mut self, request: &Request) -> io::Result<&Actor> {
+        // A cancelled request stays registered until its worker returns from I/O.
+        let cancels = self.workers[0].cancels.lock().unwrap();
+        for pending in &mut self.pending {
+            pending.retain(|(_, id)| cancels.contains_key(id));
+        }
+        let workspace = request.workspace.as_deref().unwrap_or(&self.default_workspace);
+        let assigned = self.pending.iter().position(|pending| {
+            pending.iter().any(|(root, _)| root == workspace)
+        });
+        let index = assigned.unwrap_or_else(|| {
+            self.pending.iter().enumerate().min_by_key(|(_, pending)| {
+                let abandoned = pending.first()
+                    .and_then(|(_, id)| cancels.get(id))
+                    .is_some_and(crate::background::CancellationToken::is_cancelled);
+                (abandoned, pending.len())
+            }).unwrap().0
+        });
+        drop(cancels);
+        self.pending[index].push((workspace.to_owned(), request.id));
+        self.workers[index].get()
+    }
 }
 
 /// Optional services consume no thread or worker stack until their first use.

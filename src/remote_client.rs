@@ -1232,20 +1232,44 @@ impl Client {
         result
     }
     pub(crate) fn git_status(
-        &self, command: Command, cancel: &crate::background::CancellationToken,
+        &self,
+        command: Command,
+        cancel: &crate::background::CancellationToken,
+        consume: impl FnMut(git::StatusProgress) -> io::Result<()>,
+    ) -> io::Result<Reply> {
+        self.git_status_with_timeout(command, cancel, Duration::from_secs(120), consume)
+    }
+
+    fn git_status_with_timeout(
+        &self,
+        command: Command,
+        cancel: &crate::background::CancellationToken,
+        timeout: Duration,
         mut consume: impl FnMut(git::StatusProgress) -> io::Result<()>,
     ) -> io::Result<Reply> {
-        let (id, replies) = self.submit_inner(command, Some((Duration::from_secs(120), Some(cancel))))?;
+        let (id, replies) = self.submit_inner(command, Some((timeout, Some(cancel))))?;
+        let mut last_progress = std::time::Instant::now();
         let result = (|| loop {
-            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
-            let reply = match replies.recv_timeout(Duration::from_millis(20)) {
+            if cancel.is_cancelled() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let remaining = timeout.saturating_sub(last_progress.elapsed());
+            let reply = match replies.recv_timeout(remaining.min(Duration::from_millis(20))) {
                 Ok(reply) => reply.take().map_err(Failure::into_io)?,
+                Err(mpsc::RecvTimeoutError::Timeout) if last_progress.elapsed() >= timeout => {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "Remote Git status timed out"));
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(error) => return Err(io::Error::other(error)),
             };
-            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            if cancel.is_cancelled() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             match reply {
-                Reply::GitStatusProgress { request, progress } if request == id => consume(progress)?,
+                Reply::GitStatusProgress { request, progress } if request == id => {
+                    consume(progress)?;
+                    last_progress = std::time::Instant::now();
+                }
                 reply @ Reply::GitStatus { .. } => return Ok(reply),
                 _ => return Err(io::Error::other("Invalid remote Git status reply")),
             }

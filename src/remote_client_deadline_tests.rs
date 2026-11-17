@@ -133,6 +133,77 @@ fn disconnect_cannot_lose_the_notification_between_a_permit_check_and_wait() {
 }
 
 #[test]
+fn stalled_git_status_times_out_after_progress_and_allows_retry() {
+    use std::net::{TcpListener, TcpStream};
+
+    let root = tempfile::tempdir().unwrap();
+    let session = 42;
+    let hello = super::super::service::Service::new(root.path()).unwrap().hello(session);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (mut peer, _) = listener.accept().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let client = Client::attach(BufReader::new(stream.try_clone().unwrap()), stream, hello).unwrap();
+    let peer = std::thread::spawn(move || {
+        let mut reader = BufReader::new(peer.try_clone().unwrap());
+        let mut line = Vec::new();
+        let mut decoder = wire::Decoder::new('C', session);
+        let mut request = || -> Request {
+            loop {
+                assert!(wire::read_line(&mut reader, &mut line).unwrap());
+                if let Some((_, data)) = decoder.line(&line).unwrap() {
+                    return serde_json::from_slice(&data).unwrap();
+                }
+            }
+        };
+        let status = request();
+        assert!(matches!(status.command, Command::GitStatus { .. }));
+        let mut send = |id, reply| {
+            let response = wire::encode(&Response { id, result: Ok(reply) }).unwrap();
+            let frame = if id == 0 { wire::EVENT_ID | 1 } else { id };
+            wire::write_message(&mut peer, 'S', session, frame, &response).unwrap();
+        };
+        send(0, Reply::GitStatusProgress {
+            request: status.id,
+            progress: git::StatusProgress::Repository {
+                root: RemotePath::default(),
+                branch: "main".into(),
+            },
+        });
+        assert!(matches!(request().command, Command::Cancel { request } if request == status.id));
+        let status_reply = |roots| Reply::GitStatus {
+            discovery: git::Discovery { roots, parent: None, errors: Vec::new() },
+            scans: Vec::new(),
+        };
+        send(status.id, status_reply(Vec::new()));
+        let retry = request();
+        assert!(matches!(retry.command, Command::GitStatus { .. }));
+        send(retry.id, status_reply(vec![RemotePath::default()]));
+    });
+    let command = || Command::GitStatus {
+        known: None,
+        parent_open: false,
+        closed: Vec::new(),
+        include_untracked: true,
+        changed: None,
+        revalidate: false,
+        progress: Some(git::StatusProgressOptions { preferred: None }),
+    };
+    let cancel = crate::background::CancellationToken::new();
+    let mut updates = 0;
+    let error = client.git_status_with_timeout(command(), &cancel, Duration::from_secs(1), |_| {
+        updates += 1;
+        Ok(())
+    }).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{error}");
+    assert_eq!(updates, 1);
+    assert!(client.0.shared.pending.lock().unwrap().is_empty());
+    let retry = client.git_status_with_timeout(command(), &cancel, Duration::from_secs(5), |_| Ok(())).unwrap();
+    assert!(matches!(retry, Reply::GitStatus { discovery, .. } if discovery.roots == vec![RemotePath::default()]));
+    peer.join().unwrap();
+}
+
+#[test]
 fn workspace_replace_mutation_timeout_is_not_an_acknowledged_cancellation() {
     let root = tempfile::tempdir().unwrap();
     let client = super::super::tests::connection(root.path(), Arc::default(), Arc::default());
