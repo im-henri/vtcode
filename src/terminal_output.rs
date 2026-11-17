@@ -136,6 +136,14 @@ const BEGIN_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026h";
 const END_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026l";
 impl<W: Write> AnsiBackend<W> {
     pub(crate) fn new(writer: W) -> Self { Self { writer, synchronized: false } }
+
+    fn begin_update(&mut self) -> std::io::Result<()> {
+        if !self.synchronized {
+            self.writer.write_all(BEGIN_SYNCHRONIZED_UPDATE)?;
+            self.synchronized = true;
+        }
+        Ok(())
+    }
 }
 
 impl<W: Write> Write for AnsiBackend<W> {
@@ -238,9 +246,8 @@ impl<W: Write> Backend for AnsiBackend<W> {
             return CrosstermBackend::new(&mut self.writer).draw(content);
         }
         let mut content = content.peekable();
-        if content.peek().is_some() && !self.synchronized {
-            self.writer.write_all(BEGIN_SYNCHRONIZED_UPDATE)?;
-            self.synchronized = true;
+        if content.peek().is_some() {
+            self.begin_update()?;
         }
         let writer = &mut self.writer;
         let (mut fg, mut bg, mut underline) = (Color::Reset, Color::Reset, Color::Reset);
@@ -302,10 +309,25 @@ impl<W: Write> Backend for AnsiBackend<W> {
         write_move(&mut self.writer, None, position.x, position.y)
     }
     fn clear(&mut self) -> std::io::Result<()> {
-        ratatui::backend::CrosstermBackend::new(&mut self.writer).clear()
+        self.clear_region(ratatui::backend::ClearType::All)
     }
     fn clear_region(&mut self, region: ratatui::backend::ClearType) -> std::io::Result<()> {
-        ratatui::backend::CrosstermBackend::new(&mut self.writer).clear_region(region)
+        use crossterm::terminal::{Clear, ClearType};
+        use ratatui::backend::ClearType as Region;
+        if !ansi_supported() {
+            return ratatui::backend::CrosstermBackend::new(&mut self.writer).clear_region(region);
+        }
+        let clear = match region {
+            Region::All => ClearType::All,
+            Region::AfterCursor => ClearType::FromCursorDown,
+            Region::BeforeCursor => ClearType::FromCursorUp,
+            Region::CurrentLine => ClearType::CurrentLine,
+            Region::UntilNewLine => ClearType::UntilNewLine,
+        };
+        // Ratatui invalidates the screen before it builds the resized frame.
+        // Keep the erase in the same buffered, synchronized update as the paint.
+        self.begin_update()?;
+        crossterm::queue!(self.writer, Clear(clear))
     }
     fn append_lines(&mut self, count: u16) -> std::io::Result<()> {
         ratatui::backend::CrosstermBackend::new(&mut self.writer).append_lines(count)
@@ -516,6 +538,34 @@ new={:?}",
         assert_eq!(bytes.0.take(), b"\x1b[?25l");
         paint(&mut terminal, "help", None);
         assert!(bytes.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn resized_frames_erase_and_repaint_in_one_terminal_update() {
+        if !ansi_supported() { return; }
+        let backend = CursorBackend::new(AnsiBackend::new(buffered_output(RecordingWriter::default())));
+        let mut terminal = Terminal::with_options(backend, TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 32, 8)),
+        }).unwrap();
+        let paint = |terminal: &mut Terminal<_>| {
+            terminal.draw(|frame| {
+                frame.render_widget(ratatui::widgets::Paragraph::new("RemoteResizeContent"), frame.area());
+            }).unwrap();
+        };
+        paint(&mut terminal);
+        let before = terminal.backend().writer.get_ref().bytes.len();
+        assert_eq!(apply_resize(&mut terminal, &crossterm::event::Event::Resize(27, 7)).unwrap(), Some(Size::new(27, 7)));
+        assert_eq!(terminal.backend().writer.get_ref().bytes.len(), before, "the erase must wait for the repaint");
+        paint(&mut terminal);
+
+        let recording = terminal.backend().writer.get_ref();
+        let update = &recording.bytes[before..];
+        let erase = update.windows(3).position(|bytes| bytes == b"\x1b[J").unwrap();
+        let begin = update.windows(BEGIN_SYNCHRONIZED_UPDATE.len()).position(|bytes| bytes == BEGIN_SYNCHRONIZED_UPDATE).unwrap();
+        let text = update.windows(b"RemoteResizeContent".len()).position(|bytes| bytes == b"RemoteResizeContent").unwrap();
+        assert!(begin < erase && erase < text);
+        assert!(update.ends_with(END_SYNCHRONIZED_UPDATE));
+        assert_eq!(recording.flushes, 2);
     }
 
     #[test]

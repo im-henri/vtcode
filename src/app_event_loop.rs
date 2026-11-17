@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    execute,
+    queue,
 };
 use ratatui::{backend::Backend, Terminal};
 #[cfg(test)]
@@ -3722,7 +3722,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     let mut last_title_key: Option<(u64, bool)> = None; // (view identity, modified)
     let mut needs_redraw = true;
     let mut input_redraw = true;
-    let mut background_redraw_pending = false;
+    let mut unfocused_redraw_pending = false;
     let mut service_scheduler = crate::ui_work::Scheduler::default();
     let mut startup_assets_requested = false;
     let mut input_started: Option<std::time::Instant> = None;
@@ -3808,7 +3808,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
             needs_redraw |= changed;
             if matches!(service, Service::Terminals | Service::Agents) {
-                background_redraw_pending |= changed;
+                unfocused_redraw_pending |= changed;
             }
             if service == Service::Agents { agent_changed = changed; }
             let finished = std::time::Instant::now();
@@ -3887,10 +3887,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
         }
 
-        // Keep terminal and agent changes live after window focus is lost.
-        // Retain the request across paced frames so their final output is
-        // painted even when no more data arrives to wake the workbench.
-        if !background_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
+        // A resize invalidates the displayed frame even without focus. Keep
+        // it and terminal/agent output pending until a frame is actually drawn.
+        if !unfocused_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
             needs_redraw = false;
         }
 
@@ -3941,7 +3940,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                         "vtcode".to_string()
                     };
                     if title != last_terminal_title {
-                        let _ = execute!(
+                        let _ = queue!(
                             terminal.backend_mut(),
                             crossterm::terminal::SetTitle(&title)
                         ); // Error OK: terminal title is best-effort
@@ -4035,7 +4034,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
             needs_redraw = false;
             input_redraw = false;
-            background_redraw_pending = false;
+            unfocused_redraw_pending = false;
         }
 
         // Handle mouse-triggered exit (from clicking exit confirm buttons)
@@ -4285,11 +4284,17 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             if !matches!(next_event, Event::Mouse(_)) {
                 app.editor_selection_scroll_at = None;
             }
+            let resized = crate::terminal_output::apply_resize(terminal, &next_event)?.is_some();
             if matches!(next_event, Event::Resize(..)) {
                 app.cancel_wheel_scroll();
                 app.minimap_resize.cancel();
+                if !resized {
+                    // The host may have reflowed through intermediate sizes
+                    // that the input pump coalesced back to the current size.
+                    terminal.clear()?;
+                }
+                unfocused_redraw_pending = true;
             }
-            crate::terminal_output::apply_resize(terminal, &next_event)?;
             if matches!(&next_event, Event::Key(key) if key.kind != KeyEventKind::Release && !matches!(key.code, KeyCode::Modifier(_)))
                 || matches!(&next_event, Event::Mouse(_) | Event::Paste(_))
             {
