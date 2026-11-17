@@ -732,11 +732,6 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 app.execute_palette_command("save_as");
                 return;
             }
-            KeyCode::Char('T' | 't') => {
-                // Ctrl+Shift+T: reopen closed tab
-                app.reopen_closed_tab();
-                return;
-            }
             KeyCode::Char('`') => {
                 // Ctrl+Shift+`: create a terminal in the default right dock.
                 app.execute_palette_command("new_terminal");
@@ -964,13 +959,6 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
             KeyCode::Char('K' | 'k') if shift => {
                 // Ctrl+Shift+K: delete line (VS Code standard)
                 app.execute_palette_command("delete_line");
-                return;
-            }
-            KeyCode::Char('k') => {
-                // Start Ctrl+K chord (only without Shift)
-                app.chord_pending = true;
-                app.chord_start = std::time::Instant::now();
-                app.notify("Ctrl+K ...");
                 return;
             }
             KeyCode::Up => {

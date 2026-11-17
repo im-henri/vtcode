@@ -207,10 +207,8 @@ impl App {
         // Requested tool keys take priority over editor defaults. Only an
         // explicitly reassigned workbench binding takes priority over a request.
         let stroke = crate::app_shortcuts::normalize((modifiers, code));
-        let reassigned = self.keybindings.iter().any(|binding| {
-            binding.is_modified() && self.shortcut_applies(binding)
-                && crate::app_shortcuts::normalize((binding.modifiers, binding.code)) == stroke
-        });
+        let reassigned = self.resolve_shortcut(stroke, None)
+            .is_some_and(|binding| binding.priority != 0 || binding.is_modified());
         let requested = self.active_extension_view()
             .and_then(|view| self.extension_manager.get_view(&view.extension_id, &view.view_id))
             .and_then(|view| view.frame)

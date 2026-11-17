@@ -54,11 +54,6 @@ impl App {
             return Some(false);
         }
 
-        // This is a workbench shortcut even while the terminal has focus.
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('`') {
-            return None;
-        }
-
         if self.terminals[index].terminal_pty.is_none() {
             if key.code == KeyCode::Enter && self.terminals[index].terminal_launch_error.is_some() {
                 self.retry_terminal_pty_at(index, 80, 24);

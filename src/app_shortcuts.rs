@@ -1,5 +1,6 @@
 //! Shared shortcut definitions, persistence and the assignment dialog.
-use crate::app::{ActivePane, App, KeyBinding, TabKind};
+use crate::app::{App, KeyBinding};
+use crate::shortcut_context::{Context, When};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
@@ -12,17 +13,25 @@ pub(crate) enum EditAction {
     Type,
     Reset,
     Unassign,
+    When,
 }
 
-const FOCUS_ACTIONS: [EditAction; 7] = [
+const FOCUS_ACTIONS: [EditAction; 8] = [
     EditAction::Record,
     EditAction::Chord,
     EditAction::Type,
+    EditAction::When,
     EditAction::Save,
     EditAction::Cancel,
     EditAction::Reset,
     EditAction::Unassign,
 ];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditField {
+    Shortcut,
+    When,
+}
 
 pub(crate) struct EditorState {
     index: usize,
@@ -30,11 +39,15 @@ pub(crate) struct EditorState {
     scope: crate::settings::SettingsScope,
     current: String,
     text: String,
+    draft_when: Option<String>,
     recording: bool,
+    initial_recording: bool,
     chord_mode: bool,
     first: Option<Stroke>,
-    typing: bool,
-    select_all: bool,
+    typing: Option<EditField>,
+    cursor: usize,
+    selection: Option<usize>,
+    field_hit: Option<crate::text_input::TextInputHitMap>,
     focus: usize,
     error: Option<String>,
     areas: Vec<(Rect, EditAction)>,
@@ -85,6 +98,8 @@ pub(crate) fn display_stroke(modifiers: KeyModifiers, code: KeyCode) -> String {
         default_chord: None,
         built_in_handler: false,
         editor_only: false,
+        when: None,
+        priority: 0,
     }
     .display()
 }
@@ -141,7 +156,10 @@ pub(crate) fn append_builtins(bindings: &mut Vec<KeyBinding>) {
             default_code: code,
             chord,
             default_chord: chord,
-            built_in_handler: true,
+            built_in_handler: !matches!(
+                id,
+                "reopen_closed" | "toggle_zen" | "settings" | "show_explorer" | "quit"
+            ),
             editor_only: ["Edit:", "Selection:", "Fold:", "Bookmarks:", "Macro:"]
                 .iter()
                 .any(|prefix| label.starts_with(prefix))
@@ -149,6 +167,8 @@ pub(crate) fn append_builtins(bindings: &mut Vec<KeyBinding>) {
                     id,
                     "format_selection" | "goto_bracket" | "markdown_preview" | "code_action"
                 ),
+            when: None,
+            priority: 0,
         });
     }
 }
@@ -188,11 +208,15 @@ impl App {
             scope: self.settings_scope,
             current: binding.display(),
             text: String::new(),
+            draft_when: None,
             recording: true,
+            initial_recording: true,
             chord_mode: binding.chord.is_some(),
             first: None,
-            typing: false,
-            select_all: false,
+            typing: None,
+            cursor: 0,
+            selection: None,
+            field_hit: None,
             focus: 0,
             error: None,
             areas: Vec::new(),
@@ -220,8 +244,9 @@ impl App {
         let Some(target) = bindings.get(index) else {
             return Vec::new();
         };
-        if normalize((target.modifiers, target.code)) == normalize(first)
-            && target.chord.map(normalize) == second.map(normalize)
+        if target.when.is_some()
+            || normalize((target.modifiers, target.code)) == normalize(first)
+                && target.chord.map(normalize) == second.map(normalize)
         {
             return Vec::new();
         }
@@ -230,6 +255,7 @@ impl App {
             .enumerate()
             .filter_map(|(other_index, other)| {
                 if other_index == index
+                    || other.when.is_some()
                     || (other.id == target.id
                         && other.chord.map(normalize) == second.map(normalize))
                     || other.code == KeyCode::Null
@@ -260,35 +286,33 @@ impl App {
                 });
                 return;
             };
-            let previous_scope = self.settings_scope;
-            self.settings_scope = edit.scope;
-            let before = self.selected_scope_settings();
-            if Self::keybindings_for_settings(&before)
-                .get(edit.index)
-                .is_some_and(|binding| {
-                    normalize((binding.modifiers, binding.code)) == normalize((modifiers, code))
-                        && binding.chord.map(normalize) == chord.map(normalize)
-                })
-            {
-                self.settings_scope = previous_scope;
-                self.settings_kb_editing = false;
-                self.keybindings_editing = false;
-                return;
-            }
-            let setting_id = format!("kb_{}", edit.index);
-            self.apply_setting_value(&setting_id, &before);
-            let conflicts = Self::shortcut_conflicts(&self.keybindings, edit.index, &edit.text);
-            for index in conflicts {
-                self.keybindings[index].assign(KeyModifiers::NONE, KeyCode::Null, None);
-            }
-            if let Some(binding) = self.keybindings.get_mut(edit.index) {
+            let when = match edit.draft_when.as_deref().map(When::parse).transpose() {
+                Ok(when) => when,
+                Err(error) => {
+                    self.shortcut_editor = Some(EditorState {
+                        error: Some(error),
+                        ..edit
+                    });
+                    return;
+                }
+            };
+            let mut bindings = Self::keybindings_for_settings(&self.settings_for_scope(edit.scope));
+            if let Some(original) = bindings.get(edit.index) {
+                let mut binding = original.clone();
                 binding.assign(modifiers, code, chord);
-                let message = format!("{}: {}", binding.label, binding.display());
-                self.rebuild_keybinding_settings_cache();
-                self.persist_scoped_setting_change(&setting_id, &before);
-                self.notify(message);
+                if let Some(when) = when {
+                    binding.when = Some(when);
+                }
+                if !binding.same_keys(original) || binding.when().text() != original.when().text() {
+                    let mut edited = edit.conflicts(&bindings);
+                    for &index in &edited {
+                        bindings[index].assign(KeyModifiers::NONE, KeyCode::Null, None);
+                    }
+                    bindings[edit.index] = binding;
+                    edited.push(edit.index);
+                    self.save_shortcut_edits(edit.scope, &bindings, &edited);
+                }
             }
-            self.settings_scope = previous_scope;
         }
         self.settings_kb_editing = false;
         self.keybindings_editing = false;
@@ -315,25 +339,35 @@ impl App {
             EditAction::Record | EditAction::Chord => {
                 edit.chord_mode = action == EditAction::Chord;
                 edit.recording = true;
-                edit.typing = false;
+                edit.typing = None;
                 edit.first = None;
                 edit.text.clear();
             }
-            EditAction::Type => {
+            EditAction::Type | EditAction::When => {
                 edit.recording = false;
-                edit.typing = true;
-                if edit.text.is_empty() {
+                if edit.text.is_empty() || edit.first.take().is_some() {
                     edit.text = edit.current.clone();
                 }
-                edit.select_all = true;
+                edit.typing = Some(if action == EditAction::When {
+                    let bindings =
+                        Self::keybindings_for_settings(&self.settings_for_scope(edit.scope));
+                    edit.draft_when
+                        .get_or_insert_with(|| bindings[edit.index].when().text().to_owned());
+                    EditField::When
+                } else {
+                    EditField::Shortcut
+                });
+                edit.cursor = edit.typed_text().len();
+                edit.selection = Some(0);
             }
             EditAction::Unassign => {
                 edit.text = "Unassigned".into();
                 edit.recording = false;
-                edit.typing = false;
+                edit.typing = None;
                 edit.first = None;
             }
         }
+        edit.initial_recording = false;
         edit.focus = 0;
         edit.error = None;
         self.shortcut_editor = Some(edit);
@@ -393,7 +427,14 @@ impl App {
             return true;
         }
         let actions = FOCUS_ACTIONS;
-        if !edit.recording && matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+        if (!edit.recording || edit.initial_recording)
+            && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+        {
+            edit.initial_recording = false;
+            edit.recording = false;
+            if edit.text.is_empty() {
+                edit.text = edit.current.clone();
+            }
             let backwards =
                 key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             edit.focus =
@@ -409,8 +450,9 @@ impl App {
             let action = actions[edit.focus - 1];
             self.shortcut_editor_action(edit, action);
             return true;
-        } else if edit.recording || !edit.typing {
+        } else if edit.recording || edit.typing.is_none() {
             if !matches!(key.code, KeyCode::Modifier(_) | KeyCode::Null) {
+                edit.initial_recording = false;
                 if edit.chord_mode && edit.first.is_none() {
                     edit.recording = true;
                     edit.first = Some((key.modifiers, key.code));
@@ -423,123 +465,178 @@ impl App {
                     edit.recording = false;
                 }
             }
-        } else if key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('a' | 'A'))
-        {
-            edit.select_all = true;
-        } else if matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
-            if edit.select_all {
-                edit.text.clear();
-            } else {
-                edit.text.pop();
-            }
-            edit.select_all = false;
-        } else if let KeyCode::Char(c) = key.code
-            && !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
-            if edit.select_all {
-                edit.text.clear();
-                edit.select_all = false;
-            }
-            if edit.text.len() < 160 {
-                edit.text.push(c);
-            }
+        } else {
+            edit.edit_text(key.code, key.modifiers, None);
         }
         edit.error = None;
         self.shortcut_editor = Some(edit);
         true
     }
+
+    pub(crate) fn paste_shortcut_text(&mut self, value: &str) -> bool {
+        let Some(mut edit) = self.shortcut_editor.take() else {
+            return false;
+        };
+        let focused = !blocked_by_popup(self) && self.shortcut_editor_has_focus(&edit);
+        if focused && edit.typing.is_some() {
+            edit.edit_text(KeyCode::Null, KeyModifiers::NONE, Some(value));
+            edit.error = None;
+        }
+        self.shortcut_editor = Some(edit);
+        focused
+    }
     pub(crate) fn apply_shortcut_overrides(
         bindings: &mut [KeyBinding],
         entries: &[crate::settings::KeybindingSetting],
     ) {
-        for entry in entries {
-            if let (Some(_), Some(key)) = (entry.command.as_deref(), entry.key.as_deref())
-                && let Some(((modifiers, code), chord)) = parse_shortcut(key)
-                && let Some(index) = Self::shortcut_entry_index(bindings, entry)
+        for (order, entry) in entries.iter().enumerate() {
+            let Some(index) = Self::shortcut_entry_index(bindings, entry) else {
+                continue;
+            };
+            let binding = &mut bindings[index];
+            let when = match entry
+                .when
+                .as_deref()
+                .map(crate::shortcut_context::When::parse)
+                .transpose()
             {
-                bindings[index].assign(modifiers, code, chord);
+                Ok(when) => when,
+                Err(_) => continue,
+            };
+            if let Some(key) = entry.key.as_deref() {
+                let Some(((modifiers, code), chord)) = parse_shortcut(key) else {
+                    continue;
+                };
+                binding.assign(modifiers, code, chord);
+            } else if let (Some(modifiers), Some(code)) =
+                (entry.modifiers, entry.key_code.as_deref())
+            {
+                let Some(code) = Self::keycode_from_settings_token(code) else {
+                    continue;
+                };
+                binding.assign(KeyModifiers::from_bits_truncate(modifiers), code, None);
+            } else if when.is_none() {
                 continue;
             }
-            if let (None, Some(index), Some(modifiers), Some(code)) = (
-                &entry.command,
-                entry.index,
-                entry.modifiers,
-                entry.key_code.as_deref(),
-            ) && let (Some(binding), Some(code)) = (
-                bindings.get_mut(index),
-                Self::keycode_from_settings_token(code),
-            ) {
-                binding.assign(KeyModifiers::from_bits_truncate(modifiers), code, None);
+            if let Some(when) = when {
+                binding.when = Some(when);
             }
+            binding.priority = order + 1;
         }
     }
-    pub(crate) fn shortcut_applies(&self, binding: &KeyBinding) -> bool {
-        if binding.id == "macro_start" && self.macro_recording {
-            return false;
-        }
-        if binding.id == "macro_stop" && !self.macro_recording {
-            return false;
-        }
-        !binding.editor_only
-            || (self.active_pane == ActivePane::Editor
-                && self.tabs.get(self.active_tab).is_some_and(|tab| {
-                    matches!(
-                        tab.kind,
-                        TabKind::File | TabKind::GitRevision | TabKind::Diff(_)
-                    )
-                }))
-    }
 
-    pub(crate) fn shortcut_starts_chord(&self, stroke: Stroke) -> bool {
-        self.keybindings.iter().any(|binding| {
-            binding.chord.is_some()
-                && self.shortcut_applies(binding)
-                && normalize((binding.modifiers, binding.code)) == normalize(stroke)
-        })
-    }
-
-    pub(crate) fn lookup_shortcut_chord(
-        &self,
-        first: Stroke,
-        second: Stroke,
-    ) -> Option<&'static str> {
-        self.keybindings
-            .iter()
-            .find(|binding| {
-                self.shortcut_applies(binding)
-                    && normalize((binding.modifiers, binding.code)) == normalize(first)
-                    && binding.chord.map(normalize) == Some(normalize(second))
-            })
-            .map(|binding| binding.id)
-    }
-
-    pub(crate) fn shortcut_default_overridden(
+    /// Prefer configured rules in settings order and preserve the order of defaults.
+    pub(crate) fn resolve_shortcut(
         &self,
         first: Stroke,
         second: Option<Stroke>,
-    ) -> bool {
-        self.keybindings.iter().any(|binding| {
-            binding.is_modified()
-                && self.shortcut_applies(binding)
-                && normalize((binding.default_modifiers, binding.default_code)) == normalize(first)
-                && binding.default_chord.map(normalize) == second.map(normalize)
+    ) -> Option<&KeyBinding> {
+        let first = normalize(first);
+        let context = std::cell::OnceCell::new();
+        let find = |stroke: Stroke, shifted: bool| {
+            self.keybindings
+                .iter()
+                .enumerate()
+                .filter(|(_, binding)| {
+                    binding.code != KeyCode::Null
+                        && normalize((binding.modifiers, binding.code)) == stroke
+                        && second
+                            .is_none_or(|key| binding.chord.map(normalize) == Some(normalize(key)))
+                        && (!shifted
+                            || (!binding.uses_native_handler()
+                                && binding.when.is_none()
+                                && binding.chord.is_none()))
+                        && binding
+                            .when()
+                            .matches(context.get_or_init(|| Context::new(self)))
+                })
+                .max_by_key(|(index, binding)| {
+                    (
+                        binding.priority,
+                        binding.is_modified(),
+                        std::cmp::Reverse(*index),
+                    )
+                })
+                .map(|(_, binding)| binding)
+        };
+        find(first, false).or_else(|| {
+            let (modifiers, code) = first;
+            // Preserve legacy aliases where no exact binding owns this stroke.
+            if second.is_none()
+                && modifiers.contains(KeyModifiers::SHIFT)
+                && matches!(code, KeyCode::Char(c) if c.is_ascii_alphabetic())
+                && !(modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(code, KeyCode::Char('s' | 'z' | 'v')))
+                && !self.keybindings.iter().any(|binding| {
+                    normalize((binding.modifiers, binding.code)) == first
+                        || normalize((binding.default_modifiers, binding.default_code)) == first
+                })
+            {
+                find((modifiers - KeyModifiers::SHIFT, code), true)
+            } else {
+                None
+            }
         })
     }
 
-    pub(crate) fn remaining_default_shortcut(&self, first: Stroke) -> Option<&'static str> {
-        self.keybindings
-            .iter()
-            .find(|binding| {
-                !binding.is_modified()
-                    && binding.chord.is_none()
-                    && binding.built_in_handler
-                    && self.shortcut_applies(binding)
-                    && normalize((binding.modifiers, binding.code)) == normalize(first)
-            })
+    pub(crate) fn shortcut_starts_chord(&self, stroke: Stroke) -> bool {
+        self.resolve_shortcut(stroke, None)
+            .is_some_and(|binding| binding.chord.is_some())
+    }
+
+    pub(crate) fn lookup_keybinding(
+        &self,
+        modifiers: KeyModifiers,
+        code: KeyCode,
+    ) -> Option<&'static str> {
+        self.resolve_shortcut((modifiers, code), None)
+            .filter(|binding| binding.chord.is_none() && !binding.uses_native_handler())
             .map(|binding| binding.id)
+    }
+
+    pub(crate) fn shortcut_default_overridden(&self, stroke: Stroke) -> bool {
+        let stroke = normalize(stroke);
+        let context = std::cell::OnceCell::new();
+        self.keybindings.iter().any(|binding| {
+            binding.default_chord.is_none()
+                && normalize((binding.default_modifiers, binding.default_code)) == stroke
+                && binding.is_modified()
+                && binding
+                    .default_when()
+                    .matches(context.get_or_init(|| Context::new(self)))
+        })
+    }
+}
+
+impl EditorState {
+    fn edit_text(&mut self, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) {
+        let text = match self.typing {
+            Some(EditField::When) => self.draft_when.as_mut().unwrap(),
+            _ => &mut self.text,
+        };
+        let mut input =
+            crate::text_input::TextInput::new(text, &mut self.cursor, &mut self.selection);
+        if let Some(value) = paste {
+            input.insert_text(value);
+        } else {
+            input.handle_key(code, modifiers);
+        }
+    }
+
+    fn typed_text(&self) -> &str {
+        if self.typing == Some(EditField::When) {
+            self.draft_when.as_deref().unwrap_or_default()
+        } else {
+            &self.text
+        }
+    }
+
+    fn conflicts(&self, bindings: &[KeyBinding]) -> Vec<usize> {
+        if self.draft_when.is_some() {
+            Vec::new()
+        } else {
+            App::shortcut_conflicts(bindings, self.index, &self.text)
+        }
     }
 }
 
@@ -548,7 +645,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -
     if blocked_by_popup(app) {
         return false;
     }
-    let Some(edit) = app.shortcut_editor.take() else {
+    let Some(mut edit) = app.shortcut_editor.take() else {
         return false;
     };
     if !app.shortcut_editor_has_focus(&edit) {
@@ -559,6 +656,15 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -
     app.mouse_col = mouse.column;
     app.mouse_row = mouse.row;
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        if let Some(field) = &edit.field_hit
+            && field.contains(mouse.column, mouse.row)
+        {
+            edit.cursor = field.byte_at(mouse.column, mouse.row);
+            edit.selection = None;
+            edit.focus = 0;
+            app.shortcut_editor = Some(edit);
+            return true;
+        }
         if let Some(action) = edit.areas.iter().find_map(|&(area, action)| {
             area.contains((mouse.column, mouse.row).into())
                 .then_some(action)
@@ -603,7 +709,7 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
         app.finish_shortcut_edit(edit, false);
         return;
     };
-    let conflicts = App::shortcut_conflicts(&bindings, edit.index, &edit.text);
+    let conflicts = edit.conflicts(&bindings);
     let parsed = parse_shortcut(&edit.text);
     let valid = parsed.is_some() && !edit.recording;
     let full = frame.area();
@@ -623,6 +729,7 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
                 EditAction::Type,
                 if compact { "Type" } else { "Type shortcut" },
             ),
+            (EditAction::When, "When"),
         ],
         vec![
             (
@@ -679,7 +786,9 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
         } else {
             "Press the new key combination…"
         }
-    } else if edit.typing {
+    } else if edit.typing == Some(EditField::When) {
+        "Enter a condition, e.g. terminalFocus && !terminalAltScreen"
+    } else if edit.typing == Some(EditField::Shortcut) {
         "Type a shortcut, e.g. Ctrl+Shift+S or Ctrl+K, S"
     } else if !conflicts.is_empty() {
         "Enter replaces · Esc cancels · Tab moves between actions"
@@ -703,12 +812,24 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
             },
         )
     };
-    messages.push(Line::from(Span::styled(
-        format!("  {draft}{}", if edit.typing { " ▏" } else { "" }),
-        Style::default()
-            .fg(app.colors.fg_accent_blue)
-            .add_modifier(Modifier::BOLD),
-    )));
+    if edit.typing != Some(EditField::Shortcut) {
+        messages.push(Line::from(Span::styled(
+            format!("  {draft}"),
+            Style::default()
+                .fg(app.colors.fg_accent_blue)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+    if edit.typing != Some(EditField::When) {
+        let when = edit
+            .draft_when
+            .as_deref()
+            .unwrap_or_else(|| binding.when().text());
+        messages.push(Line::from(Span::styled(
+            format!("  When  {}", if when.is_empty() { "Always" } else { when }),
+            Style::default().fg(app.colors.fg_accent_blue),
+        )));
+    }
     if !conflicts.is_empty() {
         messages.push(Line::raw(""));
         messages.push(Line::from(Span::styled(
@@ -742,8 +863,9 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
             .max(1)
         })
         .sum::<usize>();
-    let height =
-        (text_height + button_rows.len() + 4).min(full.height.saturating_sub(2) as usize) as u16;
+    let field_height = u16::from(edit.typing.is_some());
+    let height = (text_height + button_rows.len() + usize::from(field_height) + 4)
+        .min(full.height.saturating_sub(2) as usize) as u16;
     let area = Rect::new(
         full.x + full.width.saturating_sub(width) / 2,
         full.y + full.height.saturating_sub(height) / 2,
@@ -769,7 +891,9 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
         inner.x + u16::from(inner.width > 2),
         inner.y,
         inner.width.saturating_sub(2),
-        inner.height.saturating_sub(actions_height + 1),
+        inner
+            .height
+            .saturating_sub(actions_height + field_height + 1),
     );
     frame.render_widget(
         Paragraph::new(messages)
@@ -777,6 +901,33 @@ pub(crate) fn draw_editor(frame: &mut ratatui::Frame, app: &mut App) {
             .wrap(Wrap { trim: true }),
         text,
     );
+    edit.field_hit = None;
+    if let Some(field) = edit.typing
+        && inner.height > actions_height
+    {
+        let input_area = Rect::new(text.x, text.bottom(), text.width, 1);
+        let selection = edit
+            .selection
+            .map(|anchor| (anchor.min(edit.cursor), anchor.max(edit.cursor)));
+        let input = crate::ui_widgets::InputField::new(edit.typed_text())
+            .theme_colors(&app.colors)
+            .prefix(
+                if field == EditField::When {
+                    "When  "
+                } else {
+                    "Key  "
+                },
+                app.colors.fg_input,
+            )
+            .placeholder_text(if field == EditField::When {
+                "Always"
+            } else {
+                ""
+            })
+            .cursor_pos(edit.cursor)
+            .selection_range(selection);
+        edit.field_hit = Some(input.render(frame, input_area));
+    }
     edit.areas.clear();
     let order = FOCUS_ACTIONS;
     for (row, buttons) in button_rows

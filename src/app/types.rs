@@ -1265,6 +1265,8 @@ pub struct KeyBinding {
     pub default_chord: Option<(KeyModifiers, KeyCode)>,
     pub built_in_handler: bool,
     pub editor_only: bool,
+    pub(crate) when: Option<crate::shortcut_context::When>,
+    pub(crate) priority: usize,
 }
 
 impl KeyBinding {
@@ -1316,12 +1318,33 @@ impl KeyBinding {
     pub(crate) fn is_modified(&self) -> bool {
         crate::app_shortcuts::normalize((self.modifiers, self.code)) != crate::app_shortcuts::normalize((self.default_modifiers, self.default_code))
             || self.chord.map(crate::app_shortcuts::normalize) != self.default_chord.map(crate::app_shortcuts::normalize)
+            || self.when().text() != self.default_when().text()
+    }
+
+    pub(crate) fn same_keys(&self, other: &Self) -> bool {
+        use crate::app_shortcuts::normalize;
+        normalize((self.modifiers, self.code)) == normalize((other.modifiers, other.code))
+            && self.chord.map(normalize) == other.chord.map(normalize)
+    }
+
+    pub(crate) fn uses_native_handler(&self) -> bool {
+        self.built_in_handler && self.priority == 0 && !self.is_modified()
+    }
+
+    pub(crate) fn default_when(&self) -> &'static crate::shortcut_context::When {
+        crate::shortcut_context::default_when(self)
+    }
+
+    pub(crate) fn when(&self) -> &crate::shortcut_context::When {
+        self.when.as_ref().unwrap_or_else(|| self.default_when())
     }
 
     pub(crate) fn reset(&mut self) {
         self.modifiers = self.default_modifiers;
         self.code = self.default_code;
         self.chord = self.default_chord;
+        self.when = None;
+        self.priority = 0;
     }
 
     pub(crate) fn assign(&mut self, modifiers: KeyModifiers, code: KeyCode, chord: Option<(KeyModifiers, KeyCode)>) {
@@ -1337,6 +1360,7 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         default_modifiers: modifiers,
         default_code: code,
         chord: None, default_chord: None, built_in_handler: false, editor_only: false,
+        when: None, priority: 0,
     };
     let mut bindings = vec![
         make("save", "Save File", KeyModifiers::CONTROL, KeyCode::Char('s')),

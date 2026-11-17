@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    app::Tab,
+    app::{ActivePane, Tab},
     editor::Editor,
     settings::{KeybindingSetting, Settings, SettingsScope},
 };
@@ -449,6 +449,135 @@ fn unchanged_recording_preserves_shared_defaults_and_keyboard_focus_moves_both_w
         app.keybindings[index(&app, "split_editor")].display(),
         "Ctrl+\\"
     );
+}
+
+#[test]
+fn when_editor_validates_and_saves_condition_only_in_selected_scope() {
+    let mut app = fixture();
+    app.settings_global.keybindings = Some(vec![custom("reopen_closed", "F6", None)]);
+    app.apply_effective_settings();
+    app.settings_scope = SettingsScope::Workspace;
+    let target = edit(&mut app, "reopen_closed");
+    for _ in 0..4 {
+        key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    }
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(app.paste_shortcut_text("terminalFoucs"));
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(text(&render(&mut app, 90, 30)).contains("Unknown shortcut context key"));
+    assert!(app.settings_workspace.keybindings.is_none());
+    key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert!(app.paste_shortcut_text("terminalFocus && !terminalAltScreen"));
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+
+    let workspace = app.settings_workspace.keybindings.as_ref().unwrap();
+    assert_eq!(workspace[0].key, None);
+    assert_eq!(
+        workspace[0].when.as_deref(),
+        Some("terminalFocus && !terminalAltScreen")
+    );
+    let serialized = serde_json::to_string(&app.settings_workspace).unwrap();
+    let workspace = serde_json::from_str(&serialized).unwrap();
+    let bindings = App::keybindings_for_settings(&app.settings_global.merge(&workspace));
+    assert_eq!(bindings[target].display(), "F6");
+    assert_eq!(
+        bindings[target].when().text(),
+        "terminalFocus && !terminalAltScreen"
+    );
+    assert!(app.reset_keybinding_in_selected_scope(target));
+    assert_eq!(app.keybindings[target].display(), "F6");
+    assert_eq!(app.keybindings[target].when().text(), "!terminalAltScreen");
+}
+
+#[test]
+fn conditional_rules_share_a_key_and_follow_scope_and_list_order() {
+    let settings = |json: &str| serde_json::from_str::<Settings>(json).unwrap();
+    let global = settings(
+        r#"{"keybindings":[
+        {"command":"show_shortcuts","key":"F6","when":"editorTextFocus"},
+        {"command":"reopen_closed","key":"F6","when":"terminalFocus"},
+        {"command":"toggle_explorer","key":"F6","when":"editorTextFocus"}
+    ]}"#,
+    );
+    let workspace = settings(
+        r#"{"keybindings":[
+        {"command":"show_shortcuts","when":"editorTextFocus && editorTabCount >= 1"}
+    ]}"#,
+    );
+    let mut app = fixture();
+    app.settings_global = global;
+    app.settings_workspace = workspace;
+    app.apply_effective_settings();
+    let command = |app: &App| app.lookup_keybinding(KeyModifiers::NONE, KeyCode::F(6));
+    assert_eq!(command(&app), Some("show_shortcuts"));
+
+    app.tabs[0].kind = crate::app::TabKind::Terminal;
+    app.tabs[0].terminal_idx = Some(0);
+    assert_eq!(command(&app), Some("reopen_closed"));
+    app.active_pane = ActivePane::Explorer;
+    assert_eq!(command(&app), None);
+
+    app.tabs[0].kind = crate::app::TabKind::File;
+    app.active_pane = ActivePane::Editor;
+    app.settings_workspace = settings(
+        r#"{"keybindings":[
+        {"command":"toggle_explorer","when":"notAContextKey"},
+        {"command":"show_shortcuts","when":"false"}
+    ]}"#,
+    );
+    app.apply_effective_settings();
+    assert_eq!(command(&app), Some("toggle_explorer"));
+    app.flush_live_settings();
+    assert_eq!(
+        app.settings_workspace.keybindings.as_ref().unwrap()[0]
+            .when
+            .as_deref(),
+        Some("notAContextKey")
+    );
+}
+
+#[test]
+fn conditional_chord_rechecks_focus_on_its_second_key() {
+    let mut app = fixture();
+    app.settings_global = serde_json::from_str(
+        r#"{"keybindings":[
+        {"command":"show_shortcuts","key":"F6, F7","when":"editorTextFocus"},
+        {"command":"toggle_explorer","key":"F6, F7","when":"terminalFocus"}
+    ]}"#,
+    )
+    .unwrap();
+    app.apply_effective_settings();
+    key(&mut app, KeyCode::F(6), KeyModifiers::NONE);
+    assert!(app.chord_pending);
+    app.active_pane = ActivePane::Explorer;
+    key(&mut app, KeyCode::F(7), KeyModifiers::NONE);
+    assert!(!app.chord_pending);
+    assert!(!app.shortcuts_active);
+    app.active_pane = ActivePane::Editor;
+    key(&mut app, KeyCode::F(6), KeyModifiers::NONE);
+    key(&mut app, KeyCode::F(7), KeyModifiers::NONE);
+    assert!(app.shortcuts_active);
+}
+
+#[test]
+fn an_inactive_shift_shortcut_keeps_its_unshifted_action_independent() {
+    let mut app = fixture();
+    app.settings_global = serde_json::from_str(
+        r#"{"keybindings":[
+        {"command":"global_search","when":"terminalFocus"}
+    ]}"#,
+    )
+    .unwrap();
+    app.apply_effective_settings();
+    key(
+        &mut app,
+        KeyCode::Char('F'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+    assert!(!app.global_search_active);
+    assert!(!app.search_active);
+    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+    assert!(app.search_active);
 }
 
 fn preview(buffer: &Buffer, theme: crate::app_theme::EditorTheme, width: u16, state: &str) {

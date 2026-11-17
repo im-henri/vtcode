@@ -168,30 +168,7 @@ impl App {
         let word_wrap = self.default_word_wrap;
         let whitespace_mode_str = self.default_whitespace_mode.name().to_lowercase();
         let theme_name = self.committed_theme_key().to_string();
-        let keybindings = {
-            let overrides: Vec<KeybindingSetting> = self
-                .keybindings
-                .iter()
-                .enumerate()
-                .filter_map(|(index, kb)| {
-                    if !kb.is_modified() {
-                        return None;
-                    }
-                    Some(KeybindingSetting {
-                        command: Some(kb.id.to_string()),
-                        key: Some(kb.display()),
-                        index: (self.keybindings.iter().filter(|other| other.id == kb.id).count() > 1).then_some(index),
-                        modifiers: None,
-                        key_code: None,
-                    })
-                })
-                .collect();
-            if overrides.is_empty() {
-                None
-            } else {
-                Some(overrides)
-            }
-        };
+        let keybindings = Self::shortcut_snapshot(&self.keybindings);
         Settings {
             acp_agents: self.settings_effective.acp_agents.clone(),
             lsp_enabled: Some(self.lsp_enabled),
@@ -1134,6 +1111,22 @@ impl App {
         }
     }
 
+    fn shortcut_snapshot(bindings: &[crate::app::KeyBinding]) -> Option<Vec<KeybindingSetting>> {
+        let mut overrides: Vec<_> = bindings.iter().enumerate()
+            .filter(|(_, binding)| binding.priority != 0 || binding.is_modified())
+            .collect();
+        overrides.sort_by_key(|(_, binding)| binding.priority);
+        (!overrides.is_empty()).then(|| overrides.into_iter().map(|(index, binding)| {
+            KeybindingSetting {
+                command: Some(binding.id.to_owned()),
+                key: Some(binding.display()),
+                index: (bindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
+                when: binding.when.as_ref().map(|when| when.text().to_owned()),
+                ..Default::default()
+            }
+        }).collect())
+    }
+
     fn keybinding_overrides_for_scope(
         &self,
         scope: crate::settings::SettingsScope,
@@ -1148,16 +1141,19 @@ impl App {
         let parent_bindings = Self::keybindings_for_settings(&parent);
         let mut overrides = Vec::new();
         for (index, (binding, inherited)) in self.keybindings.iter().zip(parent_bindings.iter()).enumerate() {
-            if crate::app_shortcuts::normalize((binding.modifiers, binding.code)) != crate::app_shortcuts::normalize((inherited.modifiers, inherited.code))
-                || binding.chord.map(crate::app_shortcuts::normalize) != inherited.chord.map(crate::app_shortcuts::normalize) {
-                overrides.push(KeybindingSetting {
+            let when_changed = binding.when().text() != inherited.when().text();
+            if !binding.same_keys(inherited) || when_changed {
+                overrides.push((binding.priority, KeybindingSetting {
                     command: Some(binding.id.to_string()),
                     key: Some(binding.display()),
                     index: (self.keybindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
+                    when: when_changed.then(|| binding.when().text().to_owned()),
                     ..Default::default()
-                });
+                }));
             }
         }
+        overrides.sort_by_key(|(priority, _)| *priority);
+        let mut overrides: Vec<_> = overrides.into_iter().map(|(_, entry)| entry).collect();
 
         // Preserve entries for commands supplied by a newer build or plugin;
         // editing a built-in shortcut must never discard unknown JSON data.
@@ -1173,6 +1169,42 @@ impl App {
         }
 
         (!overrides.is_empty()).then_some(overrides)
+    }
+
+    pub(crate) fn save_shortcut_edits(
+        &mut self,
+        scope: crate::settings::SettingsScope,
+        bindings: &[crate::app::KeyBinding],
+        edited: &[usize],
+    ) {
+        use crate::settings::SettingsScope::{Global, Workspace};
+        let (mut target, parent) = match scope {
+            Global => (self.settings_global.clone(), self.settings_defaults.clone()),
+            Workspace => (self.settings_workspace.clone(), self.settings_for_scope(Global)),
+        };
+        let parent = Self::keybindings_for_settings(&parent);
+        let mut entries = target.keybindings.take().unwrap_or_default();
+        entries.retain(|entry| !Self::shortcut_entry_index(bindings, entry)
+            .is_some_and(|index| edited.contains(&index)));
+        for &index in edited {
+            let binding = &bindings[index];
+            let inherited = &parent[index];
+            let key = (!binding.same_keys(inherited)).then(|| binding.display());
+            let when = (binding.when().text() != inherited.when().text())
+                .then(|| binding.when().text().to_owned());
+            if key.is_some() || when.is_some() {
+                entries.push(KeybindingSetting {
+                    command: Some(binding.id.to_owned()),
+                    index: (bindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
+                    key,
+                    when,
+                    ..Default::default()
+                });
+            }
+        }
+        target.keybindings = (!entries.is_empty()).then_some(entries);
+        self.write_settings_scope(scope, target);
+        self.apply_effective_settings();
     }
 
     pub(crate) fn persist_scoped_setting_change(&mut self, id: &str, before: &Settings) {
@@ -1325,6 +1357,9 @@ impl App {
         // Compare their effective values so saving an unrelated preference does
         // not turn animation defaults or legacy fallbacks into local overrides.
         let mut before = self.settings_effective.clone();
+        if before.keybindings.is_some() {
+            before.keybindings = Self::shortcut_snapshot(&Self::keybindings_for_settings(&before));
+        }
         before.animation_copy = Some(before.animation_copy.unwrap_or(true));
         before.animation_copy_duration_ms = Some(before.animation_copy_duration_ms
             .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS));

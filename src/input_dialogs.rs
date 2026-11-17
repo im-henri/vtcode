@@ -2,8 +2,6 @@ use crate::text_input::TextInputId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, TabTextColor};
-#[cfg(test)]
-use crate::app::ActivePane;
 
 /// Save one current snapshot per path and retain all documents on failure.
 /// Both keyboard and mouse exit paths use this result before allowing exit.
@@ -896,8 +894,7 @@ mod tests {
     #[test]
     fn animations_keyboard_navigation_skips_sections_and_preserves_visual_rows() {
         let mut app = App::test_new();
-        app.settings_editor_active = true;
-        app.active_pane = ActivePane::Editor;
+        app.open_settings_tab();
         app.settings_category_selected = 7;
         app.settings_focus_categories = false;
         app.settings_focus_control = true;

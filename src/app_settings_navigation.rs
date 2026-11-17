@@ -4,9 +4,9 @@ use crate::app::App;
 
 impl App {
     pub(crate) fn settings_editor_has_focus(&self) -> bool {
-        self.settings_editor_active
-            && self.active_pane == crate::app::ActivePane::Editor
+        self.active_pane == crate::app::ActivePane::Editor
             && !self.docked_terminal_has_focus()
+            && self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::Settings)
     }
 
     /// The compact picker exposes the same pages as the expanded tree.

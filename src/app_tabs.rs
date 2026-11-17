@@ -1488,6 +1488,7 @@ impl App {
 
     pub(crate) fn reopen_closed_tab(&mut self) {
         if let Some((path, _, _)) = self.closed_tab_paths.pop_back() {
+            self.terminal_panel_focused = false;
             // The loader reports an unavailable path asynchronously. Avoid a
             // foreground filesystem round-trip, especially for remote roots.
             self.open_file(&path);

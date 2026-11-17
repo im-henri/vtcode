@@ -43,6 +43,7 @@ mod ui_vtcomplete_index;
 mod app_commands;
 mod app_commands_editor;
 mod app_shortcuts;
+mod shortcut_context;
 mod app_commands_git;
 mod app_commands_settings;
 mod app_commands_view;

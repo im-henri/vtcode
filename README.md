@@ -377,6 +377,37 @@ from File** and **Developer: Reload Syntaxes** in the command palette.
 - **Extensions:** install through **Extensions: Install Extension from GitHub**. See the [Wasm extension guide](extension-api/README.md) to build your own.
 - **Performance & activity:** pin the live monitor while you work: CPU/memory trends, UI responsiveness, slow calls, worker queues, task timings, and workspace details. Resource sampling runs at most every 10 seconds while visible and the app is focused.
 
+### Shortcut contexts
+
+In **Keyboard Shortcuts**, select a binding and choose **When** to restrict it
+to a context. Leave the condition blank to make the binding unconditional.
+Different commands can share a key when their conditions differ. Workspace rules
+take priority over User rules. Later rules in the same list win when both match.
+Conditions use the current focus, including on the second stroke of a chord.
+
+Common conditions include `editorTextFocus`, `editorHasSelection`,
+`terminalFocus`, `terminalAltScreen`, `filesExplorerFocus`, `searchInputFocus`,
+`searchResultsFocus`, `findInputFocus`, `settingsFocus`, and `chatFocus`.
+Use `!`, `&&`, `||`, and parentheses to combine them. You can also compare
+values, for example `editorLangId == rust`, `resourceExtname =~ /^\.(log|txt)$/i`,
+or `editorTabCount > 1`.
+
+**Ctrl+Shift+T** reopens the last closed tab from the editor or a regular
+integrated terminal. Fullscreen terminal applications receive the key by default.
+To limit it to the file editor, set its **When** to `editorTextFocus`. The same
+override is available in User or Workspace settings JSON.
+
+```json
+{
+  "keybindings": [
+    { "command": "reopen_closed", "when": "editorTextFocus" }
+  ]
+}
+```
+
+Omitting `key` keeps the inherited shortcut. Existing key-only overrides
+inherit their condition.
+
 ## Animations
 
 **Sliding Tabs** is enabled by default with a **250 ms** duration. Other effects

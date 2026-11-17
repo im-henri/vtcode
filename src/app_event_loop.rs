@@ -590,6 +590,7 @@ fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
     }
     if !app.accept_terminal_paste() { return; }
     let text = value.as_ref();
+    if app.paste_shortcut_text(text) { return; }
     if crate::ui_remote_targets::connection_has_focus(app)
         && app.tabs[app.active_tab].kind != crate::app::TabKind::RemoteConnection(0)
         && app.paste_remote_target_login(text) { return; }

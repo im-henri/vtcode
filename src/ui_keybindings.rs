@@ -39,6 +39,17 @@ fn first_row(app: &App, list: Rect) -> usize {
         .saturating_sub((list.height as usize).saturating_sub(1))
 }
 
+fn shortcut_columns(width: u16) -> (usize, usize) {
+    let width = usize::from(width);
+    ((width * 42 / 100).min(31), (width * 29 / 100).min(20))
+}
+
+fn shortcut_cell(text: &str, width: usize) -> String {
+    let text = crate::ui_pickers::truncate_to_width(text, width);
+    let padding = width.saturating_sub(UnicodeWidthStr::width(text.as_str()));
+    format!("{text}{}", crate::helpers::spaces(padding))
+}
+
 pub(crate) fn focused(app: &App) -> bool {
     app.active_pane == ActivePane::Editor
         && !app.docked_terminal_has_focus()
@@ -62,7 +73,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if !focused(app) {
         return false;
     }
-    if app.handle_shortcut_editor_key(key) { return true; }
+    if app.handle_shortcut_editor_key(key) {
+        return true;
+    }
     match key.code {
         KeyCode::Esc => app.close_tab(app.active_tab),
         KeyCode::Up => app.keybindings_selected = app.keybindings_selected.saturating_sub(1),
@@ -148,6 +161,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
 fn keybinding_rows(app: &App, width: u16, visible: usize, surface: Color) -> Vec<Line<'static>> {
     let selected = app.keybindings_selected;
     let scroll = selected.saturating_sub(visible.saturating_sub(1));
+    let (command_width, shortcut_width) = shortcut_columns(width);
     app.keybindings
         .iter()
         .enumerate()
@@ -179,17 +193,24 @@ fn keybinding_rows(app: &App, width: u16, visible: usize, surface: Color) -> Vec
                 )
             };
             let bg = normal.bg.unwrap_or(row_bg);
-            let shortcut = kb.display();
-            let padding = 20usize.saturating_sub(UnicodeWidthStr::width(shortcut.as_str()));
+            let shortcut = crate::ui_pickers::truncate_to_width(
+                &kb.display(),
+                shortcut_width.saturating_sub(1),
+            );
+            let padding = shortcut_width.saturating_sub(UnicodeWidthStr::width(shortcut.as_str()));
             let mut line = Line::from(vec![
-                Span::styled(format!(" {:<30}", kb.label), normal),
+                Span::styled(
+                    shortcut_cell(&format!(" {}", kb.label), command_width.saturating_sub(1)),
+                    normal,
+                ),
+                Span::styled(" ", normal),
                 Span::styled(shortcut, app.colors.ui.keybinding_label_style(bg)),
                 Span::styled(crate::helpers::spaces(padding), normal),
                 Span::styled(
-                    if editing {
-                        "⌨ waiting..."
+                    if kb.when().text().is_empty() {
+                        "Always".into()
                     } else {
-                        "Enter=edit"
+                        kb.when().text().to_owned()
                     },
                     normal.fg(app.colors.ui.description_color(bg)),
                 ),
@@ -203,6 +224,7 @@ fn keybinding_rows(app: &App, width: u16, visible: usize, surface: Color) -> Vec
 }
 
 fn keybinding_header(app: &App, surface: Color, width: u16) -> Line<'static> {
+    let (command_width, shortcut_width) = shortcut_columns(width);
     let bg = app
         .colors
         .ui
@@ -214,14 +236,14 @@ fn keybinding_header(app: &App, surface: Color, width: u16) -> Line<'static> {
         .bg(bg);
     let mut line = Line::from(vec![
         Span::styled(
-            format!(" {:<30}", "Command"),
+            shortcut_cell(" Command", command_width),
             normal.add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("{:<20}", "Shortcut"),
+            shortcut_cell("Shortcut", shortcut_width),
             normal.add_modifier(Modifier::BOLD),
         ),
-        Span::styled("Action", normal.fg(app.colors.ui.description_color(bg))),
+        Span::styled("When", normal.add_modifier(Modifier::BOLD)),
     ]);
     let fill = (width as usize).saturating_sub(line.width());
     line.spans
@@ -318,7 +340,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
     // Prefer the most descriptive hint that fits; never clip it mid-word.
     let hints: &[&str] = if app.keybindings_editing {
-        &["Press any key combo to set  │  Esc = cancel", "Press keys  │  Esc cancel", "Esc cancel"]
+        &[
+            "Press any key combo to set  │  Esc = cancel",
+            "Press keys  │  Esc cancel",
+            "Esc cancel",
+        ]
     } else {
         &[
             "↑↓ navigate  │  Enter = edit shortcut  │  Esc = close",
@@ -355,7 +381,11 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         (0..12)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
             .collect()
     }
 
@@ -371,7 +401,10 @@ mod tests {
                 screen.iter().any(|row| row.contains(expected)),
                 "{width}: {screen:#?}"
             );
-            assert!(!screen.iter().any(|row| row.trim_end().ends_with("Es")), "{width}");
+            assert!(
+                !screen.iter().any(|row| row.trim_end().ends_with("Es")),
+                "{width}"
+            );
         }
     }
 }

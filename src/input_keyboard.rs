@@ -11,62 +11,11 @@ use crate::text_input::TextInputId;
 #[path = "tab_navigation_tests.rs"]
 mod tab_navigation_tests;
 
-fn terminal_has_focus(app: &App) -> bool {
-    (app.active_pane == ActivePane::Editor
-        && app
-            .tabs
-            .get(app.active_tab)
-            .is_some_and(|tab| tab.kind == crate::app::TabKind::Terminal))
-        || app.docked_terminal_has_focus()
-}
-
-/// Workbench commands that VS Code keeps even when the integrated terminal is
-/// focused. All other keys should reach the shell before editor keybindings.
-fn terminal_workbench_shortcut(app: &App, key: crossterm::event::KeyEvent) -> bool {
-    let allowed = |command: &str| {
-        if app.focused_terminal_is_fullscreen() { return command == "toggle_terminal"; }
-        matches!(command, "toggle_terminal" | "new_terminal" | "palette" | "settings" | "source_control"
-            | "extensions" | "global_search" | "toggle_explorer" | "toggle_panel" | "toggle_problems" | "acp_chat"
-            | "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page")
-            || matches!(command, "workspace_switch" | "workspace_add" | "workspace_next" | "workspace_previous" | "workspace_sets" | "workspace_set_save")
-            || (app.zen_mode && command == "toggle_zen")
-    };
-    if app.keybindings.iter().any(|binding| binding.chord.is_some() && allowed(binding.id)
-        && app.shortcut_applies(binding)
-        && crate::app_shortcuts::normalize((binding.modifiers, binding.code))
-            == crate::app_shortcuts::normalize((key.modifiers, key.code))) {
-        return true;
-    }
-    if let Some(command) = app.lookup_keybinding(key.modifiers, key.code) {
-        return allowed(command);
-    }
-    if app.shortcut_default_overridden((key.modifiers, key.code), None) { return false; }
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-    if ctrl && key.code == KeyCode::Char('`') {
-        return true;
-    }
-    // A fullscreen terminal application owns its editor shortcuts. Keep the
-    // terminal toggle available so the user can return to this workbench.
-    if app.focused_terminal_is_fullscreen() {
-        return false;
-    }
-    if key.code == KeyCode::F(1) { return true; }
-    if ctrl
-        && matches!(
-            key.code,
-            KeyCode::Tab | KeyCode::BackTab | KeyCode::PageUp | KeyCode::PageDown
-        )
-    {
-        return true;
-    }
-    ctrl && shift
-        && matches!(
-            key.code,
-            KeyCode::Char(
-                'P' | 'p' | 'G' | 'g' | 'X' | 'x' | 'E' | 'e' | 'F' | 'f' | 'M' | 'm' | 'B' | 'b' | 'I' | 'i'
-            )
-        )
+fn start_shortcut_chord(app: &mut App, stroke: crate::app_shortcuts::Stroke) {
+    app.chord_pending = true;
+    app.shortcut_chord_prefix = Some(stroke);
+    app.chord_start = std::time::Instant::now();
+    app.notify(format!("{} …", crate::app_shortcuts::display_stroke(stroke.0, stroke.1)));
 }
 
 /// Handle a keyboard event. Returns `true` when the application should exit.
@@ -112,7 +61,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         crate::ui_hunk_peek::handle_key(app, key);
         return false;
     }
-    if crate::ui_logs::key(app, key) { return false; }
     if crate::ui_desks::handle_key(app, key) { return false; }
     app.sync_text_input_sessions();
     if let Some(quit) = crate::ui_modal::handle_key(app, key) {
@@ -147,12 +95,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         }
         return false;
     }
-    // A fullscreen terminal application owns its navigation shortcuts too.
-    if !app.focused_terminal_is_fullscreen()
-        && let Some(id @ ("navigate_back" | "navigate_forward")) = app.lookup_keybinding(key.modifiers, key.code) {
-        app.execute_palette_command(id);
-        return false;
-    }
     // Exit confirmation dialog
     if let Some(quit) = input_dialogs::handle_exit_confirm_key(app, key) {
         return quit;
@@ -174,16 +116,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         return false;
     }
 
-    if crate::ui_remote_targets::connection_has_focus(app) {
-        let workbench = terminal_workbench_shortcut(app, key)
-            || app.lookup_keybinding(key.modifiers, key.code)
-                .is_some_and(|id| matches!(id, "close_tab" | "quit" | "navigate_back" | "navigate_forward"))
-            || (!app.shortcut_default_overridden((key.modifiers, key.code), None)
-                && key.modifiers.contains(KeyModifiers::CONTROL)
-                && matches!(key.code, KeyCode::Char('w' | 'W' | 'q' | 'Q' | 'p' | 'P')));
-        if !workbench && crate::ui_remote_targets::connection_key(app, key) { return false; }
-    }
-
     // Source control commit message input (sidebar mode)
     if let Some(quit) = input_keyboard_dialogs::handle_commit_input_key(app, key) {
         return quit;
@@ -199,88 +131,43 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     // standalone editing or workbench shortcut (for example Ctrl+C or Ctrl+W).
     if app.chord_pending {
         app.chord_pending = false;
-        let prefix = app.shortcut_chord_prefix.take().unwrap_or((KeyModifiers::CONTROL, KeyCode::Char('k')));
-        if let Some(command) = app.lookup_shortcut_chord(prefix, (key.modifiers, key.code)) {
-            app.execute_palette_command(command);
-            return false;
-        }
-        if crate::app_shortcuts::normalize(prefix) != (KeyModifiers::CONTROL, KeyCode::Char('k'))
-            || app.shortcut_default_overridden(prefix, Some((key.modifiers, key.code))) {
+        let command = app.shortcut_chord_prefix.take()
+            .and_then(|prefix| app.resolve_shortcut(prefix, Some((key.modifiers, key.code))))
+            .map(|binding| binding.id);
+        if let Some(command) = command {
+            dispatch_shortcut(app, command);
+        } else {
             app.notify("Chord cancelled");
-            return false;
-        }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        match key.code {
-            KeyCode::Char('d' | 'D') if !ctrl => { crate::ui_desks::open(app, crate::ui_desks::Mode::Switch); }
-            KeyCode::Char('g' | 'G') if !ctrl => { crate::ui_desks::open(app, crate::ui_desks::Mode::AddGroup); }
-            KeyCode::Char('c' | 'C') if ctrl => {
-                // Ctrl+K, Ctrl+C: Add line comment
-                if let Some(ed) = app.editor_mut_writable() {
-                    ed.add_line_comment();
-                }
-            }
-            KeyCode::Char('u' | 'U') if ctrl => {
-                // Ctrl+K, Ctrl+U: Remove line comment
-                if let Some(ed) = app.editor_mut_writable() {
-                    ed.remove_line_comment();
-                }
-            }
-            KeyCode::Char('0') => {
-                // Ctrl+K, 0: Fold all
-                app.execute_palette_command("fold_all");
-            }
-            KeyCode::Char(c @ '1'..='9') => {
-                // Ctrl+K, 1-9: Fold to level N
-                let level = (c as usize) - ('0' as usize);
-                if let Some(ed) = app.editor_mut() {
-                    ed.fold_at_level(level);
-                }
-                app.notify(format!("Folded to level {level}"));
-            }
-            KeyCode::Char('j' | 'J') if ctrl => {
-                // Ctrl+K, Ctrl+J: Unfold all
-                app.execute_palette_command("unfold_all");
-            }
-            KeyCode::Char('x' | 'X') if ctrl => {
-                // Ctrl+K, Ctrl+X: Trim trailing whitespace
-                app.execute_palette_command("trim_trailing");
-            }
-            KeyCode::Char('s' | 'S') if ctrl => {
-                // Ctrl+K, Ctrl+S: Keyboard shortcuts
-                app.shortcuts_active = true;
-            }
-            KeyCode::Char('s') if !ctrl => {
-                // Ctrl+K, S: Save all
-                app.execute_palette_command("save_all");
-            }
-            KeyCode::Char('u') if !ctrl => {
-                // Ctrl+K, U: Close all saved tabs
-                app.close_saved_tabs();
-            }
-            KeyCode::Char('w') if !ctrl => {
-                // Ctrl+K, W: Close all tabs
-                app.execute_palette_command("tab_close_all");
-            }
-            KeyCode::Char('w') if ctrl => {
-                // Ctrl+K, Ctrl+W: Close all editors in group
-                app.close_tabs_matching(|_| true);
-            }
-            KeyCode::Char('q' | 'Q') if ctrl => {
-                // Ctrl+K, Ctrl+Q: Go to last edit location
-                app.execute_palette_command("goto_last_edit");
-            }
-            KeyCode::Char('d' | 'D') if ctrl => {
-                // Ctrl+K, Ctrl+D: Skip occurrence, select next
-                if let Some(ed) = app.editor_mut() {
-                    ed.skip_occurrence_select_next();
-                }
-            }
-            _ => {
-                app.notify("Chord cancelled");
-            }
         }
         return false;
     }
+
+    let stroke = (key.modifiers, key.code);
+    let context = crate::shortcut_context::Context::new(app);
+    let shell_focus = context.shell_focus();
+    let shell_input_focus = context.shell_input_has_focus();
+    let resolved = app.resolve_shortcut(stroke, None).map(|binding| {
+        (binding.id, binding.chord.is_some(), binding.when.is_some(), binding.uses_native_handler())
+    });
+    if let Some((command, chord, explicit_context, _)) = resolved
+        && (shell_input_focus || explicit_context || matches!(command, "navigate_back" | "navigate_forward"))
+    {
+        if !shell_focus && app.route_custom_editor_shortcut(key.code, key.modifiers) {
+            return false;
+        }
+        if chord {
+            start_shortcut_chord(app, stroke);
+        } else {
+            dispatch_shortcut(app, command);
+        }
+        return false;
+    }
+    if app.focused_terminal_index().is_none()
+        && crate::ui_remote_targets::connection_key(app, key)
+    {
+        return false;
+    }
+    if crate::ui_logs::key(app, key) { return false; }
 
     // Focused text fields own editing shortcuts. This must precede the
     // configurable workbench dispatcher, which otherwise sends Ctrl+X/C/V/A
@@ -292,16 +179,13 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     }
     if crate::ui_remote_targets::handle_shortcut(app, key) { return false; }
 
-    if !terminal_has_focus(app) || terminal_workbench_shortcut(app, key)
-        || (app.zen_mode && !app.focused_terminal_is_fullscreen()
-            && key.code == KeyCode::F(11) && key.modifiers.is_empty())
-    {
+    if !shell_focus {
         // AltGr handling (Ctrl+Alt on Windows = AltGr)
         // When both Ctrl and Alt are pressed with a printable char, treat as text input
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.modifiers.contains(KeyModifiers::ALT)
             && !key.modifiers.contains(KeyModifiers::SHIFT)
-            && app.lookup_keybinding(key.modifiers, key.code).is_none()
+            && resolved.is_none()
         {
             if let KeyCode::Char(c) = key.code {
                 if app.active_pane == ActivePane::Editor {
@@ -316,195 +200,19 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
 
         // Configurable keybinding dispatch
         if app.route_custom_editor_shortcut(key.code, key.modifiers) { return false; }
-        if app.shortcut_starts_chord((key.modifiers, key.code)) {
-            app.chord_pending = true;
-            app.shortcut_chord_prefix = Some((key.modifiers, key.code));
-            app.chord_start = std::time::Instant::now();
-            app.notify(format!("{} …", crate::app_shortcuts::display_stroke(key.modifiers, key.code)));
-            return false;
-        }
-        if let Some(cmd_id) = app.lookup_keybinding(key.modifiers, key.code) {
-            if app.route_explorer_edit_command(cmd_id) { return false; }
-            // End clipboard cycle on any keybinding that isn't clipboard_history
-            if app.clipboard_cycle_active && cmd_id != "clipboard_history" {
-                app.clipboard_cycle_active = false;
+        let legacy_reassigned = (!key.modifiers.is_empty() || matches!(key.code, KeyCode::F(_)))
+            && app.shortcut_default_overridden(stroke);
+        if let Some((command, chord, _, native)) = resolved {
+            if chord {
+                start_shortcut_chord(app, stroke);
+                return false;
             }
-            match cmd_id {
-                "quit" => {
-                    app.exit_confirm_active = true;
-                    return false;
-                }
-                "save" => {
-                    app.save_current_file();
-                    return false;
-                }
-                "toggle_explorer" => {
-                    app.toggle_explorer();
-                    return false;
-                }
-                "toggle_terminal" => {
-                    app.toggle_terminal_sidebar();
-                    return false;
-                }
-                "close_tab" => {
-                    app.close_tab(app.active_tab);
-                    return false;
-                }
-                "palette" => {
-                    app.open_palette();
-                    return false;
-                }
-                "source_control" => {
-                    app.execute_palette_command("source_control");
-                    return false;
-                }
-                "extensions" => {
-                    app.execute_palette_command("extensions");
-                    return false;
-                }
-                "go_to_line" => {
-                    app.execute_palette_command("goto_line");
-                    return false;
-                }
-                "global_search" => {
-                    app.execute_palette_command("global_search");
-                    return false;
-                }
-                "delete_line" => {
-                    app.execute_palette_command("delete_line");
-                    return false;
-                }
-                "toggle_comment" => {
-                    app.execute_palette_command("toggle_comment");
-                    return false;
-                }
-                "show_shortcuts" => {
-                    app.shortcuts_active = !app.shortcuts_active;
-                    app.shortcuts_scroll = 0;
-                    return false;
-                }
-                "rename_symbol" => {
-                    // Explorer owns F2 for file/folder renaming. Leave it for
-                    // the focused view after menus and text inputs are handled.
-                    if app.active_pane == ActivePane::Editor {
-                        app.execute_palette_command("rename_symbol");
-                        return false;
-                    }
-                }
-                "find_next" => {
-                    if !app.search_query.is_empty() {
-                        app.search_next();
-                    }
-                    return false;
-                }
-                "find_prev" => {
-                    if !app.search_query.is_empty() {
-                        app.search_prev();
-                    }
-                    return false;
-                }
-                "toggle_menu_bar" => {
-                    app.execute_palette_command("toggle_menu_bar");
-                    return false;
-                }
-                "go_to_definition" => {
-                    if app.active_pane == ActivePane::Editor {
-                        app.execute_palette_command("go_to_definition");
-                        return false;
-                    }
-                }
-                "go_to_type_definition" => {
-                    if app.active_pane == ActivePane::Editor {
-                        app.execute_palette_command("go_to_type_definition");
-                        return false;
-                    }
-                }
-                "go_to_implementation" => {
-                    if app.active_pane == ActivePane::Editor {
-                        app.execute_palette_command("go_to_implementation");
-                        return false;
-                    }
-                }
-                "go_to_declaration" => {
-                    if app.active_pane == ActivePane::Editor {
-                        app.execute_palette_command("go_to_declaration");
-                        return false;
-                    }
-                }
-                "find_references" => {
-                    if app.active_pane == ActivePane::Editor {
-                        app.execute_palette_command("find_references");
-                        return false;
-                    }
-                }
-                "format_document" => {
-                    app.execute_palette_command("format_document");
-                    return false;
-                }
-                "toggle_problems" => {
-                    crate::ui_panels::toggle_problems(app);
-                    return false;
-                }
-                "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page" => {
-                    if !app.tabs.is_empty() {
-                        app.sync_duplicate_file_tabs();
-                        app.clear_transient_editor_state();
-                        if app.tabs.len() > 1 { app.auto_save_on_focus_change(); }
-                        app.active_tab = if matches!(cmd_id, "next_tab" | "next_tab_page") {
-                            (app.active_tab + 1) % app.tabs.len()
-                        } else {
-                            app.active_tab.checked_sub(1).unwrap_or(app.tabs.len() - 1)
-                        };
-                        app.validate_diff_state_for_active_tab();
-                        app.touch_tab_mru(app.active_tab);
-                        app.refresh_git_line_status_async();
-                        app.active_pane = ActivePane::Editor;
-                        app.terminal_panel_focused = false;
-                    }
-                    return false;
-                }
-                "clipboard_history" => {
-                    // Ctrl+Shift+V: cycle paste from clipboard history
-                    if app.diff_selection_owns_cursor() || app.editor().is_none_or(|ed| ed.read_only) {
-                        return false;
-                    }
-                    if app.clipboard_history.is_empty() {
-                        app.notify("Clipboard history is empty");
-                    } else {
-                        if app.paste_in_progress() { app.notify_warn("Wait for the current paste or cancel it first"); return false; }
-                        let history_len = app.clipboard_history.len();
-                        if app.clipboard_cycle_active {
-                            if let Some(ed) = app.editor_mut() {
-                                ed.undo();
-                            }
-                            app.clipboard_cycle_index =
-                                (app.clipboard_cycle_index + 1) % history_len;
-                        } else {
-                            app.clipboard_cycle_active = true;
-                            app.clipboard_cycle_index = 0;
-                        }
-                        let real_idx = history_len - 1 - app.clipboard_cycle_index;
-                        if let Some(text) = app.clipboard_history.get(real_idx).cloned() {
-                            app.paste_editor_text(text, true);
-                        }
-                    }
-                    return false;
-                }
-                _ => {
-                    // Try to dispatch via palette command system
-                    app.execute_palette_command(cmd_id);
-                    return false;
-                }
+            if !native || legacy_reassigned {
+                dispatch_shortcut(app, command);
+                return false;
             }
         }
-
-        if (!key.modifiers.is_empty() || matches!(key.code, KeyCode::F(_)))
-            && app.shortcut_default_overridden((key.modifiers, key.code), None) {
-            if let Some(command) = app.remaining_default_shortcut((key.modifiers, key.code)) {
-                app.execute_palette_command(command);
-            }
-            return false;
-        }
+        if legacy_reassigned { return false; }
 
         // Global keybindings (Ctrl+*)
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -527,18 +235,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             && (key.code == KeyCode::Char('X') || key.code == KeyCode::Char('x'))
         {
             app.execute_palette_command("extensions");
-            app.terminal_panel_focused = false;
-            return false;
-        }
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.modifiers.contains(KeyModifiers::SHIFT)
-            && (key.code == KeyCode::Char('E') || key.code == KeyCode::Char('e'))
-        {
-            // Ctrl+Shift+E: toggle/focus explorer
-            if !app.show_explorer {
-                app.show_explorer = true;
-            }
-            app.active_pane = crate::app::ActivePane::Explorer;
             app.terminal_panel_focused = false;
             return false;
         }
@@ -594,22 +290,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             app.execute_palette_command("rename_symbol");
             return false;
         }
-        // F3/Shift+F3: Find next/previous
-        if key.code == KeyCode::F(3) {
-            if !app.search_query.is_empty() {
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    app.search_prev();
-                } else {
-                    app.search_next();
-                }
-            }
-            return false;
-        }
-        // F11: Toggle zen mode
-        if key.code == KeyCode::F(11) && key.modifiers.is_empty() {
-            app.execute_palette_command("toggle_zen");
-            return false;
-        }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('q') => {
@@ -622,14 +302,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                 }
                 KeyCode::Char('b') => {
                     app.toggle_explorer();
-                    return false;
-                }
-                KeyCode::Char('`') => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        app.execute_palette_command("new_terminal");
-                    } else {
-                        app.toggle_terminal_sidebar();
-                    }
                     return false;
                 }
                 KeyCode::Char('w') => {
@@ -801,20 +473,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                     }
                     return false;
                 }
-                KeyCode::Char('k' | 'K') => {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        // Ctrl+Shift+K: delete line
-                        if let Some(ed) = app.editor_mut_writable() {
-                            ed.delete_line();
-                        }
-                    } else {
-                        // Ctrl+K: enter chord mode
-                        app.chord_pending = true;
-                        app.chord_start = std::time::Instant::now();
-                        app.notify("Ctrl+K ...");
-                    }
-                    return false;
-                }
                 KeyCode::Char('\\') => {
                     if key.modifiers.contains(KeyModifiers::SHIFT) {
                         // Ctrl+Shift+\: select to matching bracket
@@ -862,30 +520,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                 KeyCode::Char('o') => {
                     // Ctrl+O: open folder / change directory
                     crate::ui_workspaces::open_folder(app);
-                    return false;
-                }
-                KeyCode::Char(',') => {
-                    // Toggle settings tab
-                    if app.tabs.get(app.active_tab).map(|t| t.kind)
-                        == Some(crate::app::TabKind::Settings)
-                    {
-                        app.close_tab(app.active_tab);
-                        app.settings_editor_active = false;
-                    } else {
-                        app.open_settings_tab();
-                        app.settings_selected = 0;
-                        app.settings_category_selected = 0;
-                        app.settings_section_selected = None;
-                        app.settings_category_scroll = 0;
-                        app.settings_category_collapsed.fill(true);
-                        app.settings_category_area = None;
-                        app.settings_focus_categories = false;
-                        app.settings_editor_scroll = 0;
-                        app.settings_editor_search.clear();
-                        app.settings_editor_search_cursor = 0;
-                        app.settings_editor_search_selection_anchor = None;
-                        app.ensure_settings_selection_visible();
-                    }
                     return false;
                 }
                 _ => {}
@@ -1285,7 +919,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         input::handle_global_search_key(app, key.code, key.modifiers);
         return false;
     }
-    if app.global_search_active && app.global_search_results_focused {
+    if !shell_focus && app.global_search_active && app.global_search_results_focused {
         input::handle_global_search_results_key(app, key.code, key.modifiers);
         return false;
     }
@@ -1314,7 +948,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     if crate::ui_extension_info::handle_key(app, key) { return false; }
 
     if app.active_pane == ActivePane::Editor
-        && app.shortcut_default_overridden((key.modifiers, key.code), None) {
+        && app.shortcut_default_overridden((key.modifiers, key.code)) {
         return false;
     }
     if crate::ui_git_amend::handle_key(app, key) { return false; }
@@ -1325,6 +959,124 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         ActivePane::Panel => {},
     }
     false
+}
+
+fn dispatch_shortcut(app: &mut App, cmd_id: &str) {
+    if app.route_explorer_edit_command(cmd_id) { return; }
+    // End clipboard cycle on any keybinding that isn't clipboard_history
+    if app.clipboard_cycle_active && cmd_id != "clipboard_history" {
+        app.clipboard_cycle_active = false;
+    }
+    match cmd_id {
+        "settings" if app.settings_editor_has_focus() => {
+            app.close_tab(app.active_tab);
+            app.settings_editor_active = false;
+        }
+        "quit" => {
+            app.exit_confirm_active = true;
+        }
+        "save" => {
+            app.save_current_file();
+        }
+        "toggle_explorer" => {
+            app.toggle_explorer();
+        }
+        "show_explorer" => {
+            app.show_explorer_view();
+            app.active_pane = ActivePane::Explorer;
+            app.terminal_panel_focused = false;
+        }
+        "toggle_terminal" => {
+            app.toggle_terminal_sidebar();
+        }
+        "close_tab" => {
+            app.close_tab(app.active_tab);
+        }
+        "palette" => {
+            app.open_palette();
+        }
+        "go_to_line" => {
+            app.execute_palette_command("goto_line");
+        }
+        "tab_close_saved" => app.close_saved_tabs(),
+        "add_line_comment" => {
+            if let Some(editor) = app.editor_mut_writable() {
+                editor.add_line_comment();
+            }
+        }
+        "remove_line_comment" => {
+            if let Some(editor) = app.editor_mut_writable() {
+                editor.remove_line_comment();
+            }
+        }
+        "skip_occurrence" => {
+            if let Some(editor) = app.editor_mut() {
+                editor.skip_occurrence_select_next();
+            }
+        }
+        "show_shortcuts" => {
+            app.shortcuts_active = !app.shortcuts_active;
+            app.shortcuts_scroll = 0;
+        }
+
+        "find_next" => {
+            if !app.search_query.is_empty() {
+                app.search_next();
+            }
+        }
+        "find_prev" => {
+            if !app.search_query.is_empty() {
+                app.search_prev();
+            }
+        }
+        "toggle_problems" => {
+            crate::ui_panels::toggle_problems(app);
+        }
+        "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page" => {
+            if !app.tabs.is_empty() {
+                app.sync_duplicate_file_tabs();
+                app.clear_transient_editor_state();
+                if app.tabs.len() > 1 { app.auto_save_on_focus_change(); }
+                app.active_tab = if matches!(cmd_id, "next_tab" | "next_tab_page") {
+                    (app.active_tab + 1) % app.tabs.len()
+                } else {
+                    app.active_tab.checked_sub(1).unwrap_or(app.tabs.len() - 1)
+                };
+                app.validate_diff_state_for_active_tab();
+                app.touch_tab_mru(app.active_tab);
+                app.refresh_git_line_status_async();
+                app.active_pane = ActivePane::Editor;
+                app.terminal_panel_focused = false;
+            }
+        }
+        "clipboard_history" => {
+            // Ctrl+Shift+V: cycle paste from clipboard history
+            if app.diff_selection_owns_cursor() || app.editor().is_none_or(|ed| ed.read_only) {
+                return;
+            }
+            if app.clipboard_history.is_empty() {
+                app.notify("Clipboard history is empty");
+            } else {
+                if app.paste_in_progress() { app.notify_warn("Wait for the current paste or cancel it first"); return; }
+                let history_len = app.clipboard_history.len();
+                if app.clipboard_cycle_active {
+                    if let Some(ed) = app.editor_mut() {
+                        ed.undo();
+                    }
+                    app.clipboard_cycle_index =
+                        (app.clipboard_cycle_index + 1) % history_len;
+                } else {
+                    app.clipboard_cycle_active = true;
+                    app.clipboard_cycle_index = 0;
+                }
+                let real_idx = history_len - 1 - app.clipboard_cycle_index;
+                if let Some(text) = app.clipboard_history.get(real_idx).cloned() {
+                    app.paste_editor_text(text, true);
+                }
+            }
+        }
+        _ => { app.execute_palette_command(cmd_id); }
+    }
 }
 
 #[cfg(test)]
@@ -1493,10 +1245,10 @@ mod tests {
         app.show_panel = true;
         app.panel_tab = 1;
         app.terminal_panel_focused = false;
-        assert!(!terminal_has_focus(&app));
+        assert!(!crate::shortcut_context::Context::new(&app).shell_focus());
 
         app.terminal_panel_focused = true;
-        assert!(terminal_has_focus(&app));
+        assert!(crate::shortcut_context::Context::new(&app).shell_focus());
     }
 
     #[test]
@@ -1524,7 +1276,7 @@ mod tests {
                 app.panel_tab = 1;
                 app.terminal_panel_focused = true;
 
-                assert!(terminal_has_focus(&app));
+                assert!(crate::shortcut_context::Context::new(&app).shell_focus());
                 assert!(app.focused_text_input_id().is_none());
                 handle_keyboard_event(&mut app, key(KeyCode::Char('7')));
                 handle_keyboard_event(&mut app, key_mod(KeyCode::Char('a'), KeyModifiers::CONTROL));
@@ -1609,13 +1361,104 @@ mod tests {
         app.show_terminal_sidebar = true;
         app.terminal_panel_focused = true;
 
-        assert!(!terminal_workbench_shortcut(&app, key_mod(KeyCode::Char('`'), KeyModifiers::CONTROL)));
-        assert!(!terminal_workbench_shortcut(&app, key_mod(KeyCode::Char('k'), KeyModifiers::CONTROL)));
+        assert!(app.resolve_shortcut((KeyModifiers::CONTROL, KeyCode::Char('`')), None).is_none());
+        assert!(app.resolve_shortcut((KeyModifiers::CONTROL, KeyCode::Char('k')), None).is_none());
         handle_keyboard_event(&mut app, key_mod(KeyCode::F(6), KeyModifiers::CONTROL));
         assert!(app.chord_pending);
         handle_keyboard_event(&mut app, key(KeyCode::F(7)));
         assert!(!app.show_terminal_sidebar);
         assert!(input.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reopen_closed_shortcut_in_terminal_follows_its_live_context() {
+        use crate::app::{Tab, TabKind, TerminalDock};
+
+        for docked in [false, true] {
+            for (fullscreen, when, should_reopen) in [
+                (false, None, true),
+                (true, None, false),
+                (false, Some("editorTextFocus"), false),
+                (true, Some("terminalFocus && terminalAltScreen"), true),
+            ] {
+                let mut app = App::test_new();
+                let mut terminal = crate::terminal::TerminalEmulator::test_with_output(
+                    40, 20, if fullscreen { "\x1b[?1049h" } else { "" },
+                );
+                let input = terminal.test_capture_input();
+                app.terminals[0].terminal_pty = Some(terminal);
+                if docked {
+                    app.terminals[0].dock = TerminalDock::Right;
+                    app.show_terminal_sidebar = true;
+                    app.terminal_panel_focused = true;
+                } else {
+                    let mut tab = Tab::new_file(crate::editor::Editor::new());
+                    tab.kind = TabKind::Terminal;
+                    tab.terminal_idx = Some(0);
+                    app.tabs = vec![tab];
+                }
+                app.active_tab = 0;
+                app.active_pane = ActivePane::Editor;
+                assert_eq!(app.focused_terminal_is_fullscreen(), fullscreen);
+                if let Some(when) = when {
+                    App::apply_shortcut_overrides(&mut app.keybindings, &[crate::settings::KeybindingSetting {
+                        command: Some("reopen_closed".into()),
+                        when: Some(when.into()),
+                        ..Default::default()
+                    }]);
+                }
+
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("closed.txt");
+                std::fs::write(&path, "Reopened content").unwrap();
+                app.closed_tab_paths.push_back((path.clone(), 0, 0));
+                handle_keyboard_event(&mut app, key_mod(KeyCode::Char('T'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+                assert_eq!(app.closed_tab_paths.is_empty(), should_reopen, "docked={docked} fullscreen={fullscreen} {when:?}");
+                assert_eq!(input.lock().unwrap().is_empty(), should_reopen);
+                if should_reopen {
+                    assert!(app.focused_terminal_index().is_none());
+                    assert!(app.tabs[app.active_tab].editor.file_path.as_ref().is_some_and(|file|
+                        file.ends_with("closed.txt")));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_focus_keeps_shell_editing_keys_available() {
+        let mut app = App::test_new();
+        let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
+        let input = pty.test_capture_input();
+        app.terminals[0].terminal_pty = Some(pty);
+        app.terminals[0].dock = crate::app::TerminalDock::Right;
+        app.show_terminal_sidebar = true;
+        app.terminal_panel_focused = true;
+        for (code, modifiers, expected) in [
+            ('f', KeyModifiers::ALT, b"\x1bf".as_slice()),
+            ('r', KeyModifiers::CONTROL, b"\x12".as_slice()),
+            ('c', KeyModifiers::CONTROL, b"\x03".as_slice()),
+        ] {
+            handle_keyboard_event(&mut app, key_mod(KeyCode::Char(code), modifiers));
+            let bytes = std::mem::take(&mut *input.lock().unwrap());
+            assert_eq!(bytes, expected);
+        }
+    }
+
+    #[test]
+    fn command_palette_over_terminal_owns_its_editing_shortcuts() {
+        let mut app = App::test_new();
+        app.active_pane = ActivePane::Editor;
+        app.terminals[0].dock = crate::app::TerminalDock::Right;
+        app.show_terminal_sidebar = true;
+        app.terminal_panel_focused = true;
+        app.open_palette();
+        app.palette.query = "theme".into();
+        app.palette.cursor = app.palette.query.len();
+
+        handle_keyboard_event(&mut app, key_mod(KeyCode::Char('a'), KeyModifiers::CONTROL));
+
+        assert_eq!(app.palette.selection_anchor, Some(0));
+        assert!(app.docked_terminal_has_focus());
     }
 
     // ── Exit confirmation dialog ──────────────────────────────────────
@@ -1715,7 +1558,7 @@ mod tests {
     #[test]
     fn ctrl_a_is_owned_by_settings_search_field_before_editor_keybindings() {
         let mut app = App::test_new();
-        app.settings_editor_active = true;
+        app.open_settings_tab();
         app.settings_focus_categories = false;
         app.active_pane = ActivePane::Editor;
         app.settings_editor_search = "font size".into();
@@ -1734,8 +1577,7 @@ mod tests {
     #[test]
     fn numeric_settings_input_precedes_custom_digit_keybindings() {
         let mut app = App::test_new();
-        app.settings_editor_active = true;
-        app.active_pane = ActivePane::Editor;
+        app.open_settings_tab();
         let binding = app
             .keybindings
             .iter_mut()

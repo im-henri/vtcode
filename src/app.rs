@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::editor::Editor;
 use crate::explorer::FileExplorer;
@@ -4841,76 +4840,6 @@ impl App {
             }
         }
         self.notify(format!("No definition found for '{word}'"));
-    }
-
-    fn keycode_matches_binding(binding_code: KeyCode, event_code: KeyCode) -> bool {
-        match (binding_code, event_code) {
-            (KeyCode::Char(a), KeyCode::Char(b))
-                if a.is_ascii_alphabetic() && b.is_ascii_alphabetic() =>
-            {
-                a.eq_ignore_ascii_case(&b)
-            }
-            _ => binding_code == event_code,
-        }
-    }
-
-    /// Look up which command ID is bound to a given key event
-    pub(crate) fn lookup_keybinding(
-        &self,
-        modifiers: KeyModifiers,
-        code: KeyCode,
-    ) -> Option<&'static str> {
-        // Terminals can encode Shift+Tab either in the key code or modifiers.
-        // Normalize both events and bindings, including user-assigned shortcuts.
-        let normalize = |modifiers: KeyModifiers, code: KeyCode| {
-            if code == KeyCode::BackTab {
-                (modifiers | KeyModifiers::SHIFT, KeyCode::Tab)
-            } else {
-                (modifiers, code)
-            }
-        };
-        let (modifiers, code) = normalize(modifiers, code);
-        for kb in &self.keybindings {
-            if kb.code == KeyCode::Null || kb.chord.is_some() || !self.shortcut_applies(kb)
-                || (kb.built_in_handler && !kb.is_modified()) {
-                continue;
-            }
-            let (binding_modifiers, binding_code) = normalize(kb.modifiers, kb.code);
-            if binding_modifiers == modifiers && Self::keycode_matches_binding(binding_code, code) {
-                return Some(kb.id);
-            }
-        }
-
-        // Accept shifted letter variants for non-shift letter shortcuts (e.g. Ctrl+Shift+W -> Ctrl+W).
-        // Save As owns Ctrl+Shift+S unless the user explicitly rebound it.
-        if modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            && matches!(code, KeyCode::Char('s' | 'S')) { return None; }
-        if modifiers.contains(KeyModifiers::SHIFT)
-            && matches!(code, KeyCode::Char(c) if c.is_ascii_alphabetic())
-        {
-            // Keep Ctrl+Shift+Z and Ctrl+Shift+V distinct so they aren't normalized.
-            if modifiers.contains(KeyModifiers::CONTROL)
-                && matches!(code, KeyCode::Char('z' | 'Z' | 'v' | 'V'))
-            {
-                return None;
-            }
-            let mut normalized_modifiers = modifiers;
-            normalized_modifiers.remove(KeyModifiers::SHIFT);
-            for kb in &self.keybindings {
-                if kb.code == KeyCode::Null || kb.chord.is_some() || !self.shortcut_applies(kb)
-                    || (kb.built_in_handler && !kb.is_modified()) {
-                    continue;
-                }
-                let (binding_modifiers, binding_code) = normalize(kb.modifiers, kb.code);
-                if binding_modifiers == normalized_modifiers
-                    && Self::keycode_matches_binding(binding_code, code)
-                {
-                    return Some(kb.id);
-                }
-            }
-        }
-
-        None
     }
 
     pub(crate) fn clear_lsp_syncs(&mut self) {

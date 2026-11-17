@@ -1476,8 +1476,7 @@ mod tests {
 
         for (label, _, id) in dropdowns {
             let mut app = App::test_new();
-            app.settings_editor_active = true;
-            app.active_pane = crate::app::ActivePane::Editor;
+            app.open_settings_tab();
             app.settings_focus_categories = false;
             app.settings_category_selected = App::settings_category_for_id(&id);
             app.settings_editor_search = label;
@@ -1632,10 +1631,9 @@ mod tests {
         let height = 32;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
         let mut app = App::test_new();
+        app.open_settings_tab();
         app.colors.ui.settings_controls[2].background = crate::theme_workbench::ColorLayer::rgba(11, 22, 33, 255);
         app.colors.ui.settings_controls[2].foreground = crate::theme_workbench::ColorLayer::rgba(224, 225, 226, 255);
-        app.settings_editor_active = true;
-        app.active_pane = crate::app::ActivePane::Editor;
         app.settings_category_selected = 1;
         app.settings_selected = app
             .settings_items()
@@ -1717,9 +1715,8 @@ mod tests {
         for width in [46, 100] {
             for &id in &ids {
                 let mut app = App::test_new();
+                app.open_settings_tab();
                 let enabled_before = AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect));
-                app.settings_editor_active = true;
-                app.active_pane = crate::app::ActivePane::Editor;
                 app.settings_focus_categories = false;
                 app.settings_category_selected = 7;
                 app.settings_scope = crate::settings::SettingsScope::Workspace;
@@ -1971,8 +1968,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         for width in [40, 120] {
             let mut app = App::test_new();
-            app.settings_editor_active = true;
-            app.active_pane = crate::app::ActivePane::Editor;
+            app.open_settings_tab();
             app.settings_editor_search = "Show Activity Bar".into();
             app.ensure_settings_selection_visible();
             let mut terminal = Terminal::new(TestBackend::new(width, 32)).unwrap();

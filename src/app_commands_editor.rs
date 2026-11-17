@@ -30,25 +30,11 @@ impl App {
                 if let Some(ed) = self.editor_mut() { ed.unfold_all(); }
                 self.notify("All regions unfolded");
             }
-            "fold_level_1" => {
-                if let Some(ed) = self.editor_mut() { ed.fold_at_level(1); }
-                self.notify("Folded at level 1");
-            }
-            "fold_level_2" => {
-                if let Some(ed) = self.editor_mut() { ed.fold_at_level(2); }
-                self.notify("Folded at level 2");
-            }
-            "fold_level_3" => {
-                if let Some(ed) = self.editor_mut() { ed.fold_at_level(3); }
-                self.notify("Folded at level 3");
-            }
-            "fold_level_4" => {
-                if let Some(ed) = self.editor_mut() { ed.fold_at_level(4); }
-                self.notify("Folded at level 4");
-            }
-            "fold_level_5" => {
-                if let Some(ed) = self.editor_mut() { ed.fold_at_level(5); }
-                self.notify("Folded at level 5");
+            id @ ("fold_level_1" | "fold_level_2" | "fold_level_3" | "fold_level_4"
+                | "fold_level_5" | "fold_level_6" | "fold_level_7" | "fold_level_8" | "fold_level_9") => {
+                let level = usize::from(id.as_bytes()[id.len() - 1] - b'0');
+                if let Some(ed) = self.editor_mut() { ed.fold_at_level(level); }
+                self.notify(format!("Folded at level {level}"));
             }
             "remove_empty_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -697,6 +683,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         for code in ['c', 'u'] {
             let mut app = app_with_content("// alpha\nbeta\n");
+            app.active_pane = crate::app::ActivePane::Editor;
             let editor = app.editor_mut().unwrap();
             editor.language_override = Some("C".into());
             editor.read_only = true;
@@ -714,6 +701,7 @@ mod tests {
     fn edge_case_comment_chords_execute_before_standalone_shortcuts() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = app_with_content("alpha\n");
+        app.active_pane = crate::app::ActivePane::Editor;
         app.editor_mut().unwrap().language_override = Some("C".into());
         for (code, expected) in [('c', "// alpha\n"), ('u', "alpha\n")] {
             for key in ['k', code] {

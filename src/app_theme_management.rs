@@ -319,11 +319,10 @@ mod tests {
         let root = temp.path().join(".vtcode/theme-extensions");
         let themes = crate::theme_install::install(source.to_str().unwrap(), &root).unwrap();
         let mut app = App::test_new();
+        app.open_settings_tab();
         app.loaded_themes = crate::app_theme_loader::load_builtin_themes();
         crate::app_theme::merge_themes(&mut app.loaded_themes, themes.clone());
         app.theme_management.storage_root = Some(root);
-        app.settings_editor_active = true;
-        app.active_pane = crate::app::ActivePane::Editor;
         app.settings_category_selected = 2;
         app.settings_category_collapsed[2] = false;
         app.settings_selected = app

@@ -46,6 +46,8 @@ pub struct KeybindingSetting {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modifiers: Option<u8>,
@@ -275,11 +277,18 @@ fn merge_keybinding_layers(
                     && entry.index.is_some()
                     && entry.index == existing.index)
         });
+        let mut entry = entry.clone();
         if let Some(index) = matching_index {
-            merged[index] = entry.clone();
-        } else {
-            merged.push(entry.clone());
+            if entry.when.as_deref().is_some_and(|when| crate::shortcut_context::When::parse(when).is_err()) {
+                continue;
+            }
+            let inherited = merged.remove(index);
+            entry.when = entry.when.or_else(|| inherited.when.filter(|when| crate::shortcut_context::When::parse(when).is_ok()));
+            entry.key = entry.key.or(inherited.key);
+            entry.modifiers = entry.modifiers.or(inherited.modifiers);
+            entry.key_code = entry.key_code.or(inherited.key_code);
         }
+        merged.push(entry);
     }
     Some(merged)
 }

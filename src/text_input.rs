@@ -1025,6 +1025,9 @@ impl App {
             return Some(TextInputId::QuickOpen);
         }
         if let Some(id) = self.focused_terminal_find() { return Some(TextInputId::TerminalFind(id)); }
+        if self.focused_terminal_index().is_some() {
+            return None;
+        }
         let sidebar_search_active =
             self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search;
         if self.sidebar_is_visible() && self.sidebar_view == crate::app::SidebarView::Remote
@@ -1794,7 +1797,7 @@ mod tests {
                 app.begin_terminal_rename(app.active_terminal);
             }
             TextInputId::SettingsSearch | TextInputId::SettingsValue => {
-                app.settings_editor_active = true;
+                app.open_settings_tab();
                 app.settings_focus_categories = false;
                 if id == TextInputId::SettingsValue {
                     app.begin_numeric_setting_edit("tab_size", "");
@@ -2433,7 +2436,7 @@ mod tests {
     #[test]
     fn settings_search_click_uses_the_same_focus_and_caret_path() {
         let mut app = App::test_new();
-        app.settings_editor_active = true;
+        app.open_settings_tab();
         app.settings_focus_categories = true;
         app.settings_editor_search = "editor font".into();
         app.settings_editor_search_cursor = app.settings_editor_search.len();
