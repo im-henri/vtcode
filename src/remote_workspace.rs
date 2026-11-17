@@ -550,17 +550,30 @@ impl Workspace {
         key: &Path,
         baseline: Option<&Baseline>,
     ) -> io::Result<crate::editor::LoadedTextFile> {
+        self.reload_with_cancel(key, baseline, None)
+    }
+
+    pub(crate) fn reload_with_cancel(
+        &self,
+        key: &Path,
+        baseline: Option<&Baseline>,
+        cancel: Option<&crate::background::CancellationToken>,
+    ) -> io::Result<crate::editor::LoadedTextFile> {
         let path = self.remote_path(key)?;
         let operation = self.client.file_operation("Reload document", &path);
         super::diagnostics::Operation::run(
             operation.as_ref(),
             || {
-                let _permit = self.client.text_permit()?;
-                let reply = self.client.call_file(Command::Reload {
+                let _permit = self.client.text_permit_cancellable(cancel)?;
+                let command = Command::Reload {
                     path,
                     known: baseline.map(|old| old.checkpoint.revision.clone()),
                     read_changed: true,
-                })?;
+                };
+                let reply = match cancel {
+                    Some(cancel) => self.client.call_cancellable(command, cancel)?,
+                    None => self.client.call_file(command)?,
+                };
                 if let Reply::Unchanged {
                     identity,
                     size,
@@ -585,7 +598,7 @@ impl Workspace {
                 if let Some(operation) = &operation {
                     operation.stage("Decode document / receive text");
                 }
-                self.decode_opened(reply, None, |_, _| {})
+                self.decode_opened(reply, cancel, |_, _| {})
             },
             |loaded| {
                 format!(

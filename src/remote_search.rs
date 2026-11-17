@@ -1,6 +1,5 @@
-//! Workspace scans run beside the remote disk. Unsaved/open buffers are searched
-//! locally and excluded from this request; their contents are never retransmitted
-//! merely to perform a workspace search.
+//! Workspace scans run beside the remote disk. Open buffers are searched by the
+//! client, with changed disk content fetched for clean views as needed.
 use super::*;
 use crate::{
     app::App, app_global_search::GlobalSearchSpec, background::CancellationToken,

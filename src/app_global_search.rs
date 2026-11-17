@@ -1,11 +1,54 @@
-use crate::app::{App, GlobalSearchResult};
+use crate::{
+    app::{App, GlobalSearchResult},
+    background::{BackgroundResult, CancellationToken},
+    editor::{DiskSaveBaseline, LoadedTextFile},
+    remote::{Checkpoint, workspace::{Baseline, Workspace}},
+};
 
+use std::borrow::Cow;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use crate::search_regex::SearchRegex;
 use crate::search_walk::{MatchedFiles, OpenFileAliases, has_parent_traversal};
 
 type OpenSearchBuffers = rustc_hash::FxHashMap<PathBuf, ropey::Rope>;
+
+struct SavedSearchBuffer {
+    saved: DiskSaveBaseline,
+    checkpoint: Option<Arc<Checkpoint>>,
+    targets: Vec<(u64, u64)>,
+}
+
+impl SavedSearchBuffer {
+    /// Reuse the saved Rope after verifying the file's bytes. Remote nodes can
+    /// verify their checkpoint without sending an unchanged file back.
+    fn read_changed(
+        &self,
+        path: &Path,
+        remote: Option<&Workspace>,
+        cancel: &CancellationToken,
+    ) -> io::Result<Option<LoadedTextFile>> {
+        if let Some(remote) = remote.filter(|_| crate::remote::workspace::is_view_key(path)) {
+            let baseline = self.checkpoint.as_ref().map(|checkpoint| Baseline {
+                checkpoint: checkpoint.clone(),
+                rope: self.saved.rope.clone(),
+                encoding: self.saved.encoding,
+            });
+            let loaded = remote.reload_with_cancel(path, baseline.as_ref(), Some(cancel))?;
+            return Ok((!loaded.rope.is_instance(&self.saved.rope)).then_some(loaded));
+        }
+        if self.saved.validate_cancellable(path, cancel).is_ok() {
+            return Ok(None);
+        }
+        if cancel.is_cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        let (file, metadata) = crate::fs_ops::open_document_source(path, false)?;
+        crate::editor::decode_text_source(file, metadata, path, Some(cancel)).map(Some)
+    }
+}
 
 const MODEL_SEARCH_QUIET_PERIOD: Duration = Duration::from_millis(75);
 
@@ -342,16 +385,44 @@ impl App {
         let settings = self.settings_for_scope(crate::settings::SettingsScope::Workspace);
         let follow_links = settings.search_follow_symlinks.unwrap_or(true);
         let max_results = self.max_global_search_results;
-        let open_buffers: OpenSearchBuffers = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
-            .filter(|tab| tab.kind == crate::app::TabKind::File)
-            .filter_map(|tab| {
-                tab.editor.refresh_document();
-                if tab.editor.bg_loading { return None; }
-                Some((tab.editor.file_path.clone()?, tab.editor.rope.clone()))
-            })
-            .collect();
+        let mut open_buffers = OpenSearchBuffers::default();
+        let mut saved_buffers = rustc_hash::FxHashMap::default();
+        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+            if tab.kind != crate::app::TabKind::File { continue; }
+            let editor = &mut tab.editor;
+            editor.refresh_document();
+            let Some(path) = editor.file_path.as_ref() else { continue; };
+            if editor.save_content_error().is_some() { continue; }
+            let Some(rope) = editor.saved_rope.as_ref().filter(|_| !editor.modified) else {
+                open_buffers.insert(path.clone(), editor.rope.clone());
+                continue;
+            };
+            let saved = saved_buffers.entry(path.clone()).or_insert_with(|| SavedSearchBuffer {
+                saved: DiskSaveBaseline { rope: rope.clone(), encoding: editor.saved_encoding },
+                checkpoint: editor.remote_checkpoint.clone(),
+                targets: Vec::new(),
+            });
+            saved.targets.push((editor.navigation_id, editor.content_version));
+        }
+        saved_buffers.retain(|path, _| !open_buffers.contains_key(path));
         let sender = self.background.sender.clone();
         let generation = self.search_generation;
+        let workspace_generation = self.workspace_generation;
+        let reload_sender = sender.clone();
+        let search_saved = move |path: &Path, saved: &SavedSearchBuffer, remote: Option<&Workspace>, cancel: &CancellationToken| {
+            match saved.read_changed(path, remote, cancel).ok()? {
+                None => Some(saved.saved.rope.clone()),
+                Some(loaded) => {
+                    if cancel.is_cancelled() { return None; }
+                    let rope = (loaded.encoding != "Binary").then(|| loaded.rope.clone());
+                    let _ = reload_sender.send(BackgroundResult::SearchFileReloaded {
+                        workspace_generation, generation, path: path.to_owned(),
+                        targets: saved.targets.clone(), loaded,
+                    });
+                    rope
+                }
+            }
+        };
         self.bg_global_search_running = true;
         if let Some(remote) = self.remote_workspace.clone() {
             let request = crate::remote::search::Query {
@@ -368,7 +439,7 @@ impl App {
                 // View keys are opaque client paths. Native include/exclude
                 // semantics belong to the node, including absolute and ~/ paths.
                 // Cache scope replies when the node used only path metadata.
-                let mut paths = open_buffers.keys().cloned().collect::<Vec<_>>();
+                let mut paths = open_buffers.keys().chain(saved_buffers.keys()).cloned().collect::<Vec<_>>();
                 paths.sort_unstable();
                 let selected = match remote.search_scope_with_settings(&paths, &include, &exclude,
                     &request.files_exclude, &request.search_exclude, &cancel) {
@@ -379,7 +450,7 @@ impl App {
                     }
                 };
                 if cancel.is_cancelled() { return; }
-                let scan_drafts = |indices: &[usize], limit| {
+                let scan_open = |indices: &[usize], limit| {
                     let mut results = Vec::new();
                     let mut truncated = false;
                     if indices.is_empty() {
@@ -401,14 +472,21 @@ impl App {
                             break;
                         }
                         let path = &paths[index];
+                        let rope = if let Some(rope) = open_buffers.get(path) {
+                            Cow::Borrowed(rope)
+                        } else {
+                            let Some(rope) = search_saved(path, &saved_buffers[path], Some(&remote), &cancel)
+                            else { continue; };
+                            Cow::Owned(rope)
+                        };
                         Self::search_file_rope(
-                            path, &open_buffers[path], spec,
+                            path, &rope, spec,
                             &mut results, &mut truncated, &cancel,
                         );
                     }
                     Ok::<_, String>((results, truncated))
                 };
-                let (local, truncated) = match scan_drafts(&selected, max_results) {
+                let (local, truncated) = match scan_open(&selected, max_results) {
                     Ok(result) => result,
                     Err(error) => { search_failed(&sender, generation, error); return; }
                 };
@@ -446,7 +524,7 @@ impl App {
                             .map(|index| open_indices[index])
                             .filter(|index| selected.binary_search(index).is_err())
                             .collect();
-                        match scan_drafts(&aliases, remaining) {
+                        match scan_open(&aliases, remaining) {
                             Ok((results, draft_truncated)) if !cancel.is_cancelled() => {
                                 let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults {
                                     results, done: true, generation,
@@ -475,7 +553,7 @@ impl App {
             let setting_excludes = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(
                 &settings.files_exclude, &settings.search_exclude));
             if cancel.is_cancelled() { return; }
-            let open_paths: Vec<_> = open_buffers.keys().map(PathBuf::as_path).collect();
+            let open_paths: Vec<_> = open_buffers.keys().chain(saved_buffers.keys()).map(PathBuf::as_path).collect();
             let open_aliases = OpenFileAliases::new(
                 open_paths.iter().copied().enumerate(),
                 &includes,
@@ -499,9 +577,10 @@ impl App {
             let mut last_publish = std::time::Instant::now();
             let mut visited = rustc_hash::FxHashSet::default();
             let mut matched_files = follow_links.then(MatchedFiles::default);
-            // Open models use TextModelSearch, bypass ignore files, and take
-            // precedence over the disk copy even when they contain no matches.
-            let mut paths = open_buffers.keys().cloned().map(|path| (path, true, false))
+            // Open files keep the editor's text matching and path rules.
+            // Drafts shadow disk text. Clean views are verified on demand.
+            let open_regex = regex.for_open_buffer();
+            let mut paths = open_paths.iter().map(|path| (path.to_path_buf(), true, false))
                 .chain(disk_paths.map(|(path, is_symlink)| (path, false, is_symlink)));
             loop {
                 if cancel.is_cancelled() { return; }
@@ -521,7 +600,7 @@ impl App {
                     if !included || excludes.excludes_with_aliases(&candidate, &root, &path_aliases)
                         || setting_excludes.excludes_tree(&path, &root) { continue; }
                 }
-                let (path, is_open) = if from_open || open_buffers.contains_key(&path) {
+                let (path, is_open) = if from_open || open_buffers.contains_key(&path) || saved_buffers.contains_key(&path) {
                     (path, true)
                 } else if let Some(index) = open_aliases.as_ref().and_then(|aliases| aliases.get(&path)) {
                     (open_paths[index].to_path_buf(), true)
@@ -535,7 +614,15 @@ impl App {
                     open_buffers: Some(&open_buffers),
                 };
                 let first_match = results.len();
-                Self::search_single_file(&path, &root, spec, &mut results, &mut truncated, &cancel);
+                if let Some(saved) = saved_buffers.get(&path) {
+                    if let Some(rope) = search_saved(&path, saved, None, &cancel) {
+                        Self::search_file_rope(&path, &rope,
+                            GlobalSearchSpec { regex: Some(&open_regex), ..spec },
+                            &mut results, &mut truncated, &cancel);
+                    }
+                } else {
+                    Self::search_single_file(&path, &root, spec, &mut results, &mut truncated, &cancel);
+                }
                 if (results.len() > first_match || truncated)
                     && let Some(matched_files) = &mut matched_files
                     && !is_open

@@ -2062,6 +2062,7 @@ impl App {
                     | crate::background::BackgroundResult::FileLoaded { .. }
                     | crate::background::BackgroundResult::FileLoadFailed { .. }
                     | crate::background::BackgroundResult::FileReloaded { .. }
+                    | crate::background::BackgroundResult::SearchFileReloaded { .. }
                     | crate::background::BackgroundResult::ExtensionsDiscovered { .. }
                     | crate::background::BackgroundResult::ExtensionsInitialized { .. }
                     | crate::background::BackgroundResult::ExtensionViewEventDone { .. }
@@ -3247,6 +3248,18 @@ impl App {
                         ));
                     }
                 }
+                crate::background::BackgroundResult::SearchFileReloaded { workspace_generation, generation, path, targets, loaded } => {
+                    if workspace_generation == self.workspace_generation
+                        && generation == self.search_generation
+                        && !self.pending_file_reloads.contains(&path)
+                        && !self.pending_file_saves.contains_key(&path)
+                        && !self.remote_connection.checking.contains(&path)
+                        && !self.chat.rollback.file_busy(&path)
+                    {
+                        self.refresh_source_control_diffs_for_paths(Some(&[path.clone()].into_iter().collect()));
+                        has_visual_changes |= self.apply_open_file_reload(&path, &targets, loaded, &mut file_reload_names);
+                    }
+                }
                 crate::background::BackgroundResult::FileReloaded { workspace_generation, path, targets, result } => {
                     if workspace_generation != self.workspace_generation {
                         continue;
@@ -3268,50 +3281,7 @@ impl App {
                     match result {
                         Ok(loaded) => {
                             self.remote_change_warnings.remove(&path);
-                            let mut applied = false;
-                            let default_read_only = self.default_read_only;
-                            let mut apply_reload = |tab: &mut crate::app::Tab| {
-                                if tab.editor.file_path.as_deref() == Some(path.as_path())
-                                    && tab.reloadable_file_path() == Some(path.as_path())
-                                    && targets.contains(&(tab.editor.navigation_id, tab.editor.content_version))
-                                {
-                                    let was_placeholder = tab.editor.save_content_error().is_some();
-                                    if tab.editor.apply_reloaded_file(loaded.clone()) {
-                                        file_reload_names.push(tab.editor.file_name().to_string());
-                                        applied = true;
-                                    }
-                                    if was_placeholder || loaded.encoding == "Binary" {
-                                        tab.editor.read_only = default_read_only || loaded.encoding == "Binary";
-                                        tab.editor.publish_document();
-                                    }
-                                }
-                            };
-                            for tab in &mut self.tabs {
-                                apply_reload(tab);
-                            }
-                            for group in &mut self.groups {
-                                for tab in &mut group.tabs {
-                                    apply_reload(tab);
-                                }
-                            }
-
-                            if applied {
-                                self.refresh_compare_diff();
-                            }
-                            if !applied && crate::remote::workspace::is_view_key(&path)
-                                && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-                                    .any(|tab| tab.kind == TabKind::File && tab.editor.file_path.as_ref() == Some(&path)
-                                        && tab.editor.modified && tab.editor.saved_rope.as_ref().is_some_and(|saved| !saved.is_instance(&loaded.rope))) {
-                                self.queue_remote_file_change(path.clone());
-                            }
-                            if applied
-                                && self.editor().and_then(|editor| editor.file_path.as_deref())
-                                    == Some(path.as_path())
-                            {
-                                self.blame_requested_path = None;
-                                self.refresh_git_line_status_async();
-                            }
-                            has_visual_changes |= applied;
+                            has_visual_changes |= self.apply_open_file_reload(&path, &targets, loaded, &mut file_reload_names);
                         }
                         Err(error) => {
                             let still_open =
@@ -4191,6 +4161,49 @@ impl App {
 
     pub(crate) fn editor_mut(&mut self) -> Option<&mut Editor> {
         self.tabs.get_mut(self.active_tab).map(|t| {t.editor.refresh_document(); &mut t.editor})
+    }
+
+    fn apply_open_file_reload(
+        &mut self,
+        path: &Path,
+        targets: &[(u64, u64)],
+        loaded: crate::editor::LoadedTextFile,
+        file_reload_names: &mut Vec<String>,
+    ) -> bool {
+        let mut applied = false;
+        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+            if tab.editor.file_path.as_deref() != Some(path)
+                || tab.reloadable_file_path() != Some(path)
+                || !targets.contains(&(tab.editor.navigation_id, tab.editor.content_version))
+            {
+                continue;
+            }
+            let was_placeholder = tab.editor.save_content_error().is_some();
+            if tab.editor.apply_reloaded_file(loaded.clone()) {
+                file_reload_names.push(tab.editor.file_name().to_string());
+                applied = true;
+            }
+            if was_placeholder || loaded.encoding == "Binary" {
+                tab.editor.read_only = self.default_read_only || loaded.encoding == "Binary";
+                tab.editor.publish_document();
+            }
+        }
+
+        if applied {
+            self.remote_change_warnings.remove(path);
+            self.refresh_compare_diff();
+            if self.editor().and_then(|editor| editor.file_path.as_deref()) == Some(path) {
+                self.blame_requested_path = None;
+                self.refresh_git_line_status_async();
+            }
+        } else if crate::remote::workspace::is_view_key(path)
+            && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+                .any(|tab| tab.kind == TabKind::File && tab.editor.file_path.as_deref() == Some(path)
+                    && tab.editor.modified && tab.editor.saved_rope.as_ref().is_some_and(|saved| !saved.is_instance(&loaded.rope)))
+        {
+            self.queue_remote_file_change(path.to_owned());
+        }
+        applied
     }
 
     /// Reload a clean open file without performing disk I/O or rope building

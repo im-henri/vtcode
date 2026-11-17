@@ -603,6 +603,14 @@ pub enum BackgroundResult {
         targets: Vec<(u64, u64)>, // document identity and content version at dispatch
         result: Result<crate::editor::LoadedTextFile, String>,
     },
+    /// Workspace Search read newer disk content for a clean open file.
+    SearchFileReloaded {
+        workspace_generation: u64,
+        generation: u64,
+        path: PathBuf,
+        targets: Vec<(u64, u64)>,
+        loaded: crate::editor::LoadedTextFile,
+    },
     NativeFileValidated {
         generation: u64,
         path: PathBuf,

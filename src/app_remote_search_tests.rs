@@ -31,6 +31,85 @@ fn search(app: &mut App) {
     );
 }
 
+#[test]
+fn workspace_search_reads_external_edits_in_clean_tabs_and_keeps_drafts() {
+    use crate::ui_search_controls::{self, SearchControl, SearchScope};
+
+    for use_remote in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let native = root.path().join("clean.txt");
+        let dirty = root.path().join("dirty.txt");
+        let original = "old needle\nno match!!\n";
+        std::fs::write(&native, original).unwrap();
+        std::fs::write(&dirty, "disk needle").unwrap();
+        let modified = std::fs::metadata(&native).unwrap().modified().unwrap();
+        let (mut app, workspace) = if use_remote {
+            let (app, workspace) = remote_app(root.path());
+            (app, Some(workspace))
+        } else {
+            (App::new_deferred(root.path().to_owned()), None)
+        };
+        app.source_control_enabled = false;
+        for path in [&native, &dirty] {
+            let (key, loaded) = if let Some(workspace) = &workspace {
+                let key = workspace.target_key(path.file_name().unwrap().to_str().unwrap()).unwrap();
+                let loaded = workspace.load(&key).unwrap();
+                (key, loaded)
+            } else {
+                (path.clone(), crate::editor::load_text_file(path).unwrap())
+            };
+            let mut editor = Editor::new_loading(&key, loaded.file_size);
+            editor.apply_reloaded_file(loaded);
+            if path == &dirty {
+                editor.select_all();
+                editor.paste_plain_with_text("draft needle");
+            }
+            app.tabs.push(Tab::new_file(editor));
+        }
+
+        app.global_search_query = "needle".into();
+        search(&mut app);
+        let clean_key = app.tabs[0].editor.file_path.clone().unwrap();
+        let dirty_key = app.tabs[1].editor.file_path.clone().unwrap();
+        let view = app.tabs[0].editor.navigation_id;
+        let assert_matches = |app: &App, line: usize, text: &str| {
+            assert_eq!(app.global_search_results.len(), 2);
+            let clean = app.global_search_results.iter().find(|hit| hit.file_path == clean_key).unwrap();
+            let draft = app.global_search_results.iter().find(|hit| hit.file_path == dirty_key).unwrap();
+            assert_eq!((clean.line_num, clean.line_text.as_ref()), (line, text));
+            assert_eq!(draft.line_text.as_ref(), "draft needle");
+            assert_eq!(app.tabs.len(), 2);
+            assert_eq!(app.tabs[0].editor.navigation_id, view);
+        };
+        assert_matches(&app, 1, "old needle");
+
+        // No watcher is running. Also preserve size and mtime on the first
+        // edit to prove that searches read the current file independently.
+        std::fs::write(&native, "no match!!\nnew needle\n").unwrap();
+        std::fs::File::options().write(true).open(&native).unwrap().set_modified(modified).unwrap();
+        std::fs::write(&dirty, "external needle").unwrap();
+        ui_search_controls::activate(&mut app, SearchScope::Workspace, SearchControl::Refresh);
+        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
+        assert_matches(&app, 2, "new needle");
+        assert_eq!(app.tabs[0].editor.rope, "no match!!\nnew needle\n");
+
+        let latest = "another needle\nlatest external edit\n";
+        std::fs::write(&native, latest).unwrap();
+        app.clear_global_search();
+        app.global_search_query = "needle".into();
+        app.schedule_global_search();
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            !app.bg_global_search_running && app.tabs[0].editor.rope == latest
+        });
+        assert_matches(&app, 1, "another needle");
+        assert!(!app.tabs[0].editor.modified);
+        assert_eq!(app.tabs[1].editor.rope, "draft needle");
+        assert!(app.tabs[1].editor.modified);
+        assert_eq!(std::fs::read_to_string(&dirty).unwrap(), "external needle");
+        if let Some(workspace) = workspace { workspace.client.call(remote::Command::Shutdown).unwrap(); }
+    }
+}
+
 /// A peer whose search completion is controlled by the test, rather than by
 /// disk speed or sleeps. This also exercises real framed transport delivery.
 fn controlled_search_peer(root: &Path) -> (remote::client::Client, mpsc::Receiver<remote::Request>, mpsc::Sender<remote::Response>) {
