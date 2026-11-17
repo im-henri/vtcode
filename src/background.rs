@@ -369,7 +369,7 @@ pub enum BackgroundResult {
     RemoteFileValidated { generation: u64, path: PathBuf, document: u64,
         baseline: crate::remote::workspace::Baseline,
         result: Result<crate::remote::workspace::Validation, String> },
-    RemoteLocationResolved { id: u64, result: Result<crate::remote::workspace::Location, String> },
+    RemoteLocationResolved { id: u64, result: std::io::Result<crate::remote::workspace::Location> },
     RemoteLocationProgress { id: u64, completed: u64, total: u64 },
     WorkspaceResult { generation: u64, result: Box<BackgroundResult> },
     RemoteFileResult { checkpoint: Arc<crate::remote::Checkpoint>, result: Box<BackgroundResult> },

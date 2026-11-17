@@ -88,6 +88,40 @@ fn begin_blocked(fixture: &mut Fixture, path: &Path) {
 }
 
 #[test]
+fn remote_editor_path_links_use_the_workspace_fallback_without_hover_io() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut fixture = setup();
+    let target = file(&fixture, "src/main.txt", "first\nsecond\nthird line\n");
+    let source = "src/main.txt:3:4\n";
+    let path = file(&fixture, "logs/build.log", source);
+    let mut editor = Editor::test_with_text(source);
+    editor.file_path = Some(path);
+    fixture.app.tabs = vec![Tab::new_file(editor)];
+    fixture.app.active_pane = ActivePane::Editor;
+    let mut terminal = Terminal::new(TestBackend::new(100, 15)).unwrap();
+    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut fixture.app, frame.area())).unwrap();
+    let area = fixture.app.code_area.unwrap();
+    let event = |kind| MouseEvent { kind, column: area.x + 4, row: area.y, modifiers: KeyModifiers::CONTROL };
+    let traffic = fixture.traffic.load(Ordering::Relaxed);
+    crate::mouse::handle_mouse(&mut fixture.app, event(MouseEventKind::Moved));
+    assert!(fixture.app.refresh_lsp_link_hover());
+    assert_eq!(fixture.traffic.load(Ordering::Relaxed), traffic);
+
+    fixture.hold.store(true, Ordering::Release);
+    crate::mouse::handle_mouse(&mut fixture.app, event(MouseEventKind::Down(MouseButton::Left)));
+    crate::mouse::handle_mouse(&mut fixture.app, event(MouseEventKind::Up(MouseButton::Left)));
+    until(|| fixture.blocked.load(Ordering::Acquire));
+    assert_eq!(fixture.app.tabs.len(), 1);
+    fixture.hold.store(false, Ordering::Release);
+    drain(&mut fixture);
+    let editor = fixture.app.editor().unwrap();
+    assert_eq!(editor.file_path.as_ref(), Some(&target));
+    assert_eq!((editor.cursor_line, editor.cursor_col), (2, 3));
+}
+
+#[test]
 fn remote_folder_browser_goes_up_to_the_nodes_filesystems_and_back() {
     use crate::folder_browser::{Action, Focus};
     let mut fixture = setup();

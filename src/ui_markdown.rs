@@ -1706,7 +1706,7 @@ impl App {
     pub(crate) fn markdown_preview_link_click(&mut self, col: u16, row: u16) -> bool {
         let Some(target) = self.editor().and_then(|ed| ed.markdown_preview_scroll.as_ref()).and_then(|view| view.link_at(col, row)) else { return false; };
         if let Some(anchor) = target.strip_prefix('#') {
-            let anchor = decode_fragment(anchor);
+            let anchor = crate::path_links::decode_percent_escapes(anchor);
             let editor = self.editor_mut().unwrap();
             let view = editor.markdown_preview_scroll.as_mut().unwrap();
             if let Some(source) = if anchor.is_empty() { Some(0) } else { view.anchors.get(&anchor).copied() } {
@@ -1914,19 +1914,6 @@ impl App {
         self.sync_markdown_preview_state();
         true
     }
-}
-
-fn decode_fragment(text: &str) -> String {
-    let mut out = Vec::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
-            && let (Some(a), Some(b)) = ((bytes[i + 1] as char).to_digit(16), (bytes[i + 2] as char).to_digit(16)) {
-            out.push((a * 16 + b) as u8); i += 3;
-        } else { out.push(bytes[i]); i += 1; }
-    }
-    String::from_utf8(out).unwrap_or_else(|_| text.into())
 }
 
 #[cfg(test)]

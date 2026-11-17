@@ -230,6 +230,11 @@ and `"src/main.c", line 12, column 7` also jump to the reported line and column.
 This works in local and SSH terminals. Relative paths follow directory changes
 reported by Bash, Zsh, Fish, and PowerShell shell integration.
 
+Use **Ctrl+click** on paths in plain text, log, and Markdown source tabs too.
+Relative paths start from the open file's folder. Bare relative paths also try
+the workspace root when the target is missing. Line and column references work
+in editor tabs as they do in the terminal.
+
 **View → Auto-hide Sidebar** hides the sidebar until you move the pointer to
 its edge or the Activity Bar. It stays open while you use sidebar fields or menus.
 This is off by default and can also be changed in **Settings → Workbench → Layout**

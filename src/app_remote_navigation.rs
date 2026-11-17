@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub(crate) enum Source {
     Chat,
     Markdown,
+    EditorLink,
     FileCommand,
     PathDialog,
     Terminal,
@@ -136,10 +137,11 @@ impl Origin {
 struct Request {
     id: u64,
     generation: u64,
-    // Local terminal links share cancellation and focus validation with SSH.
+    // Local paths share cancellation and focus validation with SSH.
     workspace: Option<Workspace>,
     root: PathBuf,
     path: PathBuf,
+    fallback: Option<PathBuf>,
     line: Option<u32>,
     column: u32,
     source: Source,
@@ -218,25 +220,33 @@ impl App {
     pub(crate) fn open_remote_location_at(
         &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source,
     ) {
-        if self.remote_workspace.is_some() { self.open_location_at(path, line, column, source); }
+        if self.remote_workspace.is_some() { self.open_location_at(path, line, column, source, None); }
     }
 
     pub(crate) fn open_terminal_location_at(&mut self, path: PathBuf, line: Option<u32>, column: u32) {
-        self.open_location_at(path, line, column, Source::Terminal);
+        self.open_location_at(path, line, column, Source::Terminal, None);
+    }
+
+    pub(crate) fn open_editor_location_at(
+        &mut self, path: PathBuf, fallback: Option<PathBuf>, line: Option<u32>, column: u32,
+    ) {
+        self.open_location_at(path, line, column, Source::EditorLink, fallback);
     }
 
     pub(crate) fn open_path_dialog_location(&mut self, path: PathBuf) {
         if !self.file_browser_active() || self.file_browser_open_pending() { return; }
         self.folder_browser.error = None;
-        self.open_location_at(path, None, 0, Source::PathDialog);
+        self.open_location_at(path, None, 0, Source::PathDialog, None);
     }
 
-    fn open_location_at(&mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source) {
+    fn open_location_at(
+        &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source, fallback: Option<PathBuf>,
+    ) {
         self.cancel_remote_location();
         let workspace = self.remote_workspace.clone();
         let remote_key = crate::remote::workspace::is_view_key(&path);
-        let local_file_dialog = source == Source::PathDialog && !remote_key;
-        if !local_file_dialog && ((remote_key && workspace.is_none())
+        let local_source = matches!(source, Source::PathDialog | Source::EditorLink) && !remote_key;
+        if !local_source && ((remote_key && workspace.is_none())
             || workspace.as_ref().is_some_and(|workspace| workspace.remote_path(&path).is_err())) {
             self.remote_location_error(
                 source,
@@ -280,18 +290,11 @@ impl App {
             if source == Source::PathDialog {
                 self.folder_browser_action(crate::folder_browser::Action::Close);
             }
-            self.open_file(&path);
-            if source == Source::Terminal { self.terminal_panel_focused = false; }
-            if let Some(line) = line
-                && let Some(editor) = self.editor_mut()
-            {
-                if source == Source::Terminal {
-                    if editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, &path)) {
-                        editor.set_centered_cursor(line as usize, column as usize);
-                    }
-                }
-                else { editor.set_cursor(line as usize, column as usize); }
+            if source == Source::EditorLink {
+                self.push_nav_history();
             }
+            self.open_file(&path);
+            self.place_location_cursor(&path, line, column, source);
             self.hide_chat_after_remote_location(source);
             return;
         }
@@ -303,6 +306,7 @@ impl App {
             workspace,
             root: self.explorer.root.clone(),
             path,
+            fallback,
             line,
             column,
             source,
@@ -344,11 +348,11 @@ impl App {
                 let result = match workspace {
                     Some(workspace) => workspace.open_location(&path, &cancel, source == Source::PathDialog, progress),
                     None => crate::app_terminal_links::open_local_location(&path, &root, &cancel, source),
-                }.map_err(|error| error.to_string());
+                };
                 // A cancelled large result is freed here, never on the input thread.
                 let result = if cancel.is_cancelled() {
                     drop(result);
-                    Err("File open cancelled".into())
+                    Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "File open cancelled"))
                 } else {
                     result
                 };
@@ -360,7 +364,7 @@ impl App {
     pub(crate) fn apply_remote_location(
         &mut self,
         id: u64,
-        result: Result<Location, String>,
+        result: std::io::Result<Location>,
     ) -> bool {
         if self
             .remote_navigation
@@ -433,22 +437,20 @@ impl App {
                 }
                 self.push_nav_history();
                 self.open_file_with_preloaded(&request.path, loaded);
-                if request.source == Source::Terminal { self.terminal_panel_focused = false; }
-                if let Some(line) = request.line
-                    && let Some(editor) = self.editor_mut()
-                {
-                    if request.source == Source::Terminal {
-                        if editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, &request.path)) {
-                            editor.set_centered_cursor(line as usize, request.column as usize);
-                        }
-                    }
-                    else { editor.set_cursor(line as usize, request.column as usize); }
-                }
+                self.place_location_cursor(&request.path, request.line, request.column, request.source);
             }
             Err(error) => {
+                if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory)
+                    && let Some(path) = request.fallback
+                {
+                    self.open_location_at(path, request.line, request.column, request.source, None);
+                    return true;
+                }
                 if request.source == Source::Terminal {
-                    crate::app_terminal_links::show_path_error(self, &request.path, error);
-                } else { self.remote_location_error(request.source, error); }
+                    crate::app_terminal_links::show_path_error(self, &request.path, error.to_string());
+                } else if request.source == Source::EditorLink {
+                    self.notify_warn(format!("Cannot open {}: {error}", self.display_path(&request.path)));
+                } else { self.remote_location_error(request.source, error.to_string()); }
             }
         }
         self.hide_chat_after_remote_location(request.source);
@@ -495,10 +497,24 @@ impl App {
         true
     }
 
-    fn discard_remote_location(&mut self, result: Result<Location, String>) {
+    fn discard_remote_location(&mut self, result: std::io::Result<Location>) {
         if let Ok(Location::File(loaded)) = result {
             self.background
                 .spawn("remote-location-drop", move || drop(loaded));
+        }
+    }
+
+    fn place_location_cursor(&mut self, path: &Path, line: Option<u32>, column: u32, source: Source) {
+        let center = matches!(source, Source::Terminal | Source::EditorLink);
+        if center {
+            self.terminal_panel_focused = false;
+        }
+        if let Some(line) = line && let Some(editor) = self.editor_mut() {
+            if !center {
+                editor.set_cursor(line as usize, column as usize);
+            } else if editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, path)) {
+                editor.set_centered_cursor(line as usize, column as usize);
+            }
         }
     }
 
@@ -516,7 +532,7 @@ impl App {
     fn remote_location_error(&mut self, source: Source, error: String) {
         match source {
             Source::Chat => self.chat.error = Some(error),
-            Source::Markdown | Source::FileCommand => self.notify_warn(error),
+            Source::Markdown | Source::FileCommand | Source::EditorLink => self.notify_warn(error),
             Source::PathDialog => self.folder_browser.error = Some(error),
             Source::Terminal => crate::app_terminal_links::show_error(self, error),
         }

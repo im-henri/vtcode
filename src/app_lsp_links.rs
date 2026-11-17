@@ -1,10 +1,11 @@
-//! Ctrl-hover definition probes are independent of actual navigation requests.
+//! Ctrl-hover connects painted editor cells to document links, paths and symbols.
 use crate::app::{App, TabKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::path::PathBuf;
 
 pub(crate) struct LinkHover {
     pub(crate) modifiers: KeyModifiers,
+    pub(crate) path_links: crate::app_editor_path_links::Cache,
     target: Option<Target>,
     sent: bool,
 }
@@ -13,6 +14,7 @@ impl Default for LinkHover {
     fn default() -> Self {
         Self {
             modifiers: KeyModifiers::NONE,
+            path_links: Default::default(),
             target: None,
             sent: false,
         }
@@ -23,11 +25,11 @@ impl Default for LinkHover {
 struct Target {
     document: u64,
     version: u64,
-    path: PathBuf,
+    path: Option<PathBuf>,
     line: usize,
     start: usize,
     end: usize,
-    document_link: bool,
+    direct_link: bool,
 }
 
 /// Map the actual painted cells, including expanded tabs, wide characters,
@@ -37,13 +39,14 @@ pub(crate) fn editor_position_at(app: &mut App, col: u16, row: u16) -> Option<(u
     if !area.contains((col, row).into()) {
         return None;
     }
+    let h_scrollbar_visible = app.h_scrollbar_area.is_some();
     let editor = app.editor_mut()?;
     if editor.diff_display_rows.is_some() || editor.ai_review.active {
         return None;
     }
     let screen_row = usize::from(row - area.y);
     let screen_col = usize::from(col - area.x);
-    let (line, start, end) = if editor.word_wrap {
+    let (line, start, end) = if editor.word_wrap && !editor.large_file_mode && !h_scrollbar_visible {
         let row = editor.wrapped_row_at(
             editor.wrap_scroll_offset + screen_row,
             editor.effective_wrap_width(),
@@ -58,6 +61,12 @@ pub(crate) fn editor_position_at(app: &mut App, col: u16, row: u16) -> Option<(u
 }
 
 impl App {
+    pub(crate) fn lsp_document_link_at(&self, line: usize, col: usize) -> Option<&(usize, usize, usize, String)> {
+        self.lsp_document_links.iter().find(|(row, start, end, _)| {
+            *row == line && (*start..*end).contains(&col)
+        })
+    }
+
     pub(crate) fn update_link_hover_modifiers(&mut self, modifiers: KeyModifiers) -> bool {
         if self.lsp_link_hover.modifiers == modifiers {
             return false;
@@ -91,6 +100,8 @@ impl App {
         if self.lsp_link_hover.modifiers != KeyModifiers::CONTROL
             || !self.terminal_has_focus
             || self.context_menu_active
+            || self.tab_context_active
+            || self.menu_active
             || self.palette.active
             || crate::ui_modal::active(self).is_some()
             || crate::ui_quick_picker::active(self).is_some()
@@ -103,7 +114,6 @@ impl App {
         let tab = self.tabs.get(self.active_tab)?;
         if tab.kind != TabKind::File
             || tab.extension_view.is_some()
-            || tab.editor.large_file_mode
             || tab.editor.bg_loading
             || tab.editor.blame.revision.is_some()
         {
@@ -114,39 +124,35 @@ impl App {
             return None;
         }
         let (line, col) = editor_position_at(self, self.mouse_col, self.mouse_row)?;
+        let lsp_allowed = self.editor().is_some_and(|editor| !editor.large_file_mode && editor.file_path.is_some());
+        let direct = lsp_allowed.then(|| self.lsp_document_link_at(line, col))
+            .flatten().map(|(_, start, end, _)| (*start, *end))
+            .or_else(|| self.editor_path_link_at(line, col).map(|link| (link.columns.start, link.columns.end)));
         let editor = self.editor()?;
-        let path = editor.file_path.as_ref()?;
-        let link = self
-            .lsp_document_links
-            .iter()
-            .find(|(row, start, end, _)| *row == line && col >= *start && col < *end);
-        let (start, end) = if let Some((_, start, end, _)) = link {
-            (*start, *end)
-        } else {
-            editor.word_boundaries_at(line, col)
-        };
-        if start == end {
-            return None;
-        }
-        if link.is_none()
-            && !self.lsp_manager.clients.iter().any(|client| {
+        if direct.is_none() {
+            let path = editor.file_path.as_ref().filter(|_| lsp_allowed)?;
+            if !self.lsp_manager.clients.iter().any(|client| {
                 client.initialized
                     && !client.server_dead
                     && client.handles_file(path)
                     && client.is_file_open(path)
                     && client.supports_request("textDocument/definition")
-            })
-        {
+            }) {
+                return None;
+            }
+        }
+        let (start, end) = direct.unwrap_or_else(|| editor.word_boundaries_at(line, col));
+        if start == end {
             return None;
         }
         Some(Target {
             document: editor.navigation_id,
             version: editor.content_version,
-            path: path.clone(),
+            path: editor.file_path.clone(),
             line,
             start,
             end,
-            document_link: link.is_some(),
+            direct_link: direct.is_some(),
         })
     }
 
@@ -161,12 +167,13 @@ impl App {
         let Some(target) = self.lsp_link_hover.target.as_ref() else {
             return changed;
         };
-        if target.document_link || self.lsp_link_hover.sent {
+        if target.direct_link || self.lsp_link_hover.sent {
             return changed;
         }
-        if self.lsp_manager.last_notified_version.get(&target.path) != Some(&target.version) {
+        let Some(path) = target.path.as_ref() else { return changed; };
+        if self.lsp_manager.last_notified_version.get(path) != Some(&target.version) {
             let rope = self.editor().unwrap().rope.clone();
-            self.queue_lsp_document_sync(target.path.clone(), target.version, rope);
+            self.queue_lsp_document_sync(path.clone(), target.version, rope);
             return changed;
         }
         let col =
@@ -174,12 +181,12 @@ impl App {
         if let Some(client) = self.lsp_manager.clients.iter_mut().find(|client| {
             client.initialized
                 && !client.server_dead
-                && client.handles_file(&target.path)
-                && client.is_file_open(&target.path)
+                && client.handles_file(path)
+                && client.is_file_open(path)
                 && client.supports_request("textDocument/definition")
         }) {
             self.lsp_link_hover.sent = true;
-            if let Ok(id) = client.request_definition(&target.path, target.line as u32, col) {
+            if let Ok(id) = client.request_definition(path, target.line as u32, col) {
                 self.lsp_manager.active_definition_link_id = Some(id);
             }
         }
@@ -194,8 +201,8 @@ impl App {
             && !self.rendering_inactive_editor
             && editor.navigation_id == target.document
             && editor.content_version == target.version
-            && editor.file_path.as_ref() == Some(&target.path)
-            && (target.document_link || self.lsp_manager.definition_link_available))
+            && editor.file_path.as_ref() == target.path.as_ref()
+            && (target.direct_link || self.lsp_manager.definition_link_available))
             .then_some((target.line, target.start, target.end))
     }
 }

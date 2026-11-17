@@ -1,6 +1,6 @@
 //! Ctrl-hover/click navigation uses the retained terminal grid. Path resolution
 //! stays lexical; remote classification and reads happen only on click.
-use crate::{app::{ActivePane, App, NotifyLevel}, app_terminal_selection::TerminalSurface, terminal::links::{Cache, Location}};
+use crate::{app::{ActivePane, App, NotifyLevel}, app_terminal_selection::TerminalSurface, path_links::Location, terminal::links::Cache};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Frame, style::Modifier, text::Line};
 use std::{io, path::{Path, PathBuf}};

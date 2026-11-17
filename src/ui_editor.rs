@@ -1009,6 +1009,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let file_path = Some(editor.highlight_path().to_path_buf());
     let syntax_language = editor.syntax_language_token().map(str::to_string);
     let content_version = editor.content_version;
+    let link_hover = app.lsp_link_hover_range();
     let show_cursor = (app.cursor_visible
         || (app.terminal_has_focus
             && app.animations.cursor_smear_active(
@@ -1197,6 +1198,9 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 .at(absolute_col)
                 .unwrap_or(colors.fg_text);
             let mut style = Style::default().fg(foreground).bg(line_bg);
+            if link_hover.is_some_and(|(line, start, end)| line == line_idx && (start..end).contains(&absolute_col)) {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
             if let Some(current) = search_style {
                 style = colors.ui.find_style(style, current, colors.bg_search_match);
             }

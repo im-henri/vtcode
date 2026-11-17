@@ -196,6 +196,14 @@ pub(crate) fn handle_editor_area_left_click(
             let shift_held = modifiers.contains(KeyModifiers::SHIFT);
             let ctrl_position = (ctrl_held && !alt_held && !shift_held)
                 .then(|| crate::app_lsp_links::editor_position_at(app, col, row)).flatten();
+            if modifiers == KeyModifiers::CONTROL
+                && let Some((line, column)) = ctrl_position
+                && app.lsp_document_link_at(line, column).is_none()
+                && app.follow_editor_path_link(line, column)
+            {
+                app.editor_selection_drag = None;
+                return;
+            }
 
             // Only the press edge owns plain Alt+click. Ignore the terminal's
             // subsequent drag/release sequence until the button comes up.
@@ -306,9 +314,7 @@ pub(crate) fn handle_editor_area_left_click(
                 if let Some(ed) = app.editor() {
                     let click_line = ed.cursor_line;
                     let click_col = ed.cursor_col;
-                    if let Some(link) = app.lsp_document_links.iter().find(|&&(l, sc, ec, _)| {
-                        l == click_line && click_col >= sc && click_col < ec
-                    }) {
+                    if let Some(link) = app.lsp_document_link_at(click_line, click_col) {
                         let target = link.3.clone();
                         if target.starts_with("file://") {
                             if let Ok(url) = lsp_types::Url::parse(&target) {
