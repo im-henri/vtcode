@@ -958,11 +958,16 @@ impl<'a> SnapshotReplacer<'a> {
         ))
     }
 }
-pub(crate) fn apply_open_replace_result(
-    tabs: &mut [crate::app::Tab],
+enum OpenReplacement {
+    Skipped,
+    Applied(Option<crate::editor::BackgroundSaveRequest>),
+}
+
+fn apply_open_replace_result<'a>(
+    tabs: impl IntoIterator<Item = &'a mut crate::app::Tab>,
     result: &crate::background::OpenFileReplaceResult,
-) -> bool {
-    let mut applied = false;
+) -> OpenReplacement {
+    let mut replacement = OpenReplacement::Skipped;
     for tab in tabs {
         if tab.kind != crate::app::TabKind::File {
             continue;
@@ -977,9 +982,25 @@ pub(crate) fn apply_open_replace_result(
         }
         // Applying publishes once to the shared document. Later views refresh
         // to its new version and cannot record another copy of this edit.
-        applied |= result.prepared.apply(editor).is_ok();
+        let save = result.save_when_clean && !editor.modified && editor.saved_rope.is_some();
+        if result.prepared.apply(editor).is_err() {
+            continue;
+        }
+        let request = if save && editor.modified {
+            editor.background_save_request(false, false, false).map(|mut request| {
+                // Save the replacement bytes as prepared, including mixed
+                // newlines and whitespace outside the replaced ranges.
+                request.line_ending = "LF";
+                request.trim_trailing = false;
+                request.insert_final_newline = false;
+                request
+            })
+        } else {
+            None
+        };
+        replacement = OpenReplacement::Applied(request);
     }
-    applied
+    replacement
 }
 
 impl App {
@@ -1479,6 +1500,7 @@ impl App {
                 version: tab.editor.content_version,
                 rope: tab.editor.rope.clone(),
                 writable: !tab.editor.read_only && tab.editor.save_content_error().is_none(),
+                save_when_clean: !tab.editor.modified && tab.editor.saved_rope.is_some(),
             });
         }
         let targets = by_file
@@ -1495,7 +1517,7 @@ impl App {
             .collect::<Vec<_>>();
         self.global_replace_generation = self.global_replace_generation.wrapping_add(1);
         self.bg_global_replace_running = true;
-        self.workspace_replace.open = Default::default();
+        self.workspace_replace = Default::default();
         self.workspace_replace.selection = selected.map(|index|
             (self.search_generation, index, self.global_search_scroll));
         self.status_message = format!("Replacing matches in {} files...", targets.len());
@@ -1547,14 +1569,19 @@ impl App {
         let mut changed = false;
         self.workspace_replace.open.failures += failures;
         for result in open_files {
-            let mut applied = apply_open_replace_result(&mut self.tabs, &result);
-            for group in &mut self.groups {
-                applied |= apply_open_replace_result(&mut group.tabs, &result);
-            }
-            if applied {
+            let tabs = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs));
+            if let OpenReplacement::Applied(save) = apply_open_replace_result(tabs, &result) {
                 self.workspace_replace.open.replacements += result.replacements;
                 self.workspace_replace.open.files_changed += 1;
                 changed = true;
+                if let Some(request) = save {
+                    let path = request.path.clone();
+                    if self.queue_background_save_job(request) {
+                        self.workspace_replace.pending_saves.insert(path);
+                    } else {
+                        self.notify_warn(format!("Could not automatically save replacements in {}", self.display_path(&path)));
+                    }
+                }
             } else {
                 self.workspace_replace.open.failures += 1;
             }
@@ -1572,7 +1599,7 @@ impl App {
         &mut self,
         workspace: u64,
         generation: u64,
-        mut outcome: crate::workspace_replace::Outcome,
+        outcome: crate::workspace_replace::Outcome,
         candidates: rustc_hash::FxHashSet<PathBuf>,
         error: Option<String>,
     ) -> bool {
@@ -1582,6 +1609,33 @@ impl App {
         {
             return false;
         }
+        self.workspace_replace.completion = Some(crate::workspace_replace::Completion { outcome, candidates, error });
+        if !self.complete_workspace_replace() {
+            self.status_message = "Saving workspace replacements...".into();
+        }
+        true
+    }
+
+    pub(crate) fn workspace_replace_save_finished(&mut self, path: &std::path::Path) -> bool {
+        // The replacement may have queued behind a save already in progress.
+        if self.pending_file_saves.contains_key(path)
+            || self.deferred_file_saves.contains_key(path)
+            || !self.workspace_replace.pending_saves.remove(path)
+        {
+            return false;
+        }
+        self.complete_workspace_replace()
+    }
+
+    fn complete_workspace_replace(&mut self) -> bool {
+        if !self.workspace_replace.pending_saves.is_empty() {
+            return false;
+        }
+        let Some(crate::workspace_replace::Completion { mut outcome, candidates, error }) =
+            self.workspace_replace.completion.take()
+        else {
+            return false;
+        };
         self.bg_global_replace_running = false;
         outcome.cancelled |= self
             .workspace_replace

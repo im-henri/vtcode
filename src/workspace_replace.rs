@@ -1,5 +1,6 @@
 //! Native closed-file replacement shared by the workbench and headless node.
-//! Open buffers stay local; a batch sends positions/options, never file bodies.
+//! Open buffers use prepared local edits. Clean files save through the editor's
+//! normal background save path, and existing drafts remain in the editor.
 use crate::{app_search::SnapshotReplacer, background::CancellationToken};
 use serde::{Deserialize, Serialize};
 use std::{io, path::Path};
@@ -13,6 +14,7 @@ pub(crate) struct Snapshot {
     pub version: u64,
     pub rope: ropey::Rope,
     pub writable: bool,
+    pub save_when_clean: bool,
 }
 pub(crate) struct Target {
     pub path: std::path::PathBuf,
@@ -82,6 +84,7 @@ impl Job {
                             path: target.path,
                             source_document_id: snapshot.identity,
                             source_content_version: snapshot.version,
+                            save_when_clean: snapshot.save_when_clean,
                             prepared,
                             replacements: count,
                         });
@@ -275,15 +278,26 @@ pub(crate) fn file(
 pub(crate) struct State {
     pub cancel: Option<CancellationToken>,
     pub open: Outcome,
+    pub pending_saves: rustc_hash::FxHashSet<std::path::PathBuf>,
+    pub completion: Option<Completion>,
     /// Search generation, selected match and viewport retained for a one-match edit.
     pub selection: Option<(u64, usize, usize)>,
 }
+
+pub(crate) struct Completion {
+    pub outcome: Outcome,
+    pub candidates: rustc_hash::FxHashSet<std::path::PathBuf>,
+    pub error: Option<String>,
+}
+
 impl State {
     pub(crate) fn cancel(&mut self) {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
         self.open = Outcome::default();
+        self.pending_saves.clear();
+        self.completion = None;
         self.selection = None;
     }
 }

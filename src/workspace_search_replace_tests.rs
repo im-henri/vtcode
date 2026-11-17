@@ -72,9 +72,9 @@ fn clicking_replace_changes_only_that_occurrence_and_keeps_other_results_availab
 }
 
 #[test]
-fn one_match_replacement_supports_closed_files_remote_files_and_undoable_open_drafts() {
+fn one_match_replacement_saves_clean_files_and_preserves_open_drafts() {
     for remote in [false, true] {
-        for open in [false, true] {
+        for (open, dirty) in [(false, false), (true, false), (true, true)] {
             let root = tempfile::tempdir().unwrap();
             let native = root.path().join("a.txt");
             std::fs::write(&native, "foo foo\r\n").unwrap();
@@ -90,7 +90,7 @@ fn one_match_replacement_supports_closed_files_remote_files_and_undoable_open_dr
                 let mut editor = Editor::test_with_text("foo foo\r\n");
                 editor.file_path = Some(path.clone());
                 editor.record_saved_snapshot(editor.rope.clone());
-                editor.paste_plain_with_text("draft ");
+                if dirty { editor.paste_plain_with_text("draft "); }
                 app.tabs.push(Tab::new_file(editor));
             }
             app.global_search_query = "foo".into();
@@ -102,10 +102,16 @@ fn one_match_replacement_supports_closed_files_remote_files_and_undoable_open_dr
             app.replace_global_search_result(index, revision);
             finish(&mut app);
             if open {
-                assert_eq!(app.editor().unwrap().rope.to_string(), "draft foo 猫\r\n");
-                assert_eq!(std::fs::read_to_string(&native).unwrap(), "foo foo\r\n");
+                let (edited, disk, original) = if dirty {
+                    ("draft foo 猫\r\n", "foo foo\r\n", "draft foo foo\r\n")
+                } else {
+                    ("foo 猫\r\n", "foo 猫\r\n", "foo foo\r\n")
+                };
+                assert_eq!(app.editor().unwrap().rope, edited);
+                assert_eq!(app.editor().unwrap().modified, dirty);
+                assert_eq!(std::fs::read_to_string(&native).unwrap(), disk);
                 app.editor_mut().unwrap().undo();
-                assert_eq!(app.editor().unwrap().rope.to_string(), "draft foo foo\r\n");
+                assert_eq!(app.editor().unwrap().rope, original);
             } else {
                 assert!(app.tabs.is_empty());
                 assert_eq!(std::fs::read_to_string(&native).unwrap(), "foo 猫\r\n");

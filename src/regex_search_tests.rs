@@ -497,9 +497,10 @@ fn regex_search_workspace_replacement_matches_open_and_closed_files() {
             );
             assert_eq!(
                 std::fs::read_to_string(&open).unwrap(),
-                text,
-                "open file remains unsaved"
+                open_expected,
+                "open {query:?}, CRLF={crlf} must also be saved"
             );
+            assert!(!app.editor().unwrap().modified);
         }
     }
 }

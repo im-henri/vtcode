@@ -257,6 +257,7 @@ fn result(editor: &Editor, text: &str) -> crate::background::OpenFileReplaceResu
         path: editor.file_path.clone().unwrap(),
         source_document_id: editor.save_identity,
         source_content_version: editor.content_version,
+        save_when_clean: false,
         prepared: crate::formatters::prepare(&editor.rope, text),
         replacements: 1,
     }
@@ -273,7 +274,7 @@ fn workspace_replace_does_not_modify_read_only_or_revision_tabs() {
         } else {
             app.tabs[0].editor.read_only = true;
         }
-        assert!(!apply_open_replace_result(&mut app.tabs, &result));
+        assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Skipped));
         assert_eq!(app.tabs[0].editor.rope.to_string(), "foo");
         assert!(!app.tabs[0].editor.can_undo());
     }
@@ -287,7 +288,7 @@ fn workspace_replace_shared_views_create_only_one_undo_step() {
     shared.copy_document_from(&app.tabs[0].editor);
     app.tabs.push(Tab::new_file(shared));
     let result = result(&app.tabs[0].editor, "bar");
-    assert!(apply_open_replace_result(&mut app.tabs, &result));
+    assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Applied(None)));
     app.tabs[1].editor.refresh_document();
     assert_eq!(app.tabs[1].editor.rope.to_string(), "bar");
     app.tabs[1].editor.undo();
@@ -305,7 +306,7 @@ fn workspace_replace_rejects_an_edit_from_another_shared_view() {
     let mut shared = Editor::new();
     shared.copy_document_from(&app.tabs[0].editor);
     shared.insert_char('!');
-    assert!(!apply_open_replace_result(&mut app.tabs, &result));
+    assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Skipped));
     assert_eq!(app.tabs[0].editor.rope.to_string(), "!foo");
     shared.refresh_document();
     assert_eq!(shared.rope.to_string(), "!foo");
@@ -343,7 +344,7 @@ fn workspace_replace_does_not_target_a_reopened_file_at_the_same_version() {
     reopened.file_path = Some(result.path.clone());
     assert_eq!(reopened.content_version, result.source_content_version);
     app.tabs[0] = Tab::new_file(reopened);
-    assert!(!apply_open_replace_result(&mut app.tabs, &result));
+    assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Skipped));
     assert_eq!(app.tabs[0].editor.rope.to_string(), "foo");
 }
 
@@ -485,6 +486,7 @@ fn workspace_replace_uses_the_file_buffer_even_with_a_revision_tab_open_first() 
     app.tabs.push(revision);
     let mut editor = Editor::test_with_text("foo");
     editor.file_path = Some(path.clone());
+    editor.record_saved_snapshot(editor.rope.clone());
     app.tabs.push(Tab::new_file(editor));
     app.active_tab = 1;
     app.global_search_query = "foo".into();
@@ -499,7 +501,8 @@ fn workspace_replace_uses_the_file_buffer_even_with_a_revision_tab_open_first() 
     });
     assert_eq!(app.tabs[0].editor.rope.to_string(), "foo");
     assert_eq!(app.tabs[1].editor.rope.to_string(), "bar");
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "foo");
+    assert!(!app.tabs[1].editor.modified);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "bar");
 }
 
 #[test]

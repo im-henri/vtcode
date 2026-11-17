@@ -50,6 +50,104 @@ fn replace_and_wait(app: &mut App) {
 }
 
 #[test]
+fn workspace_replace_saves_clean_open_files_and_keeps_existing_edits_unsaved() {
+    for remote in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let clean = root.path().join("clean.txt");
+        let dirty = root.path().join("dirty.txt");
+        let original = "foo\r\nkeep trailing spaces  \nlast foo";
+        let replaced = "猫\r\nkeep trailing spaces  \nlast 猫";
+        std::fs::write(&clean, format!("\u{feff}{original}")).unwrap();
+        std::fs::write(&dirty, "foo").unwrap();
+        let workspace = remote.then(|| remote::workspace::Workspace::new(remote::tests::connection(
+            root.path(), Arc::default(), Arc::default(),
+        )));
+        let mut app = App::new_deferred(workspace.as_ref().map_or_else(
+            || root.path().to_owned(), |workspace| workspace.view_root.clone(),
+        ));
+        app.remote_workspace = workspace.clone();
+        app.source_control_enabled = false;
+        app.auto_save = crate::app::AutoSaveMode::Off;
+        let open = |app: &mut App, path: &std::path::Path| {
+            let key = workspace.as_ref().map_or_else(|| path.to_owned(), |workspace| {
+                workspace.target_key(path.file_name().unwrap().to_str().unwrap()).unwrap()
+            });
+            app.open_file(&key);
+            app.wait_for_background(Duration::from_secs(10), |app| {
+                app.editor().is_some_and(|editor| editor.saved_rope.is_some() && !editor.bg_loading)
+            });
+        };
+        open(&mut app, &clean);
+        let editor = app.editor_mut().unwrap();
+        assert!(!editor.modified);
+        editor.ec_trim_trailing = Some(true);
+        editor.ec_insert_final_newline = Some(true);
+        let clean_desk = app.desks.active;
+        app.new_desk("draft", false);
+        open(&mut app, &dirty);
+        app.editor_mut().unwrap().paste_plain_with_text("draft ");
+
+        app.global_search_query = "foo".into();
+        app.global_search_replace_query = "猫".into();
+        replace_and_wait(&mut app);
+        assert!(app.pending_file_saves.is_empty());
+        assert!(app.editor().unwrap().modified);
+        assert_eq!(app.editor().unwrap().rope, "draft 猫");
+        assert_eq!(std::fs::read_to_string(&dirty).unwrap(), "foo");
+
+        app.switch_desk(clean_desk);
+        let editor = app.editor_mut().unwrap();
+        assert_eq!(editor.rope, replaced);
+        assert!(!editor.modified);
+        editor.undo();
+        assert_eq!(editor.rope, original);
+        assert!(editor.modified);
+        assert_eq!(std::fs::read_to_string(&clean).unwrap(), format!("\u{feff}{replaced}"));
+        if let Some(workspace) = &workspace { workspace.client.call(remote::Command::Shutdown).unwrap(); }
+    }
+}
+
+#[test]
+fn workspace_replace_autosave_keeps_later_edits_and_checks_the_disk_baseline() {
+    for external in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("file.txt");
+        std::fs::write(&path, "foo").unwrap();
+        let mut app = App::new_deferred(root.path().to_owned());
+        app.source_control_enabled = false;
+        let mut editor = Editor::test_with_text("foo");
+        editor.file_path = Some(path.clone());
+        editor.record_saved_snapshot(editor.rope.clone());
+        let result = crate::background::OpenFileReplaceResult {
+            path: path.clone(),
+            source_document_id: editor.save_identity,
+            source_content_version: editor.content_version,
+            save_when_clean: true,
+            prepared: crate::formatters::prepare(&editor.rope, "bar"),
+            replacements: 1,
+        };
+        app.tabs.push(Tab::new_file(editor));
+        app.bg_global_replace_running = true;
+        let workspace = app.workspace_generation;
+        let generation = app.global_replace_generation;
+        if external { std::fs::write(&path, "foo changed on disk").unwrap(); }
+        assert!(app.apply_workspace_replace_prepared(workspace, generation, vec![result], 0));
+        assert!(app.pending_file_saves.contains_key(&path));
+        let editor = app.editor_mut().unwrap();
+        editor.set_cursor(0, 3);
+        editor.insert_char('!');
+        assert!(app.finish_workspace_replace(workspace, generation, Default::default(), Default::default(), None));
+        assert!(app.bg_global_replace_running, "replacement is active until its save completes");
+        app.wait_for_background(Duration::from_secs(10), |app| !app.bg_global_replace_running);
+        assert_eq!(app.editor().unwrap().rope, "bar!");
+        assert!(app.editor().unwrap().modified);
+        assert_eq!(app.save_conflict.is_some(), external);
+        let expected = if external { "foo changed on disk" } else { "bar" };
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+}
+
+#[test]
 fn workspace_replace_keeps_hidden_desk_drafts_local_and_undoable() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("hidden.txt");
@@ -209,6 +307,7 @@ fn workspace_replace_local_edits_undo_typing_and_cancellation_do_not_wait_for_re
     let mut editor = Editor::test_with_text("foo");
     editor.file_path = Some(key("open.txt"));
     editor.record_saved_snapshot(editor.rope.clone());
+    editor.paste_plain_with_text("draft ");
     app.tabs.push(Tab::new_file(editor));
     app.global_search_query = "foo".into();
     app.global_search_replace_query = "bar".into();
@@ -230,7 +329,7 @@ fn workspace_replace_local_edits_undo_typing_and_cancellation_do_not_wait_for_re
         blocked.load(Ordering::Acquire)
             && app
                 .editor()
-                .is_some_and(|editor| editor.rope.to_string() == "bar")
+                .is_some_and(|editor| editor.rope == "draft bar")
     });
     assert!(
         app.bg_global_replace_running,
@@ -242,7 +341,7 @@ fn workspace_replace_local_edits_undo_typing_and_cancellation_do_not_wait_for_re
     );
     let traffic = transferred.load(Ordering::Relaxed);
     app.editor_mut().unwrap().undo();
-    assert_eq!(app.editor().unwrap().rope.to_string(), "foo");
+    assert_eq!(app.editor().unwrap().rope, "draft foo");
     for _ in 0..64 {
         let editor = app.editor_mut().unwrap();
         editor.move_right();
@@ -306,6 +405,7 @@ fn workspace_replace_completion_from_an_old_workspace_cannot_finish_or_edit_the_
         path,
         source_document_id: editor.save_identity,
         source_content_version: editor.content_version,
+        save_when_clean: true,
         prepared,
         replacements: 1,
     };

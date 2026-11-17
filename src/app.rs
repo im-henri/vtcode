@@ -4118,6 +4118,7 @@ impl App {
                     if let Some((generation, next)) = deferred {
                         self.queue_background_save_job_for_workspace(next, generation);
                     }
+                    has_visual_changes |= self.workspace_replace_save_finished(&path);
                     if workspace_generation == self.workspace_generation && self.remote_changes_deferred.remove(&path) {
                         self.queue_workspace_file_check(path);
                     }

@@ -311,6 +311,7 @@ pub struct OpenFileReplaceResult {
     pub path: PathBuf,
     pub source_document_id: u64,
     pub source_content_version: u64,
+    pub save_when_clean: bool,
     pub prepared: crate::formatters::Prepared,
     pub replacements: usize,
 }
