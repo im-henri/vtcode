@@ -27,7 +27,7 @@ const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
   const pythonRegex = JSON.parse(fs.readFileSync(path.join(root, 'grammars/Python/MagicRegExp.tmLanguage.json'), 'utf8'));
   const pythonRegexId = [...grammars].find(([,g]) => g.scopeName === pythonRegex.scopeName)?.[0] || pythonRegex.scopeName;
   grammars.set(pythonRegexId, pythonRegex);
-  for (const id of ['git-commit','git-rebase','ignore']) {
+  for (const id of ['git-commit','git-log','git-rebase','ignore']) {
     grammars.set(id,JSON.parse(fs.readFileSync(path.join(root,`grammars/Git/${id}.tmLanguage.json`),'utf8')));
   }
   grammars.set('antlr', JSON.parse(fs.readFileSync(path.join(root, 'grammars/ANTLR4/antlr.tmLanguage.json'), 'utf8')));

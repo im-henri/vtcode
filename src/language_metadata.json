@@ -871,19 +871,42 @@
   },
   "git-commit": {
     "name": "Git Commit Message",
-    "aliases": [],
+    "aliases": [
+      "git-commit"
+    ],
     "extensions": [
       "COMMIT_EDITMSG",
       "MERGE_MSG",
       "TAG_EDITMSG"
     ],
+    "filenames": [
+      "COMMIT_EDITMSG",
+      "EDIT_DESCRIPTION",
+      "MERGE_MSG",
+      "SQUASH_MSG",
+      "TAG_EDITMSG"
+    ]
+  },
+  "git-log": {
+    "name": "Git Log",
+    "aliases": [
+      "git-log"
+    ],
+    "extensions": [
+      "git-log",
+      "gitlog"
+    ],
     "filenames": []
   },
   "git-rebase": {
     "name": "Git Rebase Message",
-    "aliases": [],
+    "aliases": [
+      "git-rebase"
+    ],
     "extensions": [],
-    "filenames": []
+    "filenames": [
+      "git-rebase-todo"
+    ]
   },
   "gleam": {
     "name": "Gleam",

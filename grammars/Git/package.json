@@ -10,7 +10,10 @@
         ],
         "filenames": [
           "COMMIT_EDITMSG",
-          "MERGE_MSG"
+          "MERGE_MSG",
+          "TAG_EDITMSG",
+          "SQUASH_MSG",
+          "EDIT_DESCRIPTION"
         ],
         "configuration": "./languages/git-commit.language-configuration.json"
       },
@@ -27,6 +30,17 @@
           "**/rebase-merge/done"
         ],
         "configuration": "./languages/git-rebase.language-configuration.json"
+      },
+      {
+        "id": "git-log",
+        "aliases": [
+          "Git Log",
+          "git-log"
+        ],
+        "extensions": [
+          ".gitlog",
+          ".git-log"
+        ]
       },
       {
         "id": "ignore",
@@ -52,6 +66,11 @@
         "language": "git-rebase",
         "scopeName": "text.git-rebase",
         "path": "./git-rebase.tmLanguage.json"
+      },
+      {
+        "language": "git-log",
+        "scopeName": "text.git-log",
+        "path": "./git-log.tmLanguage.json"
       },
       {
         "language": "ignore",

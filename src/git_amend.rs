@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub(crate) const TITLE: &str = "Amend Commit";
+pub(crate) const LANGUAGE: &str = "Git Commit Message";
 const HEAD_CHANGED: &str = "HEAD changed. Abort and reopen Amend to edit the current commit.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -238,6 +239,7 @@ impl App {
         } else {
             let mut editor = self.new_editor();
             editor.suggested_file_name = Some(TITLE.into());
+            editor.language_override = Some(LANGUAGE.into());
             editor.read_only = true;
             editor.word_wrap = true;
             let view = editor.navigation_id;

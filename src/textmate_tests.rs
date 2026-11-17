@@ -290,3 +290,145 @@ fn textmate_plist_grammars_keep_their_scopes_and_patterns() {
         Color::parse("#ff0000").unwrap()
     );
 }
+
+fn assert_scope_colors(syntax: &Syntax, rules: &[(&str, &str)], lines: &[(&str, &str, &str)]) {
+    let rules: Vec<_> = rules
+        .iter()
+        .map(|(scope, color)| json!({"scope": scope, "settings": {"foreground": color}}))
+        .collect();
+    let theme = Theme::new("Git test", "#ffffff", "#000000", &rules).unwrap();
+    let mut parser = crate::textmate_backend::State::new(syntax, &theme);
+    for (line, sample, color) in lines {
+        let spans = parser.line(line, true, &mut Vec::new());
+        if sample.is_empty() {
+            continue;
+        }
+        let start = line.find(sample).unwrap();
+        let expected = Color::parse(color).unwrap();
+        let colors: Vec<_> = spans
+            .iter()
+            .flat_map(|(style, text)| std::iter::repeat_n(style.foreground, text.len()))
+            .collect();
+        assert!(
+            colors[start..start + sample.len()].iter().all(|c| *c == expected),
+            "{line:?}: {sample:?} should be {color}, got {:?}",
+            &colors[start..start + sample.len()]
+        );
+    }
+}
+
+#[test]
+fn git_commit_messages_highlight_subject_trailers_and_references() {
+    let registry = SyntaxRegistry::embedded();
+    for name in ["COMMIT_EDITMSG", "MERGE_MSG", "SQUASH_MSG", ".git/COMMIT_EDITMSG"] {
+        let syntax = crate::highlight::select_syntax(
+            &registry,
+            Some(std::path::Path::new(name)),
+            None,
+            "",
+        );
+        assert_eq!(syntax.id, "git-commit", "{name}");
+    }
+    let syntax = registry
+        .find_syntax_by_token(crate::git_amend::LANGUAGE)
+        .unwrap();
+    assert_eq!(syntax.id, "git-commit");
+    assert_scope_colors(
+        syntax,
+        &[
+            ("markup.heading", "#ff0000"),
+            ("keyword.other.type", "#00ff00"),
+            ("keyword.other.trailer", "#0000ff"),
+            ("markup.underline.link", "#ffff00"),
+            ("constant.other.reference.issue", "#00ffff"),
+            ("comment", "#888888"),
+            ("invalid.illegal", "#ff00ff"),
+        ],
+        &[
+            ("feat(editor): Highlight commit messages", "Highlight commit messages", "#ff0000"),
+            ("", "", ""),
+            ("Fixes #42 by adding a grammar.", "#42", "#00ffff"),
+            ("See https://example.com/docs for details.", "https://example.com/docs", "#ffff00"),
+            ("Signed-off-by: A Person <a@example.com>", "Signed-off-by", "#0000ff"),
+            ("Signed-off-by: A Person <a@example.com>", "a@example.com", "#ffff00"),
+            ("# Please enter the commit message", "# Please enter the commit message", "#888888"),
+        ],
+    );
+    // The type prefix of a Conventional Commits subject stands out.
+    assert_scope_colors(
+        syntax,
+        &[("markup.heading", "#ff0000"), ("keyword.other.type", "#00ff00")],
+        &[("fix: Repair the parser", "fix", "#00ff00")],
+    );
+    // Subjects longer than 72 characters are flagged.
+    let long = format!("{}{}", "a".repeat(72), "overflow");
+    assert_scope_colors(
+        syntax,
+        &[("markup.heading", "#ff0000"), ("invalid.illegal", "#ff00ff")],
+        &[(&long, "overflow", "#ff00ff")],
+    );
+}
+
+#[test]
+fn git_log_output_highlights_hashes_refs_headers_and_patches() {
+    let registry = SyntaxRegistry::embedded();
+    let syntax = registry.find_syntax_by_name("Git Log").unwrap();
+    assert_eq!(syntax.scope, "text.git-log");
+    assert_eq!(registry.find_syntax_by_extension("history.gitlog").unwrap().id, "git-log");
+    assert_eq!(
+        registry
+            .find_syntax_by_first_line("commit 0123456789abcdef0123456789abcdef01234567 (HEAD -> main)")
+            .unwrap()
+            .id,
+        "git-log"
+    );
+    assert_eq!(
+        registry.find_syntax_by_first_line("* commit a033e42d").unwrap().id,
+        "git-log"
+    );
+    let rules = [
+        ("constant.sha", "#ffff00"),
+        ("keyword.other.head", "#00ffff"),
+        ("entity.name.type.branch", "#00ff00"),
+        ("string.other.remote-branch", "#ff0000"),
+        ("entity.name.tag", "#ff8800"),
+        ("keyword.other.header", "#0000ff"),
+        ("markup.underline.link", "#8888ff"),
+        ("constant.numeric.date", "#888800"),
+        ("markup.inserted", "#00aa00"),
+        ("markup.deleted", "#aa0000"),
+        ("punctuation.definition.graph", "#444444"),
+    ];
+    let header = "commit a033e42d1f2b3c4d5e6f708192a3b4c5d6e7f809 (HEAD -> main, origin/main, tag: v0.7.4)";
+    assert_scope_colors(
+        syntax,
+        &rules,
+        &[
+            (header, "a033e42d1f2b3c4d5e6f708192a3b4c5d6e7f809", "#ffff00"),
+            (header, "HEAD", "#00ffff"),
+            (header, "main", "#00ff00"),
+            (header, "origin/main", "#ff0000"),
+            (header, "v0.7.4", "#ff8800"),
+            ("Author: A Person <a@example.com>", "Author", "#0000ff"),
+            ("Author: A Person <a@example.com>", "a@example.com", "#8888ff"),
+            ("Date:   Mon Nov 16 12:00:00 2026 +0200", "Mon Nov 16 12:00:00 2026 +0200", "#888800"),
+            (" src/textmate.rs | 4 ++--", "++", "#00aa00"),
+            (" src/textmate.rs | 4 ++--", "--", "#aa0000"),
+            (" 1 file changed, 2 insertions(+), 2 deletions(-)", "2 insertions(+)", "#00aa00"),
+            ("* a033e42 (HEAD -> main) Release VTCode", "a033e42", "#ffff00"),
+            ("* a033e42 (HEAD -> main) Release VTCode", "*", "#444444"),
+            ("| * 1fd6f9d Open an editable commit message tab", "1fd6f9d", "#ffff00"),
+        ],
+    );
+    // Patches from `git log -p` use the diff grammar until the next commit.
+    assert_scope_colors(
+        syntax,
+        &rules,
+        &[
+            ("diff --git a/x b/x", "", ""),
+            ("+added", "+added", "#00aa00"),
+            ("-removed", "-removed", "#aa0000"),
+            ("commit 1fd6f9d0aa", "1fd6f9d0aa", "#ffff00"),
+        ],
+    );
+}

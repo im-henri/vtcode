@@ -1,8 +1,8 @@
 {
 	"information_for_contributors": [
-		"This file has been converted from https://github.com/walles/git-commit-message-plus/blob/master/syntaxes/git-commit.tmLanguage.json",
-		"If you want to provide a fix or improvement, please create a pull request against the original repository.",
-		"Once accepted there, we are happy to receive an update request."
+		"Based on https://github.com/walles/git-commit-message-plus/blob/master/syntaxes/git-commit.tmLanguage.json",
+		"via VS Code's git-base extension. VTCode extends it with subject, Conventional Commits, trailer,",
+		"issue reference, commit hash and link highlighting."
 	],
 	"version": "https://github.com/walles/git-commit-message-plus/commit/35a079dea5a91b087021b40c01a6bb4eb0337a87",
 	"name": "Git Commit Message",
@@ -27,17 +27,10 @@
 			"end": "^(?=#)",
 			"patterns": [
 				{
-					"comment": "Mark > 50 lines as deprecated, > 72 as illegal",
-					"name": "meta.scope.subject.git-commit",
-					"match": "\\G.{0,50}(.{0,22}(.*))$",
-					"captures": {
-						"1": {
-							"name": "invalid.deprecated.line-too-long.git-commit"
-						},
-						"2": {
-							"name": "invalid.illegal.line-too-long.git-commit"
-						}
-					}
+					"include": "#subject"
+				},
+				{
+					"include": "#body"
 				}
 			]
 		},
@@ -86,5 +79,156 @@
 				}
 			]
 		}
-	]
+	],
+	"repository": {
+		"url": {
+			"match": "\\b(?:https?|ftp|ssh|git)://[^\\s<>()\\[\\]]+[^\\s<>()\\[\\].,;:!?'\\\"]",
+			"name": "markup.underline.link.git-commit"
+		},
+		"email": {
+			"match": "(<)([^<>\\s@]+@[^<>\\s]+)(>)",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.email.begin.git-commit"
+				},
+				"2": {
+					"name": "markup.underline.link.email.git-commit"
+				},
+				"3": {
+					"name": "punctuation.definition.email.end.git-commit"
+				}
+			}
+		},
+		"issue": {
+			"match": "(?<![\\w&/#])(?:[\\w.-]+/[\\w.-]+)?(?:#|GH-|!)\\d+\\b",
+			"name": "constant.other.reference.issue.git-commit"
+		},
+		"hash": {
+			"match": "(?<![\\w/.-])(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\\d)[0-9a-f]{7,64}\\b(?![\\w-])",
+			"name": "constant.sha.git-commit"
+		},
+		"code": {
+			"match": "(`)([^`\\n]+)(`)",
+			"name": "markup.inline.raw.git-commit",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.raw.git-commit"
+				},
+				"3": {
+					"name": "punctuation.definition.raw.git-commit"
+				}
+			}
+		},
+		"conventional": {
+			"comment": "Conventional Commits prefix: type(scope)!: description",
+			"match": "\\G([A-Za-z]+)(?:(\\()([^()\\n]*)(\\)))?(!)?(:)(?=\\s)",
+			"captures": {
+				"1": {
+					"name": "keyword.other.type.git-commit"
+				},
+				"2": {
+					"name": "punctuation.definition.scope.begin.git-commit"
+				},
+				"3": {
+					"name": "entity.name.section.scope.git-commit"
+				},
+				"4": {
+					"name": "punctuation.definition.scope.end.git-commit"
+				},
+				"5": {
+					"name": "keyword.operator.breaking-change.git-commit"
+				},
+				"6": {
+					"name": "punctuation.separator.git-commit"
+				}
+			}
+		},
+		"subject": {
+			"comment": "The first line is the subject. Mark > 50 characters as deprecated, > 72 as illegal",
+			"name": "meta.scope.subject.git-commit markup.heading.subject.git-commit",
+			"begin": "\\G(?=.)",
+			"end": "$",
+			"patterns": [
+				{
+					"include": "#conventional"
+				},
+				{
+					"match": "(?<=^.{72}).+",
+					"name": "invalid.illegal.line-too-long.git-commit"
+				},
+				{
+					"match": "(?<=^.{50}).{1,22}",
+					"name": "invalid.deprecated.line-too-long.git-commit"
+				},
+				{
+					"include": "#issue"
+				},
+				{
+					"include": "#code"
+				}
+			]
+		},
+		"trailer": {
+			"match": "^([A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+|Fixes|Closes|Resolves|Refs|Ref|Bug|Issue|Cc|Link)(:)[ \\t]+(.*)$",
+			"name": "meta.trailer.git-commit",
+			"captures": {
+				"1": {
+					"name": "keyword.other.trailer.git-commit"
+				},
+				"2": {
+					"name": "punctuation.separator.key-value.git-commit"
+				},
+				"3": {
+					"name": "string.unquoted.trailer.git-commit",
+					"patterns": [
+						{
+							"include": "#email"
+						},
+						{
+							"include": "#issue"
+						},
+						{
+							"include": "#url"
+						},
+						{
+							"include": "#hash"
+						}
+					]
+				}
+			}
+		},
+		"list": {
+			"match": "^\\s*([-*+]|\\d+[.)])(?=\\s)",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.list.begin.git-commit"
+				}
+			}
+		},
+		"body": {
+			"patterns": [
+				{
+					"include": "#trailer"
+				},
+				{
+					"include": "#list"
+				},
+				{
+					"include": "#url"
+				},
+				{
+					"include": "#email"
+				},
+				{
+					"include": "#issue"
+				},
+				{
+					"include": "#hash"
+				},
+				{
+					"include": "#code"
+				}
+			]
+		}
+	}
 }

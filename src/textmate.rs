@@ -190,6 +190,10 @@ const BUNDLED_OVERRIDES: &[(&str, &[u8])] = &[
         include_bytes!("../grammars/Git/git-rebase.tmLanguage.json"),
     ),
     (
+        "git-log",
+        include_bytes!("../grammars/Git/git-log.tmLanguage.json"),
+    ),
+    (
         "ignore",
         include_bytes!("../grammars/Git/ignore.tmLanguage.json"),
     ),

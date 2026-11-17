@@ -1,0 +1,400 @@
+{
+	"information_for_contributors": [
+		"Written for VTCode. Highlights `git log` output in its common formats."
+	],
+	"name": "Git Log",
+	"scopeName": "text.git-log",
+	"fileTypes": [
+		"gitlog",
+		"git-log"
+	],
+	"firstLineMatch": "^(?:[*|/\\\\_.-] *)*commit\\s+[0-9a-f]{7,64}\\b",
+	"patterns": [
+		{
+			"include": "#diff"
+		},
+		{
+			"include": "#commit"
+		},
+		{
+			"include": "#person"
+		},
+		{
+			"include": "#date"
+		},
+		{
+			"include": "#merge"
+		},
+		{
+			"include": "#reflog"
+		},
+		{
+			"include": "#summary"
+		},
+		{
+			"include": "#stat"
+		},
+		{
+			"include": "#status"
+		},
+		{
+			"include": "#oneline"
+		},
+		{
+			"include": "#trailer"
+		},
+		{
+			"include": "#graph"
+		},
+		{
+			"include": "#url"
+		},
+		{
+			"include": "#email"
+		},
+		{
+			"include": "#issue"
+		},
+		{
+			"include": "#hash"
+		},
+		{
+			"include": "#code"
+		}
+	],
+	"repository": {
+		"url": {
+			"match": "\\b(?:https?|ftp|ssh|git)://[^\\s<>()\\[\\]]+[^\\s<>()\\[\\].,;:!?'\\\"]",
+			"name": "markup.underline.link.git-log"
+		},
+		"email": {
+			"match": "(<)([^<>\\s@]+@[^<>\\s]+)(>)",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.email.begin.git-log"
+				},
+				"2": {
+					"name": "markup.underline.link.email.git-log"
+				},
+				"3": {
+					"name": "punctuation.definition.email.end.git-log"
+				}
+			}
+		},
+		"issue": {
+			"match": "(?<![\\w&/#])(?:[\\w.-]+/[\\w.-]+)?(?:#|GH-|!)\\d+\\b",
+			"name": "constant.other.reference.issue.git-log"
+		},
+		"hash": {
+			"match": "(?<![\\w/.-])(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\\d)[0-9a-f]{7,64}\\b(?![\\w-])",
+			"name": "constant.sha.git-log"
+		},
+		"code": {
+			"match": "(`)([^`\\n]+)(`)",
+			"name": "markup.inline.raw.git-log",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.raw.git-log"
+				},
+				"3": {
+					"name": "punctuation.definition.raw.git-log"
+				}
+			}
+		},
+		"decoration": {
+			"begin": "\\(",
+			"end": "\\)|$",
+			"beginCaptures": {
+				"0": {
+					"name": "punctuation.definition.decoration.begin.git-log"
+				}
+			},
+			"endCaptures": {
+				"0": {
+					"name": "punctuation.definition.decoration.end.git-log"
+				}
+			},
+			"name": "meta.decoration.git-log",
+			"patterns": [
+				{
+					"match": "(HEAD)\\s*(->)\\s*([^,()\\s]+)",
+					"captures": {
+						"1": {
+							"name": "keyword.other.head.git-log"
+						},
+						"2": {
+							"name": "punctuation.separator.arrow.git-log"
+						},
+						"3": {
+							"name": "entity.name.type.branch.git-log"
+						}
+					}
+				},
+				{
+					"match": "\\bHEAD\\b",
+					"name": "keyword.other.head.git-log"
+				},
+				{
+					"match": "(tag)(:)\\s*([^,()\\s]+)",
+					"captures": {
+						"1": {
+							"name": "storage.type.tag.git-log"
+						},
+						"2": {
+							"name": "punctuation.separator.git-log"
+						},
+						"3": {
+							"name": "entity.name.tag.git-log"
+						}
+					}
+				},
+				{
+					"match": "(?:refs/remotes/|(?:origin|upstream)/)[^,()\\s]+",
+					"name": "string.other.remote-branch.git-log"
+				},
+				{
+					"match": "(?:refs/(?:heads|stash)/)?[^,()\\s]+",
+					"name": "entity.name.type.branch.git-log"
+				},
+				{
+					"match": ",",
+					"name": "punctuation.separator.git-log"
+				}
+			]
+		},
+		"commit": {
+			"comment": "commit <hash> (<refs>): medium, full, fuller and raw formats",
+			"begin": "^((?:[*|/\\\\_.-] *)*)(commit)\\s+([0-9a-f]{4,64})\\b",
+			"beginCaptures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "keyword.other.commit.git-log"
+				},
+				"3": {
+					"name": "constant.sha.git-log"
+				}
+			},
+			"end": "$",
+			"name": "meta.commit.header.git-log",
+			"patterns": [
+				{
+					"include": "#decoration"
+				}
+			]
+		},
+		"oneline": {
+			"comment": "--oneline summaries: <hash> (<refs>) subject",
+			"begin": "^((?:[*|/\\\\_.-] *)*)([0-9a-f]{7,64})(?=\\s)",
+			"beginCaptures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "constant.sha.git-log"
+				}
+			},
+			"end": "$",
+			"name": "meta.commit.oneline.git-log",
+			"patterns": [
+				{
+					"include": "#decoration"
+				},
+				{
+					"include": "#issue"
+				},
+				{
+					"include": "#code"
+				}
+			]
+		},
+		"person": {
+			"match": "^((?:[*|/\\\\_.-] *)*)(Author|Commit|Tagger)(:)\\s+([^<\\n]*?)\\s*(<[^>\\n]*>)?\\s*$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "keyword.other.header.git-log"
+				},
+				"3": {
+					"name": "punctuation.separator.key-value.git-log"
+				},
+				"4": {
+					"name": "string.unquoted.person.git-log"
+				},
+				"5": {
+					"patterns": [
+						{
+							"include": "#email"
+						}
+					]
+				}
+			}
+		},
+		"date": {
+			"match": "^((?:[*|/\\\\_.-] *)*)(Date|AuthorDate|CommitDate)(:)\\s+(.*)$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "keyword.other.header.git-log"
+				},
+				"3": {
+					"name": "punctuation.separator.key-value.git-log"
+				},
+				"4": {
+					"name": "constant.numeric.date.git-log"
+				}
+			}
+		},
+		"merge": {
+			"match": "^((?:[*|/\\\\_.-] *)*)(Merge)(:)\\s+(.*)$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "keyword.other.header.git-log"
+				},
+				"3": {
+					"name": "punctuation.separator.key-value.git-log"
+				},
+				"4": {
+					"patterns": [
+						{
+							"match": "[0-9a-f]{4,64}",
+							"name": "constant.sha.git-log"
+						}
+					]
+				}
+			}
+		},
+		"reflog": {
+			"match": "^((?:[*|/\\\\_.-] *)*)(Reflog|Reflog message)(:)\\s+(.*)$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "keyword.other.header.git-log"
+				},
+				"3": {
+					"name": "punctuation.separator.key-value.git-log"
+				},
+				"4": {
+					"name": "string.unquoted.reflog.git-log"
+				}
+			}
+		},
+		"stat": {
+			"comment": "--stat lines:  path | 12 ++++--",
+			"match": "^((?:[*|/\\\\_.-] *)*)\\s+(\\S.*?)\\s+(\\|)\\s+(\\d+|Bin\\b[^+\\n]*)\\s*(\\+*)(-*)\\s*$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "string.unquoted.filename.git-log"
+				},
+				"3": {
+					"name": "punctuation.separator.git-log"
+				},
+				"4": {
+					"name": "constant.numeric.git-log"
+				},
+				"5": {
+					"name": "markup.inserted.git-log"
+				},
+				"6": {
+					"name": "markup.deleted.git-log"
+				}
+			}
+		},
+		"summary": {
+			"match": "^((?:[*|/\\\\_.-] *)*)\\s+(\\d+ files? changed)(?:(,\\s*)(\\d+ insertions?\\(\\+\\)))?(?:(,\\s*)(\\d+ deletions?\\(-\\)))?\\s*$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "constant.numeric.git-log"
+				},
+				"4": {
+					"name": "markup.inserted.git-log"
+				},
+				"6": {
+					"name": "markup.deleted.git-log"
+				}
+			}
+		},
+		"status": {
+			"comment": "--name-status lines",
+			"match": "^((?:[*|/\\\\_.-] *)*)(?:(A)|(D)|([MTU]|[RC]\\d*))\\t(.*)$",
+			"captures": {
+				"1": {
+					"name": "punctuation.definition.graph.git-log"
+				},
+				"2": {
+					"name": "markup.inserted.git-log"
+				},
+				"3": {
+					"name": "markup.deleted.git-log"
+				},
+				"4": {
+					"name": "markup.changed.git-log"
+				},
+				"5": {
+					"name": "string.unquoted.filename.git-log"
+				}
+			}
+		},
+		"diff": {
+			"comment": "Patches from git log -p run until the next commit",
+			"begin": "^(?=diff --(?:git|cc|combined) )",
+			"end": "^(?=(?:[*|/\\\\_.-] *)*commit\\s+[0-9a-f]{4,64}\\b)",
+			"name": "meta.embedded.diff.git-log",
+			"contentName": "source.diff",
+			"patterns": [
+				{
+					"include": "source.diff"
+				}
+			]
+		},
+		"trailer": {
+			"match": "^(?:[*|/\\\\_.-] *)*\\s+([A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+|Fixes|Closes|Resolves|Refs|Ref|Bug|Issue|Cc|Link)(:)[ \\t]+(.*)$",
+			"name": "meta.trailer.git-log",
+			"captures": {
+				"1": {
+					"name": "keyword.other.trailer.git-log"
+				},
+				"2": {
+					"name": "punctuation.separator.key-value.git-log"
+				},
+				"3": {
+					"name": "string.unquoted.trailer.git-log",
+					"patterns": [
+						{
+							"include": "#email"
+						},
+						{
+							"include": "#issue"
+						},
+						{
+							"include": "#url"
+						},
+						{
+							"include": "#hash"
+						}
+					]
+				}
+			}
+		},
+		"graph": {
+			"match": "^[*|/\\\\_.-][*|/\\\\_. -]*$",
+			"name": "punctuation.definition.graph.git-log"
+		}
+	}
+}

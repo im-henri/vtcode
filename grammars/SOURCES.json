@@ -57,11 +57,13 @@
     "destination": "grammars/Git",
     "license": "grammars/Rust/VSCode-LICENSE.txt",
     "sha256": {
-      "git-commit.tmLanguage.json": "f972e38c85ccfe9d151ff3d25b14cb0794a1db503594407e7f9a362b59b39eb7",
+      "git-commit.tmLanguage.json": "19c4d281c173b59798e37d908dd295a4ef2d5d5c8268f0d142aca405fdf9aaec",
       "git-rebase.tmLanguage.json": "d98e2cca9c165c3dfccf28fbf93d5bf4378ab937f6b1902161ba792ee5f8f282",
       "ignore.tmLanguage.json": "1a3ed223e92899c46954118389f941dd2567bf8f8cfdb99e591e4ed74079f3aa",
-      "package.json": "f6866ae58f87e0498f6256291cd64150ced976dc473a6d0e1bbabaae16ea2112"
-    }
+      "package.json": "8f54f3a759e41c420d2d886f15041de69ec7ab461b4149f0b415b5e4785df954",
+      "git-log.tmLanguage.json": "7d88eafe99f50caf8e2ab8e88c1c3b6844ebe4f034534e13d01e3c3cf9e03a4b"
+    },
+    "policy": "VS Code git-base grammars. VTCode extends git-commit (subject, Conventional Commits, trailers, references and links), adds the git-log grammar and more commit/rebase file names."
   },
   "ANTLR4 TextMate": {
     "repository": "mike-lischke/vscode-antlr4",
