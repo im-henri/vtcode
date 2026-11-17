@@ -1746,6 +1746,85 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
+    fn change_arrows_center_offscreen_hunks_and_keep_visible_hunks_still() {
+        use crate::app::{DiffMode, Tab, TabKind};
+        use crate::editor::Editor;
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let changes = [30, 32, 90, 92];
+        let lines = |modified| {
+            (0..130).map(|line| {
+                let label = if modified && changes.contains(&line) { "changed" } else { "line" };
+                format!("{label} {line} with some context before the end\n")
+            }).collect::<String>()
+        };
+        let base = lines(false);
+        let target = lines(true);
+        for mode in [DiffMode::Off, DiffMode::Inline, DiffMode::SideBySide] {
+            for wrapped in [false, true] {
+                let mut app = App::test_new();
+                app.show_minimap = false;
+                app.sticky_scroll = false;
+                let mut editor = Editor::test_with_text(&target);
+                editor.file_path = Some("changes.txt".into());
+                editor.word_wrap = wrapped;
+                editor.word_wrap_column = 32;
+                let mut statuses = vec![' '; editor.line_count()];
+                for line in changes { statuses[line] = 'M'; }
+                editor.set_git_line_status(statuses);
+                let mut tab = Tab::new_file(editor);
+                if mode != DiffMode::Off {
+                    tab.kind = TabKind::Diff(1);
+                    app.diff_tabs.owner = Some(1);
+                }
+                app.tabs.push(tab);
+                app.diff_mode = mode;
+                if mode != DiffMode::Off {
+                    app.compare_base_content = Some(base.as_str().into());
+                    app.set_compare_diff_lines(crate::app::compute_file_diff(&base, &target));
+                }
+
+                let mut terminal = Terminal::new(TestBackend::new(120, 22)).unwrap();
+                let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+                    terminal.draw(|frame| draw_editor_section(frame, app, frame.area())).unwrap();
+                };
+                let scroll = |app: &App| {
+                    let editor = app.editor().unwrap();
+                    if mode != DiffMode::Off { app.diff_inline_scroll.row }
+                    else if wrapped { editor.wrap_scroll_offset }
+                    else { editor.scroll_offset }
+                };
+                draw(&mut terminal, &mut app);
+                let previous = app.diff_nav_prev_area.expect("previous change button");
+                let next = app.diff_nav_next_area.expect("next change button");
+                for (button, line, center) in [
+                    (next, 30, true), (next, 32, false), (next, 90, true), (next, 92, false),
+                    (previous, 90, false), (previous, 32, true), (previous, 30, false),
+                ] {
+                    let before = scroll(&app);
+                    crate::mouse::handle_mouse(&mut app, MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: button.x + 1,
+                        row: button.y,
+                        modifiers: KeyModifiers::NONE,
+                    });
+                    draw(&mut terminal, &mut app);
+                    assert_eq!(app.editor().unwrap().cursor_line, line);
+                    if center {
+                        let code = app.code_area.unwrap();
+                        let y = code.y + code.height / 2;
+                        let buffer = terminal.backend().buffer();
+                        let middle: String = (code.x..code.right()).map(|x| buffer[(x, y)].symbol()).collect();
+                        assert!(middle.contains(&format!("changed {line}")), "wrapped={wrapped}, middle row={middle:?}");
+                    } else {
+                        assert_eq!(scroll(&app), before, "visible change at line {line} shifted the viewport");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn diff_tab_navigation_arrows_render_hover_and_navigate_in_each_layout() {
         use crate::app::{DiffMode, SplitDirection, Tab, TabKind};
         use crate::editor::Editor;

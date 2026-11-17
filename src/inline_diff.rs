@@ -216,7 +216,7 @@ impl InlineDiffScroll {
         self.sync_editor(editor);
     }
 
-    pub(crate) fn set_find_cursor(
+    pub(crate) fn set_cursor_centered_if_offscreen(
         &mut self,
         cache: &Arc<DiffRenderCache>,
         editor: &mut Editor,

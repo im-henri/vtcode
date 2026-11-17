@@ -67,7 +67,7 @@ impl Editor {
         });
     }
 
-    pub(crate) fn set_find_cursor(&mut self, line: usize, col: usize) {
+    pub(crate) fn set_cursor_centered_if_offscreen(&mut self, line: usize, col: usize) {
         let (row, first) = if self.word_wrap {
             let width = self.effective_wrap_width();
             (self.wrapped_row_for_position(line, col, width), self.wrap_scroll_offset)

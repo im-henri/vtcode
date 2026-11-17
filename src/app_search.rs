@@ -1189,24 +1189,12 @@ impl App {
         }
         if let Some(&(line, col, end)) = self.search_matches.get(self.search_current) {
             self.push_nav_history();
-            let mut diff = self.row_diff_active().then(|| {
-                (self.diff_render_cache.clone(), std::mem::take(&mut self.diff_inline_scroll))
-            });
             if let Some(editor) = self.editor_mut() {
                 editor.push_cursor_position();
-                editor.clear_selection();
                 let offset = (editor.rope.line_to_char(line) + end).min(editor.rope.len_chars());
                 let end_line = editor.rope.char_to_line(offset);
                 let end_col = offset - editor.rope.line_to_char(end_line);
-                if let Some((cache, scroll)) = &mut diff {
-                    scroll.set_find_cursor(cache, editor, end_line, end_col);
-                } else {
-                    editor.set_find_cursor(end_line, end_col);
-                }
-                editor.selection_anchor = Some((line, col));
-            }
-            if let Some((_, scroll)) = diff {
-                self.diff_inline_scroll = scroll;
+                self.jump_to_editor_position(end_line, end_col, Some((line, col)));
             }
             self.finish_navigation();
         }

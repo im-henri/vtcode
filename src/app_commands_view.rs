@@ -517,10 +517,7 @@ impl App {
                         found
                     };
                     if let Some(line) = found {
-                        if let Some(editor) = self.editor_mut() {
-                            editor.clear_selection();
-                            editor.set_cursor(line, 0);
-                        }
+                        self.jump_to_editor_position(line, 0, None);
                     } else {
                         self.notify("No more changes below");
                     }
@@ -558,10 +555,7 @@ impl App {
                         found
                     };
                     if let Some(line) = found {
-                        if let Some(editor) = self.editor_mut() {
-                            editor.clear_selection();
-                            editor.set_cursor(line, 0);
-                        }
+                        self.jump_to_editor_position(line, 0, None);
                     } else {
                         self.notify("No more changes above");
                     }

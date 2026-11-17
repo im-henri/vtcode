@@ -379,6 +379,30 @@ impl App {
         self.navigation.jump_pending = true;
     }
 
+    /// Center an offscreen destination using the active editor's rendered rows.
+    pub(crate) fn jump_to_editor_position(
+        &mut self,
+        line: usize,
+        col: usize,
+        selection_anchor: Option<(usize, usize)>,
+    ) {
+        let mut diff = self.row_diff_active().then(|| {
+            (self.diff_render_cache.clone(), std::mem::take(&mut self.diff_inline_scroll))
+        });
+        if let Some(editor) = self.editor_mut() {
+            editor.clear_selection();
+            if let Some((cache, scroll)) = &mut diff {
+                scroll.set_cursor_centered_if_offscreen(cache, editor, line, col);
+            } else {
+                editor.set_cursor_centered_if_offscreen(line, col);
+            }
+            editor.selection_anchor = selection_anchor;
+        }
+        if let Some((_, scroll)) = diff {
+            self.diff_inline_scroll = scroll;
+        }
+    }
+
     // Reconcile live view identities before walking history. Reordering tabs
     // does not affect identity; moving a view also moves all of its old stops.
     pub(crate) fn reconcile_navigation(&mut self) {
