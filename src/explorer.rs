@@ -1270,8 +1270,12 @@ impl FileExplorer {
         expanded || refresh
     }
 
+    pub(crate) fn is_reveal_pending(&self, path: &Path) -> bool {
+        self.pending_reveal.as_deref() == Some(path)
+    }
+
     pub(crate) fn cancel_pending_reveal(&mut self, path: &Path) {
-        if self.pending_reveal.as_deref() == Some(path) {
+        if self.is_reveal_pending(path) {
             self.pending_reveal = None;
             self.center_reveal_pending = false;
         }

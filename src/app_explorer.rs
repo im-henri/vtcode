@@ -22,6 +22,26 @@ mod clipboard_tests;
 mod delete_tests;
 
 impl App {
+    pub(crate) fn reveal_active_file_in_explorer(&mut self) {
+        let Some(path) = self
+            .tabs
+            .get(self.active_tab)
+            .and_then(|tab| tab.editor.file_path.as_deref())
+        else {
+            return;
+        };
+        if !self.explorer_contains_file_path(path) {
+            return;
+        }
+        // A tab change and a sidebar switch can ask for the same reveal.
+        if self.bg_explorer_refresh_running && self.explorer.is_reveal_pending(path) {
+            return;
+        }
+        if self.explorer.reveal_file_centered_deferred(path) {
+            self.refresh_explorer_tree_async();
+        }
+    }
+
     /// File-tree commands are resolved before editor commands, regardless of
     /// their keybinding or whether they came from the Edit menu.
     pub(crate) fn route_explorer_edit_command(&mut self, id: &str) -> bool {

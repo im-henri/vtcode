@@ -90,6 +90,48 @@ fn clicking_matches_keeps_search_focus_for_arrows_and_honors_preview_tabs() {
 }
 
 #[test]
+fn returning_to_explorer_reveals_the_open_search_match() {
+    for use_activity_bar in [true, false] {
+        let (root, mut app) = fixture(true);
+        let folder = root.path().join("src/nested");
+        std::fs::create_dir_all(&folder).unwrap();
+        for index in 0..30 {
+            std::fs::write(folder.join(format!("before-{index:02}.txt")), "").unwrap();
+        }
+        let path = folder.join("match.txt");
+        std::fs::write(&path, "first needle\n").unwrap();
+        let mut result = app.global_search_results[0].clone();
+        result.file_path = path.clone();
+        app.global_search_results = vec![result].into();
+        app.refresh_explorer_tree_async();
+        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_explorer_refresh_running);
+        assert!(app.explorer.find_path(&path).is_none());
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 25)).unwrap();
+        click_result_row(&mut app, &mut terminal, SearchRow::Result(0));
+        wait_for_files(&mut app);
+        assert_open_match(&app, 0, true);
+        let editor_id = app.editor().unwrap().navigation_id;
+
+        if use_activity_bar {
+            let area = app.activity_bar_area.unwrap();
+            click(&mut app, area.x, area.y);
+        } else {
+            app.execute_palette_command("show_explorer");
+        }
+        assert_eq!(app.sidebar_view, crate::app::SidebarView::Explorer);
+        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_explorer_refresh_running);
+        draw(&mut app, &mut terminal);
+
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.editor().unwrap().navigation_id, editor_id);
+        let selected = app.explorer.selected;
+        assert_eq!(app.explorer.entries[selected].path, path);
+        assert!(app.explorer.viewport_indices(app.explorer.visible_height).contains(&selected));
+    }
+}
+
+#[test]
 fn clicks_arrows_and_enter_center_each_workspace_match() {
     for preview in [false, true] {
         let (root, mut app) = fixture(preview);

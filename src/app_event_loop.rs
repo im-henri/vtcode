@@ -3962,11 +3962,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     last_revealed_tab = Some(app.active_tab);
                     // Explicit Explorer navigation owns the selection, including
                     // a folder revealed by a terminal link while the tree was hidden.
-                    if app.active_pane != ActivePane::Explorer && let Some(ref path) = current_path
-                        && app.explorer_contains_file_path(path) {
-                        if app.explorer.reveal_file_centered_deferred(path) {
-                            app.refresh_explorer_tree_async();
-                        }
+                    if app.active_pane != ActivePane::Explorer {
+                        app.reveal_active_file_in_explorer();
                     }
                     last_revealed_path = current_path;
                 }

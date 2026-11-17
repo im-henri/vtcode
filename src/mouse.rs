@@ -849,8 +849,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                 if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Explorer {
                                     app.show_explorer = false;
                                 } else {
-                                    app.show_explorer = true;
-                                    app.sidebar_view = crate::app::SidebarView::Explorer;
+                                    app.show_explorer_view();
+                                    return;
                                 }
                             }
                             1 => {

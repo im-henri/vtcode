@@ -127,11 +127,8 @@ impl App {
                 });
             }
             "show_explorer" => {
-                self.sidebar_view = crate::app::SidebarView::Explorer;
-                self.activity_bar_selected = 0;
-                self.reveal_sidebar();
+                self.show_explorer_view();
                 self.active_pane = crate::app::ActivePane::Explorer;
-                self.global_search_active = false;
                 self.terminal_panel_focused = false;
             }
             "toggle_explorer" | "toggle_sidebar" => self.toggle_explorer(),

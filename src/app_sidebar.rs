@@ -1,7 +1,7 @@
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{ActivePane, App};
+use crate::app::{ActivePane, App, SidebarView};
 
 /// Hover visibility is transient; `show_explorer` remains the saved preference.
 #[derive(Default)]
@@ -31,6 +31,17 @@ impl App {
     pub(crate) fn reveal_sidebar(&mut self) {
         self.show_explorer = true;
         self.sidebar_auto_hide.revealed = true;
+    }
+
+    pub(crate) fn show_explorer_view(&mut self) {
+        let returning_from_search = self.sidebar_view == SidebarView::Search;
+        self.sidebar_view = SidebarView::Explorer;
+        self.activity_bar_selected = 0;
+        self.global_search_active = false;
+        self.reveal_sidebar();
+        if returning_from_search {
+            self.reveal_active_file_in_explorer();
+        }
     }
 
     /// A reveal never changes keyboard focus. Freeze layout during gestures and
