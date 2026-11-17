@@ -917,6 +917,16 @@ impl App {
         }
         preserve_document_overrides!(tab_size, use_tabs, word_wrap, word_wrap_column,
             whitespace_mode, read_only, cursor_surrounding_lines, large_file_threshold_mb);
+        // Layout sizes change by dragging without touching settings. Saving an
+        // unrelated preference must not snap them back to the configured size.
+        for (field, previous) in [
+            (&mut applied.explorer_width, self.settings_effective.explorer_width),
+            (&mut applied.panel_height, self.settings_effective.panel_height),
+        ] {
+            if *field == previous {
+                *field = None;
+            }
+        }
         self.animation_settings = crate::animation_config::AnimationSettings::default();
         self.copy_animation.enabled = settings.animation_copy.unwrap_or(true);
         self.set_sidebar_auto_hide(settings.sidebar_auto_hide.unwrap_or(false));
@@ -2984,6 +2994,25 @@ mod tests {
         assert!(app.focus_mode);
         assert!(app.show_word_count);
         assert!(app.screencast_mode);
+    }
+
+    #[test]
+    fn saving_an_unrelated_setting_keeps_the_dragged_sidebar_width() {
+        let mut app = App::test_new();
+        app.apply_effective_settings();
+        app.explorer_width = 47;
+        app.panel_height = 19;
+        app.patch_settings_scope(crate::settings::SettingsScope::Global, "sourceControlShowUntracked", |s| {
+            s.source_control_show_untracked = Some(false);
+        }).unwrap();
+        assert!(!app.sc_visibility.untracked);
+        assert_eq!(app.explorer_width, 47);
+        assert_eq!(app.panel_height, 19);
+        // An explicit width change in settings still applies.
+        app.patch_settings_scope(crate::settings::SettingsScope::Global, "explorerWidth", |s| {
+            s.explorer_width = Some(40);
+        }).unwrap();
+        assert_eq!(app.explorer_width, 40);
     }
 
     #[test]
