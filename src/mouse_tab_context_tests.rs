@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::Tab;
+use crate::app::{Tab, TabTextColor};
 use crate::editor::Editor;
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -54,6 +54,57 @@ fn mouse(app: &mut App, kind: MouseEventKind, (column, row): (u16, u16)) {
             modifiers: KeyModifiers::NONE,
         },
     );
+}
+
+#[test]
+fn tab_text_color_menu_sets_and_resets_the_right_clicked_tab() {
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    let mut app = app_with_tab_menu((0, 0));
+    app.close_tab_context_menu();
+    let strip = Rect::new(0, 0, 80, 1);
+    app.tab_bar_area = Some(strip);
+    let target = TabBarHits::new(&app, strip).tabs[0].1;
+    let right_click = (target.x + 1, target.y);
+    let choose = |app: &mut App| {
+        mouse(app, MouseEventKind::Down(MouseButton::Right), right_click);
+        let menu = render_menu(app, 80, 24);
+        let color_command = label_position(&menu, "Tab Text Color");
+        mouse(app, MouseEventKind::Down(MouseButton::Left), color_command);
+    };
+    let key = |app: &mut App, code| {
+        crate::input_keyboard::handle_keyboard_event(app, KeyEvent::new(code, KeyModifiers::NONE));
+    };
+
+    choose(&mut app);
+    let blue = TabTextColor::CHOICES.iter()
+        .position(|(color, _)| *color == Some(TabTextColor::Blue)).unwrap();
+    for _ in 0..blue {
+        key(&mut app, KeyCode::Down);
+    }
+    let clipped = render_menu(&mut app, 40, 7);
+    assert!(app.tab_context_scroll > 0);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), label_position(&clipped, "Blue"));
+    assert!(!app.tab_context_active);
+    assert_eq!(app.tabs[0].text_color, Some(TabTextColor::Blue));
+    assert_eq!(app.tabs[1].text_color, None);
+    assert_eq!(app.active_tab, 1);
+    assert!(!app.tabs[0].has_unsaved_changes());
+
+    choose(&mut app);
+    assert_eq!(app.tab_context_selected, blue);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.tabs[0].text_color, Some(TabTextColor::Blue));
+
+    choose(&mut app);
+    for _ in 0..blue {
+        key(&mut app, KeyCode::Up);
+    }
+    key(&mut app, KeyCode::Enter);
+    assert!(!app.tab_context_active);
+    assert_eq!(app.tabs[0].text_color, None);
+    assert_eq!(app.active_tab, 1);
 }
 
 #[test]

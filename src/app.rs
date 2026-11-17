@@ -35,7 +35,7 @@ pub(crate) use types::{
     DiffLabels, DiffMode, DiffRenderCache, DiffScopeLineSummary, EditorGroup, ExtensionPaletteAction, ExtensionViewTabRef,
     GitBranchPickerItem, GitCommitInfo, GitCommitReference, GitFileChange, GlobalSearchResult, InlayHintDisplay, KeyBinding, NotifyLevel,
     PaletteCommand, PaletteState, PeekDefinition, RenameState, SidebarView,
-    SourceControlRepositoryState, SplitDirection, SplitNode, SymbolItem, Tab, TabDropZone, TabKind,
+    SourceControlRepositoryState, SplitDirection, SplitNode, SymbolItem, Tab, TabDropZone, TabKind, TabTextColor,
     TerminalDock, TerminalTab, TypeHierarchyMode, WhitespaceMode,
 };
 pub(crate) use types::{contains_ignore_case, fuzzy_match, fuzzy_match_indices, fuzzy_match_score};
@@ -794,6 +794,8 @@ pub(crate) struct App {
     pub tab_context_inner: Option<ratatui::layout::Rect>,
     pub tab_context_tab: usize,
     pub tab_context_selected: usize,
+    pub(crate) tab_context_scroll: usize,
+    pub(crate) tab_context_color_target: Option<u64>,
     // Performance caches (avoid expensive per-frame recomputation)
     pub cached_git_branch: String,
     pub cached_error_count: usize,
@@ -1781,6 +1783,8 @@ impl App {
             tab_context_inner: None,
             tab_context_tab: 0,
             tab_context_selected: 0,
+            tab_context_scroll: 0,
+            tab_context_color_target: None,
             cached_git_branch: String::new(),
             cached_error_count: 0,
             editor_analysis_memo: Default::default(),

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::app::{App, ContextMenuItem, GitFileChange};
+use crate::app::{App, ContextMenuItem, GitFileChange, TabTextColor};
 use crate::helpers::len_as_u16;
 
 impl App {
@@ -19,12 +19,71 @@ impl App {
                 .is_none_or(|index| !self.terminal_is_open(index)),
             "tab_group_edit" | "tab_group_remove" => self.tabs.get(self.tab_context_tab).is_none_or(|t| self.tab_group(t).is_none()),
             "duplicate_tab" => !self.can_duplicate_tab(self.tab_context_tab),
+            "tab_text_color" => self.tabs.get(self.tab_context_tab).is_none(),
             "tab_select_compare" => self.tab_compare_path(self.tab_context_tab).is_none(),
             "tab_compare_selected" => self
                 .tab_compare_path(self.tab_context_tab)
                 .is_none_or(|path| !self.can_compare_with_selected(path)),
             _ => false,
         }
+    }
+
+    pub(crate) fn tab_context_item_count(&self) -> usize {
+        if self.tab_context_color_target.is_some() {
+            TabTextColor::CHOICES.len()
+        } else {
+            Self::tab_context_items().len()
+        }
+    }
+
+    pub(crate) fn tab_context_item_enabled(&self, index: usize) -> bool {
+        if self.tab_context_color_target.is_some() {
+            index < TabTextColor::CHOICES.len()
+        } else {
+            Self::tab_context_items().get(index).is_some_and(|(_, command, _)| {
+                !command.is_empty() && !self.tab_context_command_disabled(command)
+            })
+        }
+    }
+
+    pub(crate) fn step_tab_context_selection(&mut self, up: bool) {
+        let selected = self.tab_context_selected;
+        let count = self.tab_context_item_count();
+        let enabled = |index| self.tab_context_item_enabled(index);
+        let next = if up {
+            (0..selected.min(count)).rev().find(|&index| enabled(index))
+        } else {
+            (selected.saturating_add(1)..count).find(|&index| enabled(index))
+        };
+        if let Some(next) = next {
+            self.tab_context_selected = next;
+        }
+    }
+
+    pub(crate) fn open_tab_text_color_menu(&mut self, index: usize) {
+        let Some(tab) = self.tabs.get(index) else { return; };
+        self.tab_context_color_target = Some(tab.editor.navigation_id);
+        self.tab_context_selected = TabTextColor::CHOICES.iter()
+            .position(|(color, _)| *color == tab.text_color)
+            .unwrap_or(0);
+        self.tab_context_scroll = 0;
+        self.tab_context_inner = None;
+        self.tab_context_active = true;
+    }
+
+    pub(crate) fn close_tab_context_menu(&mut self) {
+        self.tab_context_active = false;
+        self.tab_context_color_target = None;
+    }
+
+    pub(crate) fn set_tab_text_color(&mut self, view: u64, color: Option<TabTextColor>) {
+        let Some((group, index)) = self.tab_location(view) else { return; };
+        let tab = if group == self.active_group {
+            &mut self.tabs[index]
+        } else {
+            &mut self.groups[group].tabs[index]
+        };
+        tab.text_color = color;
     }
 
     pub(crate) fn execute_tab_compare_command(&mut self, tab: usize, command: &str) {

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::style::Color;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -1599,10 +1600,53 @@ impl ExtensionPaletteAction {
 }
 
 /// A single open file tab
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum TabTextColor {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Cyan,
+    Blue,
+    Purple,
+    Pink,
+}
+
+impl TabTextColor {
+    pub(crate) const CHOICES: [(Option<Self>, &'static str); 9] = [
+        (None, "Theme Default"),
+        (Some(Self::Red), "Red"),
+        (Some(Self::Orange), "Orange"),
+        (Some(Self::Yellow), "Yellow"),
+        (Some(Self::Green), "Green"),
+        (Some(Self::Cyan), "Cyan"),
+        (Some(Self::Blue), "Blue"),
+        (Some(Self::Purple), "Purple"),
+        (Some(Self::Pink), "Pink"),
+    ];
+
+    pub(crate) fn foreground(self, background: Color) -> Color {
+        let (light, dark) = match self {
+            Self::Red => (Color::Rgb(248, 113, 113), Color::Rgb(153, 27, 27)),
+            Self::Orange => (Color::Rgb(251, 146, 60), Color::Rgb(154, 52, 18)),
+            Self::Yellow => (Color::Rgb(250, 204, 21), Color::Rgb(106, 79, 0)),
+            Self::Green => (Color::Rgb(74, 222, 128), Color::Rgb(22, 101, 52)),
+            Self::Cyan => (Color::Rgb(34, 211, 238), Color::Rgb(21, 94, 117)),
+            Self::Blue => (Color::Rgb(96, 165, 250), Color::Rgb(30, 64, 175)),
+            Self::Purple => (Color::Rgb(192, 132, 252), Color::Rgb(107, 33, 168)),
+            Self::Pink => (Color::Rgb(244, 114, 182), Color::Rgb(157, 23, 77)),
+        };
+        let contrast = |color| crate::ui_colors::contrast_ratio(color, background);
+        if contrast(dark) > contrast(light) { dark } else { light }
+    }
+}
+
 pub struct Tab {
     pub editor: Editor,
     pub pinned: bool,
     pub preview: bool,
+    pub(crate) text_color: Option<TabTextColor>,
     pub kind: TabKind,
     pub extension_view: Option<ExtensionViewTabRef>,
     pub(crate) file_search: crate::file_search::State,
@@ -1641,6 +1685,7 @@ impl Tab {
             editor,
             pinned: false,
             preview: false,
+            text_color: None,
             kind: TabKind::File,
             extension_view: None,
             file_search: Default::default(),

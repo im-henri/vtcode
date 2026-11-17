@@ -1,7 +1,7 @@
 use crate::text_input::TextInputId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::App;
+use crate::app::{App, TabTextColor};
 #[cfg(test)]
 use crate::app::ActivePane;
 
@@ -215,42 +215,23 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
         return None;
     }
     match key.code {
-        KeyCode::Esc => {
-            app.tab_context_active = false;
-        }
-        KeyCode::Up => {
-            let items = App::tab_context_items();
-            if app.tab_context_selected > 0 {
-                app.tab_context_selected -= 1;
-                while app.tab_context_selected > 0
-                    && (items[app.tab_context_selected].0 == "─"
-                        || app.tab_context_command_disabled(items[app.tab_context_selected].1))
-                {
-                    app.tab_context_selected -= 1;
-                }
-            }
-        }
-        KeyCode::Down => {
-            let items = App::tab_context_items();
-            let max = items.len().saturating_sub(1);
-            if app.tab_context_selected < max {
-                app.tab_context_selected += 1;
-                while app.tab_context_selected < max
-                    && (items[app.tab_context_selected].0 == "─"
-                        || app.tab_context_command_disabled(items[app.tab_context_selected].1))
-                {
-                    app.tab_context_selected += 1;
-                }
-            }
-        }
+        KeyCode::Esc => app.close_tab_context_menu(),
+        KeyCode::Up => app.step_tab_context_selection(true),
+        KeyCode::Down => app.step_tab_context_selection(false),
         KeyCode::Enter => {
+            let selected = app.tab_context_selected;
+            if !app.tab_context_item_enabled(selected) {
+                return Some(false);
+            }
+            if let Some(view) = app.tab_context_color_target {
+                app.set_tab_text_color(view, TabTextColor::CHOICES[selected].0);
+                app.close_tab_context_menu();
+                return Some(false);
+            }
             let items = App::tab_context_items();
-            if let Some((_, cmd, _)) = items.get(app.tab_context_selected) {
-                if cmd.is_empty() || app.tab_context_command_disabled(cmd) {
-                    return Some(false);
-                }
+            if let Some((_, cmd, _)) = items.get(selected) {
                 let tab = app.tab_context_tab;
-                app.tab_context_active = false;
+                app.close_tab_context_menu();
                 if cmd.starts_with("tab_group_") || matches!(*cmd, "tab_move_desk" | "tab_copy_desk") {
                     app.sync_duplicate_file_tabs();
                     app.active_tab = tab;
@@ -258,6 +239,7 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                     return Some(false);
                 }
                 match *cmd {
+                    "tab_text_color" => app.open_tab_text_color_menu(tab),
                     "tab_rename_terminal" => app.rename_context_terminal(),
                     "tab_find_terminal" => {
                         if let Some(index) = app.tabs.get(tab).and_then(|tab| tab.terminal_idx) { app.begin_terminal_find(index); }

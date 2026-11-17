@@ -1,6 +1,6 @@
 //! Whole-label tab motion. Layout and drag thresholds remain immediate; only
 //! the visible labels move, and pointer clicks use the last presented frame.
-use super::{App, CloseButton, TabBarHits, close_button, strip_scroll_position};
+use super::{App, CloseButton, ColoredTabText, TabBarHits, close_button, strip_scroll_position};
 use crate::animation_config::AnimationEffect;
 use ratatui::{Frame, buffer::Buffer, layout::Rect, style::Style, text::Line, widgets::Paragraph};
 use std::{
@@ -18,6 +18,7 @@ pub(super) struct Label {
     pub line: Line<'static>,
     pub style: Style,
     pub icon: Option<Range<usize>>,
+    pub(super) text_color: Option<ColoredTabText>,
 }
 
 pub(super) struct Capture {
@@ -462,6 +463,9 @@ impl State {
                     &app.colors.ui,
                     icon.as_slice(),
                 );
+                if let Some(text) = label.text_color {
+                    text.paint(frame.buffer_mut(), rect, inset);
+                }
             }
             self.presented.push(Presented {
                 id: label.id,

@@ -559,17 +559,13 @@ impl App {
         }
 
         self.tabs.push(Tab {
-            editor,
-            pinned: false,
-            preview: false,
             kind: TabKind::ExtensionView,
             extension_view: Some(ExtensionViewTabRef {
                 extension_id: extension_id.to_string(),
                 view_id: view_id.to_string(),
                 title: view.title.clone(),
             }),
-            file_search: Default::default(),
-            terminal_idx: None,
+            ..Tab::new_file(editor)
         });
         self.active_tab = self.tabs.len() - 1;
         self.active_pane = crate::app::ActivePane::Editor;

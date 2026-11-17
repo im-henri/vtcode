@@ -55,6 +55,8 @@ pub(crate) struct SavedDeskTool {
     kind: String,
     path: Option<std::path::PathBuf>,
     pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text_color: Option<crate::app::TabTextColor>,
     selected: bool,
     group: Option<u64>,
     scroll: usize,
@@ -222,6 +224,7 @@ impl App {
                     kind: kind.into(),
                     path: tab.editor.file_path.clone(),
                     pinned: tab.pinned,
+                    text_color: tab.text_color,
                     selected: index == active,
                     group: self
                         .desks
@@ -404,6 +407,7 @@ impl App {
             let mut tab = Tab::new_file(editor);
             tab.kind = kind;
             tab.pinned = tool.pinned;
+            tab.text_color = tool.text_color;
             if let Some(id) = tool.group.filter(|id| self.desks.groups.contains_key(id)) {
                 self.desks.membership.insert(view, id);
             }
@@ -906,6 +910,7 @@ impl App {
             editor,
             pinned: tab.pinned,
             preview: false,
+            text_color: tab.text_color,
             kind: tab.kind,
             extension_view: tab.extension_view.clone(),
             file_search: Default::default(),

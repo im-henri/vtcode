@@ -503,13 +503,9 @@ impl App {
         editor.file_path = None;
         editor.read_only = true;
         let tab = Tab {
-            editor,
-            pinned: false,
-            preview: false,
             kind: TabKind::Terminal,
-            extension_view: None,
-            file_search: Default::default(),
             terminal_idx: Some(index),
+            ..Tab::new_file(editor)
         };
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;

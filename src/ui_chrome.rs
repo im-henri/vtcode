@@ -12,7 +12,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::App;
+use crate::app::{App, TabTextColor};
 use crate::explorer::{GitStatus, GitStatusSummary};
 use crate::text_input::TextInputId;
 use crate::ui_widgets::{DropdownItem, DropdownMenu, InputField, themed_dropdown_colors};
@@ -1716,22 +1716,46 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 pub(crate) fn draw_tab_context_menu(f: &mut Frame, app: &mut App) {
-    let raw_items = App::tab_context_items();
     let (x, y) = app.tab_context_pos;
-    let items: Vec<DropdownItem> = raw_items.iter()
-        .map(|(label, command, shortcut)| {
-            DropdownItem::new(label)
-                .shortcut(shortcut)
-                .disabled(app.tab_context_command_disabled(command))
-        })
-        .collect();
     let colors = themed_dropdown_colors(&app.colors);
+    let items: Vec<DropdownItem> = if let Some(view) = app.tab_context_color_target {
+        let Some((group, index)) = app.tab_location(view) else {
+            app.close_tab_context_menu();
+            return;
+        };
+        let current = if group == app.active_group {
+            app.tabs[index].text_color
+        } else {
+            app.groups[group].tabs[index].text_color
+        };
+        TabTextColor::CHOICES.iter()
+            .map(|(color, label)| {
+                let marker = if *color == current {
+                    " ✓ "
+                } else if color.is_some() {
+                    " ● "
+                } else {
+                    "   "
+                };
+                let swatch = color.map_or(colors.fg, |color| color.foreground(colors.bg));
+                DropdownItem::new(label).icon(marker, swatch)
+            })
+            .collect()
+    } else {
+        App::tab_context_items().iter()
+            .map(|(label, command, shortcut)| {
+                DropdownItem::new(label)
+                    .shortcut(shortcut)
+                    .disabled(app.tab_context_command_disabled(command))
+            })
+            .collect()
+    };
     let inner = DropdownMenu::new(&items, colors)
         .anchor(x, y)
         .min_width(16)
         .selected(app.tab_context_selected)
         .mouse(app.mouse_row, app.mouse_col)
-        .render(f);
+        .render_scrolled(f, &mut app.tab_context_scroll);
     app.tab_context_inner = Some(inner);
 }
 

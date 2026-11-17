@@ -375,7 +375,7 @@ fn cached_startup_registry_highlights_without_waiting_for_maintenance_completion
 fn saved(path: Option<String>, text: Option<&str>) -> crate::session::SavedTab {
     crate::session::SavedTab {
         file_path: path.map(std::path::PathBuf::from), cursor_line: 0, cursor_col: 0, scroll_offset: 0,
-        horizontal_scroll: 0, pinned: false, preview: false, unsaved_file: None,
+        horizontal_scroll: 0, pinned: false, preview: false, text_color: None, unsaved_file: None,
         pending_unsaved_content: text.map(ropey::Rope::from_str), undo_history_file: None,
         language_override: None, undo_entries: None, redo_entries: None,
         bookmarks: vec![], folded_ranges: vec![],

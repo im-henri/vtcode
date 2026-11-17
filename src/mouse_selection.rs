@@ -492,6 +492,8 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
                 app.tab_context_inner = None;
                 app.tab_context_tab = tab_idx;
                 app.tab_context_selected = 0;
+                app.tab_context_scroll = 0;
+                app.tab_context_color_target = None;
             }
             return;
         }

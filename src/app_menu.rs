@@ -704,11 +704,12 @@ impl App {
         }
     }
 
-    pub(crate) fn tab_context_items() -> Vec<(&'static str, &'static str, &'static str)> {
-        vec![
+    pub(crate) fn tab_context_items() -> &'static [(&'static str, &'static str, &'static str)] {
+        &[
             ("Close", "tab_close", "Ctrl+W"),
             ("Rename Terminal…", "tab_rename_terminal", ""),
             ("Find in Terminal…", "tab_find_terminal", ""),
+            ("Tab Text Color…", "tab_text_color", ""),
             ("Close Others", "tab_close_others", ""),
             ("Close All", "tab_close_all", ""),
             ("Close Saved", "tab_close_saved", ""),
@@ -1000,7 +1001,7 @@ mod tests {
     fn tab_context_items_no_duplicate_ids() {
         let items = App::tab_context_items();
         let mut seen = HashSet::new();
-        for (label, id, _shortcut) in &items {
+        for (label, id, _shortcut) in items {
             if *label != "─" {
                 assert!(seen.insert(*id), "Duplicate tab context id: {}", id);
             }

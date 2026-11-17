@@ -47,13 +47,14 @@ pub(crate) fn handle_mouse_dialogs(
     // Use the actual rendered rows: dropdowns can shift left, flip upward,
     // or be clipped after resizing. Borders never select a command.
     if app.tab_context_active {
-        let items = App::tab_context_items();
+        let point = (col, row).into();
         let hit = app.tab_context_inner
-            .filter(|inner| inner.contains((col, row).into()))
-            .map(|inner| (row - inner.y) as usize)
-            .filter(|&index| items.get(index).is_some_and(|item| {
-                !item.1.is_empty() && !app.tab_context_command_disabled(item.1)
-            }));
+            .filter(|inner| inner.contains(point))
+            .filter(|&inner| crate::ui_widgets::DropdownScrollbar::new(
+                inner, app.tab_context_item_count(), app.tab_context_scroll,
+            ).is_none_or(|bar| !bar.area.contains(point)))
+            .map(|inner| app.tab_context_scroll + usize::from(row - inner.y))
+            .filter(|&index| app.tab_context_item_enabled(index));
         match mouse.kind {
             MouseEventKind::Moved => {
                 app.reset_hover_states();
@@ -76,11 +77,16 @@ pub(crate) fn handle_mouse_dialogs(
                         ).contains((col, row).into())
                     });
                     if !in_menu {
-                        app.tab_context_active = false;
+                        app.close_tab_context_menu();
                     }
                 }
             }
-            MouseEventKind::Down(_) => app.tab_context_active = false,
+            MouseEventKind::Down(_) => app.close_tab_context_menu(),
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if app.tab_context_inner.is_some_and(|inner| inner.contains(point)) =>
+            {
+                app.step_tab_context_selection(mouse.kind == MouseEventKind::ScrollUp);
+            }
             _ => {}
         }
         // Dismissal, hovering and scrolling must not reach controls underneath.

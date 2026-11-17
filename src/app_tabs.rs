@@ -1123,13 +1123,8 @@ impl App {
             editor.file_path = Some(std::path::PathBuf::from("⚙ Settings"));
             editor.read_only = true;
             self.tabs.push(Tab {
-                editor,
-                pinned: false,
-                preview: false,
                 kind: TabKind::Settings,
-                extension_view: None,
-                file_search: Default::default(),
-                terminal_idx: None,
+                ..Tab::new_file(editor)
             });
             self.active_tab = self.tabs.len() - 1;
         }
@@ -1164,13 +1159,8 @@ impl App {
         let mut editor = self.new_editor();
         editor.file_path = Some(std::path::PathBuf::from("⌨ Keyboard Shortcuts"));
         self.tabs.push(Tab {
-            editor,
-            pinned: false,
-            preview: false,
             kind: TabKind::KeyboardShortcuts,
-            extension_view: None,
-            file_search: Default::default(),
-            terminal_idx: None,
+            ..Tab::new_file(editor)
         });
         self.active_tab = self.tabs.len() - 1;
         self.active_pane = ActivePane::Editor;
@@ -1198,7 +1188,7 @@ impl App {
                 .map_or("Unknown Extension", |ext| ext.name.as_str());
             let mut editor = self.new_editor();
             editor.file_path = Some(std::path::PathBuf::from(format!("Extension: {name} [ext-info:{extension_id}]")));
-            let tab = Tab { editor, pinned: false, preview, kind: TabKind::ExtensionInfo, extension_view: None, file_search: Default::default(), terminal_idx: None };
+            let tab = Tab { preview, kind: TabKind::ExtensionInfo, ..Tab::new_file(editor) };
             if let Some(index) = self.tabs.iter().position(|tab| tab.kind == TabKind::ExtensionInfo && tab.preview) {
                 self.tabs[index] = tab;
                 self.active_tab = index;
@@ -1366,13 +1356,8 @@ impl App {
         editor.horizontal_scroll = 0;
         editor.language_override = Some("Markdown".into());
         let preview_idx = self.insert_tab_after_active(Tab {
-            editor,
-            pinned: false,
-            preview: false,
             kind: TabKind::MarkdownPreview,
-            extension_view: None,
-            file_search: Default::default(),
-            terminal_idx: None,
+            ..Tab::new_file(editor)
         });
         self.markdown_preview = true;
         self.activate_markdown_preview_tab(preview_idx);
@@ -2357,13 +2342,8 @@ mod tests {
         editor.file_path = Some(std::path::PathBuf::from(name));
         editor.modified = modified;
         Tab {
-            editor,
             pinned,
-            preview: false,
-            kind: TabKind::File,
-            extension_view: None,
-            file_search: Default::default(),
-            terminal_idx: None,
+            ..Tab::new_file(editor)
         }
     }
 
@@ -2417,13 +2397,8 @@ mod tests {
         preview_editor.scroll_offset = 12;
         preview_editor.content_version = 1;
         let preview_tab = Tab {
-            editor: preview_editor,
-            pinned: false,
-            preview: false,
             kind: TabKind::MarkdownPreview,
-            extension_view: None,
-            file_search: Default::default(),
-            terminal_idx: None,
+            ..Tab::new_file(preview_editor)
         };
 
         let mut app = App::new(PathBuf::from("."));

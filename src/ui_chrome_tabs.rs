@@ -7,7 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::App;
+use crate::app::{App, TabTextColor};
 use crate::ui_widgets::{DropdownItem, DropdownMenu, themed_dropdown_colors};
 
 #[path = "tab_path_labels.rs"]
@@ -244,6 +244,24 @@ fn tab_label_width_with_icon(tab: &crate::app::Tab, display_name: &str, icon: &s
 
 pub(crate) fn tab_trailing_padding(tab: &crate::app::Tab) -> &'static str {
     if tab.pinned { " " } else { close_button::PADDING }
+}
+
+#[derive(Clone, Copy)]
+struct ColoredTabText {
+    color: TabTextColor,
+    start: usize,
+    width: usize,
+}
+
+impl ColoredTabText {
+    fn paint(self, buffer: &mut ratatui::buffer::Buffer, tab: Rect, clip: usize) {
+        let start = self.start.saturating_sub(clip);
+        let end = (self.start + self.width).saturating_sub(clip).min(usize::from(tab.width));
+        for column in start..end {
+            let cell = &mut buffer[(tab.x + column as u16, tab.y)];
+            cell.set_fg(self.color.foreground(cell.bg));
+        }
+    }
 }
 
 /// Keep long titles readable without letting one tab consume the strip. The
@@ -533,6 +551,9 @@ pub(crate) fn draw_tab_bar_for_group(
     }
     let mut active_rect = None;
     let mut file_icon_areas = Vec::new();
+    let gradient = &app.colors.gradients.bg_tabbar;
+    let has_gradient = strip_scroll.is_some() && gradient.start != gradient.end;
+    let mut colored_text = Vec::new();
     let mut reorder_labels = (group == app.active_group && app.terminal_has_focus
         && app.animation_settings.enabled(crate::animation_config::AnimationEffect::TabSlide))
         .then(Vec::new);
@@ -636,12 +657,22 @@ pub(crate) fn draw_tab_bar_for_group(
             }
         }
         spans.push(Span::styled(icon, icon_style));
-        if tab.editor.disk_unavailable && tab.kind == crate::app::TabKind::File {
+        let disk_unavailable = tab.editor.disk_unavailable && tab.kind == crate::app::TabKind::File;
+        if disk_unavailable {
             spans.push(Span::styled("~", style));
         }
         let display_name = tab_label_name(app, area, group, i, tab, duplicates.as_ref());
-        spans.push(Span::styled(display_name, style));
+        let text_color = tab.text_color.map(|color| ColoredTabText {
+            color,
+            start: icon_start + icon.width() + usize::from(disk_unavailable),
+            width: display_name.width(),
+        });
+        let name_style = text_color.map_or(style, |text| style.fg(text.color.foreground(tab_bg)));
+        spans.push(Span::styled(display_name, name_style));
         spans.push(Span::styled(tab_trailing_padding(tab), style));
+        if has_gradient && let Some(text) = text_color {
+            colored_text.push((rect, clip, text));
+        }
         if let Some(labels) = &mut reorder_labels {
             let width = hits.tab_widths[position];
             let line = Line::from(spans.iter().cloned().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>());
@@ -650,6 +681,7 @@ pub(crate) fn draw_tab_bar_for_group(
                 width, close: CloseButton::for_tab(tab, width), line, style,
                 icon: matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision)
                     .then_some(icon_start..icon_start + icon.width()),
+                text_color,
             });
         }
         f.render_widget(Paragraph::new(Line::from(spans)).scroll((0, crate::helpers::len_as_u16(clip))).style(style), rect);
@@ -670,18 +702,19 @@ pub(crate) fn draw_tab_bar_for_group(
             rect,
         );
     }
-    if strip_scroll.is_some() && area.width > 0 {
-        let gradient = &app.colors.gradients.bg_tabbar;
-        if gradient.start != gradient.end {
-            let computed = crate::app_theme::GradientPrecomputed::new(area.width, 1, gradient.angle_deg);
-            for x in area.x..area.right() {
-                if let Some(cell) = f.buffer_mut().cell_mut((x, area.y))
-                    && (cell.bg == bg || cell.bg == app.colors.bg_tab_inactive)
-                {
-                    cell.set_bg(crate::app_theme::lerp_color(gradient.start, gradient.end, computed.t_at(x - area.x, 0)));
-                }
+    if has_gradient && area.width > 0 {
+        let computed = crate::app_theme::GradientPrecomputed::new(area.width, 1, gradient.angle_deg);
+        let buffer = f.buffer_mut();
+        for x in area.x..area.right() {
+            if let Some(cell) = buffer.cell_mut((x, area.y))
+                && (cell.bg == bg || cell.bg == app.colors.bg_tab_inactive)
+            {
+                cell.set_bg(crate::app_theme::lerp_color(gradient.start, gradient.end, computed.t_at(x - area.x, 0)));
             }
-            crate::ui_colors::ensure_control_row_contrast_except(f.buffer_mut(), area, &app.colors.ui, &file_icon_areas);
+        }
+        crate::ui_colors::ensure_control_row_contrast_except(buffer, area, &app.colors.ui, &file_icon_areas);
+        for (rect, clip, text) in colored_text {
+            text.paint(buffer, rect, clip);
         }
     }
     if group == app.active_group {
@@ -722,8 +755,7 @@ pub(crate) fn draw_tab_bar_for_group(
             fixed.extend([hits.left, hits.right, hits.new_tab]);
             reorder::capture(f, app, reorder::Capture {
                 area, bar: area, viewport: Rect::new(left, area.y, right.saturating_sub(left), 1),
-                labels, fixed, gradient: strip_scroll.is_some()
-                    && app.colors.gradients.bg_tabbar.start != app.colors.gradients.bg_tabbar.end,
+                labels, fixed, gradient: has_gradient,
             }, now);
         }
         let active_rect = reorder::paint(f, app, area, active_rect, now);
@@ -807,6 +839,7 @@ fn draw_tab_bar_labels(
     let visible_capacity = app.tabs.len().min(usize::from(area.width) / 2 + 2);
     let mut spans = Vec::with_capacity(visible_capacity * 6 + 2);
     let mut file_icon_areas = Vec::new();
+    let mut colored_text = Vec::new();
     let mut close_buttons = Vec::new();
     let mut active_tab_area = None;
     let has_gradient = app.colors.gradients.bg_tabbar.start != app.colors.gradients.bg_tabbar.end;
@@ -928,9 +961,19 @@ fn draw_tab_bar_labels(
             text_style.fg(if is_file_tab { color } else { app.colors.ui.readable_foreground(color, bg, 3.0) })
         });
         spans.push(Span::styled(icon, icon_style));
-        let label = if deleted_prefix.is_empty() { display_name }
-            else { std::borrow::Cow::Owned(format!("{deleted_prefix}{display_name}")) };
-        spans.push(Span::styled(label, text_style));
+        if !deleted_prefix.is_empty() {
+            spans.push(Span::styled(deleted_prefix, text_style));
+        }
+        let text_color = tab.text_color.map(|color| ColoredTabText {
+            color,
+            start: prefix.width() + modified_width + icon.width() + deleted_prefix.len(),
+            width: display_name.width(),
+        });
+        let name_style = text_color.map_or(text_style, |text| text_style.fg(text.color.foreground(bg)));
+        spans.push(Span::styled(display_name, name_style));
+        if has_gradient && let Some(text) = text_color {
+            colored_text.push((rect, text));
+        }
         let trailing_style = app.colors.ui.border_tab.map_or(text_style, |border|
             text_style.add_modifier(Modifier::UNDERLINED).underline_color(border));
         spans.push(Span::styled(tab_trailing_padding(tab), trailing_style));
@@ -945,6 +988,7 @@ fn draw_tab_bar_labels(
                 line: Line::from(spans[span_start..].iter().map(|span|
                     Span::styled(span.content.to_string(), span.style)).collect::<Vec<_>>()),
                 icon: is_file_tab.then_some(start..start + icon.width()),
+                text_color,
             });
         }
         used_width += tab_width;
@@ -987,6 +1031,9 @@ fn draw_tab_bar_labels(
             }
         }
         crate::ui_colors::ensure_control_row_contrast_except(buf, area, &app.colors.ui, &file_icon_areas);
+        for (rect, text) in colored_text {
+            text.paint(buf, rect, 0);
+        }
     }
 
     if app.animation_settings.any_enabled() && !area.is_empty() {
@@ -1540,6 +1587,50 @@ mod tests {
         let cells = &terminal.backend().buffer().content;
         assert!(cells.iter().any(|c| c.symbol() == "a" && c.fg == app.colors.ui.fg_tab_active));
         assert!(cells.iter().any(|c| c.symbol() == "b" && c.fg == app.colors.ui.fg_tab_inactive));
+    }
+
+    #[test]
+    fn tab_text_color_changes_only_the_label_on_plain_and_scrolled_strips() {
+        use ratatui::style::Color;
+
+        let mut app = App::test_new();
+        for name in ["active.rs", "target.rs"] {
+            let mut editor = Editor::new();
+            editor.file_path = Some(name.into());
+            app.tabs.push(Tab::new_file(editor));
+        }
+        app.tabs[1].editor.modified = true;
+        app.tabs[1].editor.disk_unavailable = true;
+        app.colors.gradients.bg_tabbar.start = Color::Rgb(210, 220, 230);
+        app.colors.gradients.bg_tabbar.end = Color::Rgb(250, 250, 250);
+        let render = |app: &App| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+            terminal.draw(|frame| draw_tab_bar(frame, app, frame.area())).unwrap();
+            terminal.backend().buffer().clone()
+        };
+        let color = TabTextColor::Purple;
+        for scrolled in [false, true] {
+            app.tab_strip_scroll = scrolled.then_some(StripScroll {
+                anchor: app.tabs[0].editor.navigation_id,
+                columns: 2,
+                manual: true,
+            });
+            let before = render(&app);
+            app.tabs[1].text_color = Some(color);
+            let after = render(&app);
+            let start = before.content.iter().position(|cell| cell.symbol() == "~").unwrap() + 1;
+            let end = start + "target.rs".len();
+            assert_ne!(after.content[start].fg, before.content[start].fg);
+            for (index, (old, new)) in before.content.iter().zip(&after.content).enumerate() {
+                let mut expected = old.clone();
+                if (start..end).contains(&index) {
+                    expected.set_fg(color.foreground(old.bg));
+                }
+                assert_eq!(*new, expected, "scrolled={scrolled}, column={index}");
+            }
+            app.tabs[1].text_color = None;
+            assert_eq!(render(&app), before);
+        }
     }
 
     #[test]

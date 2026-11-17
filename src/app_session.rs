@@ -1415,12 +1415,13 @@ impl App {
             )
         };
         let save_tab = |tab: &Tab| -> crate::session::SavedTab {
-            // Preserve the on-disk manifest verbatim while its background
-            // session load is still pending. An immediate quit must never
-            // discard recovery sidecars that have not been hydrated yet.
+            // Keep the saved document state and recovery references while
+            // its background session load is still pending.
             if tab.editor.bg_loading {
                 if let Some(restore) = &tab.editor.pending_session_restore {
-                    return restore.tab.clone();
+                    let mut saved = restore.tab.clone();
+                    saved.text_color = tab.text_color;
+                    return saved;
                 }
             }
             let unsaved = tab.editor.modified.then(|| tab.editor.rope.clone());
@@ -1440,6 +1441,7 @@ impl App {
                 horizontal_scroll: tab.editor.horizontal_scroll,
                 pinned: tab.pinned,
                 preview: tab.preview && !tab.pinned && !tab.has_unsaved_changes(),
+                text_color: tab.text_color,
                 pending_unsaved_content: unsaved,
                 unsaved_file: None,
                 undo_history_file: None,
@@ -1628,15 +1630,12 @@ impl App {
             }
 
             Tab {
-                editor,
                 pinned: saved_tab.pinned,
                 preview: enable_preview_tabs && saved_tab.preview && !saved_tab.pinned
                     && saved_tab.unsaved_file.is_none()
                     && saved_tab.pending_unsaved_content.is_none(),
-                kind: TabKind::File,
-                extension_view: None,
-                file_search: Default::default(),
-                terminal_idx: None,
+                text_color: saved_tab.text_color,
+                ..Tab::new_file(editor)
             }
         };
 
@@ -2281,6 +2280,7 @@ mod tests {
             horizontal_scroll: 0,
             pinned: false,
             preview: false,
+            text_color: None,
             pending_unsaved_content: None,
             unsaved_file: None,
             undo_history_file: None,
@@ -2299,6 +2299,8 @@ mod tests {
 
     #[test]
     fn restore_session_hydrates_unsaved_content_off_thread() {
+        use crate::app::TabTextColor;
+
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("restored.txt");
         std::fs::write(&file_path, "disk baseline\n").unwrap();
@@ -2311,6 +2313,7 @@ mod tests {
                 horizontal_scroll: 0,
                 pinned: true,
                 preview: false,
+                text_color: Some(TabTextColor::Purple),
                 pending_unsaved_content: Some("unsaved buffer\n".into()),
                 unsaved_file: None,
                 undo_history_file: None,
@@ -2329,8 +2332,15 @@ mod tests {
         let mut restored = App::new(dir.path().to_path_buf());
         restored.restore_session(&manifest);
         assert!(restored.tabs[0].editor.bg_loading);
+        assert_eq!(restored.tabs[0].text_color, Some(TabTextColor::Purple));
+        let view = restored.tabs[0].editor.navigation_id;
+        restored.set_tab_text_color(view, Some(TabTextColor::Blue));
+        let pending = restored.build_session();
+        assert_eq!(pending.tabs[0].text_color, Some(TabTextColor::Blue));
+        assert_eq!(pending.tabs[0].unsaved_file, manifest.tabs[0].unsaved_file);
         wait_for_session_restore(&mut restored);
 
+        assert_eq!(restored.tabs[0].text_color, Some(TabTextColor::Blue));
         let editor = &restored.tabs[0].editor;
         assert_eq!(editor.rope.to_string(), "unsaved buffer\n");
         assert!(editor.modified);
@@ -2406,6 +2416,7 @@ mod tests {
                 horizontal_scroll: 0,
                 pinned: false,
                 preview: false,
+                text_color: None,
                 pending_unsaved_content: Some("kept unsaved\n".into()),
                 unsaved_file: None,
                 undo_history_file: None,
