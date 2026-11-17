@@ -1708,7 +1708,12 @@ mod tests {
             .into_iter()
             .flat_map(|effect| [effect.duration_id(), effect.intensity_id()])
             .collect::<Vec<_>>();
-        ids.extend(["animation_scope_bubble_tight", "animation_scope_bubble_fill", "animation_scope_bubble_disabled_languages"]);
+        ids.extend([
+            "animation_cursor_smear_when_typing",
+            "animation_scope_bubble_tight",
+            "animation_scope_bubble_fill",
+            "animation_scope_bubble_disabled_languages",
+        ]);
         for width in [46, 100] {
             for &id in &ids {
                 let mut app = App::test_new();

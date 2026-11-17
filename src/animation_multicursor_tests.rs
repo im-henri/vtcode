@@ -37,6 +37,7 @@ fn multicursor_suspends_each_editor_effect_and_resumes_without_replaying_edits()
             app.tabs[0].editor.large_file_mode = large;
             app.tabs[0].editor.set_cursor(1, 4);
             app.animation_settings.set(effect, true);
+            app.animation_settings.cursor_smear_when_typing = effect == Effect::CursorSmear;
             app.animation_settings.scope_fill = true;
             app.animation_settings.duration_ms = 1500;
             let settings = app.animation_settings.clone();

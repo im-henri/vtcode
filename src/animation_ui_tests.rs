@@ -154,6 +154,52 @@ fn smear_replaces_the_stationary_primary_caret_in_every_editor_path() {
 }
 
 #[test]
+fn cursor_smear_runs_on_navigation_and_only_animates_typing_when_enabled() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::time::Instant;
+
+    for (width, wrapped, large) in [(100, false, false), (45, true, false), (100, false, true)] {
+        let mut app = fixture("abcdefghijklmnopqrstuvwxyz\n");
+        app.show_minimap = false;
+        app.tabs[0].editor.word_wrap = wrapped;
+        app.tabs[0].editor.large_file_mode = large;
+        app.animation_settings.set(AnimationEffect::TabSlide, false);
+        app.animation_settings.set(AnimationEffect::CursorSmear, true);
+        app.animation_settings.set_duration(AnimationEffect::CursorSmear, 1500);
+        let id = app.tabs[0].editor.navigation_id;
+        render(&mut app, width, 20);
+
+        for (key, should_animate) in [
+            (KeyCode::Char('x'), false),
+            (KeyCode::Right, true),
+            (KeyCode::Char('y'), false),
+            (KeyCode::Right, true),
+            (KeyCode::Backspace, false),
+            (KeyCode::Right, true),
+            (KeyCode::Delete, false),
+        ] {
+            crate::input::handle_editor_key(&mut app, key, KeyModifiers::NONE);
+            let probe = Instant::now();
+            let frame = render(&mut app, width, 20);
+            let settings = &app.animation_settings;
+            assert_eq!(app.animations.cursor_smear_active(id, settings, probe), should_animate, "{key:?}");
+            assert_eq!(app.animations.next_frame_wait(settings, probe).is_some(), should_animate, "{key:?}");
+            if !should_animate {
+                let area = app.code_area.unwrap();
+                let col = app.tabs[0].editor.cursor_col as u16;
+                assert_eq!(frame[(area.x + col, area.y)].bg, app.colors.bg_cursor, "{key:?}");
+            }
+        }
+
+        app.animation_settings.cursor_smear_when_typing = true;
+        crate::input::handle_editor_key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE);
+        let probe = Instant::now();
+        render(&mut app, width, 20);
+        assert!(app.animations.cursor_smear_active(id, &app.animation_settings, probe));
+    }
+}
+
+#[test]
 fn cursor_effects_animate_the_first_move_from_eol_in_every_editor_path() {
     use std::time::{Duration, Instant};
 

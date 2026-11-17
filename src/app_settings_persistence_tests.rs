@@ -760,6 +760,35 @@ fn keybinding_capture_preserves_ui_changes_and_workspace_defaults() {
 }
 
 #[test]
+fn cursor_smear_when_typing_saves_in_its_own_scope_and_resets_to_inherited() {
+    use crate::animation_config::AnimationEffect;
+
+    let (_dir, mut app) = fixture();
+    let id = "animation_cursor_smear_when_typing";
+    app.settings_global.animation_cursor_smear = Some(true);
+    app.apply_effective_settings();
+    assert!(!app.animation_settings.cursor_smear_when_typing);
+
+    app.toggle_setting(id);
+    let global = saved(&app, SettingsScope::Global);
+    assert_eq!(global.animation_cursor_smear_when_typing, Some(true));
+    assert_eq!(global.animation_cursor_smear, Some(true));
+
+    app.settings_scope = SettingsScope::Workspace;
+    app.toggle_setting(id);
+    assert!(!app.animation_settings.cursor_smear_when_typing);
+    let workspace = saved(&app, SettingsScope::Workspace);
+    assert_eq!(workspace.animation_cursor_smear_when_typing, Some(false));
+    assert_eq!(workspace.animation_cursor_smear, None);
+    assert!(app.animation_settings.enabled(AnimationEffect::CursorSmear));
+
+    assert!(app.reset_setting_in_selected_scope(id));
+    assert!(app.animation_settings.cursor_smear_when_typing);
+    assert_eq!(app.setting_source_label(id), "Inherited · Global");
+    assert_eq!(saved(&app, SettingsScope::Workspace).animation_cursor_smear_when_typing, None);
+}
+
+#[test]
 fn unrelated_settings_keep_color_customizations_and_animation_inheritance() {
     let (_dir, mut app) = fixture();
     app.settings_global

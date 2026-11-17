@@ -61,7 +61,7 @@ impl AnimationEffect {
 }
 
 animation_effects! {
-    (CursorSmear, "animation_cursor_smear", "animationCursorSmear", "Cursor Smear", "Animate the cursor as a filled, elastic ribbon with smooth corners, continuous turns, and compact movement while typing."),
+    (CursorSmear, "animation_cursor_smear", "animationCursorSmear", "Cursor Smear", "Animate cursor movement as a filled, elastic ribbon with smooth corners and continuous turns."),
     (CursorFire, "animation_cursor_fire", "animationCursorFire", "Fire Hazard", "Follow the cursor with curling flame tongues, fine drifting sparks, and glowing embers that cool along the trail. Works independently from Cursor Smear."),
     (WhitespaceReveal, "animation_whitespace_reveal", "animationWhitespaceReveal", "Whitespace Reveal", "Sweep a filled ribbon smoothly across inserted tabs and spaces, with fractional edges and a soft arrival at each tab stop. Editing remains immediate."),
     (ScopeConnector, "animation_scope_connector", "animationScopeConnector", "Scope Bubble", "Wrap the active block, including Python indentation, brace-free C/C++ statements, preprocessor branches (#if/#elif/#else/#endif), and nested braces, in rounded tracing lines on both sides. The bubble follows whitespace around the code, stays visible inside the block, and fades smoothly between scopes."),
@@ -77,6 +77,7 @@ pub(crate) struct AnimationSettings {
     pub(crate) duration_ms: u64,
     pub(crate) fps: u64,
     pub(crate) intensity: u8,
+    pub(crate) cursor_smear_when_typing: bool,
     pub(crate) scope_tight: bool,
     pub(crate) scope_fill: bool,
     /// Canonicalized once when preferences are applied, never on each frame.
@@ -93,6 +94,7 @@ impl Default for AnimationSettings {
             duration_ms: 240,
             fps: 90,
             intensity: 55,
+            cursor_smear_when_typing: false,
             scope_tight: true,
             scope_fill: false,
             scope_disabled_languages: Vec::new(),
@@ -179,6 +181,9 @@ impl AnimationSettings {
     pub(crate) fn apply(&mut self, settings: &crate::settings::Settings) {
         if let Some(value) = settings.animation_cursor_smear {
             self.set(AnimationEffect::CursorSmear, value);
+        }
+        if let Some(value) = settings.animation_cursor_smear_when_typing {
+            self.cursor_smear_when_typing = value;
         }
         if let Some(value) = settings.animation_cursor_fire {
             self.set(AnimationEffect::CursorFire, value);

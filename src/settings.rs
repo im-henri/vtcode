@@ -171,6 +171,8 @@ pub struct Settings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation_cursor_smear: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub animation_cursor_smear_when_typing: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub animation_cursor_fire: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation_whitespace_reveal: Option<bool>,
@@ -468,6 +470,9 @@ impl Settings {
             auto_save: other.auto_save.clone().or_else(|| self.auto_save.clone()),
             auto_save_delay: other.auto_save_delay.or(self.auto_save_delay),
             animation_cursor_smear: other.animation_cursor_smear.or(self.animation_cursor_smear),
+            animation_cursor_smear_when_typing: other
+                .animation_cursor_smear_when_typing
+                .or(self.animation_cursor_smear_when_typing),
             animation_copy: other.animation_copy.or(self.animation_copy),
             animation_copy_duration_ms: other.animation_copy_duration_ms.or(self.animation_copy_duration_ms),
             animation_cursor_fire: other.animation_cursor_fire.or(self.animation_cursor_fire),

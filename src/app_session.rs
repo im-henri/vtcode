@@ -271,6 +271,7 @@ impl App {
             }),
             auto_save_delay: Some(self.auto_save_delay),
             animation_cursor_smear: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::CursorSmear)),
+            animation_cursor_smear_when_typing: Some(self.animation_settings.cursor_smear_when_typing),
             animation_copy: Some(self.copy_animation.enabled),
             animation_copy_duration_ms: Some(self.copy_animation.duration_ms),
             animation_cursor_fire: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::CursorFire)),

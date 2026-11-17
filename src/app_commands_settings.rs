@@ -55,6 +55,10 @@ impl App {
                 self.copy_animation.enabled = !self.copy_animation.enabled;
                 if !self.copy_animation.enabled { self.copy_animation.clear(); }
             }
+            "animation_cursor_smear_when_typing" => {
+                self.animation_settings.cursor_smear_when_typing =
+                    !self.animation_settings.cursor_smear_when_typing;
+            }
             "animation_scope_bubble_tight" => {
                 self.animation_settings.scope_tight = !self.animation_settings.scope_tight;
             }

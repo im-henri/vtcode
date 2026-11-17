@@ -106,7 +106,7 @@ impl App {
         match setting_id {
             "files_exclude" | "search_exclude" => "exclusions",
             "acp_agents" | "lsp_servers" | "formatters" | "language_associations" => "action",
-            "animation_copy" => "checkbox",
+            "animation_copy" | "animation_cursor_smear_when_typing" => "checkbox",
             "animation_copy_duration_ms" => "number",
             "lsp_enabled" | "source_control_enabled" | "source_control_show_untracked" => "checkbox",
             "animation_duration_ms" | "animation_fps" | "animation_intensity" => "number",
@@ -148,6 +148,7 @@ impl App {
         Some(match setting_id {
             "animation_copy" => "animationCopy",
             "animation_copy_duration_ms" => "animationCopyDurationMs",
+            "animation_cursor_smear_when_typing" => "animationCursorSmearWhenTyping",
             "formatters" => "formatters",
             "language_associations" => "languageAssociations",
             "acp_agents" => "acpAgents",
@@ -414,6 +415,7 @@ impl App {
             }
             "animation_copy" => "Briefly fade the selected code highlight out and back after Copy (Ctrl+C, Edit menu, or Command Palette). Enabled by default. Only visible selected cells animate; editing and clipboard contents stay unchanged. Runs locally in SSH mode.",
             "animation_copy_duration_ms" => "Total time in milliseconds for the copy highlight to fade out and return (1–5000). Default: 220. A new copy restarts the animation. Has no effect when Copy Animation is off.",
+            "animation_cursor_smear_when_typing" => "Apply a compact smear to the caret while typing and editing text. Requires Cursor Smear. Off by default.",
             "animation_fps" => {
                 "Maximum animation frame rate (15–120). Only active effects request extra frames."
             }
@@ -587,7 +589,11 @@ impl App {
     }
 
     pub(crate) fn animation_setting_section(setting_id: &str) -> Option<&'static str> {
-        if matches!(setting_id, "animation_copy" | "animation_copy_duration_ms") { return Some("Editing"); }
+        match setting_id {
+            "animation_cursor_smear_when_typing" => return Some("Cursor"),
+            "animation_copy" | "animation_copy_duration_ms" => return Some("Editing"),
+            _ => {}
+        }
         let effect = AnimationSettings::effect_for_id(setting_id)
             .or_else(|| AnimationSettings::effect_for_duration_id(setting_id))
             .or_else(|| AnimationSettings::effect_for_intensity_id(setting_id))
@@ -865,6 +871,13 @@ impl App {
                     on_off(animation_settings.enabled(effect)),
                     effect.id().into(),
                 ));
+                if effect == AnimationEffect::CursorSmear {
+                    items.push((
+                        "Apply cursor smear when typing".into(),
+                        on_off(animation_settings.cursor_smear_when_typing),
+                        "animation_cursor_smear_when_typing".into(),
+                    ));
+                }
                 items.push((
                     format!("{} Duration (ms)", effect.label()),
                     animation_settings.duration(effect).to_string(),
@@ -983,7 +996,7 @@ mod tests {
                 .iter()
                 .filter(|&&index| !items[index].2.starts_with("heading_"))
                 .count(),
-            AnimationEffect::ALL.len() * 3 + 7
+            AnimationEffect::ALL.len() * 3 + 8
         );
         for effect in AnimationEffect::ALL {
             assert_eq!(App::settings_category_for_id(effect.id()), 7);
@@ -1004,6 +1017,13 @@ mod tests {
             assert_eq!(App::setting_field_kind(id), "number");
             assert_eq!(App::settings_category_for_id(id), 7);
         }
+        let typing = "animation_cursor_smear_when_typing";
+        assert_eq!(App::setting_field_kind(typing), "checkbox");
+        assert_eq!(App::animation_setting_section(typing), Some("Cursor"));
+        let index = items.iter().position(|(_, _, id)| id == typing).unwrap();
+        assert!(filtered.contains(&index));
+        assert_eq!(items[index].0, "Apply cursor smear when typing");
+        assert_eq!(items[index].1, "Off");
         assert!(!items.iter().any(|(_, _, id)| matches!(
             id.as_str(),
             "animation_duration_ms"

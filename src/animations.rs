@@ -152,6 +152,7 @@ struct TabIndicatorState {
 pub(crate) enum Trigger {
     Cursor {
         motion: SmearMotion,
+        editing: bool,
     },
     Insert {
         start: usize,
@@ -168,13 +169,18 @@ pub(crate) enum Trigger {
 impl Trigger {
     fn enabled(&self, settings: &AnimationSettings) -> bool {
         match self {
-            Self::Cursor { .. } => {
-                settings.enabled(Effect::CursorSmear) || settings.enabled(Effect::CursorFire)
-            }
+            Self::Cursor { editing, .. } => cursor_effects(settings, *editing).next().is_some(),
             Self::Insert { .. } => settings.enabled(Effect::WhitespaceReveal),
             Self::Scope { .. } => settings.enabled(Effect::ScopeConnector),
         }
     }
+}
+
+fn cursor_effects(settings: &AnimationSettings, editing: bool) -> impl Iterator<Item = Effect> + '_ {
+    [Effect::CursorSmear, Effect::CursorFire].into_iter().filter(move |&effect| {
+        settings.enabled(effect)
+            && (effect != Effect::CursorSmear || !editing || settings.cursor_smear_when_typing)
+    })
 }
 
 #[derive(Clone)]
@@ -222,9 +228,7 @@ impl AnimationEvent {
 
     fn lifetime(&self, settings: &AnimationSettings) -> Duration {
         match self.trigger {
-            Trigger::Cursor { .. } => [Effect::CursorSmear, Effect::CursorFire]
-                .into_iter()
-                .filter(|effect| settings.enabled(*effect))
+            Trigger::Cursor { editing, .. } => cursor_effects(settings, editing)
                 .map(|effect| effect_lifetime(settings, effect))
                 .max()
                 .unwrap_or_else(|| effect_lifetime(settings, Effect::CursorSmear)),
@@ -280,17 +284,15 @@ impl AnimationEvent {
         effect: Effect,
         now: Instant,
     ) -> Option<SmearSample> {
-        if !settings.enabled(effect) || self.effect_progress(settings, effect, now) >= 1.0 {
+        let Trigger::Cursor { motion, editing } = self.trigger else {
+            return None;
+        };
+        if !cursor_effects(settings, editing).any(|enabled| enabled == effect)
+            || self.effect_progress(settings, effect, now) >= 1.0
+        {
             return None;
         }
-        match self.trigger {
-            Trigger::Cursor { motion } => Some(motion.sample_for_effect(
-                settings,
-                effect,
-                now.saturating_duration_since(self.started),
-            )),
-            _ => None,
-        }
+        Some(motion.sample_for_effect(settings, effect, now.saturating_duration_since(self.started)))
     }
 }
 
@@ -1270,8 +1272,7 @@ impl AnimationState {
             self.clear();
             return observed_events(&[]);
         }
-        let cursor_motion =
-            settings.enabled(Effect::CursorSmear) || settings.enabled(Effect::CursorFire);
+        let cursor_motion = cursor_effects(settings, false).next().is_some();
         let cursor_point = cursor_motion
             .then(|| screen_point(anchors, snapshot.cursor, ordered))
             .flatten();
@@ -1333,26 +1334,22 @@ impl AnimationState {
         } else {
             view.fire.advance(now, settings);
         }
-        view.events.retain(|event| {
+        view.events.retain_mut(|event| {
+            if let Trigger::Cursor { editing: editing_motion, .. } = &mut event.trigger {
+                if remapped {
+                    return false;
+                }
+                // A stationary edit can end an existing smear while the fire fades.
+                *editing_motion |= editing && !settings.cursor_smear_when_typing;
+            }
             event.active(settings, now)
-                && !(remapped && matches!(event.trigger, Trigger::Cursor { .. }))
         });
         if old.cursor != snapshot.cursor
-            && (settings.enabled(Effect::CursorSmear) || settings.enabled(Effect::CursorFire))
+            && let Some(effect) = cursor_effects(settings, editing).next()
         {
             let previous = (!remapped && !changed_view)
                 .then(|| {
-                    view.events.iter().rev().find_map(|event| {
-                        event.cursor_sample(
-                            settings,
-                            if settings.enabled(Effect::CursorSmear) {
-                                Effect::CursorSmear
-                            } else {
-                                Effect::CursorFire
-                            },
-                            now,
-                        )
-                    })
+                    view.events.iter().rev().find_map(|event| event.cursor_sample(settings, effect, now))
                 })
                 .flatten();
             let origin = if remapped {
@@ -1369,7 +1366,7 @@ impl AnimationState {
                 view.events
                     .retain(|event| !matches!(event.trigger, Trigger::Cursor { .. }));
                 view.events.push(AnimationEvent {
-                    trigger: Trigger::Cursor { motion },
+                    trigger: Trigger::Cursor { motion, editing },
                     started: now,
                 });
             }
@@ -2204,6 +2201,42 @@ mod tests {
     }
 
     #[test]
+    fn fire_keeps_its_own_motion_and_duration_when_typing_smear_is_off() {
+        let mut settings = AnimationSettings::default();
+        settings.set(Effect::CursorSmear, true);
+        settings.set(Effect::CursorFire, true);
+        settings.set_duration(Effect::CursorSmear, 1500);
+        settings.set_duration(Effect::CursorFire, 120);
+        let mut state = AnimationState::default();
+        let now = Instant::now();
+        let initial = snapshot("abcdefghijklmnopqrstuvwxyz", 0);
+        state.observe(initial.clone(), &anchors(&initial), &settings, now);
+        let moved = snapshot("abcdefghijklmnopqrstuvwxyz", 8);
+        state.observe(moved.clone(), &anchors(&moved), &settings, now);
+
+        let mut deleted = snapshot("abcdefghjklmnopqrstuvwxyz", 8);
+        deleted.content_version = 2;
+        let at_delete = now + Duration::from_millis(25);
+        let events = state.observe(deleted.clone(), &anchors(&deleted), &settings, at_delete);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].started, now);
+        assert!(events[0].cursor_sample(&settings, Effect::CursorSmear, at_delete).is_none());
+        assert!(state.fire_core(deleted.id, &settings, at_delete).is_some());
+
+        let mut typed = snapshot("abcdefghXjklmnopqrstuvwxyz", 9);
+        typed.content_version = 3;
+        let at_type = at_delete + Duration::from_millis(25);
+        let events = state.observe(typed.clone(), &anchors(&typed), &settings, at_type);
+        assert_eq!(events.len(), 1);
+        let motion = &events[0];
+        assert_eq!(motion.started, at_type);
+        assert!(motion.cursor_sample(&settings, Effect::CursorSmear, at_type).is_none());
+        assert!(motion.cursor_sample(&settings, Effect::CursorFire, at_type).is_some());
+        assert!(state.fire_core(typed.id, &settings, at_type).is_some());
+        assert_eq!(motion.lifetime(&settings), Duration::from_millis(120));
+    }
+
+    #[test]
     fn fire_embers_outlive_cursor_motion_and_finish_with_one_clean_frame() {
         let mut settings = AnimationSettings::default();
         settings.set(Effect::CursorFire, true);
@@ -2363,6 +2396,7 @@ mod tests {
         settings.fps = 30;
         let cursor = AnimationEvent {
             trigger: Trigger::Cursor {
+                editing: false,
                 motion: SmearMotion::retarget(
                     MotionPoint::default(),
                     MotionPoint { x: 20.0, y: 0.0 },
@@ -2455,6 +2489,7 @@ mod tests {
             }
             for trigger in [
                 Trigger::Cursor {
+                    editing: false,
                     motion: SmearMotion::retarget(
                         MotionPoint::default(),
                         MotionPoint { x: 20.0, y: 0.0 },

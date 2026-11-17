@@ -374,7 +374,9 @@ are off by default; configure them in **Settings → Animations**.
 as the active underline when switching tabs. Repeated reorders continue from
 the current motion, and the duration and intensity controls apply to both.
 Cursor Smear, Fire Hazard, Whitespace Reveal, and Scope Bubble pause during
-multicursor editing. **Scope Bubble: Background Fill** adds animated shading
+multicursor editing. **Cursor Smear** follows navigation when enabled. Check
+**Apply cursor smear when typing** to extend it to edits. This is off by default.
+**Scope Bubble: Background Fill** adds animated shading
 after the scope outline finishes drawing.
 **Scope Bubble: Language Rules** lets you choose a parsing style and delimiter
 pairs (`{}`, `()`, `[]`) per language, with User and Workspace overrides.

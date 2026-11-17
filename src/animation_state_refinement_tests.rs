@@ -88,6 +88,7 @@ fn state_refinement_rapid_navigation_and_typing_preserve_all_live_corners_and_ve
     let mut settings = AnimationSettings::default();
     settings.duration_ms = 650;
     settings.set(Effect::CursorSmear, true);
+    settings.cursor_smear_when_typing = true;
     let mut state = AnimationState::default();
     let now = Instant::now();
     let mut text = vec!["a".repeat(72); 4].join("\n");
