@@ -4,16 +4,23 @@
 use crate::app::{ActivePane, App, SidebarView, TabKind};
 use crate::background::{BackgroundResult, CancellationToken};
 use crate::remote::workspace::{Location, Workspace};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Source {
     Chat,
     Markdown,
-    EditorLink,
+    EditorLink { file_only: bool },
     FileCommand,
     PathDialog,
     Terminal,
+}
+
+impl Source {
+    pub(crate) fn requires_file(self) -> bool {
+        matches!(self, Self::FileCommand | Self::EditorLink { file_only: true })
+    }
 }
 
 type Caret = (u64, usize, usize, Option<(usize, usize)>, usize);
@@ -141,7 +148,7 @@ struct Request {
     workspace: Option<Workspace>,
     root: PathBuf,
     path: PathBuf,
-    fallback: Option<PathBuf>,
+    fallback: VecDeque<PathBuf>,
     line: Option<u32>,
     column: u32,
     source: Source,
@@ -220,32 +227,34 @@ impl App {
     pub(crate) fn open_remote_location_at(
         &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source,
     ) {
-        if self.remote_workspace.is_some() { self.open_location_at(path, line, column, source, None); }
+        if self.remote_workspace.is_some() { self.open_location_at(path, line, column, source, VecDeque::new()); }
     }
 
     pub(crate) fn open_terminal_location_at(&mut self, path: PathBuf, line: Option<u32>, column: u32) {
-        self.open_location_at(path, line, column, Source::Terminal, None);
+        self.open_location_at(path, line, column, Source::Terminal, VecDeque::new());
     }
 
-    pub(crate) fn open_editor_location_at(
-        &mut self, path: PathBuf, fallback: Option<PathBuf>, line: Option<u32>, column: u32,
+    pub(crate) fn open_editor_paths(
+        &mut self, mut paths: VecDeque<PathBuf>, line: Option<u32>, column: u32, file_only: bool,
     ) {
-        self.open_location_at(path, line, column, Source::EditorLink, fallback);
+        if let Some(path) = paths.pop_front() {
+            self.open_location_at(path, line, column, Source::EditorLink { file_only }, paths);
+        }
     }
 
     pub(crate) fn open_path_dialog_location(&mut self, path: PathBuf) {
         if !self.file_browser_active() || self.file_browser_open_pending() { return; }
         self.folder_browser.error = None;
-        self.open_location_at(path, None, 0, Source::PathDialog, None);
+        self.open_location_at(path, None, 0, Source::PathDialog, VecDeque::new());
     }
 
     fn open_location_at(
-        &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source, fallback: Option<PathBuf>,
+        &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source, fallback: VecDeque<PathBuf>,
     ) {
         self.cancel_remote_location();
         let workspace = self.remote_workspace.clone();
         let remote_key = crate::remote::workspace::is_view_key(&path);
-        let local_source = matches!(source, Source::PathDialog | Source::EditorLink) && !remote_key;
+        let local_source = matches!(source, Source::PathDialog | Source::EditorLink { .. }) && !remote_key;
         if !local_source && ((remote_key && workspace.is_none())
             || workspace.as_ref().is_some_and(|workspace| workspace.remote_path(&path).is_err())) {
             self.remote_location_error(
@@ -254,7 +263,7 @@ impl App {
             );
             return;
         }
-        if path == self.explorer.root {
+        if path == self.explorer.root && !matches!(source, Source::EditorLink { file_only: true }) {
             if source == Source::PathDialog {
                 self.navigate_folder_browser(path);
                 return;
@@ -290,7 +299,7 @@ impl App {
             if source == Source::PathDialog {
                 self.folder_browser_action(crate::folder_browser::Action::Close);
             }
-            if source == Source::EditorLink {
+            if matches!(source, Source::EditorLink { .. }) {
                 self.push_nav_history();
             }
             self.open_file(&path);
@@ -346,7 +355,8 @@ impl App {
                     });
                 });
                 let result = match workspace {
-                    Some(workspace) => workspace.open_location(&path, &cancel, source == Source::PathDialog, progress),
+                    Some(workspace) => workspace.open_location(&path, &cancel,
+                        matches!(source, Source::PathDialog | Source::EditorLink { file_only: true }), progress),
                     None => crate::app_terminal_links::open_local_location(&path, &root, &cancel, source),
                 };
                 // A cancelled large result is freed here, never on the input thread.
@@ -397,7 +407,7 @@ impl App {
             self.start_remote_location();
             return false;
         }
-        let request = self.remote_navigation.pending.take().unwrap();
+        let mut request = self.remote_navigation.pending.take().unwrap();
         if self.status_message == request.status {
             self.status_message = request.previous_status.clone();
         }
@@ -416,6 +426,12 @@ impl App {
             self.discard_remote_location(result);
             return true;
         }
+        let result = match result {
+            Ok(Location::Directory(_)) if matches!(request.source, Source::EditorLink { file_only: true }) => {
+                Err(std::io::Error::new(std::io::ErrorKind::IsADirectory, "Expected a file"))
+            }
+            result => result,
+        };
         match result {
             Ok(Location::Directory(path)) => {
                 if request.source == Source::PathDialog {
@@ -440,15 +456,16 @@ impl App {
                 self.place_location_cursor(&request.path, request.line, request.column, request.source);
             }
             Err(error) => {
-                if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory)
-                    && let Some(path) = request.fallback
+                use std::io::ErrorKind::{IsADirectory, NotADirectory, NotFound};
+                if matches!(error.kind(), NotFound | NotADirectory | IsADirectory)
+                    && let Some(path) = request.fallback.pop_front()
                 {
-                    self.open_location_at(path, request.line, request.column, request.source, None);
+                    self.open_location_at(path, request.line, request.column, request.source, request.fallback);
                     return true;
                 }
                 if request.source == Source::Terminal {
                     crate::app_terminal_links::show_path_error(self, &request.path, error.to_string());
-                } else if request.source == Source::EditorLink {
+                } else if matches!(request.source, Source::EditorLink { .. }) {
                     self.notify_warn(format!("Cannot open {}: {error}", self.display_path(&request.path)));
                 } else { self.remote_location_error(request.source, error.to_string()); }
             }
@@ -505,7 +522,7 @@ impl App {
     }
 
     fn place_location_cursor(&mut self, path: &Path, line: Option<u32>, column: u32, source: Source) {
-        let center = matches!(source, Source::Terminal | Source::EditorLink);
+        let center = matches!(source, Source::Terminal | Source::EditorLink { .. });
         if center {
             self.terminal_panel_focused = false;
         }
@@ -532,7 +549,7 @@ impl App {
     fn remote_location_error(&mut self, source: Source, error: String) {
         match source {
             Source::Chat => self.chat.error = Some(error),
-            Source::Markdown | Source::FileCommand | Source::EditorLink => self.notify_warn(error),
+            Source::Markdown | Source::FileCommand | Source::EditorLink { .. } => self.notify_warn(error),
             Source::PathDialog => self.folder_browser.error = Some(error),
             Source::Terminal => crate::app_terminal_links::show_error(self, error),
         }

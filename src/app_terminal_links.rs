@@ -101,7 +101,7 @@ pub(crate) fn open_local_location(path: &Path, root: &Path, cancel: &crate::back
                 drop(std::fs::read_dir(path)?);
                 return Ok(Location::Directory(path.to_path_buf()));
             }
-            if source == Source::FileCommand { return Err(io::Error::new(io::ErrorKind::IsADirectory, "Choose a file, not a folder")); }
+            if source.requires_file() { return Err(io::Error::new(io::ErrorKind::IsADirectory, "Choose a file, not a folder")); }
             let canonical = path.canonicalize()?;
             let canonical_root = root.canonicalize()?;
             let relative = crate::native_paths::strip_prefix(&canonical, &canonical_root)

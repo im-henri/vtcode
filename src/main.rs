@@ -5,6 +5,7 @@ mod cli;
 mod portable;
 mod native_paths;
 mod path_links;
+mod code_path_links;
 mod filesystem_roots;
 mod file_icons;
 mod app;

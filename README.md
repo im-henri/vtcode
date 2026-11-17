@@ -235,6 +235,12 @@ Relative paths start from the open file's folder. Bare relative paths also try
 the workspace root when the target is missing. Line and column references work
 in editor tabs as they do in the terminal.
 
+**Ctrl+click** the path in a C or C++ include to open the header in local and SSH
+workspaces. Quoted includes look in the current file's folder first. Angle-bracket
+includes look in the workspace's `include/` directory and root first. Literal file
+references in Rust, JavaScript, TypeScript, shell scripts, and CMake work the same
+way, without requiring a language server.
+
 **View → Auto-hide Sidebar** hides the sidebar until you move the pointer to
 its edge or the Activity Bar. It stays open while you use sidebar fields or menus.
 This is off by default and can also be changed in **Settings → Workbench → Layout**

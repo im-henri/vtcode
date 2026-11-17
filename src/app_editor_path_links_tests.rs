@@ -129,13 +129,110 @@ fn editor_path_links_open_a_quoted_absolute_path_from_plain_text() {
 }
 
 #[test]
+fn editor_path_links_open_c_family_headers_without_a_language_server() {
+    let root = tempfile::tempdir().unwrap();
+    let absolute = root.path().join("absolute.h");
+    let cases = [
+        (
+            "src/main.c",
+            "#include \"headers/with space.h\"\n".to_owned(),
+            "with space.h",
+            root.path().join("src/headers/with space.h"),
+        ),
+        (
+            "src/main.cpp",
+            "#include <lib/project.h>\n".to_owned(),
+            "project.h",
+            root.path().join("include/lib/project.h"),
+        ),
+        (
+            "src/other.cpp",
+            "# /* build */ include \"../shared/parent.h\"\n".to_owned(),
+            "parent.h",
+            root.path().join("src/../shared/parent.h"),
+        ),
+        (
+            "src/module.cppm",
+            "export import <sibling.h>;\n".to_owned(),
+            "sibling.h",
+            root.path().join("src/sibling.h"),
+        ),
+        (
+            "src/main.cpp",
+            format!("#include \"{}\"\n", absolute.display()),
+            "absolute.h",
+            absolute,
+        ),
+    ];
+    let workspace_copy = root.path().join("include/headers/with space.h");
+    std::fs::create_dir_all(workspace_copy.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(root.path().join("src")).unwrap();
+    std::fs::write(workspace_copy, "workspace copy").unwrap();
+    for (file, source, marker, path) in cases {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "target header\n").unwrap();
+        let mut app = fixture(root.path(), file, &source);
+        assert!(app.lsp_manager.clients.is_empty());
+        let at = cell(&render(&mut app, 180), marker);
+        mouse(&mut app, at, MouseEventKind::Moved, KeyModifiers::CONTROL);
+        assert!(app.refresh_lsp_link_hover(), "{source}");
+        assert!(render(&mut app, 180)[at].modifier.contains(Modifier::UNDERLINED));
+
+        click(&mut app, at, KeyModifiers::NONE);
+        assert_eq!(app.tabs.len(), 1);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        wait_for_file(&mut app, &path);
+        assert_eq!(app.editor().unwrap().rope, "target header\n");
+    }
+}
+
+#[test]
+fn editor_path_links_open_literal_file_references_in_other_languages() {
+    let root = tempfile::tempdir().unwrap();
+    for (file, source, marker, target) in [
+        ("src/main.rs", r##"const DATA: &str = include_str!(r#"assets/file.txt"#);"##, "file.txt", "src/assets/file.txt"),
+        ("src/main.rs", r#"#[path = "other.rs"]"#, "other.rs", "src/other.rs"),
+        ("src/main.ts", "import { from } from './widgets';", "widgets", "src/widgets/index.ts"),
+        ("src/main.js", "const helper = require('./helper.js');", "helper.js", "src/helper.js"),
+        ("src/main.js", "const helper = import('./helper.mjs');", "helper.mjs", "src/helper.mjs"),
+        ("src/build.sh", r#"source "./two words.sh""#, "two words.sh", "src/two words.sh"),
+        ("src/CMakeLists.txt", r#"include("${CMAKE_CURRENT_LIST_DIR}/helper.cmake")"#, "helper.cmake", "src/helper.cmake"),
+    ] {
+        let path = root.path().join(target);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "referenced file\n").unwrap();
+        let mut app = fixture(root.path(), file, source);
+        let at = cell(&render(&mut app, 100), marker);
+        click(&mut app, at, KeyModifiers::CONTROL);
+        wait_for_file(&mut app, &path);
+        assert_eq!(app.editor().unwrap().rope, "referenced file\n");
+    }
+}
+
+#[test]
+fn editor_path_links_skip_comments_and_computed_references() {
+    for (syntax, source) in [
+        (Syntax::CFamily, r#"// #include "file.h""#),
+        (Syntax::CFamily, r#"#include HEADER"#),
+        (Syntax::JavaScript, r#"const data = "require('./file.js')";"#),
+        (Syntax::JavaScript, r#"import("./" + fileName)"#),
+        (Syntax::TypeScript, r#"import { item } from "@scope/package";"#),
+        (Syntax::Rust, r#"// include_str!("file.txt");"#),
+        (Syntax::Shell, r#"source "$LOCATION/file.sh""#),
+        (Syntax::CMake, r#"include("${MODULE}")"#),
+    ] {
+        assert!(code_path_links::parse(source, syntax).is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn editor_path_links_limit_detection_to_the_hovered_part_of_long_lines() {
     let prefix = "x".repeat(16 * LINE_WINDOW);
     let text = format!("{prefix} (../src/notes.txt).\n");
     let editor = Editor::test_with_text(&text);
     let mut cache = Cache::default();
-    assert!(cache.hit(&editor, 0, 2, false).is_none());
-    let link = cache.hit(&editor, 0, prefix.len() + 4, false).unwrap();
+    assert!(cache.hit(&editor, 0, 2, Mode::Text).is_none());
+    let link = cache.hit(&editor, 0, prefix.len() + 4, Mode::Text).unwrap();
     assert_eq!(link.location.path, "../src/notes.txt");
     assert_eq!(link.columns.start, prefix.len() + 2);
 }
