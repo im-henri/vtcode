@@ -3988,19 +3988,16 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             // Auto-reveal active file in explorer when tab changes
             if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer {
                 let tab_changed = Some(app.active_tab) != last_revealed_tab;
-                let path_changed = tab_changed || {
-                    let current = app.editor().and_then(|e| e.file_path.as_ref());
-                    current != last_revealed_path.as_ref()
-                };
-                if path_changed {
-                    let current_path = app.editor().and_then(|e| e.file_path.clone());
+                let current_path = app.tabs.get(app.active_tab)
+                    .and_then(|tab| app.diff_tabs.explorer_auto_reveal_path(tab));
+                if tab_changed || current_path != last_revealed_path.as_deref() {
+                    last_revealed_path = current_path.map(Path::to_owned);
                     last_revealed_tab = Some(app.active_tab);
                     // Explicit Explorer navigation owns the selection, including
                     // a folder revealed by a terminal link while the tree was hidden.
                     if app.active_pane != ActivePane::Explorer {
                         app.reveal_active_file_in_explorer();
                     }
-                    last_revealed_path = current_path;
                 }
             }
 

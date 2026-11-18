@@ -26,7 +26,7 @@ impl App {
         let Some(path) = self
             .tabs
             .get(self.active_tab)
-            .and_then(|tab| tab.editor.file_path.as_deref())
+            .and_then(|tab| self.diff_tabs.explorer_auto_reveal_path(tab))
         else {
             return;
         };

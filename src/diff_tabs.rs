@@ -52,6 +52,7 @@ pub(crate) struct DiffTabs {
     views: rustc_hash::FxHashMap<u64, DiffViewState>,
     // Keep comparison identity even while a tab's view is installed or pending.
     source_control: rustc_hash::FxHashMap<u64, SourceControlIdentity>,
+    commit_snapshots: rustc_hash::FxHashSet<u64>,
     blame_revisions: rustc_hash::FxHashMap<u64, (Option<Arc<crate::git_blame::Revision>>, Arc<crate::git_blame::Revision>)>,
     refresh_generation: u64,
     pub(crate) refresh_running: bool,
@@ -248,6 +249,14 @@ impl DiffTabs {
     pub(crate) fn repository_for_tab(&self, tab: &Tab) -> Option<&Path> {
         let TabKind::Diff(id) = tab.kind else { return None; };
         self.source_control.get(&id)?.repository.as_deref()
+    }
+
+    pub(crate) fn explorer_auto_reveal_path<'a>(&self, tab: &'a Tab) -> Option<&'a Path> {
+        match tab.kind {
+            TabKind::CommitDetails => None,
+            TabKind::Diff(id) if self.commit_snapshots.contains(&id) => None,
+            _ => tab.editor.file_path.as_deref(),
+        }
     }
 }
 
@@ -928,6 +937,7 @@ impl App {
     pub(crate) fn forget_diff_tab(&mut self, id: u64) {
         self.forget_cached_diff_view(id);
         self.diff_tabs.source_control.remove(&id);
+        self.diff_tabs.commit_snapshots.remove(&id);
         self.diff_tabs.dirty.remove(&id);
         self.diff_tabs.blame_revisions.remove(&id);
     }
@@ -986,6 +996,7 @@ impl App {
             }
         });
         self.diff_tabs.source_control.retain(|id, _| live.contains(id));
+        self.diff_tabs.commit_snapshots.retain(|id| live.contains(id));
         self.diff_tabs.dirty.retain(|id| live.contains(id));
         self.diff_tabs.blame_revisions.retain(|id, _| live.contains(id));
         if let Some(id) = target {
@@ -1031,6 +1042,7 @@ impl App {
         let language = self.language_override_for_path(&path);
         let limit = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
         self.new_snapshot_diff_tab();
+        self.diff_tabs.commit_snapshots.insert(self.diff_tabs.next_id);
         if let Some(editor) = self.editor_mut() {
             editor.file_path = Some(path.clone());
             editor.language_override = language;

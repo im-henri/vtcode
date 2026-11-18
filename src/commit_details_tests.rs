@@ -109,7 +109,12 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
 
     let dir = tempfile::tempdir().unwrap();
     let repo = Repository::init(dir.path()).unwrap();
-    let path = dir.path().join("history.rs");
+    let root = repo.workdir().unwrap();
+    let folder = root.join("src");
+    let path = folder.join("history.rs");
+    let selected_file = root.join("keep.txt");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(&selected_file, "Keep selected\n").unwrap();
     let before = (0..100)
         .map(|line| format!("let value_{line} = {line};\n"))
         .collect::<String>();
@@ -125,7 +130,18 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
         crate::app::DiffMode::Inline,
     ] {
         let mut app = App::test_new();
-        app.explorer.root = dir.path().to_path_buf();
+        app.explorer = crate::explorer::FileExplorer::new(root.to_owned());
+        app.show_explorer = true;
+        app.sidebar_view = crate::app::SidebarView::Explorer;
+        let selected = app.explorer.find_path(&selected_file).unwrap();
+        app.explorer.selected = selected;
+        let assert_explorer_unchanged = |app: &mut App| {
+            app.reveal_active_file_in_explorer();
+            assert_eq!(app.explorer.selected, selected);
+            assert!(app.explorer.expanded_snapshot().is_empty());
+            assert!(!app.explorer.is_reveal_pending(&path));
+        };
+        assert!(app.explorer.find_path(&path).is_none());
         app.preferred_diff_mode = mode;
         app.commit_details.active = true;
         app.commit_details.data = load(dir.path(), &hash.to_string()).unwrap();
@@ -145,6 +161,7 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
             .unwrap(),
         );
         app.set_commit_diff_context(true, 3);
+        assert_explorer_unchanged(&mut app);
         let preview = app.diff_render_cache.clone();
         let mut terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
         terminal
@@ -161,6 +178,7 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
             },
         );
         app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.is_commit_details_tab());
+        assert_explorer_unchanged(&mut app);
         let diff_tab = app.active_tab;
         terminal
             .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -241,10 +259,15 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
             .unwrap();
         assert!(app.should_render_diff_for_active_editor());
         assert_eq!(app.compare_base_content.as_deref(), Some(before.as_str()));
+        assert_explorer_unchanged(&mut app);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "// unrelated working tree changes\n"
         );
+        app.active_tab = app.tabs.iter().position(|tab| tab.kind == TabKind::File).unwrap();
+        app.reveal_active_file_in_explorer();
+        assert!(app.explorer.expanded_snapshot().contains(&folder));
+        assert!(app.explorer.is_reveal_pending(&path));
     }
 }
 
