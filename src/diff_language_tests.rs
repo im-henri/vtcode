@@ -44,6 +44,90 @@ fn settle_diff(app: &mut App) {
     });
 }
 
+#[test]
+fn stash_pop_keeps_unchanged_visible_lines_highlighted_during_reload() {
+    for open_diff in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.rs");
+        let base: String = (0..160)
+            .map(|line| format!("fn item_{line}() {{ let value = {line}; }}\n"))
+            .collect();
+        std::fs::write(&path, &base).unwrap();
+        let mut repo = init_git_fixture(dir.path());
+        commit_fixture_files(dir.path(), &["main.rs"], "initial");
+        let insert_at = base.match_indices('\n').nth(99).unwrap().0 + 1;
+        let mut restored = base.clone();
+        restored.insert_str(insert_at, &"const RESTORED: usize = 7;\n".repeat(32));
+        std::fs::write(&path, &restored).unwrap();
+        let signature = repo.signature().unwrap();
+        repo.stash_save(&signature, "restore lines below the viewport", None).unwrap();
+
+        let mut app = App::new(dir.path().to_owned());
+        app.source_control_enabled = true;
+        app.enable_preview_tabs = false;
+        app.syntax_theme = "dark-plus".into();
+        app.colors.ui.preserve_theme_colors = true;
+        app.cursor_visible = false;
+        app.sticky_scroll = false;
+        app.show_minimap = false;
+        app.open_file(&path);
+        let timeout = Duration::from_secs(10);
+        app.wait_for_background(timeout, |app| app.editor().unwrap().rope == base);
+        app.refresh_visible_highlights_async();
+        app.wait_for_background(timeout, |app| !app.background.has_active_jobs());
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        let colors = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+            terminal
+                .draw(|frame| crate::ui_editor::draw_editor(frame, app, frame.area()))
+                .unwrap();
+            let area = app.code_area.unwrap();
+            let buffer = terminal.backend().buffer();
+            (area.y..area.bottom())
+                .map(|row| {
+                    let keyword = &buffer[(area.x, row)];
+                    let name = &buffer[(area.x + 3, row)];
+                    assert_eq!(keyword.symbol(), "f");
+                    assert_eq!(name.symbol(), "i");
+                    (keyword.fg, name.fg)
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = colors(&mut terminal, &mut app);
+        assert!(before.iter().all(|(keyword, name)| keyword != name));
+
+        if open_diff {
+            app.open_source_control_diff_tab(&path, false, false);
+            settle_diff(&mut app);
+        }
+        app.execute_palette_command("git_stash_pop");
+        app.wait_for_background(timeout, |app| {
+            !app.bg_git_action_running && app.tabs[0].editor.rope == restored
+        });
+        if open_diff {
+            app.close_tab(app.active_tab);
+        }
+        app.refresh_visible_highlights_async();
+        // Paint before accepting new syntax batches. These rows were visible
+        // before the reload and are unchanged in the new source.
+        assert_eq!(colors(&mut terminal, &mut app), before, "open_diff={open_diff}");
+
+        app.editor_mut().unwrap().scroll_offset = 100;
+        app.refresh_visible_highlights_async();
+        app.wait_for_background(timeout, |app| !app.background.has_active_jobs());
+        terminal
+            .draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area()))
+            .unwrap();
+        let area = app.code_area.unwrap();
+        let buffer = terminal.backend().buffer();
+        let keyword = &buffer[(area.x, area.y)];
+        let number = &buffer[(area.x + 24, area.y)];
+        assert_eq!(keyword.symbol(), "c");
+        assert_eq!(number.symbol(), "7");
+        assert_ne!(keyword.fg, number.fg);
+    }
+}
+
 fn assert_syntax_in_both_layouts(app: &mut App) {
     app.show_minimap = false;
     app.sticky_scroll = false;

@@ -1208,15 +1208,22 @@ impl Editor {
         self.disk_unavailable = false;
         self.load_failed = false;
 
-        if self.rope == loaded.rope {
+        // Use the same changed-line bounds as save transformations. In
+        // particular, a line-count change must not shift cached syntax for
+        // the unchanged prefix as though the edit started on line zero.
+        let (old_lines, new_lines) =
+            crate::rope_changes::changed_lines(&self.rope, &loaded.rope, &|| false).unwrap();
+        if old_lines.is_empty() && new_lines.is_empty() {
             // Saves/discards can generate duplicate watcher events. Keep the
             // existing Rope identity, undo/redo stacks and cursor unchanged.
             self.record_saved_snapshot(self.rope.clone());
             self.update_large_file_mode(crate::editor::LARGE_FILE_THRESHOLD);
             return false;
         }
+        let dirty_from = old_lines.start.min(new_lines.start);
+        let dirty_through = old_lines.end.max(new_lines.end).saturating_sub(1);
         let previous_lines = self.rope.len_lines();
-        self.save_undo();
+        self.save_undo_for_range(dirty_from, dirty_through);
         self.rope = loaded.rope;
         self.insertion_anchors = None;
         self.update_large_file_mode(crate::editor::LARGE_FILE_THRESHOLD);
@@ -1226,7 +1233,7 @@ impl Editor {
             state.dirty_from = 0;
             state.dirty_through = previous_lines.max(self.rope.len_lines()).saturating_sub(1);
         }
-        self.mark_syntax_dirty_range(0, self.rope.len_lines());
+        self.mark_syntax_dirty_range(dirty_from, dirty_through);
         self.break_undo_group();
         self.content_version += 1;
         self.record_saved_snapshot(self.rope.clone());
