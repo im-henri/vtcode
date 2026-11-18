@@ -200,6 +200,7 @@ impl App {
         self.commit_input.scrollbar_drag = None;
         self.commit_details.divider_drag = None;
         self.commit_details.scrollbar_drag = None;
+        self.commit_details.message_selection.dragging = false;
         self.chat.layout.dragging = None;
         self.chat.scroll_drag = None;
         self.dragging_tab = None;

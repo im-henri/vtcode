@@ -1631,6 +1631,82 @@ fn commit_inspector_wraps_unicode_without_splitting_graphemes() {
 }
 
 #[test]
+fn commit_inspector_copies_a_rendered_message_selection_through_the_keyboard_route() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let mut app = fixture();
+    let selection = format!(
+        "東京 e\u{301} 👩‍💻\n\n{}end of paragraph\n\nFinal",
+        "long words ".repeat(10)
+    );
+    let message = format!("Subject {selection} line");
+    app.commit_details.data.message = message.clone();
+    let mut terminal = Terminal::new(TestBackend::new(60, 48)).unwrap();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    let area = current_layout(&app).overview;
+    let author_row = area.y + 1;
+    let end_row = app.commit_details.message_hit.len() as u16 - 1 + area.y;
+    assert!(end_row < area.bottom());
+    assert!(end_row > author_row + 5, "the body must wrap");
+    let start = area.x + "Subject ".len() as u16;
+    let end = area.x + "Final".len() as u16;
+    let normal = terminal.backend().buffer()[(start, area.y)].bg;
+    let author_bg = terminal.backend().buffer()[(area.x, author_row)].bg;
+
+    for (kind, x, y) in [
+        (MouseEventKind::Down(MouseButton::Left), end, end_row),
+        (MouseEventKind::Drag(MouseButton::Left), start, area.y),
+        (MouseEventKind::Up(MouseButton::Left), start, area.y),
+    ] {
+        crate::mouse::handle_mouse(&mut app, mouse_at(kind, x, y));
+    }
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    assert_eq!(app.commit_details.focus, Focus::Message);
+    assert_ne!(terminal.backend().buffer()[(start, area.y)].bg, normal);
+    assert_eq!(terminal.backend().buffer()[(area.x, author_row)].bg, author_bg);
+
+    let copy = |app: &mut App, modifiers| {
+        crate::input_keyboard::handle_keyboard_event(
+            app,
+            KeyEvent::new(KeyCode::Char('c'), modifiers),
+        );
+        crate::clipboard::get_text().unwrap()
+    };
+    assert_eq!(copy(&mut app, KeyModifiers::SUPER), selection);
+    assert_eq!(
+        copy(&mut app, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        message
+    );
+    crate::mouse::handle_mouse(
+        &mut app,
+        mouse_at(MouseEventKind::Down(MouseButton::Left), area.x, author_row),
+    );
+    assert_eq!(
+        copy(&mut app, KeyModifiers::CONTROL),
+        app.commit_details.data.hash
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    let area = current_layout(&app).overview;
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+    );
+    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    assert!(app.commit_details.message_scroll > 0);
+    let y = area.bottom() - 1;
+    assert_eq!(terminal.backend().buffer()[(area.x, y)].symbol(), "F");
+    for (kind, x) in [
+        (MouseEventKind::Down(MouseButton::Left), area.x),
+        (MouseEventKind::Drag(MouseButton::Left), area.x + 5),
+        (MouseEventKind::Up(MouseButton::Left), area.x + 5),
+    ] {
+        crate::mouse::handle_mouse(&mut app, mouse_at(kind, x, y));
+    }
+    assert_eq!(copy(&mut app, KeyModifiers::CONTROL), "Final");
+}
+
+#[test]
 fn commit_inspector_resize_reveals_patch_and_long_paths_keep_the_filename() {
     let mut app = fixture();
     app.commit_details.diff_expanded = true;

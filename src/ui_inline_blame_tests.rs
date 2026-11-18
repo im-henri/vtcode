@@ -271,6 +271,60 @@ fn inline_blame_hover_uses_painted_columns_and_only_visible_annotation_text() {
 }
 
 #[test]
+fn inline_blame_drag_highlights_and_copies_across_wrapped_and_logical_lines() {
+    let _clipboard = crate::clipboard::test_terminal_clipboard();
+    let body = format!(
+        "東京 e\u{301} 👩‍💻 {}end of paragraph\nFinal line",
+        "long words ".repeat(12)
+    );
+    let mut app = fixture("let value = 42;\n", &format!("Subject\n\n{body}"));
+    let terminal = open(&mut app, 90, 20);
+    let hover = app.inline_blame_hover.as_ref().unwrap();
+    let area = hover.text_area();
+    let author = Rect::new(area.x + 11, area.y + 1, 1, 1);
+    let mut author_end = author;
+    author_end.x += "Alex Morgan <alex@example.com>".len() as u16;
+    pointer(&mut app, author, MouseEventKind::Down(MouseButton::Left));
+    pointer(&mut app, author_end, MouseEventKind::Drag(MouseButton::Left));
+    pointer(&mut app, author_end, MouseEventKind::Up(MouseButton::Left));
+    let copy = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    crate::input_keyboard::handle_keyboard_event(&mut app, copy);
+    assert_eq!(
+        crate::clipboard::get_text().unwrap(),
+        "Alex Morgan <alex@example.com>"
+    );
+
+    let hover = app.inline_blame_hover.as_ref().unwrap();
+    let body_row = hover
+        .rows
+        .iter()
+        .position(|row| hover.message[row.clone()].starts_with("東京"))
+        .unwrap();
+    assert!(hover.rows.len() > body_row + 2, "the first body line must wrap");
+    let start = Rect::new(area.x + 1, area.y + body_row as u16, 1, 1);
+    let end = Rect::new(area.x, hover.area.bottom(), 1, 1);
+    let editor = app.editor().unwrap();
+    let caret = (editor.cursor_line, editor.cursor_col);
+    pointer(&mut app, start, MouseEventKind::Down(MouseButton::Left));
+    pointer(&mut app, end, MouseEventKind::Drag(MouseButton::Left));
+    let selected = render(&mut app, 90, 20);
+    let first_cell = (area.x, start.y);
+    assert_ne!(
+        selected.backend().buffer()[first_cell].bg,
+        terminal.backend().buffer()[first_cell].bg
+    );
+    pointer(&mut app, end, MouseEventKind::Up(MouseButton::Left));
+    assert!(!app.inline_blame_hover.as_ref().unwrap().selection.dragging);
+    crate::input_keyboard::handle_keyboard_event(&mut app, copy);
+    assert_eq!(crate::clipboard::get_text().unwrap(), body);
+    let editor = app.editor().unwrap();
+    assert_eq!((editor.cursor_line, editor.cursor_col), caret);
+    assert!(editor.selection_anchor.is_none());
+    pointer(&mut app, end, MouseEventKind::Moved);
+    assert!(app.inline_blame_hover.is_none());
+}
+
+#[test]
 fn inline_blame_hover_scrolls_to_the_last_message_line_without_scrolling_source() {
     let message = (0..90)
         .map(|line| format!("Message line {line:02}"))

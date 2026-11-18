@@ -14,6 +14,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
+use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -652,26 +653,35 @@ fn tooltip(f: &mut Frame, app: &mut App) {
     }
 }
 
-pub(crate) fn wrapped_message(message: &str, width: u16) -> Vec<Line<'static>> {
+pub(crate) fn wrapped_message_ranges(message: &str, width: u16) -> Vec<Range<usize>> {
     if width == 0 {
         return Vec::new();
     }
     let mut rows = Vec::new();
+    let mut base = 0;
     for line in message.split('\n') {
-        let mut text = String::new();
+        let mut start = 0;
         let mut columns = 0;
-        for grapheme in line.graphemes(true) {
+        for (offset, grapheme) in line.grapheme_indices(true) {
             let size = grapheme.width();
-            if columns + size > width as usize && !text.is_empty() {
-                rows.push(Line::raw(std::mem::take(&mut text)));
+            if columns + size > width as usize && start < offset {
+                rows.push(base + start..base + offset);
+                start = offset;
                 columns = 0;
             }
-            text.push_str(grapheme);
             columns += size;
         }
-        rows.push(Line::raw(text));
+        rows.push(base + start..base + line.len());
+        base += line.len() + 1;
     }
     rows
+}
+
+fn wrapped_message(message: &str, width: u16) -> Vec<Line<'static>> {
+    wrapped_message_ranges(message, width)
+        .into_iter()
+        .map(|row| Line::raw(message[row].to_owned()))
+        .collect()
 }
 
 struct DetailAction {

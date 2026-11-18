@@ -46,6 +46,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     app.editor_selection_scroll_at = None;
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.mouse_press_serial = app.mouse_press_serial.wrapping_add(1);
+        app.commit_details.message_selection.dragging = false;
     }
     if app.handle_text_input_context_menu_mouse(mouse) { return; }
     if crate::ui_workspaces::handle_mouse(app, mouse) { return; }
@@ -158,6 +159,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     app.mouse_hover_changed |= empty_folder_hover_changed;
     let sidebar_visibility_changed = mouse.kind == MouseEventKind::Moved
         && app.update_sidebar_auto_hide(mouse);
+    if crate::ui_inline_blame::captured_mouse(app, mouse) { return; }
     crate::ui_inline_blame::leave(app, col, row);
     let modifiers_changed = app.update_link_hover_modifiers(mouse.modifiers);
     if crate::ui_search_dialog::handle_search_bar_resize(app, mouse) { return; }

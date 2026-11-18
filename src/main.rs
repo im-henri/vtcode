@@ -275,6 +275,7 @@ mod git_trust;
 mod git_blame;
 mod editor_blame;
 mod ui_inline_blame;
+mod ui_text_selection;
 mod ui;
 mod ui_keybindings;
 #[cfg(test)]

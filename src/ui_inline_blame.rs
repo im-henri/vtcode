@@ -1,11 +1,12 @@
 //! Hover details for the current line's author/age annotation. The renderer
 //! supplies the exact hit region; the existing blame snapshot supplies all data.
 use std::{
+    ops::Range,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use crossterm::event::{MouseEvent, MouseEventKind};
+use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -16,6 +17,7 @@ use ratatui::{
 use crate::{
     app::{App, TabKind},
     git_blame,
+    ui_text_selection::{self, Selection},
 };
 
 const HOVER_DELAY: Duration = Duration::from_secs(2);
@@ -44,15 +46,35 @@ pub(crate) struct Hover {
     pointer: (u16, u16),
     area: Rect,
     width: u16,
-    rows: Vec<Line<'static>>,
+    message: String,
+    rows: Vec<Range<usize>>,
     scroll: usize,
     max_scroll: usize,
+    selection: Selection,
 }
 
 impl Hover {
     fn contains(&self, column: u16, row: u16) -> bool {
         let point = (column, row).into();
         self.target.anchor.contains(point) || self.area.contains(point)
+    }
+
+    fn text_area(&self) -> Rect {
+        Rect::new(
+            self.area.x + 1,
+            self.area.y + 1,
+            self.area.width.saturating_sub(2),
+            self.area.height.saturating_sub(2 + u16::from(self.max_scroll > 0)),
+        )
+    }
+
+    fn byte_at(&self, mouse: MouseEvent, text_area: Rect) -> usize {
+        let index = mouse
+            .row
+            .saturating_sub(text_area.y)
+            .min(text_area.height - 1);
+        let row = &self.rows[self.scroll + usize::from(index)];
+        ui_text_selection::byte_at(&self.message, row, text_area, mouse)
     }
 }
 
@@ -151,6 +173,40 @@ pub(crate) fn leave(app: &mut App, column: u16, row: u16) {
     }
 }
 
+fn captured(hover: &Hover, kind: MouseEventKind) -> bool {
+    hover.selection.dragging
+        && matches!(
+            kind,
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+        )
+}
+
+pub(crate) fn captured_mouse(app: &mut App, mouse: MouseEvent) -> bool {
+    app.inline_blame_hover
+        .as_ref()
+        .is_some_and(|hover| captured(hover, mouse.kind))
+        && handle_mouse(app, mouse)
+}
+
+pub(crate) fn copy_key(app: &mut App, key: KeyEvent) -> bool {
+    if !ui_text_selection::is_copy_key(key) || obscured(app) {
+        return false;
+    }
+    let Some(text) = app
+        .inline_blame_hover
+        .as_ref()
+        .and_then(|hover| hover.selection.text(&hover.message))
+    else {
+        return false;
+    };
+    if crate::clipboard::set_text(text).is_ok() {
+        app.status_message = "Copied selected blame text".into();
+    } else {
+        app.notify_error("Could not copy selected blame text: clipboard unavailable");
+    }
+    true
+}
+
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if obscured(app) {
         app.inline_blame_hover = None;
@@ -158,9 +214,29 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     }
     let point = (mouse.column, mouse.row).into();
     if let Some(hover) = &mut app.inline_blame_hover
-        && hover.area.contains(point)
+        && (hover.area.contains(point) || captured(hover, mouse.kind))
     {
+        let text_area = hover.text_area();
         match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                hover.selection = Selection::default();
+                if text_area.contains(point) {
+                    hover.selection.start(hover.byte_at(mouse, text_area));
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+                if hover.selection.dragging =>
+            {
+                if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
+                    if mouse.row < text_area.y {
+                        hover.scroll = hover.scroll.saturating_sub(1);
+                    } else if mouse.row >= text_area.bottom() {
+                        hover.scroll = (hover.scroll + 1).min(hover.max_scroll);
+                    }
+                }
+                hover.selection.extend(hover.byte_at(mouse, text_area));
+                hover.selection.dragging = mouse.kind != MouseEventKind::Up(MouseButton::Left);
+            }
             MouseEventKind::ScrollDown => {
                 hover.scroll = hover.scroll.saturating_add(3).min(hover.max_scroll)
             }
@@ -182,9 +258,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 pointer: (mouse.column, mouse.row),
                 area: Rect::default(),
                 width: 0,
+                message: String::new(),
                 rows: Vec::new(),
                 scroll: 0,
                 max_scroll: 0,
+                selection: Selection::default(),
             });
         } else if let Some(hover) = &mut app.inline_blame_hover
             && hover.area.is_empty()
@@ -213,7 +291,9 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
         return;
     };
     if obscured(app)
-        || !hover.contains(app.mouse_col, app.mouse_row)
+        || (!hover.selection.dragging
+            && hover.selection.range().is_none()
+            && !hover.contains(app.mouse_col, app.mouse_row))
         || source(app, |id, anchor| {
             id == hover.target.navigation_id && anchor == hover.target.anchor
         })
@@ -235,7 +315,7 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
     }
     let content_width = width - 4;
     if hover.width != content_width {
-        let message = match &hover.target.document.lines[hover.target.line] {
+        hover.message = match &hover.target.document.lines[hover.target.line] {
             git_blame::Line::Committed(commit) => {
                 crate::editor_blame::commit_details_message(commit, content_width)
             }
@@ -245,19 +325,33 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
             }
             git_blame::Line::Empty => return,
         };
-        hover.rows = crate::editor_blame::wrapped_message(&message, content_width);
+        hover.rows = crate::editor_blame::wrapped_message_ranges(&hover.message, content_width);
         hover.width = content_width;
+        hover.selection = Selection::default();
     }
     let scrolling = hover.rows.len() > usize::from(height - 2);
     let visible = usize::from(height - 2 - u16::from(scrolling));
     hover.max_scroll = hover.rows.len().saturating_sub(visible);
     hover.scroll = hover.scroll.min(hover.max_scroll);
+    let selection_style = if hover.selection.range().is_some() {
+        let base = app.colors.bg_editor;
+        let surface = app
+            .colors
+            .ui
+            .hover_colors
+            .background
+            .over(base)
+            .unwrap_or(base);
+        app.colors.ui.input_selection_style(surface)
+    } else {
+        Style::default()
+    };
     let mut lines: Vec<_> = hover
         .rows
         .iter()
         .skip(hover.scroll)
         .take(visible)
-        .cloned()
+        .map(|row| hover.selection.line(&hover.message, row, selection_style))
         .collect();
     if scrolling {
         lines.push(Line::raw(crate::ui_pickers::truncate_to_width(

@@ -4386,6 +4386,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     app.background.activity.ui.cancel_input();
                     app.terminal_has_focus = false;
                     app.inline_blame_hover = None;
+                    app.commit_details.message_selection.dragging = false;
                     app.update_link_hover_modifiers(KeyModifiers::NONE);
                     app.animations.clear();
                     app.copy_animation.clear();

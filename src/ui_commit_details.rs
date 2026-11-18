@@ -1,5 +1,7 @@
 //! Responsive commit inspector: overview, changed files, and the native diff editor.
 //! Rendering and input share one layout, including after terminal resizing.
+use std::ops::Range;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
@@ -13,8 +15,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::App,
-    commit_details::{Divider, Focus, PaneSizes},
+    commit_details::{CommitDetails, Divider, Focus, PaneSizes},
     ui_pickers::truncate_to_width,
+    ui_text_selection::{self, Selection},
 };
 
 #[cfg(test)]
@@ -353,34 +356,50 @@ fn resize_pane(app: &mut App, view: &InspectorLayout, _col: u16, row: u16) {
 }
 
 pub(crate) fn wrapped(text: &str, width: usize) -> Vec<String> {
+    wrapped_ranges(text, width)
+        .into_iter()
+        .map(|row| text[row].to_owned())
+        .collect()
+}
+
+fn wrapped_ranges(text: &str, width: usize) -> Vec<Range<usize>> {
     let width = width.max(1);
     let mut lines = Vec::new();
+    let mut base = 0;
     for paragraph in text.split('\n') {
-        let mut row = String::new();
+        let (mut start, mut end) = (0, 0);
         let mut used = 0;
-        for word in paragraph.split_word_bounds() {
+        for (byte, word) in paragraph.split_word_bound_indices() {
             let word_width = UnicodeWidthStr::width(word);
             if used > 0 && used + word_width > width {
-                lines.push(row.trim_end().to_owned());
-                row.clear();
+                let trimmed = paragraph[start..end].trim_end().len();
+                lines.push(base + start..base + start + trimmed);
+                start = end;
                 used = 0;
             }
-            if used == 0 && word.trim().is_empty() {
+            if start == end && word.trim().is_empty() {
                 continue;
             }
-            for g in word.graphemes(true) {
+            for (offset, g) in word.grapheme_indices(true) {
                 let w = UnicodeWidthStr::width(g);
-                if used + w > width && !row.is_empty() {
-                    lines.push(std::mem::take(&mut row));
+                if used + w > width && start != end {
+                    lines.push(base + start..base + end);
+                    start = end;
                     used = 0;
                 }
                 if w <= width {
-                    row.push_str(g);
+                    let index = byte + offset;
+                    if start == end {
+                        start = index;
+                    }
+                    end = index + g.len();
                     used += w;
                 }
             }
         }
-        lines.push(row.trim_end().to_owned());
+        let trimmed = paragraph[start..end].trim_end().len();
+        lines.push(base + start..base + start + trimmed);
+        base += paragraph.len() + 1;
     }
     lines
 }
@@ -441,6 +460,19 @@ fn copy_commit_value_with(app: &mut App, action: usize, copy: impl FnOnce(&str) 
     if !copied {
         app.notify_error(message);
     }
+}
+
+fn copy_message_selection(app: &mut App) -> bool {
+    let details = &app.commit_details;
+    let Some(text) = details.message_selection.text(&details.data.message) else {
+        return false;
+    };
+    if crate::clipboard::set_text(text).is_ok() {
+        app.status_message = "Copied selected commit message text".into();
+    } else {
+        app.notify_error("Could not copy selected commit message text: clipboard unavailable");
+    }
+    true
 }
 
 fn activate(app: &mut App, action: usize) {
@@ -668,14 +700,17 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('[' | ']') if focus == Focus::Diff => {
             activate(app, if key.code == KeyCode::Char('[') { 6 } else { 7 })
         }
-        KeyCode::Char('c' | 'C') if ctrl && focus != Focus::Filter => activate(
-            app,
-            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                3
-            } else {
-                2
-            },
-        ),
+        KeyCode::Char('c' | 'C') if ctrl && focus != Focus::Filter => {
+            if focus != Focus::Message
+                || !ui_text_selection::is_copy_key(key)
+                || !copy_message_selection(app)
+            {
+                activate(
+                    app,
+                    if key.modifiers.contains(KeyModifiers::SHIFT) { 3 } else { 2 },
+                );
+            }
+        }
         KeyCode::Char('f' | 'F') if ctrl => {
             app.commit_details.diff_expanded = false;
             app.commit_details.layout = None;
@@ -847,6 +882,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
     if app.commit_details.focus == Focus::Diff {
         app.request_commit_diff();
     }
+    if focus == Focus::Message && app.commit_details.focus != Focus::Message {
+        app.commit_details.message_selection = Selection::default();
+    }
 }
 
 pub(crate) fn click(app: &mut App, col: u16, row: u16) {
@@ -995,11 +1033,77 @@ fn drag_scrollbar(app: &mut App, view: &InspectorLayout, row: u16) {
     }
 }
 
+fn message_byte_at(
+    details: &CommitDetails,
+    area: Rect,
+    mouse: MouseEvent,
+    clamp: bool,
+) -> Option<usize> {
+    let y = mouse
+        .row
+        .saturating_sub(area.y)
+        .min(area.height.saturating_sub(1));
+    let index = details.message_scroll + usize::from(y);
+    let rows = &details.message_hit;
+    if let Some(Some(range)) = rows.get(index) {
+        return Some(ui_text_selection::byte_at(
+            &details.data.message,
+            range,
+            area,
+            mouse,
+        ));
+    }
+    if !clamp {
+        return None;
+    }
+    // A drag crossing author or parent information continues at the nearest
+    // preceding message boundary, without including the intervening metadata.
+    let (above, below) = rows.split_at(index.min(rows.len()));
+    above
+        .iter()
+        .rev()
+        .flatten()
+        .next()
+        .map(|range| range.end)
+        .or_else(|| below.iter().flatten().next().map(|range| range.start))
+}
+
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.commit_details.visible || obscured(app) {
         return false;
     }
     let view = current_layout(app);
+    if app.commit_details.message_selection.dragging
+        && matches!(
+            mouse.kind,
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+        )
+    {
+        let active = focused(app)
+            && app.commit_details.focus == Focus::Message
+            && !view.overview.is_empty();
+        let details = &mut app.commit_details;
+        if !active {
+            details.message_selection.dragging = false;
+            return false;
+        }
+        let release = mouse.kind == MouseEventKind::Up(MouseButton::Left);
+        if !release {
+            if mouse.row < view.overview.y {
+                details.message_scroll = details.message_scroll.saturating_sub(1);
+            } else if mouse.row >= view.overview.bottom() {
+                let max = details
+                    .message_rows
+                    .saturating_sub(usize::from(view.overview.height));
+                details.message_scroll = (details.message_scroll + 1).min(max);
+            }
+        }
+        if let Some(end) = message_byte_at(details, view.overview, mouse, true) {
+            details.message_selection.extend(end);
+        }
+        details.message_selection.dragging = !release;
+        return true;
+    }
     let captured =
         app.commit_details.divider_drag.is_some() || app.commit_details.scrollbar_drag.is_some();
     // Workbench drags retain ownership across this editor view, including
@@ -1171,7 +1275,14 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 }
                 return true;
             }
+            app.commit_details.message_selection = Selection::default();
             click(app, mouse.column, mouse.row);
+            if view.overview.contains(point)
+                && let Some(offset) =
+                    message_byte_at(&app.commit_details, view.overview, mouse, false)
+            {
+                app.commit_details.message_selection.start(offset);
+            }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
             app.commit_details.last_divider_click = None;
@@ -1370,20 +1481,31 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
 
     let width = view.overview.width.saturating_sub(1) as usize;
     let mut overview = Vec::new();
-    let (subject, body) = details
-        .data
-        .message
-        .split_once('\n')
-        .unwrap_or((&details.data.message, ""));
-    for line in wrapped(
-        if subject.is_empty() {
-            "(no commit message)"
-        } else {
-            subject
-        },
-        width,
-    ) {
-        overview.push(Line::from(Span::styled(line, strong)));
+    let mut message_hit = Vec::new();
+    let unselected = Selection::default();
+    let selection = if details.focus == Focus::Message {
+        &details.message_selection
+    } else {
+        &unselected
+    };
+    let selection_style = if selection.range().is_some() {
+        app.colors.ui.input_selection_style(bg)
+    } else {
+        Style::default()
+    };
+    let message = &details.data.message;
+    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    if subject.is_empty() {
+        overview.extend(
+            wrapped("(no commit message)", width)
+                .into_iter()
+                .map(|line| Line::styled(line, strong)),
+        );
+    } else {
+        for row in wrapped_ranges(subject, width) {
+            overview.push(selection.line(message, &row, selection_style).style(strong));
+            message_hit.push(Some(row));
+        }
     }
     let author = if details.data.email.is_empty() {
         details.data.author.clone()
@@ -1433,22 +1555,26 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
     }
     if !body.trim().is_empty() {
         overview.push(Line::from(""));
-        for line in wrapped(body.trim(), width) {
-            overview.push(Line::from(Span::styled(line, base)));
+        message_hit.resize(overview.len(), None);
+        let offset = subject.len() + 1 + body.len() - body.trim_start().len();
+        for row in wrapped_ranges(body.trim(), width) {
+            let bytes = offset + row.start..offset + row.end;
+            overview.push(selection.line(message, &bytes, selection_style).style(base));
+            message_hit.push(Some(bytes));
         }
     }
-    app.commit_details.message_rows = overview.len();
-    app.commit_details.message_scroll = app
-        .commit_details
-        .message_scroll
-        .min(overview.len().saturating_sub(view.overview.height as usize));
-    f.render_widget(
-        Paragraph::new(overview).style(base).scroll((
-            app.commit_details.message_scroll.min(u16::MAX as usize) as u16,
-            0,
-        )),
-        view.overview,
-    );
+    let message_rows = overview.len();
+    let visible_rows = usize::from(view.overview.height);
+    let message_scroll = details.message_scroll.min(message_rows.saturating_sub(visible_rows));
+    let lines: Vec<_> = overview
+        .into_iter()
+        .skip(message_scroll)
+        .take(visible_rows)
+        .collect();
+    f.render_widget(Paragraph::new(lines).style(base), view.overview);
+    app.commit_details.message_rows = message_rows;
+    app.commit_details.message_scroll = message_scroll;
+    app.commit_details.message_hit = message_hit;
     let details = &app.commit_details;
     let filtered = details.filtered_files();
     let added: usize = details.data.files.iter().map(|f| f.added).sum();

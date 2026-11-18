@@ -34,6 +34,7 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
     }
     app.copy_animation.clear();
     app.dismiss_lsp_hover();
+    if crate::ui_inline_blame::copy_key(app, key) { return false; }
     app.inline_blame_hover = None;
     app.search_bar_layout.resizing = false;
     app.cancel_extension_pointer_capture();

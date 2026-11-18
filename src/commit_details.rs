@@ -1,6 +1,9 @@
 //! A pinned, asynchronous commit inspection session. Late results cannot replace
 //! a newer selection or cross a workspace boundary.
-use std::path::{Path, PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use crate::app::{ActivePane, App, GitCommitReference, Tab, TabKind};
 use crate::background::{BackgroundResult, CancellationToken};
@@ -86,6 +89,8 @@ pub(crate) struct CommitDetails {
     pub selected: usize,
     pub message_scroll: usize,
     pub message_rows: usize,
+    pub message_hit: Vec<Option<Range<usize>>>,
+    pub message_selection: crate::ui_text_selection::Selection,
     pub query: String,
     pub query_cursor: usize,
     pub query_anchor: Option<usize>,
@@ -653,6 +658,10 @@ impl App {
                 // Newly loaded files start collapsed; metadata refreshes keep
                 // files the user has already expanded in this inspector.
                 self.commit_details.review.collapsed.extend(self.commit_details.data.files.len()..data.files.len());
+                if self.commit_details.data.message != data.message {
+                    self.commit_details.message_hit.clear();
+                    self.commit_details.message_selection = Default::default();
+                }
                 self.commit_details.data = data;
             }
             Err(error) => self.commit_details.error = Some(error),
