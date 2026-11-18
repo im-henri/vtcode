@@ -234,6 +234,7 @@ fn inline_blame_hover_shows_metadata_and_complete_multiline_message() {
     assert!(app.hovered_gutter_line.is_none());
     let hover = app.inline_blame_hover.as_ref().unwrap();
     assert!(hover.area.intersection(hover.target.anchor).is_empty());
+    assert!(hover.scrollbar().is_none());
 }
 
 #[test]
@@ -326,13 +327,25 @@ fn inline_blame_drag_highlights_and_copies_across_wrapped_and_logical_lines() {
 
 #[test]
 fn inline_blame_hover_scrolls_to_the_last_message_line_without_scrolling_source() {
+    use crate::theme_workbench::ColorLayer;
+
     let message = (0..90)
         .map(|line| format!("Message line {line:02}"))
         .collect::<Vec<_>>()
         .join("\n");
     let mut app = fixture("let value = 42;\nsecond line\n", &message);
-    open(&mut app, 90, 16);
+    let background = ColorLayer::rgba(80, 100, 120, 128);
+    let slider = ColorLayer::rgba(240, 240, 240, 128);
+    app.colors.ui.scrollbar_background = background;
+    app.colors.ui.scrollbar_slider = slider;
+    let terminal = open(&mut app, 90, 16);
     let area = app.inline_blame_hover.as_ref().unwrap().area;
+    let thumb = (area.right() - 2, area.y + 1);
+    let buffer = terminal.backend().buffer();
+    let track = background.over(buffer[(thumb.0 - 1, thumb.1)].bg).unwrap();
+    assert_eq!(buffer[thumb].symbol(), "┃");
+    assert_eq!(buffer[thumb].bg, track);
+    assert_eq!(buffer[thumb].fg, slider.over(track).unwrap());
     let source_scroll = app.editor().unwrap().scroll_offset;
     pointer(&mut app, area, MouseEventKind::Moved);
     assert!(
@@ -348,6 +361,13 @@ fn inline_blame_hover_scrolls_to_the_last_message_line_without_scrolling_source(
         "inline blame hover scrolled message",
     );
     assert!(output(&terminal).contains("Message line 89"));
+    assert!(!output(&terminal).contains("Scroll ·"));
+    let last = area.bottom() - 2;
+    assert_eq!(
+        terminal.backend().buffer()[(area.x + 1, last)].symbol(),
+        "M"
+    );
+    assert_eq!(terminal.backend().buffer()[(thumb.0, last)].symbol(), "┃");
     assert_eq!(app.editor().unwrap().scroll_offset, source_scroll);
     assert_eq!(app.inline_blame_hover.as_ref().unwrap().area, area);
     for _ in 0..100 {
@@ -356,6 +376,71 @@ fn inline_blame_hover_scrolls_to_the_last_message_line_without_scrolling_source(
     assert!(output(&render(&mut app, 90, 16)).contains("Author"));
     pointer(&mut app, Rect::new(0, 0, 1, 1), MouseEventKind::Moved);
     assert!(app.inline_blame_hover.is_none());
+}
+
+#[test]
+fn inline_blame_scrollbar_clicks_and_drags_without_reaching_the_editor() {
+    let mut app = fixture(
+        &"let value = 42;\n".repeat(50),
+        &"Commit message line\n".repeat(90),
+    );
+    open(&mut app, 110, 16);
+    let hover = app.inline_blame_hover.as_ref().unwrap();
+    let popup = hover.area;
+    let max_scroll = hover.max_scroll;
+    let editor = app.editor().unwrap();
+    let scroll = editor.scroll_offset;
+    let caret = (editor.cursor_line, editor.cursor_col);
+
+    pointer(&mut app, popup, MouseEventKind::ScrollDown);
+    let (track, bar) = app
+        .inline_blame_hover
+        .as_ref()
+        .unwrap()
+        .scrollbar()
+        .unwrap();
+    let (top, _) = bar.thumb();
+    let thumb = Rect::new(track.x, track.y + top, 1, 1);
+    pointer(&mut app, thumb, MouseEventKind::Down(MouseButton::Left));
+    pointer(&mut app, thumb, MouseEventKind::Up(MouseButton::Left));
+    assert_eq!(app.inline_blame_hover.as_ref().unwrap().scroll, 3);
+
+    let track_end = Rect::new(track.x, track.bottom() - 1, 1, 1);
+    pointer(&mut app, track_end, MouseEventKind::Down(MouseButton::Left));
+    assert_eq!(app.inline_blame_hover.as_ref().unwrap().scroll, max_scroll);
+    pointer(&mut app, track_end, MouseEventKind::Up(MouseButton::Left));
+    pointer(&mut app, track_end, MouseEventKind::Down(MouseButton::Left));
+    let hover = app.inline_blame_hover.as_ref().unwrap();
+    assert!(hover.scrollbar_drag.is_some());
+    assert!(!hover.selection.dragging);
+
+    let outside_top = Rect::new(popup.x - 1, track.y, 1, 1);
+    pointer(
+        &mut app,
+        outside_top,
+        MouseEventKind::Drag(MouseButton::Left),
+    );
+    let terminal = render(&mut app, 110, 16);
+    assert!(output(&terminal).contains("Author"));
+    assert_eq!(app.inline_blame_hover.as_ref().unwrap().scroll, 0);
+
+    let outside_bottom = Rect::new(outside_top.x, track_end.y, 1, 1);
+    pointer(
+        &mut app,
+        outside_bottom,
+        MouseEventKind::Up(MouseButton::Left),
+    );
+    let hover = app.inline_blame_hover.as_ref().unwrap();
+    assert_eq!(hover.scroll, max_scroll);
+    assert!(hover.scrollbar_drag.is_none());
+    assert!(hover.selection.range().is_none());
+    render(&mut app, 110, 16);
+    assert!(app.inline_blame_hover.is_none());
+
+    let editor = app.editor().unwrap();
+    assert_eq!(editor.scroll_offset, scroll);
+    assert_eq!((editor.cursor_line, editor.cursor_col), caret);
+    assert!(editor.selection_anchor.is_none());
 }
 
 #[test]

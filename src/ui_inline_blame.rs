@@ -7,17 +7,13 @@ use std::{
 };
 
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{
-    Frame,
-    layout::Rect,
-    style::Style,
-    text::{Line, Span},
-};
+use ratatui::{Frame, layout::Rect, style::Style, text::Span};
 
 use crate::{
     app::{App, TabKind},
     git_blame,
     ui_text_selection::{self, Selection},
+    ui_widgets::{VerticalScrollbar, surface_background},
 };
 
 const HOVER_DELAY: Duration = Duration::from_secs(2);
@@ -50,7 +46,15 @@ pub(crate) struct Hover {
     rows: Vec<Range<usize>>,
     scroll: usize,
     max_scroll: usize,
+    scrollbar_drag: Option<ScrollbarDrag>,
     selection: Selection,
+}
+
+#[derive(Clone, Copy)]
+struct ScrollbarDrag {
+    start_row: u16,
+    start_offset: usize,
+    grab: u16,
 }
 
 impl Hover {
@@ -63,9 +67,61 @@ impl Hover {
         Rect::new(
             self.area.x + 1,
             self.area.y + 1,
-            self.area.width.saturating_sub(2),
-            self.area.height.saturating_sub(2 + u16::from(self.max_scroll > 0)),
+            self.area
+                .width
+                .saturating_sub(2 + u16::from(self.max_scroll > 0)),
+            self.area.height.saturating_sub(2),
         )
+    }
+
+    fn scrollbar(&self) -> Option<(Rect, VerticalScrollbar)> {
+        let text = self.text_area();
+        (self.max_scroll > 0 && !text.is_empty()).then(|| {
+            let area = Rect::new(text.right(), text.y, 1, text.height);
+            let bar =
+                VerticalScrollbar::new(area.x, area.y, area.height, self.rows.len(), self.scroll);
+            (area, bar)
+        })
+    }
+
+    fn start_scrollbar_drag(&mut self, mouse: MouseEvent) -> bool {
+        let Some((area, bar)) = self.scrollbar() else {
+            return false;
+        };
+        if !area.contains((mouse.column, mouse.row).into()) {
+            return false;
+        }
+        let (top, size) = bar.thumb();
+        let row = mouse.row - area.y;
+        let grab = if (top..top + size).contains(&row) {
+            row - top
+        } else {
+            let grab = size / 2;
+            self.scroll = self.thumb_offset(&bar, mouse.row, grab);
+            grab
+        };
+        self.selection.dragging = false;
+        self.scrollbar_drag = Some(ScrollbarDrag {
+            start_row: mouse.row,
+            start_offset: self.scroll,
+            grab,
+        });
+        true
+    }
+
+    fn thumb_offset(&self, bar: &VerticalScrollbar, row: u16, grab: u16) -> usize {
+        let (_, size) = bar.thumb();
+        let travel = bar.height.saturating_sub(size);
+        let top = row
+            .saturating_sub(bar.top_y.saturating_add(grab))
+            .min(travel);
+        // The widget rounds down when painting the thumb. Round up when
+        // mapping a thumb cell back to text so it stays under the pointer.
+        (u128::from(top) * self.max_scroll as u128).div_ceil(u128::from(travel.max(1))) as usize
+    }
+
+    fn dragging(&self) -> bool {
+        self.scrollbar_drag.is_some() || self.selection.dragging
     }
 
     fn byte_at(&self, mouse: MouseEvent, text_area: Rect) -> usize {
@@ -174,7 +230,7 @@ pub(crate) fn leave(app: &mut App, column: u16, row: u16) {
 }
 
 fn captured(hover: &Hover, kind: MouseEventKind) -> bool {
-    hover.selection.dragging
+    hover.dragging()
         && matches!(
             kind,
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
@@ -219,9 +275,26 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         let text_area = hover.text_area();
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                hover.selection = Selection::default();
-                if text_area.contains(point) {
-                    hover.selection.start(hover.byte_at(mouse, text_area));
+                hover.scrollbar_drag = None;
+                if !hover.start_scrollbar_drag(mouse) {
+                    hover.selection = Selection::default();
+                    if text_area.contains(point) {
+                        hover.selection.start(hover.byte_at(mouse, text_area));
+                    }
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+                if hover.scrollbar_drag.is_some() =>
+            {
+                if let Some((drag, (_, bar))) = hover.scrollbar_drag.zip(hover.scrollbar()) {
+                    hover.scroll = if mouse.row == drag.start_row {
+                        drag.start_offset.min(hover.max_scroll)
+                    } else {
+                        hover.thumb_offset(&bar, mouse.row, drag.grab)
+                    };
+                }
+                if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+                    hover.scrollbar_drag = None;
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
@@ -262,6 +335,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 rows: Vec::new(),
                 scroll: 0,
                 max_scroll: 0,
+                scrollbar_drag: None,
                 selection: Selection::default(),
             });
         } else if let Some(hover) = &mut app.inline_blame_hover
@@ -291,7 +365,7 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
         return;
     };
     if obscured(app)
-        || (!hover.selection.dragging
+        || (!hover.dragging()
             && hover.selection.range().is_none()
             && !hover.contains(app.mouse_col, app.mouse_row))
         || source(app, |id, anchor| {
@@ -328,9 +402,9 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
         hover.rows = crate::editor_blame::wrapped_message_ranges(&hover.message, content_width);
         hover.width = content_width;
         hover.selection = Selection::default();
+        hover.scrollbar_drag = None;
     }
-    let scrolling = hover.rows.len() > usize::from(height - 2);
-    let visible = usize::from(height - 2 - u16::from(scrolling));
+    let visible = usize::from(height - 2);
     hover.max_scroll = hover.rows.len().saturating_sub(visible);
     hover.scroll = hover.scroll.min(hover.max_scroll);
     let selection_style = if hover.selection.range().is_some() {
@@ -353,17 +427,6 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
         .take(visible)
         .map(|row| hover.selection.line(&hover.message, row, selection_style))
         .collect();
-    if scrolling {
-        lines.push(Line::raw(crate::ui_pickers::truncate_to_width(
-            &format!(
-                "Scroll · {}–{} / {}",
-                hover.scroll + 1,
-                (hover.scroll + visible).min(hover.rows.len()),
-                hover.rows.len()
-            ),
-            usize::from(content_width),
-        )));
-    }
     // Keep the card width and anchor stable while scrolling between short and
     // long lines.
     if let Some(line) = lines.first_mut() {
@@ -393,6 +456,15 @@ fn draw_at(f: &mut Frame, app: &mut App, now: Instant) {
         anchor.y,
     );
     if !hover.area.is_empty() {
+        if let Some((area, bar)) = hover.scrollbar() {
+            let bg = surface_background(f, area, app.colors.bg_editor);
+            let hovered = area.contains((app.mouse_col, app.mouse_row).into());
+            let (track, thumb) =
+                app.colors
+                    .ui
+                    .scrollbar_colors(bg, hovered, hover.scrollbar_drag.is_some());
+            bar.symbols('┃', '│').colors(thumb, track, track).render(f);
+        }
         app.inline_blame_hover = Some(hover);
     }
 }
