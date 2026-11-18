@@ -1,5 +1,6 @@
 use super::*;
 use crate::commit_details::{CommitData, CommitDiff, CommitFile};
+use crate::commit_review::ContextExpansion;
 use ratatui::{Terminal, backend::TestBackend};
 
 fn fixture() -> App {
@@ -687,20 +688,27 @@ fn commit_inspector_changes_only_context_preserves_source_ranges_and_merges_hunk
         }
     }
     let unchanged = crate::app::DiffRenderCache::new(&crate::app::compute_file_diff(&base, &base));
-    assert!(unchanged.with_context(3).rows.is_empty());
+    let compact = unchanged.with_context(3);
+    assert_eq!(compact.context_gap(0), Some(&(0..100)));
+    assert!(compact.visible_target_lines.is_empty());
+    let expanded = unchanged.with_expanded_context(3, None, &[0..100]);
+    assert_eq!(expanded.visible_target_lines, (0..100).collect::<Vec<_>>());
     let deleted = crate::app::DiffRenderCache::new(&crate::app::compute_file_diff(&base, ""));
     assert_eq!(deleted.with_context(0).rows.len(), 100);
     assert_eq!(deleted.with_context(0).inline_rows.len(), 100);
 }
 
 #[test]
-fn commit_inspector_context_controls_accept_zero_typed_counts_and_restore_full_file() {
+fn commit_inspector_context_controls_accept_zero_and_typed_counts() {
     let mut app = fixture();
-    let full = app.diff_render_cache.clone();
     let source = app.editor().unwrap().rope.clone();
     let mut terminal = Terminal::new(TestBackend::new(180, 44)).unwrap();
     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
     let view = current_layout(&app);
+    let toolbar: String = (view.patch_heading.x..view.patch_heading.right())
+        .map(|x| terminal.backend().buffer()[(x, view.patch_heading.y)].symbol())
+        .collect();
+    assert!(!toolbar.contains("Full file"));
     click(&mut app, view.diff_changes.x + 2, view.diff_changes.y);
     assert!(app.commit_details.diff_context.changes_only);
     assert_eq!(app.diff_render_cache.context_lines, Some(3));
@@ -729,9 +737,6 @@ fn commit_inspector_context_controls_accept_zero_typed_counts_and_restore_full_f
     paste_context_count(&mut app, "9999");
     handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(app.commit_details.diff_context.lines, 25);
-    click(&mut app, view.diff_full.x, view.diff_full.y);
-    assert!(!app.commit_details.diff_context.changes_only);
-    assert!(std::sync::Arc::ptr_eq(&full, &app.diff_render_cache));
     assert_eq!(
         app.editor().unwrap().rope,
         source,
@@ -747,6 +752,206 @@ fn commit_inspector_context_controls_accept_zero_typed_counts_and_restore_full_f
     app.reset_commit_details();
     assert!(app.commit_details.diff_context.changes_only);
     assert_eq!(app.commit_details.diff_context.lines, 7);
+}
+
+fn press_context_button(
+    app: &mut App,
+    terminal: &mut Terminal<TestBackend>,
+    file: usize,
+    gap: &Range<usize>,
+    expansion: ContextExpansion,
+) {
+    let button = app
+        .commit_details
+        .review
+        .context_buttons
+        .iter()
+        .find(|button| button.file == file && &button.gap == gap && button.expansion == expansion)
+        .unwrap_or_else(|| panic!("missing {expansion:?} button for file {file}, gap {gap:?}"));
+    let (x, y) = (button.area.x, button.area.y);
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        crate::mouse::handle_mouse(app, mouse_at(kind, x, y));
+    }
+    terminal.draw(|frame| draw(frame, app)).unwrap();
+}
+
+#[test]
+fn commit_inspector_context_buttons_expand_both_ends_and_every_common_line() {
+    for mode in [
+        crate::app::DiffMode::Inline,
+        crate::app::DiffMode::SideBySide,
+    ] {
+        let mut app = fixture();
+        app.commit_details.data.files.truncate(1);
+        let base: String = (0..120)
+            .map(|line| format!("let value_{line} = {line};\n"))
+            .collect();
+        let target = base
+            .replace(
+                "let value_20 = 20;\n",
+                "let updated_20 = -1;\nlet extra = 20;\n",
+            )
+            .replace("let value_80 = 80;\n", "");
+        set_diff(&mut app, &base, &target);
+        app.preferred_diff_mode = mode;
+        app.set_commit_diff_context(true, 0);
+        app.commit_details.diff_expanded = true;
+        let full = app.commit_details.diff_full_cache.clone().unwrap();
+        let compact = app.diff_render_cache.visible_target_lines.clone();
+        let mut terminal = Terminal::new(TestBackend::new(140, 68)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let buttons = &app.commit_details.review.context_buttons;
+        let gaps: Vec<_> = buttons
+            .iter()
+            .filter(|button| button.expansion == ContextExpansion::All)
+            .map(|button| button.gap.clone())
+            .collect();
+        let [leading, middle, trailing] = gaps.as_slice() else {
+            panic!("gaps: {gaps:?}");
+        };
+        assert_eq!(leading.start, 0);
+        assert_eq!(trailing.end, full.rows.len());
+        assert!(!buttons.iter().any(|button| {
+            (button.gap == *leading && button.expansion == ContextExpansion::FromStart)
+                || (button.gap == *trailing && button.expansion == ContextExpansion::FromEnd)
+        }));
+
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            middle,
+            ContextExpansion::FromStart,
+        );
+        let remaining = middle.start + 10..middle.end;
+        assert_eq!(
+            app.commit_details.review.expanded_context_for(0),
+            &[middle.start..remaining.start]
+        );
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            &remaining,
+            ContextExpansion::FromEnd,
+        );
+        let remaining = remaining.start..remaining.end - 10;
+        assert_eq!(
+            app.commit_details.review.expanded_context_for(0),
+            &[middle.start..remaining.start, remaining.end..middle.end]
+        );
+        for (index, row) in full.rows[middle.clone()].iter().enumerate() {
+            let line = row.right_line.unwrap();
+            let still_hidden = remaining.contains(&(middle.start + index));
+            assert_eq!(
+                app.diff_render_cache.visible_target_lines.contains(&line),
+                !still_hidden
+            );
+        }
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            leading,
+            ContextExpansion::FromEnd,
+        );
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            &(0..leading.end - 10),
+            ContextExpansion::All,
+        );
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            &remaining,
+            ContextExpansion::All,
+        );
+
+        app.commit_details.review.scroll = usize::MAX;
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        press_context_button(&mut app, &mut terminal, 0, trailing, ContextExpansion::All);
+        assert!(app.commit_details.review.context_buttons.is_empty());
+        assert!(
+            app.diff_render_cache
+                .rows
+                .iter()
+                .all(|row| row.hidden_lines == 0)
+        );
+        assert_eq!(app.diff_render_cache.rows.len(), full.rows.len());
+        assert_eq!(app.diff_render_cache.hunks, full.hunks);
+        for (row, original) in app.diff_render_cache.rows.iter().zip(&full.rows) {
+            assert_eq!(
+                (row.left_line, row.right_line),
+                (original.left_line, original.right_line)
+            );
+        }
+        assert_eq!(app.editor().unwrap().rope.to_string(), target);
+
+        let changes = current_layout(&app).diff_changes;
+        click(&mut app, changes.x, changes.y);
+        assert_eq!(app.diff_render_cache.visible_target_lines, compact);
+        assert!(app.commit_details.review.expanded_context.is_empty());
+    }
+}
+
+#[test]
+fn commit_inspector_context_expansions_follow_the_clicked_file_after_it_reloads() {
+    let mut app = review_fixture(2);
+    let base: String = (0..55).map(|line| format!("old line {line}\n")).collect();
+    let target = base.replace("old line 25\n", "new line 25\n");
+    set_diff(&mut app, &base, &target);
+    assert!(app.activate_commit_review_file(1));
+    app.commit_details.selected = 1;
+    set_diff(&mut app, &base, &target);
+    assert!(app.activate_commit_review_file(0));
+    app.commit_details.selected = 0;
+    app.commit_details.diff_expanded = true;
+    let compact = app.diff_render_cache.visible_target_lines.clone();
+    let mut terminal = Terminal::new(TestBackend::new(140, 44)).unwrap();
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    press_context_button(
+        &mut app,
+        &mut terminal,
+        1,
+        &(0..22),
+        ContextExpansion::FromEnd,
+    );
+    assert_eq!(app.commit_details.selected_file(), Some(1));
+    assert_eq!(app.commit_details.diff_file, Some(1));
+    assert!(app.diff_render_cache.visible_target_lines.contains(&12));
+    assert!(app.commit_details.review.expanded_context_for(0).is_empty());
+    assert!(app.activate_commit_review_file(0));
+    assert_eq!(app.diff_render_cache.visible_target_lines, compact);
+
+    let evicted = app.commit_details.review.cached.remove(&1).unwrap();
+    evicted.discard(&mut app.animations);
+    app.stash_commit_review_file();
+    set_diff(&mut app, &base, &target);
+    assert_eq!(app.commit_details.diff_file, Some(1));
+    assert_eq!(app.commit_details.review.expanded_context_for(1), &[12..22]);
+    assert!(app.diff_render_cache.visible_target_lines.contains(&12));
+
+    app.search_active = true;
+    app.search_query = "old line 45".into();
+    app.update_search();
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        !app.bg_file_search_running && !app.file_search_refresh_pending
+    });
+    app.jump_to_current_match();
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    assert_eq!(app.commit_details.context_revealed_line, Some(45));
+    assert!(app.diff_render_cache.visible_target_lines.contains(&12));
+    assert!(app.diff_render_cache.visible_target_lines.contains(&45));
+    app.search_active = false;
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    assert!(app.diff_render_cache.visible_target_lines.contains(&12));
+    assert!(!app.diff_render_cache.visible_target_lines.contains(&45));
 }
 
 #[test]
@@ -785,32 +990,20 @@ fn commit_inspector_context_uses_native_layouts_syntax_selection_and_scrollbars(
         } else {
             "inline"
         };
-        let panes = if mode == crate::app::DiffMode::SideBySide {
-            let layout = crate::ui_diff_display::side_by_side_diff_layout(body, app.diff_split_ratio);
-            vec![(layout.left.x, layout.left.right()), (app.gutter_area.unwrap().x, code.right())]
-        } else {
-            vec![(body.x, code.right())]
-        };
         crate::ui_control_visibility_tests::snapshot(
             terminal.backend().buffer(), &format!("commit-context-gutters-{mode_name}"),
         );
-        for (start, end) in panes {
-            let mut separators = 0;
-            for row in code.y..code.bottom() {
-                let text: String = (start..end)
-                    .map(|column| terminal.backend().buffer()[(column, row)].symbol()).collect();
-                if text.contains("unchanged lines hidden") {
-                    separators += 1;
-                    assert!(text.starts_with("… "),
-                        "{mode_name} context separator must start in the line-number gutter: {text:?}");
-                    assert!(text.trim_end().ends_with("hidden …"),
-                        "{mode_name} context separator must not leave source text behind: {text:?}");
-                    assert!((start..end).all(|column|
-                        terminal.backend().buffer()[(column, row)].bg == app.colors.bg_dark),
-                        "the separator background must span the gutter and code");
-                }
-            }
-            assert!(separators > 0, "the rendered {mode_name} pane must expose a context separator");
+        let buttons = &app.commit_details.review.context_buttons;
+        assert!(!buttons.is_empty(), "{mode_name} needs visible context controls");
+        for button in buttons.iter().filter(|button| button.expansion == ContextExpansion::All) {
+            let row = button.area.y;
+            let buffer = terminal.backend().buffer();
+            let text: String = (body.x..body.right() - 1)
+                .map(|column| buffer[(column, row)].symbol()).collect();
+            assert!(text.contains(&format!("+{} common lines", button.gap.len())));
+            assert!(!text.contains("value_") && !text.contains("unchanged lines hidden"));
+            assert_eq!(buffer[(body.x, row)].bg, app.colors.bg_dark);
+            assert_eq!(buffer[(body.right() - 2, row)].bg, app.colors.bg_dark);
         }
         let editor = app.editor().unwrap();
         let screen_row = editor
@@ -1097,7 +1290,6 @@ fn commit_inspector_responsive_layout_stays_inside_terminal() {
                     view.filter_clear,
                     view.hunk_previous,
                     view.hunk_next,
-                    view.diff_full,
                     view.diff_changes,
                     view.context_label,
                     view.context_less,

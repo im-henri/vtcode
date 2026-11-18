@@ -849,7 +849,7 @@ impl App {
                     self.commit_details.diff_error = None;
                     self.install_commit_diff(diff);
                 } else {
-                    let view = self.make_commit_file_view(diff);
+                    let view = self.make_commit_file_view(diff, Some(result.file));
                     self.commit_details.review.cached.insert(result.file, view);
                 }
             }

@@ -1,7 +1,7 @@
 //! A virtual, continuous commit review. Only visible, expanded files request
 //! revisions. Native editors and diff caches move between cards without copying
 //! their source text, and offscreen caches are evicted under a bounded budget.
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use ratatui::layout::Rect;
 
@@ -19,6 +19,9 @@ pub(crate) struct Review {
     /// Heights include the card header, revision labels, and breathing room.
     pub heights: rustc_hash::FxHashMap<usize, usize>,
     pub visible: Vec<Card>,
+    pub context_buttons: Vec<ContextButton>,
+    /// Ranges in each full diff, kept even when its rendered cache is evicted.
+    pub expanded_context: rustc_hash::FxHashMap<usize, Vec<Range<usize>>>,
     pub total: usize,
     pub scroll: usize,
     pub paint_row: Option<usize>,
@@ -38,6 +41,35 @@ pub(crate) struct Card {
     pub open: Rect,
     pub first_row: usize,
     pub geometry: Geometry,
+}
+
+pub(crate) const CONTEXT_STEP: usize = 10;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ContextExpansion {
+    FromStart,
+    All,
+    FromEnd,
+}
+
+impl ContextExpansion {
+    pub(crate) fn range(self, gap: &Range<usize>) -> Range<usize> {
+        let count = gap.len().min(CONTEXT_STEP);
+        match self {
+            Self::FromStart => gap.start..gap.start + count,
+            Self::All => gap.clone(),
+            Self::FromEnd => gap.end - count..gap.end,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ContextButton {
+    pub area: Rect,
+    pub file: usize,
+    pub aligned_row: usize,
+    pub gap: Range<usize>,
+    pub expansion: ContextExpansion,
 }
 
 /// Native input must use the geometry of the card clicked, not the last card
@@ -141,7 +173,23 @@ impl Review {
     pub fn clear_geometry(&mut self) {
         self.heights.clear();
         self.visible.clear();
+        self.context_buttons.clear();
         self.reveal = true;
+    }
+
+    pub fn expanded_context_for(&self, file: usize) -> &[Range<usize>] {
+        self.expanded_context.get(&file).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn expand_context(&mut self, file: usize, mut range: Range<usize>) {
+        let ranges = self.expanded_context.entry(file).or_default();
+        let first = ranges.partition_point(|existing| existing.end < range.start);
+        let end = first + ranges[first..].partition_point(|existing| existing.start <= range.end);
+        if first < end {
+            range.start = range.start.min(ranges[first].start);
+            range.end = range.end.max(ranges[end - 1].end);
+        }
+        ranges.splice(first..end, [range]);
     }
 }
 
@@ -188,12 +236,15 @@ impl App {
         let Some(full) = self.commit_details.diff_full_cache.as_ref() else {
             return;
         };
-        if self.diff_render_cache.context_lines != context.changes_only.then_some(context.lines) {
-            self.diff_render_cache = if context.changes_only {
-                Arc::new(full.with_context(context.lines))
-            } else {
-                full.clone()
-            };
+        let expanded = self.commit_details.diff_file.map_or(&[][..], |file| {
+            self.commit_details.review.expanded_context_for(file)
+        });
+        if !self.diff_render_cache.matches_context(
+            context.changes_only.then_some(context.lines),
+            expanded,
+        ) {
+            self.diff_render_cache = context.project(full, None, expanded);
+            self.commit_details.context_revealed_line = None;
             self.diff_inline_scroll = Default::default();
         }
     }

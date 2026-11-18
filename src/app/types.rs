@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::style::Color;
@@ -561,6 +564,9 @@ pub(crate) struct DiffRenderCache {
     /// Bounded original/target headers survive scrolling and compact views.
     pub syntax_first_lines: [String; 2],
     pub context_lines: Option<usize>,
+    expanded_context: Vec<Range<usize>>,
+    // Projected aligned row and the corresponding range in the complete diff.
+    context_gaps: Vec<(usize, Range<usize>)>,
     pub visible_target_lines: Vec<usize>,
     aligned_row_targets: Vec<usize>,
     inline_row_targets: Vec<usize>,
@@ -584,6 +590,8 @@ impl Default for DiffRenderCache {
         Self {
             syntax_first_lines: Default::default(),
             context_lines: None,
+            expanded_context: Vec::new(),
+            context_gaps: Vec::new(),
             visible_target_lines: Vec::new(),
             aligned_row_targets: Vec::new(),
             inline_row_targets: Vec::new(),
@@ -728,6 +736,8 @@ impl DiffRenderCache {
         Self {
             syntax_first_lines,
             context_lines: None,
+            expanded_context: Vec::new(),
+            context_gaps: Vec::new(),
             visible_target_lines: Vec::new(),
             aligned_row_targets: Vec::new(),
             inline_row_targets: Vec::new(),
@@ -925,14 +935,31 @@ impl DiffRenderCache {
         changes
     }
 
-    /// Project complete revisions into hunks without renumbering source lines.
-    /// This runs only when the context setting or the underlying diff changes.
+    #[cfg(test)]
     pub(crate) fn with_context(&self, context: usize) -> Self {
-        self.with_context_around(context, None)
+        self.with_expanded_context(context, None, &[])
     }
 
-    pub(crate) fn with_context_around(&self, context: usize, reveal: Option<usize>) -> Self {
-        let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    pub(crate) fn context_gap(&self, aligned_row: usize) -> Option<&Range<usize>> {
+        let index = self
+            .context_gaps
+            .binary_search_by_key(&aligned_row, |(row, _)| *row)
+            .ok()?;
+        Some(&self.context_gaps[index].1)
+    }
+
+    pub(crate) fn matches_context(&self, lines: Option<usize>, expanded: &[Range<usize>]) -> bool {
+        self.context_lines == lines && (lines.is_none() || self.expanded_context == expanded)
+    }
+
+    /// Project complete revisions into hunks without renumbering source lines.
+    pub(crate) fn with_expanded_context(
+        &self,
+        context: usize,
+        reveal: Option<usize>,
+        expanded: &[Range<usize>],
+    ) -> Self {
+        let mut ranges: Vec<Range<usize>> = Vec::new();
         for (index, row) in self.rows.iter().enumerate() {
             if row.left_kind != '-' && row.right_kind != '+' { continue; }
             let start = index.saturating_sub(context);
@@ -946,8 +973,14 @@ impl DiffRenderCache {
         if let Some(line) = reveal {
             let index = self.aligned_row_for_target_line(line);
             ranges.push(index.saturating_sub(context)..index.saturating_add(context).saturating_add(1).min(self.rows.len()));
+        }
+        if reveal.is_some() || !expanded.is_empty() {
+            ranges.extend(expanded.iter().filter_map(|range| {
+                let end = range.end.min(self.rows.len());
+                (range.start < end).then_some(range.start..end)
+            }));
             ranges.sort_unstable_by_key(|range| range.start);
-            let mut merged: Vec<std::ops::Range<usize>> = Vec::new();
+            let mut merged: Vec<Range<usize>> = Vec::new();
             for range in ranges {
                 if let Some(last) = merged.last_mut().filter(|last| range.start <= last.end) { last.end = last.end.max(range.end); }
                 else { merged.push(range); }
@@ -955,24 +988,24 @@ impl DiffRenderCache {
             ranges = merged;
         }
         let mut rows = Vec::new();
+        let mut context_gaps = Vec::new();
         let mut previous = 0;
-        for range in &ranges {
+        // Renames and mode changes can have an entirely unchanged text diff.
+        // The trailing gap also gives those files a way to reveal their text.
+        if !self.rows.is_empty() {
+            ranges.push(self.rows.len()..self.rows.len());
+        }
+        for range in ranges {
             if range.start > previous {
                 let count = range.start - previous;
                 let text = format!("… {count} unchanged lines hidden …");
                 let mut gap = AlignedDiffRow::new(' ', None, text.clone(), None, ' ', None, text, None);
                 gap.hidden_lines = count;
+                context_gaps.push((rows.len(), previous..range.start));
                 rows.push(gap);
             }
-            rows.extend_from_slice(&self.rows[range.clone()]);
             previous = range.end;
-        }
-        if !ranges.is_empty() && previous < self.rows.len() {
-            let count = self.rows.len() - previous;
-            let text = format!("… {count} unchanged lines hidden …");
-            let mut gap = AlignedDiffRow::new(' ', None, text.clone(), None, ' ', None, text, None);
-            gap.hidden_lines = count;
-            rows.push(gap);
+            rows.extend_from_slice(&self.rows[range]);
         }
         let inline_rows = Self::index_inline_rows(&rows);
         let last_target = self.aligned_target_rows.len().saturating_sub(1);
@@ -1007,6 +1040,8 @@ impl DiffRenderCache {
         Self {
             syntax_first_lines: self.syntax_first_lines.clone(),
             context_lines: Some(context),
+            expanded_context: expanded.to_vec(),
+            context_gaps,
             visible_target_lines: rows.iter().filter_map(|row| row.right_line).collect(),
             aligned_target_rows: map_targets(&aligned_row_targets),
             inline_target_rows,

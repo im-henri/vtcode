@@ -296,12 +296,12 @@ impl CommitFileView {
         self.view.pan(&mut self.editor, col, row, delta);
     }
     pub(crate) fn review_height(
-        &mut self, context: crate::commit_details::DiffContext, mode: DiffMode, width: u16,
+        &mut self, context: crate::commit_details::DiffContext, expanded: &[std::ops::Range<usize>],
+        mode: DiffMode, width: u16,
         wrap: (bool, usize), animations: &crate::animation_config::AnimationSettings,
     ) -> usize {
-        if self.view.cache.context_lines != context.changes_only.then_some(context.lines) {
-            self.view.cache = if context.changes_only { Arc::new(self.full.with_context(context.lines)) }
-                else { self.full.clone() };
+        if !self.view.cache.matches_context(context.changes_only.then_some(context.lines), expanded) {
+            self.view.cache = context.project(&self.full, None, expanded);
             self.view.inline_scroll = Default::default();
             self.revealed = None;
         }
@@ -793,11 +793,13 @@ impl App {
         // Results may arrive with another file or diff focused. Cache them for
         // the browsing tab without touching that editor or activating a tab.
         self.sync_diff_tab();
-        let view = self.make_commit_file_view(snapshot);
+        let view = self.make_commit_file_view(snapshot, self.commit_details.diff_file);
         self.put_commit_file_view(view);
     }
 
-    pub(crate) fn make_commit_file_view(&self, snapshot: crate::commit_details::CommitDiff) -> CommitFileView {
+    pub(crate) fn make_commit_file_view(
+        &self, snapshot: crate::commit_details::CommitDiff, file: Option<usize>,
+    ) -> CommitFileView {
         let mut editor = self.new_editor();
         editor.language_override = self.language_override_for_path(&snapshot.path);
         editor.content_version = self.tabs.iter()
@@ -818,9 +820,8 @@ impl App {
         editor.scroll_offset = first.saturating_sub(5);
         editor.set_git_line_status(snapshot.prepared.target_line_markers);
         let full_cache = Arc::new(snapshot.prepared.render_cache);
-        let cache = if self.commit_details.diff_context.changes_only {
-            Arc::new(full_cache.with_context(self.commit_details.diff_context.lines))
-        } else { Arc::clone(&full_cache) };
+        let expanded = file.map_or(&[][..], |file| self.commit_details.review.expanded_context_for(file));
+        let cache = self.commit_details.diff_context.project(&full_cache, None, expanded);
         let version = editor.content_version;
         // Approximate residency conservatively without scanning all diff rows
         // during a frame. This is a cache budget, not a file-size limit.

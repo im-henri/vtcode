@@ -1,10 +1,30 @@
 //! Compact views of native diffs. Source text and source coordinates stay intact.
-use crate::{app::App, editor::WrappedRowInfo};
+use crate::{
+    app::{App, DiffRenderCache},
+    commit_details::DiffContext,
+    commit_review::ContextButton,
+    editor::WrappedRowInfo,
+};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{Frame, widgets::Clear};
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+impl DiffContext {
+    pub(crate) fn project(
+        self,
+        full: &Arc<DiffRenderCache>,
+        reveal: Option<usize>,
+        expanded: &[Range<usize>],
+    ) -> Arc<DiffRenderCache> {
+        if self.changes_only {
+            Arc::new(full.with_expanded_context(self.lines, reveal, expanded))
+        } else {
+            Arc::clone(full)
+        }
+    }
+}
 
 impl App {
     pub(crate) fn context_diff_active(&self) -> bool {
@@ -23,7 +43,7 @@ impl App {
             return;
         }
         let old = self.commit_details.diff_context;
-        self.commit_details.diff_context = crate::commit_details::DiffContext {
+        self.commit_details.diff_context = DiffContext {
             changes_only,
             lines,
         };
@@ -32,25 +52,50 @@ impl App {
         self.rebuild_commit_diff_context();
     }
 
+    pub(crate) fn reset_commit_diff_expansions(&mut self) {
+        let had_expansions = !self.commit_details.review.expanded_context.is_empty();
+        if had_expansions {
+            self.commit_details.review.expanded_context.clear();
+            self.commit_details.review.clear_geometry();
+        }
+        let context = self.commit_details.diff_context;
+        if !context.changes_only {
+            self.set_commit_diff_context(true, context.lines);
+        } else if had_expansions {
+            self.commit_details.context_revealed_line = None;
+            self.rebuild_commit_diff_context();
+        }
+    }
+
+    pub(crate) fn expand_commit_diff_gap(&mut self, button: &ContextButton) {
+        if self.commit_details.diff_file != Some(button.file)
+            || self.diff_render_cache.context_gap(button.aligned_row) != Some(&button.gap)
+        {
+            return;
+        }
+        self.commit_details
+            .review
+            .expand_context(button.file, button.expansion.range(&button.gap));
+        self.commit_details.review.context_buttons.clear();
+        self.rebuild_commit_diff_context();
+    }
+
     fn rebuild_commit_diff_context(&mut self) {
-        let Some(full) = self.commit_details.diff_full_cache.clone() else {
+        let Some(full) = self.commit_details.diff_full_cache.as_ref() else {
             return;
         };
-        let crate::commit_details::DiffContext {
-            changes_only,
-            lines,
-        } = self.commit_details.diff_context;
-        self.diff_render_cache = if changes_only {
-            Arc::new(full.with_context_around(lines, self.commit_details.context_revealed_line))
-        } else {
-            full
-        };
+        let context = self.commit_details.diff_context;
+        let expanded = self.commit_details.diff_file.map_or(&[][..], |file| {
+            self.commit_details.review.expanded_context_for(file)
+        });
+        self.diff_render_cache =
+            context.project(full, self.commit_details.context_revealed_line, expanded);
         self.diff_refresh_generation = self.diff_refresh_generation.wrapping_add(1);
         self.diff_inline_scroll = Default::default();
         let cache = self.diff_render_cache.clone();
         if let Some(editor) = self.editor_mut() {
             editor.diff_display_rows = None;
-            if changes_only && !cache.visible_target_lines.is_empty() {
+            if context.changes_only && !cache.visible_target_lines.is_empty() {
                 let index = cache
                     .visible_target_lines
                     .partition_point(|line| *line < editor.cursor_line)
@@ -61,7 +106,7 @@ impl App {
                 }
                 editor.set_cursor(line, editor.cursor_col.min(editor.line_len(line)));
             }
-            editor.scroll_offset = editor.cursor_line.saturating_sub(lines);
+            editor.scroll_offset = editor.cursor_line.saturating_sub(context.lines);
         }
     }
 

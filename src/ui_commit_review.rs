@@ -1,7 +1,8 @@
 //! File cards in a single scrolling review. There are no nested vertical
 //! scroll regions: the native diff renderer paints only each visible slice.
 use super::*;
-use crate::commit_review::{Card, Geometry};
+use crate::commit_review::{CONTEXT_STEP, Card, ContextButton, ContextExpansion, Geometry};
+use ratatui::{layout::Position, widgets::Clear};
 
 pub(super) fn draw_controls(f: &mut Frame, app: &App, view: &InspectorLayout) {
     let details = &app.commit_details;
@@ -40,7 +41,6 @@ pub(super) fn draw_controls(f: &mut Frame, app: &App, view: &InspectorLayout) {
             .into(),
         ),
         (9, view.diff_toggle, mode.to_string()),
-        (10, view.diff_full, "Full file".to_string()),
         (11, view.diff_changes, "Changes".to_string()),
         (12, view.context_less, "−".to_string()),
         (13, view.context_more, "+".to_string()),
@@ -49,7 +49,7 @@ pub(super) fn draw_controls(f: &mut Frame, app: &App, view: &InspectorLayout) {
         (7, view.hunk_next, "↓".to_string()),
     ] {
         let selected =
-            action == 10 && !context.changes_only || action == 11 && context.changes_only;
+            action == 11 && context.changes_only && details.review.expanded_context.is_empty();
         let focused = details.focus == Focus::Action(action);
         let style = app.colors.ui.button_style(
             bg,
@@ -257,8 +257,91 @@ fn header(f: &mut Frame, app: &App, card: &Card, selected: bool) {
     );
 }
 
+fn draw_context_buttons(f: &mut Frame, app: &App, card: &Card, buttons: &mut Vec<ContextButton>) {
+    let cache = &app.diff_render_cache;
+    let Some(full) = &app.commit_details.diff_full_cache else {
+        return;
+    };
+    let scroll = &app.diff_inline_scroll;
+    let bg = app.colors.bg_dark;
+    let point = (app.mouse_col, app.mouse_row).into();
+    for offset in 0..scroll.text_area.height {
+        let logical = scroll.wrap.row_at(scroll.row + usize::from(offset)).logical;
+        let aligned_row = if scroll.aligned {
+            logical
+        } else if let Some(entry) = cache.inline_rows.get(logical) {
+            entry.aligned_row
+        } else {
+            continue;
+        };
+        let Some(gap) = cache.context_gap(aligned_row) else {
+            continue;
+        };
+        let area = Rect::new(
+            card.body.x,
+            scroll.text_area.y + offset,
+            card.body.width.saturating_sub(1),
+            1,
+        )
+        .intersection(card.body);
+        if area.is_empty() {
+            continue;
+        }
+        f.render_widget(Clear, area);
+        f.render_widget(Block::default().style(Style::default().bg(bg)), area);
+
+        let count = gap.len();
+        let from_start = count > CONTEXT_STEP && gap.start > 0;
+        let from_end = count > CONTEXT_STEP && gap.end < full.rows.len();
+        let down = format!(" +{CONTEXT_STEP} ↓ ");
+        let up = format!(" ↑ +{CONTEXT_STEP} ");
+        let step_space =
+            usize::from(from_start) * (down.width() + 1) + usize::from(from_end) * (up.width() + 1);
+        let noun = if count == 1 { "line" } else { "lines" };
+        let label = format!(" +{count} common {noun} ");
+        let compact = format!(" +{count} ");
+        let available = usize::from(area.width);
+        let (label, show_steps) = if label.width() + step_space <= available {
+            (label, true)
+        } else if compact.width() + step_space <= available {
+            (compact, true)
+        } else if label.width() <= available {
+            (label, false)
+        } else {
+            (compact, false)
+        };
+        let total = label.width() + if show_steps { step_space } else { 0 };
+        let mut x = area.x + available.saturating_sub(total) as u16 / 2;
+        for (visible, expansion, label) in [
+            (show_steps && from_start, ContextExpansion::FromStart, down),
+            (true, ContextExpansion::All, label),
+            (show_steps && from_end, ContextExpansion::FromEnd, up),
+        ] {
+            if !visible {
+                continue;
+            }
+            let width = (label.width() as u16).min(area.right().saturating_sub(x));
+            let button = Rect::new(x, area.y, width, 1);
+            let style = app
+                .colors
+                .ui
+                .button_style(bg, false, button.contains(point), true);
+            row(f, button, label, style);
+            buttons.push(ContextButton {
+                area: button,
+                file: card.file,
+                aligned_row,
+                gap: gap.clone(),
+                expansion,
+            });
+            x = button.right().saturating_add(1);
+        }
+    }
+}
+
 pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     let area = view.files;
+    app.commit_details.review.context_buttons.clear();
     if area.is_empty() {
         return;
     }
@@ -314,9 +397,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
         }
         app.diff_inline_scroll = scroll;
     }
-    for (&file, view) in &mut app.commit_details.review.cached {
-        let height = view.review_height(context, mode, width, wrap, &app.animation_settings);
-        app.commit_details.review.heights.insert(file, height);
+    let review = &mut app.commit_details.review;
+    for (&file, view) in &mut review.cached {
+        let expanded = review.expanded_context.get(&file).map_or(&[][..], Vec::as_slice);
+        let height = view.review_height(context, expanded, mode, width, wrap, &app.animation_settings);
+        review.heights.insert(file, height);
     }
     // Native keyboard/search navigation keeps the target row in the outer
     // viewport; ordinary wheel scrolling never follows an unchanged caret.
@@ -365,6 +450,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     let cursor = app.cursor_visible;
     let mut selected_geometry = Geometry::default();
     let mut selected_body = Rect::default();
+    let mut context_buttons = std::mem::take(&mut app.commit_details.review.context_buttons);
     for card in &mut visible {
         let file_selected = selected == Some(card.file);
         header(f, app, card, file_selected);
@@ -386,6 +472,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
             } else {
                 crate::ui_diff_display::draw_inline_diff(f, app, card.body);
             }
+            draw_context_buttons(f, app, card, &mut context_buttons);
             // Use one scrollbar for the review, not one thumb per file.
             if let Some(bar) = app.scrollbar_area.take() {
                 f.render_widget(Block::default().style(Style::default().bg(bg)), bar);
@@ -460,6 +547,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
         .and_then(|file| app.editor().map(|editor| (file, editor.cursor_line, if wrap.0 { editor.cursor_col } else { 0 })));
     app.commit_details.layout.as_mut().unwrap().patch = selected_body;
     app.commit_details.review.visible = visible;
+    app.commit_details.review.context_buttons = context_buttons;
     app.commit_details.diff_loading = app.commit_details.review.pending.is_some()
         && app.commit_details.review.pending == selected;
     app.commit_details.diff_error =
@@ -510,6 +598,38 @@ pub(super) fn toggle(app: &mut App, file: usize) {
         review.scroll = review.scroll.min(card.start);
     }
     review.toggle(file);
+}
+
+pub(super) fn click_context(app: &mut App, point: Position) -> bool {
+    let review = &app.commit_details.review;
+    let Some(button) = review
+        .context_buttons
+        .iter()
+        .find(|button| button.area.contains(point))
+        .cloned()
+    else {
+        return review
+            .context_buttons
+            .iter()
+            .any(|button| button.area.y == point.y)
+            && review.visible.iter().any(|card| card.body.contains(point));
+    };
+    let selected = app
+        .commit_details
+        .filtered_files()
+        .iter()
+        .position(|file| *file == button.file);
+    if let Some(index) = selected
+        && !app.commit_details.review.collapsed.contains(&button.file)
+        && app.activate_commit_review_file(button.file)
+    {
+        app.commit_details.selected = index;
+        app.commit_details.focus = Focus::Diff;
+        app.commit_details.review.reveal = false;
+        app.commit_details.review.caret = None;
+        app.expand_commit_diff_gap(&button);
+    }
+    true
 }
 
 pub(super) fn click_card(app: &mut App, col: u16, row: u16) -> bool {

@@ -52,7 +52,6 @@ pub(crate) struct InspectorLayout {
     pub files: Rect,
     pub patch_heading: Rect,
     pub diff_toggle: Rect,
-    pub diff_full: Rect,
     pub diff_changes: Rect,
     pub context_label: Rect,
     pub context_less: Rect,
@@ -170,12 +169,11 @@ pub(crate) fn layout_in_area(area: Rect, expanded: bool, panes: PaneSizes) -> In
     }
     if content.width >= 42 && content.bottom().saturating_sub(y) >= 4 {
         result.patch_heading = Rect::new(content.x, y, content.width, 1);
-        result.diff_full = Rect::new(content.x, y, 11, 1);
-        result.diff_changes = Rect::new(content.x + 12, y, 9, 1);
-        result.context_label = Rect::new(content.x + 22, y, 2, 1);
-        result.context_less = Rect::new(content.x + 24, y, 3, 1);
-        result.context_count = Rect::new(content.x + 27, y, 4, 1);
-        result.context_more = Rect::new(content.x + 31, y, 3, 1);
+        result.diff_changes = Rect::new(content.x, y, 9, 1);
+        result.context_label = Rect::new(content.x + 10, y, 2, 1);
+        result.context_less = Rect::new(content.x + 12, y, 3, 1);
+        result.context_count = Rect::new(content.x + 15, y, 4, 1);
+        result.context_more = Rect::new(content.x + 19, y, 3, 1);
         if content.width >= 52 {
             result.hunk_previous = Rect::new(content.right() - 7, y, 3, 1);
             result.hunk_next = Rect::new(content.right() - 3, y, 3, 1);
@@ -211,7 +209,6 @@ fn actions(view: &InspectorLayout) -> impl Iterator<Item = (usize, Rect)> + '_ {
             (9, view.diff_toggle),
             (6, view.hunk_previous),
             (7, view.hunk_next),
-            (10, view.diff_full),
             (11, view.diff_changes),
             (12, view.context_less),
             (14, view.context_count),
@@ -421,7 +418,7 @@ fn enabled(app: &App, action: usize) -> bool {
         }
         6 | 7 => native_diff_ready(app) && !app.diff_render_cache.hunks.is_empty(),
         9 => native_diff_ready(app),
-        10 | 11 | 14 => native_diff_ready(app),
+        11 | 14 => native_diff_ready(app),
         12 => native_diff_ready(app) && app.commit_details.diff_context.lines > 0,
         13 => native_diff_ready(app) && app.commit_details.diff_context.lines < 999,
         8 => true,
@@ -527,9 +524,9 @@ fn activate(app: &mut App, action: usize) {
             app.execute_palette_command("toggle_diff_layout");
             app.commit_details.focus = Focus::Diff;
         }
-        10 | 11 => {
+        11 => {
             app.commit_details.context_draft = None;
-            app.set_commit_diff_context(action == 11, app.commit_details.diff_context.lines);
+            app.reset_commit_diff_expansions();
         }
         12 | 13 => {
             let lines = app
@@ -902,7 +899,7 @@ pub(crate) fn click(app: &mut App, col: u16, row: u16) {
             return;
         }
     }
-    if review::click_card(app, col, row) {
+    if review::click_context(app, point) || review::click_card(app, col, row) {
         return;
     }
     if !app.commit_details.query.is_empty() && view.filter_clear.contains(point) {
@@ -1195,6 +1192,12 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         && !mouse.modifiers.contains(KeyModifiers::SHIFT)
     {
         scroll(app, mouse.kind, mouse.column, mouse.row);
+        return true;
+    }
+    if !captured
+        && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && review::click_context(app, point)
+    {
         return true;
     }
     if !captured
