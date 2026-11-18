@@ -5,6 +5,7 @@ use crate::app::{ActivePane, App, TerminalDock};
 use unicode_width::UnicodeWidthStr;
 use crate::ui_chrome::ACTIVITY_SETTINGS_INDEX;
 use crate::ui_chrome_tabs::TabBarHits;
+use crate::ui_diff_display::diff_divider_hit;
 #[cfg(test)]
 use crate::ui_chrome_tabs::tab_display_name;
 #[cfg(test)]
@@ -82,7 +83,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     let previous = (app.mouse_col, app.mouse_row).into();
     handle_mouse_inner(app, mouse);
     if mouse.kind == MouseEventKind::Moved {
-        app.mouse_hover_changed |= crate::ui_minimap_resize::hover_changed(app, previous);
+        app.mouse_hover_changed |= crate::ui_minimap_resize::hover_changed(app, previous)
+            || diff_divider_hit(app, previous.x, previous.y)
+                != diff_divider_hit(app, app.mouse_col, app.mouse_row);
     }
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
         app.update_sidebar_auto_hide(mouse);
@@ -1436,27 +1439,21 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
             // Internal side-by-side diff divider. It is independent from the
             // editor-group split tree and resizes only the two diff panes.
-            if let Some(divider) = app.diff_divider_area {
-                let hit = col >= divider.x.saturating_sub(1)
-                    && col <= divider.x.saturating_add(divider.width)
-                    && row >= divider.y
-                    && row < divider.bottom();
-                if hit {
-                    let now = std::time::Instant::now();
-                    let is_double_click = now
-                        .duration_since(app.last_click_time)
-                        .as_millis()
-                        < 400
-                        && app.last_click_pos == (col, row);
-                    if is_double_click {
-                        app.diff_split_ratio = 0.5;
-                    } else {
-                        app.resizing_diff_split = true;
-                    }
-                    app.last_click_time = now;
-                    app.last_click_pos = (col, row);
-                    return;
+            if diff_divider_hit(app, col, row) {
+                let now = std::time::Instant::now();
+                let is_double_click = now
+                    .duration_since(app.last_click_time)
+                    .as_millis()
+                    < 400
+                    && app.last_click_pos == (col, row);
+                if is_double_click {
+                    app.diff_split_ratio = 0.5;
+                } else {
+                    app.resizing_diff_split = true;
                 }
+                app.last_click_time = now;
+                app.last_click_pos = (col, row);
+                return;
             }
 
             // Click on split divider to start resize?

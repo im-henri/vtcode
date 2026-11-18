@@ -79,6 +79,13 @@ pub(crate) fn side_by_side_diff_layout(area: Rect, ratio: f32) -> SideBySideDiff
     }
 }
 
+pub(crate) fn diff_divider_hit(app: &App, col: u16, row: u16) -> bool {
+    app.diff_divider_area.is_some_and(|divider| {
+        (divider.x.saturating_sub(1)..=divider.right()).contains(&col)
+            && (divider.y..divider.bottom()).contains(&row)
+    })
+}
+
 pub(crate) fn measure_wrap(
     cache: &DiffRenderCache,
     editor: &Editor,
@@ -200,19 +207,32 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
     // Draw the divider last. Besides being the resize affordance, this is a
     // hard visual boundary that prevents either pane's diff style leaking.
     if layout.divider.width > 0 {
-        let border = if app.resizing_diff_split {
-            Some(app.colors.fg_accent)
-        } else {
-            app.colors.ui.border_diff
-        };
+        let bg = app.colors.bg_editor;
+        let highlighted = !app.rendering_inactive_editor
+            && (app.resizing_diff_split
+                || (app.terminal_has_focus && diff_divider_hit(app, app.mouse_col, app.mouse_row)));
+        let accent = highlighted.then(|| {
+            app.colors
+                .ui
+                .sash_hover_border
+                .border(bg)
+                .unwrap_or(app.colors.fg_accent)
+        });
+        let border = accent.or(app.colors.ui.border_diff);
+        let line_style = Style::default().fg(border.unwrap_or(bg)).bg(bg);
+        let line_symbol = if border.is_some() { "│" } else { " " };
+        let grip_y = layout.divider.y + layout.divider.height / 2;
         let buffer = f.buffer_mut();
         for y in layout.divider.top()..layout.divider.bottom() {
             if let Some(cell) = buffer.cell_mut((layout.divider.x, y)) {
-                cell.set_symbol(if border.is_some() { "│" } else { " " });
-                let color = border.unwrap_or(app.colors.bg_editor);
-                cell.set_fg(color);
-                cell.set_bg(app.colors.bg_editor);
-                cell.set_style(Style::default().fg(color).bg(app.colors.bg_editor));
+                if y == grip_y && let Some(accent) = accent {
+                    let style = Style::default()
+                        .fg(app.colors.ui.widget_text_color(accent))
+                        .bg(accent);
+                    cell.set_symbol("↔").set_style(style);
+                } else {
+                    cell.set_symbol(line_symbol).set_style(line_style);
+                }
             }
         }
     }
@@ -2126,6 +2146,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn side_by_side_diff_divider_reveals_resize_handle_on_hover() {
+        use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+
+        let mut app = app_with_diff("before\n", "after\n");
+        app.diff_mode = DiffMode::SideBySide;
+        app.show_minimap = false;
+        app.sticky_scroll = false;
+        app.colors.ui.border_diff = None;
+        let accent = Color::Rgb(0, 180, 240);
+        app.colors.ui.sash_hover_border = crate::theme_workbench::ColorLayer::opaque(accent);
+        let mut terminal = Terminal::new(TestBackend::new(81, 8)).unwrap();
+        let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+            terminal
+                .draw(|frame| draw_side_by_side_diff(frame, app, frame.area()))
+                .unwrap();
+        };
+        let move_to = |app: &mut App, column, row| {
+            app.mouse_hover_changed = false;
+            crate::mouse::handle_mouse(app, MouseEvent {
+                kind: MouseEventKind::Moved,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            });
+            assert!(app.mouse_hover_changed);
+        };
+
+        draw(&mut terminal, &mut app);
+        let divider = app.diff_divider_area.unwrap();
+        let grip = (divider.x, divider.y + divider.height / 2);
+        assert_eq!(terminal.backend().buffer()[grip].symbol(), " ");
+
+        move_to(&mut app, divider.right(), divider.y + 1);
+        draw(&mut terminal, &mut app);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(divider.x, divider.y)].fg, accent);
+        assert_eq!(buffer[grip].symbol(), "↔");
+        assert_eq!(buffer[grip].bg, accent);
+
+        let code = app.code_area.unwrap();
+        move_to(&mut app, code.x + 4, code.y + 1);
+        draw(&mut terminal, &mut app);
+        assert_eq!(terminal.backend().buffer()[grip].symbol(), " ");
     }
 
     #[test]
