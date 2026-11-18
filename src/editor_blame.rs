@@ -222,10 +222,6 @@ fn history_document(app: &App) -> Option<&std::sync::Arc<git_blame::Document>> {
         })
 }
 
-fn available(app: &App) -> bool {
-    history_document(app).is_some_and(|doc| doc.key.is_some() && doc.notice.is_none())
-}
-
 pub(crate) fn toggle(app: &mut App) {
     if !eligible(app) {
         app.notify("Git blame is available in a file editor.");
@@ -599,42 +595,15 @@ fn tooltip(f: &mut Frame, app: &mut App) {
             .render(f, app.mouse_col, app.mouse_row);
         return;
     }
-    let document = git_blame::cached(app, editor);
-    if !app.rendering_inactive_editor
-        && let Some(button) = app.editor().unwrap().blame.button
-        && button.contains((app.mouse_col, app.mouse_row).into())
-    {
-        let lines = if available(app) {
-            vec![
-                Line::raw("Show each line's commit date and short title."),
-                Line::raw("Click an annotation for commit details and actions."),
-            ]
-        } else {
-            vec![Line::raw(
-                history_document(app)
-                    .and_then(|doc| doc.notice.as_deref())
-                    .unwrap_or(if editor.blame.enabled {
-                        "Loading Git blame…"
-                    } else {
-                        "Load Git blame for this file."
-                    }),
-            )]
-        };
-        crate::ui_widgets::Tooltip::hover(lines, &app.colors)
-            .prefer_below()
-            .render(f, button.x, button.y);
-    } else if !app.rendering_inactive_editor
-        && editor.blame.panel.is_none()
-        && let Some((_, line)) = app
-            .editor()
-            .unwrap()
+    if editor.blame.panel.is_none()
+        && let Some((_, line)) = editor
             .blame
             .hits
             .iter()
-            .find(|(area, _)| area.contains((app.mouse_col, app.mouse_row).into()))
+            .find(|(area, _)| area.contains(point))
         && editor.blame.clicked_annotation != Some(*line)
         && let Some(git_blame::Line::Committed(commit)) =
-            document.as_ref().and_then(|doc| doc.lines.get(*line))
+            git_blame::cached(app, editor).and_then(|doc| doc.lines.get(*line))
     {
         crate::ui_widgets::Tooltip::hover(
             vec![

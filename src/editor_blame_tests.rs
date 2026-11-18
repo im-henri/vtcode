@@ -646,17 +646,18 @@ fn blame_dates_use_the_commit_timezone_and_cancelled_navigation_stays_cancelled(
 }
 
 #[test]
-fn blame_cold_breadcrumb_loads_on_click_and_explains_the_action() {
+fn blame_breadcrumb_loads_on_click_without_a_hover_popup() {
     let (_root, path, _) = fixture(SOURCE);
     let mut app = loaded_app(&path, SOURCE);
     app.blame_documents.clear();
     let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
     render(&mut app, &mut terminal);
+    let before_hover = output(&terminal);
     let button = app.editor().unwrap().blame.button.unwrap();
     pointer(&mut app, button, MouseEventKind::Moved);
     render(&mut app, &mut terminal);
-    assert!(output(&terminal).contains("Load Git blame for this file."));
-    assert!(!output(&terminal).contains("Blame —"));
+    assert_eq!(output(&terminal), before_hover);
+    assert!(!before_hover.contains("Blame —"));
     assert!(!app.bg_blame_running);
     pointer(&mut app, button, MouseEventKind::Down(MouseButton::Left));
     assert!(app.editor().unwrap().blame.enabled);
@@ -666,7 +667,9 @@ fn blame_cold_breadcrumb_loads_on_click_and_explains_the_action() {
     assert!(app.bg_blame_running);
     app.wait_for_background(Duration::from_secs(10), |app| !app.bg_blame_running);
     render(&mut app, &mut terminal);
-    assert!(output(&terminal).contains("Add array summation"));
+    let text = output(&terminal);
+    assert!(text.contains("Add array summation"));
+    assert!(!text.contains("Show each line's commit date and short title."));
     assert!(app.editor().unwrap().blame.enabled);
 }
 
@@ -726,7 +729,7 @@ fn blame_button_stays_on_the_visible_desk_when_a_hidden_button_overlaps() {
 }
 
 #[test]
-fn blame_unsupported_files_explain_the_reason_and_do_not_retry_at_idle() {
+fn blame_unsupported_files_explain_the_reason_on_click_and_do_not_retry_at_idle() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("example.c");
     std::fs::write(&path, SOURCE).unwrap();
@@ -750,12 +753,17 @@ fn blame_unsupported_files_explain_the_reason_and_do_not_retry_at_idle() {
     let style = terminal.backend().buffer()[(button.x + 1, button.y)].style();
     pointer(&mut app, button, MouseEventKind::Moved);
     render(&mut app, &mut terminal);
-    assert!(output(&terminal).contains("Git repository"));
+    assert!(!output(&terminal).contains("Git repository"));
     assert_eq!(
         terminal.backend().buffer()[(button.x + 1, button.y)].style(),
         style
     );
     pointer(&mut app, button, MouseEventKind::Down(MouseButton::Left));
+    assert!(
+        app.notification_history
+            .last()
+            .is_some_and(|(message, _, _)| message.contains("Git repository"))
+    );
     assert!(!app.editor().unwrap().blame.enabled);
     assert!(app.editor().unwrap().blame.panel.is_none());
 
