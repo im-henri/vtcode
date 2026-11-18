@@ -414,24 +414,12 @@ pub(crate) fn load(root: &Path, hash: &str) -> Result<CommitData, String> {
             });
         }
         files.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        let mut references = Vec::new();
-        for reference in repo.references()?.flatten() {
-            if (reference.is_branch() || reference.is_remote() || reference.is_tag())
-                && reference
-                    .peel_to_commit()
-                    .is_ok_and(|target| target.id() == commit.id())
-            {
-                let name = reference.shorthand().unwrap_or("");
-                references.push(GitCommitReference {
-                    name: if reference.is_tag() {
-                        format!("tag: {name}")
-                    } else {
-                        name.to_owned()
-                    },
-                    remote: reference.is_remote(),
-                });
-            }
-        }
+        let mut references: Vec<_> = repo
+            .references()?
+            .flatten()
+            .filter_map(|reference| GitCommitReference::from_git_ref(&reference))
+            .filter_map(|(id, reference)| (id == commit.id()).then_some(reference))
+            .collect();
         references.sort_by(|a, b| (a.remote, &a.name).cmp(&(b.remote, &b.name)));
         let time = commit.time();
         let offset = chrono::FixedOffset::east_opt(time.offset_minutes().saturating_mul(60));

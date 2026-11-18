@@ -1259,6 +1259,31 @@ pub struct GitCommitReference {
     pub remote: bool,
 }
 
+impl GitCommitReference {
+    // Git ref names cannot contain a colon, so this prefix distinguishes tags.
+    const TAG_PREFIX: &str = "tag: ";
+
+    pub(crate) fn from_git_ref(reference: &git2::Reference<'_>) -> Option<(git2::Oid, Self)> {
+        let remote = reference.is_remote();
+        let tag = reference.is_tag();
+        if !(remote || tag || reference.is_branch()) {
+            return None;
+        }
+        let name = reference.shorthand()?;
+        let commit = reference.peel_to_commit().ok()?.id();
+        let name = if tag {
+            format!("{}{name}", Self::TAG_PREFIX)
+        } else {
+            name.to_owned()
+        };
+        Some((commit, Self { name, remote }))
+    }
+
+    pub(crate) fn tag_name(&self) -> Option<&str> {
+        self.name.strip_prefix(Self::TAG_PREFIX)
+    }
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum GitBranchPickerItem {
     Local {

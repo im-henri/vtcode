@@ -166,17 +166,21 @@ pub(crate) fn stream_history(root: PathBuf, requests: mpsc::Receiver<()>, cancel
         let repo = git2::Repository::open(canonical)?;
         let mut refs: rustc_hash::FxHashMap<git2::Oid, Vec<GitCommitReference>> =
             Default::default();
-        if let Ok(branches) = repo.branches(None) {
-            for (branch, kind) in branches.flatten() {
-                if let Ok(commit) = branch.get().peel_to_commit() {
-                    refs.entry(commit.id())
-                        .or_default()
-                        .push(GitCommitReference {
-                            name: branch.name().ok().flatten().unwrap_or("").to_owned(),
-                            remote: kind == git2::BranchType::Remote,
-                        });
+        if let Ok(references) = repo.references() {
+            for reference in references.flatten() {
+                if cancel.is_cancelled() {
+                    return Ok(());
+                }
+                if let Some((id, reference)) = GitCommitReference::from_git_ref(&reference) {
+                    refs.entry(id).or_default().push(reference);
                 }
             }
+        }
+        for labels in refs.values_mut() {
+            labels.sort_unstable_by(|a, b| {
+                (a.tag_name().is_some(), a.remote, &a.name)
+                    .cmp(&(b.tag_name().is_some(), b.remote, &b.name))
+            });
         }
         let mut walk = repo.revwalk()?;
         walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
@@ -496,8 +500,8 @@ mod tests {
     }
 
     #[test]
-    fn history_preserves_reference_kind_when_local_and_remote_names_match() {
-        let (root, _) = history_repo(1);
+    fn history_preserves_branch_kinds_and_resolves_tags_to_commits() {
+        let (root, ids) = history_repo(2);
         {
             let repo = git2::Repository::open(&root).unwrap();
             let head = repo.head().unwrap().peel_to_commit().unwrap();
@@ -509,17 +513,36 @@ mod tests {
                 "test remote reference",
             )
             .unwrap();
+            let head_object = repo.find_object(head.id(), None).unwrap();
+            repo.tag_lightweight("origin/main", &head_object, false)
+                .unwrap();
+            let older = repo
+                .find_object(git2::Oid::from_str(&ids[1]).unwrap(), None)
+                .unwrap();
+            repo.tag("release/v1", &older, &head.author(), "First release", false)
+                .unwrap();
+            let tree = repo.find_object(head.tree_id(), None).unwrap();
+            repo.tag_lightweight("tree", &tree, false).unwrap();
         }
         let mut app = App::new(root.clone());
         app.refresh_git_log_async();
         app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_log_running);
-        assert_eq!(app.git_log.len(), 1);
+        assert_eq!(app.git_log.len(), 2);
         for remote in [false, true] {
             assert!(app.git_log[0].branches.contains(&GitCommitReference {
                 name: "origin/main".into(),
                 remote
             }));
         }
+        let tags = |index: usize| {
+            app.git_log[index]
+                .branches
+                .iter()
+                .filter_map(GitCommitReference::tag_name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tags(0), ["origin/main"]);
+        assert_eq!(tags(1), ["release/v1"]);
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
     }

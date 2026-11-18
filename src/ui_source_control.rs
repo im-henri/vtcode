@@ -1253,17 +1253,33 @@ fn draw_sc_graph_panel(f: &mut Frame, app: &mut App, area: Rect) {
             let meta_width = if total >= 64 { (total / 4).min(28) } else { 0 };
             let mut badge_budget = total.saturating_sub(graph_width + hash_width + meta_width + 16);
             let mut badges = Vec::new();
-            for (index, branch) in commit.branches.iter().enumerate() {
-                let label = format!(" {} ", truncate_to_width(&branch.name, 14));
-                let width = UnicodeWidthStr::width(label.as_str()) + 1;
-                if width > badge_budget {
-                    let remaining = format!(" +{} ", commit.branches.len() - index);
-                    if remaining.len() <= badge_budget { badges.push(Span::styled(remaining, row_style.fg(description))); }
+            let mut shown = 0;
+            for reference in &commit.branches {
+                if badge_budget < 4 {
                     break;
                 }
+                let label = if let Some(tag) = reference.tag_name() {
+                    format!(" ◇{tag} ")
+                } else {
+                    format!(" {} ", truncate_to_width(&reference.name, 14))
+                };
+                let width = UnicodeWidthStr::width(label.as_str()) + 1;
+                if width > badge_budget {
+                    continue;
+                }
                 badge_budget -= width;
-                badges.push(Span::styled(label, app.colors.ui.graph_reference_style(branch.remote, row_bg)));
+                shown += 1;
+                badges.push(Span::styled(
+                    label,
+                    app.colors.ui.graph_reference_style(reference.remote, row_bg),
+                ));
                 badges.push(Span::styled(" ", row_style));
+            }
+            if shown < commit.branches.len() {
+                let remaining = format!(" +{} ", commit.branches.len() - shown);
+                if remaining.len() <= badge_budget {
+                    badges.push(Span::styled(remaining, row_style.fg(description)));
+                }
             }
             let badge_width: usize = badges.iter().map(Span::width).sum();
             let message_width = total.saturating_sub(graph_width + hash_width + meta_width + badge_width);
@@ -1348,6 +1364,39 @@ mod tests {
         for y in 1..=3 {
             let start = (0..64).find(|&x| terminal.backend().buffer()[(x, y)].symbol() == "M");
             assert_eq!(start, Some(7));
+        }
+    }
+
+    #[test]
+    fn graph_displays_whole_tags_only_when_they_fit_beside_the_subject() {
+        let mut app = App::test_new();
+        app.git_log = vec![crate::app::GitCommitInfo {
+            hash: "0123456".into(),
+            full_hash: "0123456789abcdef0123456789abcdef01234567".into(),
+            graph: "●".into(),
+            message: "Keep this title".into(),
+            author: "Alex".into(),
+            time_ago: "1h ago".into(),
+            branches: [
+                "tag: release/tag-that-needs-a-much-wider-source-control-sidebar",
+                "tag: v1.2.3",
+            ]
+            .map(|name| crate::app::GitCommitReference {
+                name: name.into(),
+                remote: false,
+            })
+            .to_vec(),
+        }];
+        for (width, tag_fits) in [(28, false), (29, true)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 3)).unwrap();
+            terminal
+                .draw(|frame| draw_sc_graph_panel(frame, &mut app, Rect::new(0, 0, width, 3)))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let row: String = (0..width).map(|x| buffer[(x, 1)].symbol()).collect();
+            assert!(row.contains("Keep this title"), "{row}");
+            assert_eq!(row.contains("◇v1.2.3"), tag_fits, "{row}");
+            assert!(!row.contains("release/"), "{row}");
         }
     }
 

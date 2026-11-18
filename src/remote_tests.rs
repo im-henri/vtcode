@@ -1429,6 +1429,12 @@ fn remote_history_pages_retain_the_walk_and_finish_unborn_repositories() {
             ids.push(id.to_string());
             parent = Some(repo.find_commit(id).unwrap());
         }
+        if let Some(id) = ids.first() {
+            let oldest = repo
+                .find_object(git2::Oid::from_str(id).unwrap(), None)
+                .unwrap();
+            repo.tag_lightweight("v1.0.0", &oldest, false).unwrap();
+        }
         let workspace =
             workspace::Workspace::new(connection(dir.path(), Arc::default(), Arc::default()));
         let mut app = app_for_workspace(&workspace);
@@ -1457,6 +1463,9 @@ fn remote_history_pages_retain_the_walk_and_finish_unborn_repositories() {
                     .collect::<Vec<_>>(),
                 ids.iter().rev().collect::<Vec<_>>()
             );
+            assert!(app.git_log.last().unwrap().branches.iter().any(|reference| {
+                reference.tag_name() == Some("v1.0.0")
+            }));
         }
         assert!(!app.git_history.has_more);
         workspace.client.call(Command::Shutdown).unwrap();
