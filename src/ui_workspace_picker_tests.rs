@@ -140,6 +140,53 @@ fn filtering_switches_the_matching_workspace_and_empty_results_do_nothing() {
 }
 
 #[test]
+fn reordering_folder_rows_changes_shortcut_order_and_keeps_the_current_folder() {
+    let (_root, mut app) = fixture();
+    let order = |app: &App| {
+        app.workspace_entries()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>()
+    };
+    crate::ui_workspaces::open(&mut app);
+    for (name, arrow, expected) in [("infra", "↑", [0, 2, 1]), ("api", "↓", [2, 0, 1])] {
+        let buffer = draw(&mut app, 120, 24);
+        let area = app.workspaces.popup.area;
+        let row = row_containing(&buffer, area, name);
+        let col = (area.x..area.right())
+            .find(|&col| buffer[(col, row)].symbol() == arrow)
+            .unwrap();
+        click(&mut app, Rect::new(col, row, 1, 1));
+        assert_eq!(order(&app), expected);
+        assert_eq!(app.workspaces.active, 0);
+        assert!(app.workspaces.popup.open);
+        assert_eq!(app.workspaces.popup.selected, 1);
+        assert!(app.workspaces.request.is_none());
+    }
+
+    key(&mut app, KeyCode::Up, KeyModifiers::ALT);
+    assert_eq!(order(&app), [0, 2, 1]);
+    assert_eq!(app.workspaces.popup.selected, 0);
+    key(&mut app, KeyCode::Up, KeyModifiers::ALT);
+    assert_eq!(order(&app), [0, 2, 1]);
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    for (code, expected) in [
+        (KeyCode::PageDown, 2),
+        (KeyCode::PageUp, 0),
+        (KeyCode::PageUp, 1),
+    ] {
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::ALT),
+        );
+        app.poll_workspace_requests();
+        assert_eq!(app.workspaces.active, expected);
+        assert_eq!(order(&app), [0, 2, 1]);
+    }
+}
+
+#[test]
 fn set_details_target_the_filtered_set_and_actions_never_delete_another_set() {
     let (_root, mut app) = fixture();
     crate::ui_workspace_sets::open(&mut app);

@@ -66,7 +66,14 @@ fn sets_switch_exact_membership_reuse_dirty_documents_and_keep_closed_recovery()
     app.insert_workspace(b.app(wake.clone()));
     let identity = app.editor().unwrap().save_identity;
     app.editor_mut().unwrap().insert_char('B');
+    assert!(app.swap_workspace_order(0, 1));
     let id = save(&mut app, "Engineering");
+    let (saved, modified) = app.current_workspace_set().unwrap();
+    assert!(!modified);
+    assert_eq!(saved.active, 0);
+    assert_eq!(saved.roots, [b.path(), a.path()].map(|path| Location::local(path, &crate::portable::base_dir())));
+    assert!(app.swap_workspace_order(0, 1));
+    assert!(app.current_workspace_set().unwrap().1);
     let disk = app.workspaces.sets.path.clone();
     app.insert_workspace(c.app(wake));
     app.editor_mut().unwrap().insert_char('C');
@@ -96,7 +103,11 @@ fn sets_switch_exact_membership_reuse_dirty_documents_and_keep_closed_recovery()
     assert_eq!(app.workspaces.active, 1);
     assert_eq!(app.editor().unwrap().save_identity, identity);
     assert!(app.editor().unwrap().rope.to_string().starts_with('B'));
-    assert_eq!(app.workspace_entries().len(), 2);
+    assert_eq!(
+        app.workspace_entries().into_iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        [1, 0]
+    );
+    assert!(!app.current_workspace_set().unwrap().1);
     let mut recovered = crate::session::load_session(c.path()).unwrap();
     crate::session::hydrate_saved_tab(c.path(), &mut recovered.tabs[0]);
     assert!(
@@ -109,7 +120,7 @@ fn sets_switch_exact_membership_reuse_dirty_documents_and_keep_closed_recovery()
     );
     let mut restarted = a.app(Default::default());
     catalog(&mut restarted, &disk);
-    assert_eq!(restarted.saved_workspace_sets()[0].name, "Engineering");
+    assert_eq!(restarted.saved_workspace_sets(), [saved]);
 }
 
 #[test]

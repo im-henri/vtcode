@@ -89,6 +89,8 @@ struct Opening {
 pub(crate) struct Workspaces {
     pub active: u64,
     pub parked: Vec<Parked>,
+    // New folders follow the explicitly ordered IDs in opening order.
+    order: rustc_hash::FxHashMap<u64, usize>,
     pub popup: crate::ui_workspaces::Popup,
     next_id: u64,
     cursors: [usize; 5],
@@ -199,6 +201,37 @@ impl App {
             || self.paste_receiving()
     }
 
+    fn ordered_workspaces(&self) -> Vec<(u64, &App)> {
+        let mut workspaces: Vec<_> = std::iter::once((self.workspaces.active, self))
+            .chain(self.workspaces.parked.iter().map(|parked| (parked.id, &*parked.app)))
+            .collect();
+        workspaces.sort_unstable_by_key(|(id, _)| {
+            (self.workspaces.order.get(id).copied().unwrap_or(usize::MAX), *id)
+        });
+        workspaces
+    }
+
+    fn set_workspace_order(&mut self, ids: Vec<u64>) {
+        self.workspaces.order = ids
+            .into_iter()
+            .enumerate()
+            .map(|(position, id)| (id, position))
+            .collect();
+    }
+
+    pub(crate) fn swap_workspace_order(&mut self, id: u64, neighbor: u64) -> bool {
+        let mut ids: Vec<_> = self.ordered_workspaces().into_iter().map(|(id, _)| id).collect();
+        let (Some(index), Some(destination)) = (
+            ids.iter().position(|&current| current == id),
+            ids.iter().position(|&current| current == neighbor),
+        ) else {
+            return false;
+        };
+        ids.swap(index, destination);
+        self.set_workspace_order(ids);
+        true
+    }
+
     pub(crate) fn workspace_entries(&self) -> Vec<Entry> {
         let entry = |id, app: &App, active| Entry {
             id,
@@ -233,15 +266,10 @@ impl App {
             unsaved: app.unsaved_file_count(),
             terminals: (0..app.terminals.len()).filter(|&index| app.terminal_is_open(index)).count(),
         };
-        let mut entries = vec![entry(self.workspaces.active, self, true)];
-        entries.extend(
-            self.workspaces
-                .parked
-                .iter()
-                .map(|parked| entry(parked.id, &parked.app, false)),
-        );
-        entries.sort_by_key(|entry| entry.id);
-        entries
+        self.ordered_workspaces()
+            .into_iter()
+            .map(|(id, app)| entry(id, app, id == self.workspaces.active))
+            .collect()
     }
 
     pub(crate) fn workspace_unread(&self) -> usize {

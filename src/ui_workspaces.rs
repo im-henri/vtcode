@@ -7,6 +7,8 @@ use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+const ROW_BUTTON_WIDTH: u16 = 3;
+
 pub(crate) fn escaped(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.chars().any(char::is_control) {
         return std::borrow::Cow::Borrowed(text);
@@ -54,6 +56,7 @@ pub(crate) struct Popup {
     pub dismiss: Rect,
     pub search: picker::Search,
     hits: Vec<(Rect, usize)>,
+    move_hits: Vec<(Rect, u64, isize)>,
     pub(crate) close_hits: Vec<(Rect, u64)>,
 }
 pub(crate) fn open(app: &mut App) {
@@ -164,6 +167,20 @@ fn entries(app: &App) -> Vec<crate::app_workspaces::Entry> {
         })
         .collect()
 }
+
+fn move_workspace(app: &mut App, entries: &[crate::app_workspaces::Entry], index: usize, delta: isize) {
+    if let Some(target) = index.checked_add_signed(delta)
+        && let (Some(entry), Some(neighbor)) = (entries.get(index), entries.get(target))
+        && app.swap_workspace_order(entry.id, neighbor.id)
+    {
+        let popup = &mut app.workspaces.popup;
+        popup.selected = target;
+        popup.hits.clear();
+        popup.move_hits.clear();
+        popup.close_hits.clear();
+    }
+}
+
 fn activate(app: &mut App, index: usize) {
     if app.workspaces.popup.close {
         let target = app
@@ -283,6 +300,16 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if !app.workspaces.popup.close && filter_key(app, key) {
         return true;
     }
+    if !app.workspaces.popup.close
+        && key.modifiers == KeyModifiers::ALT
+        && matches!(key.code, KeyCode::Up | KeyCode::Down)
+    {
+        let entries = entries(app);
+        let selected = app.workspaces.popup.selected;
+        let delta = if key.code == KeyCode::Up { -1 } else { 1 };
+        move_workspace(app, &entries, selected, delta);
+        return true;
+    }
     let count = if app.workspaces.popup.close {
         2
     } else {
@@ -334,17 +361,24 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     app.mouse_col = mouse.column;
     app.mouse_row = mouse.row;
     if !app.workspaces.popup.close
+        && app.workspaces.popup.sets.mode.is_none()
         && mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        && let Some((_, id)) = app
-            .workspaces
-            .popup
-            .close_hits
-            .iter()
-            .find(|(rect, _)| rect.contains(point))
-            .copied()
     {
-        close_folder(app, id);
-        return true;
+        if let Some(&(_, id, delta)) = app.workspaces.popup.move_hits.iter()
+            .find(|(rect, _, _)| rect.contains(point))
+        {
+            let entries = entries(app);
+            if let Some(index) = entries.iter().position(|entry| entry.id == id) {
+                move_workspace(app, &entries, index, delta);
+            }
+            return true;
+        }
+        if let Some(&(_, id)) = app.workspaces.popup.close_hits.iter()
+            .find(|(rect, _)| rect.contains(point))
+        {
+            close_folder(app, id);
+            return true;
+        }
     }
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         let saved = app.workspaces.popup.tabs[1].contains(point);
@@ -462,6 +496,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     app.workspaces.popup.close_hits.clear();
+    app.workspaces.popup.move_hits.clear();
     if app.workspaces.popup.sets.mode.is_some() {
         crate::ui_workspace_sets::draw(f, app);
         return;
@@ -509,15 +544,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             1,
         );
         if let Some(entry) = entries.get(index) {
-            let close = Rect::new(
-                row.right().saturating_sub(4).max(row.x),
-                row.y,
-                row.width.min(3),
-                1,
-            );
             let show_close = !entry.path.is_empty() && row.width >= 12;
+            let show_move = entries.len() > 1 && row.width >= 26;
+            let button_width = ROW_BUTTON_WIDTH * (u16::from(show_close) + 2 * u16::from(show_move));
             let content = Rect {
-                width: row.width.saturating_sub(if show_close { 5 } else { 0 }),
+                width: row.width.saturating_sub(button_width + 2 * u16::from(button_width > 0)),
                 ..row
             };
             let mut badges = Vec::new();
@@ -546,13 +577,20 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 selected == index,
                 true,
             );
+            if show_move {
+                let mut x = row.right() - button_width - 1;
+                for (delta, label) in [(-1, " ↑ "), (1, " ↓ ")] {
+                    if index.checked_add_signed(delta).is_some_and(|target| target < entries.len()) {
+                        let button = Rect::new(x, row.y, ROW_BUTTON_WIDTH, 1);
+                        draw_row_button(f, app, button, label);
+                        app.workspaces.popup.move_hits.push((button, entry.id, delta));
+                    }
+                    x += ROW_BUTTON_WIDTH;
+                }
+            }
             if show_close {
-                let hovered = close.contains((app.mouse_col, app.mouse_row).into());
-                let style =
-                    app.colors
-                        .ui
-                        .button_style(picker::base(app).bg.unwrap(), false, hovered, true);
-                f.render_widget(Paragraph::new(" × ").style(style), close);
+                let close = Rect::new(row.right() - ROW_BUTTON_WIDTH - 1, row.y, ROW_BUTTON_WIDTH, 1);
+                draw_row_button(f, app, close, " × ");
                 app.workspaces.popup.close_hits.push((close, entry.id));
             }
             if layout.row_height > 1 {
@@ -636,6 +674,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         }
     }
 }
+
+fn draw_row_button(f: &mut Frame, app: &App, rect: Rect, label: &str) {
+    let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
+    let style = app.colors.ui.button_style(picker::base(app).bg.unwrap(), false, hovered, true);
+    f.render_widget(Paragraph::new(label).style(style), rect);
+}
+
 fn draw_close(f: &mut Frame, app: &mut App) {
     let target = app
         .workspaces

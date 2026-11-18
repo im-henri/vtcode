@@ -306,6 +306,8 @@ pub(crate) fn list(
             "↑↓ ↵ Esc"
         } else if inner.width < 40 {
             "↑↓ Move  Enter  Esc"
+        } else if !saved && count > 1 && inner.width >= 74 {
+            "↑↓ Select  Alt+↑↓ Reorder  Enter Switch  Delete Close  Ctrl+Tab Views  Esc"
         } else if inner.width < 80 {
             if saved {
                 "↑↓ Move  Enter Details  Ctrl+Tab Views"

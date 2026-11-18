@@ -102,23 +102,20 @@ impl App {
         sets
     }
 
-    /// Compare saved membership without filesystem work during rendering.
+    /// Compare saved folder order without filesystem work during rendering.
     /// Changing the focused folder does not make the workspace unsaved.
     pub(crate) fn current_workspace_set(&self) -> Option<(SavedSet, bool)> {
         let active = self.workspaces.sets.active?;
         let base = crate::portable::base_dir();
-        let roots: Vec<_> = std::iter::once(self)
-            .chain(self.workspaces.parked.iter().map(|parked| &*parked.app))
-            .filter(|app| app.has_open_folder())
-            .map(|app| app.remote_workspace.as_ref().map_or_else(
+        let roots: Vec<_> = self.ordered_workspaces().into_iter()
+            .filter(|(_, app)| app.has_open_folder())
+            .map(|(_, app)| app.remote_workspace.as_ref().map_or_else(
                 || Location::local(&app.explorer.root, &base),
                 |remote| Location::Remote { uri: remote.client.hello().root_uri.clone() },
             )).collect();
-        let matches = |set: &SavedSet| set.roots.len() == roots.len()
-            && set.roots.iter().all(|root| roots.contains(root));
         if roots.is_empty() { return None; }
         let set = self.saved_workspace_sets().into_iter().find(|set| set.id == active)?;
-        let modified = !matches(&set);
+        let modified = set.roots != roots;
         Some((set, modified))
     }
     pub(crate) fn workspace_sets_busy(&self) -> bool {
@@ -184,17 +181,11 @@ impl App {
             }
             let base = crate::portable::base_dir();
             let scope = self.workspace_sets_scope();
-            let mut roots: Vec<_> = std::iter::once((self.workspaces.active, &*self))
-                .chain(
-                    self.workspaces
-                        .parked
-                        .iter()
-                        .map(|parked| (parked.id, &*parked.app)),
-                )
+            let roots: Vec<_> = self.ordered_workspaces()
+                .into_iter()
                 .filter(|(_, app)| app.has_open_folder())
                 .collect();
             if roots.is_empty() { return Err("Open a folder before saving a workspace".into()); }
-            roots.sort_by_key(|(id, _)| *id);
             let active = roots
                 .iter()
                 .position(|(id, _)| *id == self.workspaces.active)
@@ -651,6 +642,21 @@ impl App {
                         return true;
                     }
                     self.switch_workspace(transition.active);
+                    if !transition.folder {
+                        let mut folders = transition.target.into_iter();
+                        let order = self
+                            .ordered_workspaces()
+                            .into_iter()
+                            .map(|(id, app)| {
+                                if app.has_open_folder() {
+                                    folders.next().unwrap_or(id)
+                                } else {
+                                    id
+                                }
+                            })
+                            .collect();
+                        self.set_workspace_order(order);
+                    }
                     self.workspaces.sets.active = transition.set_id;
                     self.notify(format!("Opened {}: {}", if transition.folder { "folder" } else { "workspace" }, transition.name));
                 }
