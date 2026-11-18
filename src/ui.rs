@@ -740,10 +740,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         ui_search_dialog::draw_global_search(f, app);
     }
 
-    // VTComplete popup
-    if app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty()
+    // VTComplete inline prediction, then the word popup when no prediction is shown
+    crate::app_vtcomplete_inline::draw_ghost(f, app);
+    let popup = app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty()
         && !crate::ui_lsp_completion::visible(app)
-    {
+        && !app.inline_hides_popup();
+    app.vtcomplete_inline.popup_drawn = popup;
+    if popup {
         ui_search_dialog::draw_vtcomplete(f, app);
     }
 

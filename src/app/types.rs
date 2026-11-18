@@ -1405,6 +1405,7 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
         make("clipboard_history", "Clipboard History", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('V')),
         make("paste_plain", "Paste Without Formatting", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::Char('v')),
         make("toggle_word_wrap", "Toggle Word Wrap", KeyModifiers::ALT, KeyCode::Char('z')),
+        make("vtcomplete_inline_request", "VTComplete: Predict Here", KeyModifiers::ALT, KeyCode::Char('i')),
         make("join_lines", "Join Lines", KeyModifiers::CONTROL, KeyCode::Char('j')),
         make("select_line", "Select Line", KeyModifiers::CONTROL, KeyCode::Char('l')),
         make("rename_symbol", "Rename Symbol", KeyModifiers::empty(), KeyCode::F(2)),

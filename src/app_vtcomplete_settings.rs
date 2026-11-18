@@ -2,7 +2,7 @@
 //! the index popup. Neither surface keeps a second copy of these values.
 use crate::{
     app::App,
-    completion_index::{IndexSettings, IndexSpeed},
+    completion_index::{IndexSettings, IndexSpeed, InlineEagerness},
 };
 
 /// User-facing modes combine the worker switch and its pause state. Pausing
@@ -49,6 +49,7 @@ pub(crate) fn dropdown_options(id: &str) -> Option<&'static [&'static str]> {
     let id = canonical_id(id);
     match id {
         "vtcomplete_learning_mode" => Some(&["Off", "Paused", "On"]),
+        "vtcomplete_inline_eagerness" => Some(&["Cautious", "Balanced", "Eager", "Always"]),
         "vtcomplete_sources" => Some(&["Files you open", "Entire workspace"]),
         "vtcomplete_index_speed" => Some(&["Low CPU", "Balanced", "Faster"]),
         _ => None,
@@ -95,6 +96,18 @@ pub(crate) const FIELDS: &[(&str, &str, &str, &str)] = &[
         "Learn from Accepted Completions",
         "checkbox",
         "Prioritize completions you have chosen in the same surrounding context during this session. Saved for this project.",
+    ),
+    (
+        "vtcomplete_inline_predictions",
+        "Inline Predictions",
+        "checkbox",
+        "Show a dimmed prediction of the next tokens after the caret while you type, learned from repeated patterns in the files you have open. Tab accepts it, Ctrl+Right accepts one word, Esc hides it, Alt+I asks for one now. With Learn from Files set to Entire workspace, it also learns from the workspace files most related to the code at the caret. Runs locally on the CPU without a model download. Saved for this project.",
+    ),
+    (
+        "vtcomplete_inline_eagerness",
+        "Inline Prediction Eagerness",
+        "dropdown",
+        "How readily a prediction is shown. Cautious shows one only when fairly sure (about 60% of lines, mostly right). Balanced is the default. Eager and Always show a guess almost every time, so some are wrong; they are dim and Esc or typing on dismisses them. Alt+I is always at least Eager. Saved for this project.",
     ),
     (
         "vtcomplete_learning_mode",
@@ -167,6 +180,8 @@ fn display(settings: &IndexSettings, id: &str) -> String {
         "vtcomplete_context_triggers" => on_off(settings.context_triggers),
         "vtcomplete_complete_calls" => on_off(settings.complete_calls),
         "vtcomplete_use_history" => on_off(settings.use_history),
+        "vtcomplete_inline_predictions" => on_off(settings.inline_predictions),
+        "vtcomplete_inline_eagerness" => settings.inline_eagerness.label().into(),
         "vtcomplete_learning_mode" => LearningMode::from_settings(settings).label().into(),
         "vtcomplete_sources" => if settings.project_wide {
             "Entire workspace"
@@ -221,6 +236,9 @@ impl App {
             "vtcomplete_context_triggers" => settings.context_triggers = !settings.context_triggers,
             "vtcomplete_complete_calls" => settings.complete_calls = !settings.complete_calls,
             "vtcomplete_use_history" => settings.use_history = !settings.use_history,
+            "vtcomplete_inline_predictions" => {
+                settings.inline_predictions = !settings.inline_predictions
+            }
             "vtcomplete_status" => {
                 crate::ui_vtcomplete_index::open(self);
                 return true;
@@ -278,6 +296,12 @@ impl App {
             ("vtcomplete_learning_mode", "On") => {
                 settings.enabled = true;
                 settings.paused = false;
+            }
+            ("vtcomplete_inline_eagerness", label) => {
+                match InlineEagerness::ALL.iter().find(|level| level.label() == label) {
+                    Some(&level) => settings.inline_eagerness = level,
+                    None => return false,
+                }
             }
             ("vtcomplete_sources", "Files you open") => settings.project_wide = false,
             ("vtcomplete_sources", "Entire workspace") => settings.project_wide = true,

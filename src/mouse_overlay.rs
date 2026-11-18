@@ -285,7 +285,7 @@ fn handle_completion_popup_click(app: &mut App, col: u16, row: u16, viewport: Re
         return false;
     }
 
-    if app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty() {
+    if app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty() && !app.inline_hides_popup() {
         let item_count = app.vtcomplete_suggestions.len();
         if let Some(geometry) = crate::ui_search_dialog::vtcomplete_popup_geometry(app, viewport) {
             if let Some(index) = crate::ui_search_dialog::completion_index_at(geometry, col, row, item_count) {

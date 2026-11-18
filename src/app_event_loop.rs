@@ -645,6 +645,7 @@ pub(crate) fn handle_keyboard_input(
         .flatten();
     let started = std::time::Instant::now();
     if !reference_input_batches() { app.begin_vtcomplete_batch(); }
+    app.begin_inline_key();
     let mut quit = false;
     for processed in 1..=MAX_NAVIGATION_BATCH {
         note_user_activity(app);
@@ -698,6 +699,7 @@ pub(crate) fn handle_keyboard_input(
         }
     }
     if !reference_input_batches() { app.finish_vtcomplete_batch(); }
+    app.finish_inline_key(!quit && crate::app_vtcomplete_inline::trigger_key(key));
     quit
 }
 
@@ -3032,6 +3034,9 @@ fn next_event_wait(
     if let Some(wait) = app.completion_index_next_wait() {
         include(wait);
     }
+    if let Some(wait) = app.inline_hold_wait() {
+        include(wait);
+    }
     if let Some(wait) = crate::app_explorer_hover::next_wait(app, std::time::Instant::now()) {
         include(wait);
     }
@@ -3787,6 +3792,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             needs_redraw = true;
         }
         if app.poll_git_watcher_refresh(std::time::Instant::now()) {
+            needs_redraw = true;
+        }
+        if app.expire_inline_hold() {
             needs_redraw = true;
         }
 

@@ -295,6 +295,7 @@ pub(crate) struct App {
     pub vtcomplete_selected: usize,
     pub(crate) vtcomplete_explicit: bool,
     pub(crate) vtcomplete_navigated: bool,
+    pub(crate) vtcomplete_inline: crate::app_vtcomplete_inline::State,
     pub(crate) completion_index: crate::completion_index::CompletionIndex,
     pub(crate) completion_index_sync: crate::app_vtcomplete_index::State,
     pub(crate) completion_index_ui: crate::ui_vtcomplete_index::State,
@@ -1344,6 +1345,7 @@ impl App {
             vtcomplete_selected: 0,
             vtcomplete_explicit: false,
             vtcomplete_navigated: false,
+            vtcomplete_inline: Default::default(),
             completion_index: Default::default(),
             completion_index_sync: Default::default(),
             completion_index_ui: Default::default(),
@@ -3917,6 +3919,9 @@ impl App {
                         self.vtcomplete_selected = selected.unwrap_or(0);
                         self.vtcomplete_cancel_token = None;
                     }
+                }
+                crate::background::BackgroundResult::VtCompleteInline { generation, target, rope, text } => {
+                    has_visual_changes |= self.receive_inline(generation, target, rope, text);
                 }
                 crate::background::BackgroundResult::LspSemanticTokens { target, tokens } => {
                     let is_latest = self

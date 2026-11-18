@@ -198,6 +198,10 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             }
         }
 
+        // Accept the next word of a visible inline prediction.
+        if key.code == KeyCode::Right && key.modifiers == KeyModifiers::CONTROL && app.accept_inline(true) {
+            return false;
+        }
         // Configurable keybinding dispatch
         if app.route_custom_editor_shortcut(key.code, key.modifiers) { return false; }
         let legacy_reassigned = (!key.modifiers.is_empty() || matches!(key.code, KeyCode::F(_)))
@@ -633,6 +637,21 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         return false;
     }
 
+    // A visible inline prediction owns Tab and Esc; the word popup is hidden behind it.
+    if app.inline_ghost_visible() {
+        match key.code {
+            KeyCode::Tab if key.modifiers.is_empty() => {
+                app.accept_inline(false);
+                return false;
+            }
+            KeyCode::Esc => {
+                app.dismiss_inline();
+                return false;
+            }
+            KeyCode::Char(_) | KeyCode::Backspace => {}
+            _ => app.dismiss_vtcomplete(),
+        }
+    }
     if key.code == KeyCode::Esc && (app.vtcomplete_active
         || app.vtcomplete_explicit
             || app.vtcomplete_cancel_token.is_some()
@@ -675,6 +694,14 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         app.dismiss_vtcomplete();
     }
 
+    // A popup held back for a pending prediction is not on screen: keys
+    // that would act on it act as if it were not there.
+    if app.vtcomplete_active
+        && app.inline_holds_popup()
+        && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Enter)
+    {
+        app.dismiss_vtcomplete();
+    }
     // VTComplete popup
     if app.vtcomplete_active {
         match key.code {

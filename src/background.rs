@@ -769,6 +769,13 @@ pub enum BackgroundResult {
         work_outcome: crate::app_vtcomplete::VtCompleteWorkOutcome,
         deferred_candidates: u32,
     },
+    /// A multi-token continuation for the caret, or None when the predictor abstains.
+    VtCompleteInline {
+        generation: u64,
+        target: crate::app_vtcomplete_inline::Target,
+        rope: ropey::Rope,
+        text: Option<String>,
+    },
     /// Full semantic-token response decoded away from the event loop.
     LspSemanticTokens {
         target: EditorAnalysisTarget,

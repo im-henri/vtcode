@@ -258,6 +258,7 @@ pub(crate) fn handle_vtcomplete_mouse(
         mouse.kind,
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
     ) || !app.vtcomplete_active
+        || app.inline_hides_popup()
         || app.vtcomplete_suggestions.is_empty()
         || crate::ui_lsp_completion::visible(app)
     {

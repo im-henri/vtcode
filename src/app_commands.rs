@@ -584,6 +584,7 @@ impl App {
             }
             "language_servers" => self.open_lsp_settings_page(),
             "completion_index" => crate::ui_vtcomplete_index::open(self),
+            "vtcomplete_inline_request" => self.request_inline_prediction(),
             "explorer_find" => self.open_explorer_find(),
             "restart_language_servers" => {
                 self.refresh_language_servers(true);

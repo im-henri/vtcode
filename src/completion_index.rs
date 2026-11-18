@@ -49,6 +49,31 @@ fn retained_limit(settings: &IndexSettings) -> usize {
     (settings.max_memory_mb * 1024 * 1024).saturating_sub(LEARNING_WORKING_RESERVE)
 }
 
+/// How readily inline predictions are shown: the more eager, the more often
+/// something appears and the more often it is wrong.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum InlineEagerness {
+    Cautious,
+    #[default]
+    Balanced,
+    Eager,
+    Always,
+}
+
+impl InlineEagerness {
+    pub(crate) const ALL: [Self; 4] = [Self::Cautious, Self::Balanced, Self::Eager, Self::Always];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Cautious => "Cautious",
+            Self::Balanced => "Balanced",
+            Self::Eager => "Eager",
+            Self::Always => "Always",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum IndexSpeed {
@@ -89,6 +114,8 @@ pub(crate) struct IndexSettings {
     pub(crate) context_triggers: bool,
     pub(crate) complete_calls: bool,
     pub(crate) use_history: bool,
+    pub(crate) inline_predictions: bool,
+    pub(crate) inline_eagerness: InlineEagerness,
 }
 
 impl Default for IndexSettings {
@@ -105,6 +132,8 @@ impl Default for IndexSettings {
             context_triggers: true,
             complete_calls: true,
             use_history: true,
+            inline_predictions: true,
+            inline_eagerness: InlineEagerness::default(),
         }
     }
 }

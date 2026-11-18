@@ -253,6 +253,7 @@ impl App {
             PaletteCommand { name: "Preferences: Keyboard Shortcuts".into(), shortcut: String::new(), id: Cow::Borrowed("keybindings") },
             PaletteCommand { name: "LSP: Configure Language Servers".into(), shortcut: String::new(), id: Cow::Borrowed("language_servers"),
             },
+            PaletteCommand { name: "VTComplete: Predict Here".into(), shortcut: "Alt+I".into(), id: Cow::Borrowed("vtcomplete_inline_request") },
             PaletteCommand {
                 name: "VTComplete: Manage File Learning".into(),
                 shortcut: String::new(),

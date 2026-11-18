@@ -29,6 +29,8 @@ mod app_acp;
 mod app_chat_files;
 mod app_chat_terminals;
 mod app_vtcomplete;
+mod app_vtcomplete_inline;
+mod vtcomplete_inline;
 mod app_vtcomplete_index;
 mod app_vtcomplete_settings;
 mod completion_index;
