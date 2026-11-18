@@ -43,6 +43,7 @@ impl App {
             "git_refresh" => {
                 self.repositories.rescan = true;
                 self.refresh_source_control_async();
+                self.queue_open_remote_file_checks();
                 self.refresh_git_log_async();
                 self.refresh_git_branch_async();
             }

@@ -102,6 +102,61 @@ fn full(app: &mut App) {
     settle(app);
 }
 
+#[test]
+fn explicit_source_control_refresh_rechecks_open_remote_files_after_missed_watch_events() {
+    use crate::remote;
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    init(root.path());
+    let workspace = remote::workspace::Workspace::new(remote::tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
+    let mut app = App::new_deferred(workspace.view_root.clone());
+    workspace.client.set_wake(app.background.wake_handle());
+    app.remote_workspace = Some(workspace.clone());
+    app.source_control_enabled = false;
+    let clean_path = workspace.target_key("first.txt").unwrap();
+    let dirty_path = workspace.target_key("other.txt").unwrap();
+    for path in [&clean_path, &dirty_path] {
+        app.open_file(path);
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.editor().is_some_and(|editor| !editor.bg_loading)
+        });
+    }
+    let clean_view = app.tabs[0].editor.navigation_id;
+    app.editor_mut().unwrap().insert_char('!');
+    app.source_control_enabled = true;
+    app.workspace_watcher_active = true;
+
+    // The GUI still believes it has watch coverage, but neither write is
+    // delivered as a filesystem notification.
+    std::fs::write(root.path().join("first.txt"), "external first\n").unwrap();
+    std::fs::write(root.path().join("other.txt"), "external other\n").unwrap();
+    assert!(app.execute_git_command("git_refresh"));
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        !app.bg_git_status_running && !app.bg_git_status_pending
+            && !app.background.has_active_jobs()
+    });
+
+    assert!(app.source_control_files.iter().any(|file| {
+        file.path == "first.txt" && file.status == 'M' && !file.staged
+    }));
+    let clean = &app.tabs[0].editor;
+    assert_eq!(clean.navigation_id, clean_view);
+    assert_eq!(clean.rope, "external first\n");
+    assert!(!clean.modified);
+    let dirty = app.editor().unwrap();
+    assert_eq!(dirty.rope, "!other\n");
+    assert!(dirty.modified);
+    assert!(app.notification_history.iter().any(|entry| {
+        entry.0.contains("other.txt changed on disk")
+    }));
+    workspace.client.call(remote::Command::Shutdown).unwrap();
+}
+
 fn changed(app: &mut App, paths: impl IntoIterator<Item = PathBuf>) {
     app.refresh_source_control_changed_paths(paths);
     settle(app);

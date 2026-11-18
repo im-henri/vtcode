@@ -1,5 +1,5 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::{
@@ -122,6 +122,31 @@ fn open_disk_sources(app: &App) -> impl Iterator<Item = (&std::path::Path, Optio
         .chain(app.groups.iter().flat_map(|group| group.tabs.iter()))
         .filter(|tab| !matches!(tab.kind, TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails))
         .filter_map(|tab| Some((tab.editor.file_path.as_deref()?, tab.editor.remote_checkpoint.as_ref())))
+}
+
+fn recheck_activated_remote_file(app: &mut App, previous_view: &mut Option<u64>) {
+    let view = app.editor().map(|editor| editor.navigation_id);
+    if std::mem::replace(previous_view, view) != view
+        && let Some(path) = app.active_remote_file_path().map(Path::to_owned)
+    {
+        app.queue_remote_file_change(path);
+    }
+}
+
+fn recheck_open_files_on_focus(app: &mut App) {
+    let remote_file = app.active_remote_file_path().map(Path::to_owned);
+    let paths: rustc_hash::FxHashSet<_> = app.tabs.iter()
+        .chain(app.groups.iter().flat_map(|group| &group.tabs))
+        .filter_map(|tab| tab.editor.file_path.as_deref())
+        .filter(|path| Some(*path) != remote_file.as_deref())
+        .map(Path::to_owned)
+        .collect();
+    app.queue_file_disk_checks(paths);
+    // A remote watch can miss a write, including one with unchanged metadata.
+    // Compare the focused file's saved content on the server.
+    if let Some(path) = remote_file {
+        app.queue_remote_file_change(path);
+    }
 }
 
 #[derive(Default)]
@@ -3723,6 +3748,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     let mut last_revealed_tab: Option<usize> = None;
     let mut last_revealed_path: Option<PathBuf> = None;
     let mut last_caret_state = capture_caret_state(app);
+    let mut last_active_view = app.editor().map(|editor| editor.navigation_id);
     let mut periodic_disk_paths_cache = PeriodicDiskPaths::default();
     let mut last_terminal_title = String::new();
     let mut last_title_key: Option<(u64, bool)> = None; // (view identity, modified)
@@ -3845,6 +3871,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             needs_redraw = true;
         }
         app.finish_navigation();
+        recheck_activated_remote_file(app, &mut last_active_view);
 
         if app.promote_modified_preview_tabs() {
             needs_redraw = true;
@@ -4350,20 +4377,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     app.forward_terminal_focus(true);
                     // Slow/network filesystem metadata must not delay the first
                     // frame after returning to the terminal.
-                    let mut paths = rustc_hash::FxHashSet::default();
-                    for tab in &app.tabs {
-                        if let Some(path) = tab.editor.file_path.as_ref() {
-                            paths.insert(path.clone());
-                        }
-                    }
-                    for group in &app.groups {
-                        for tab in &group.tabs {
-                            if let Some(path) = tab.editor.file_path.as_ref() {
-                                paths.insert(path.clone());
-                            }
-                        }
-                    }
-                    app.queue_file_disk_checks(paths);
+                    recheck_open_files_on_focus(app);
                     needs_redraw = true;
                     continue;
                 }

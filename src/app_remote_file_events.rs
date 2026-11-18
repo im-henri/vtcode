@@ -2,6 +2,15 @@
 use super::*;
 use crate::remote::workspace::{Baseline, Validation};
 
+fn open_remote_file_path(tab: &Tab) -> Option<&Path> {
+    if tab.kind != TabKind::File || tab.editor.bg_loading {
+        return None;
+    }
+    tab.editor.file_path.as_deref().filter(|path| {
+        crate::remote::workspace::is_view_key(path)
+    })
+}
+
 impl App {
     /// Metadata hints and byte validation describe the same outstanding disk
     /// conflict. Warn once until it is saved, reloaded, or verified unchanged.
@@ -93,6 +102,27 @@ impl App {
     pub(crate) fn forget_remote_file_changes(&mut self, path: &Path) {
         self.remote_change_warnings.remove(path);
         self.remote_changes_deferred.remove(path);
+    }
+
+    pub(crate) fn active_remote_file_path(&self) -> Option<&Path> {
+        self.remote_workspace.as_ref().filter(|workspace| workspace.client.connected())?;
+        open_remote_file_path(self.tabs.get(self.active_tab)?)
+    }
+
+    pub(crate) fn queue_open_remote_file_checks(&mut self) {
+        if self.remote_workspace.as_ref().is_none_or(|workspace| !workspace.client.connected()) {
+            return;
+        }
+        let paths: rustc_hash::FxHashSet<_> = self.tabs.iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .filter_map(open_remote_file_path)
+            .map(Path::to_owned)
+            .collect();
+        for path in paths {
+            if !self.defer_workspace_file_check(&path) {
+                self.queue_remote_file_change(path);
+            }
+        }
     }
 
     pub(crate) fn queue_remote_file_change(&mut self, path: PathBuf) {

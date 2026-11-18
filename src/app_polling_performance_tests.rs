@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::PeriodicDiskPaths;
+use super::{PeriodicDiskPaths, recheck_activated_remote_file, recheck_open_files_on_focus};
 use crate::app::{App, EditorGroup, Tab};
 use crate::editor::Editor;
 
@@ -104,6 +104,61 @@ fn remote_disk_inventory_reuses_coverage_and_keeps_unwatched_and_alias_fallbacks
         assert_eq!(cache.get(&app).len(), 3);
     }
     assert_eq!(cache.rebuilds, rebuilds);
+}
+
+#[test]
+fn remote_tab_activation_and_focus_recheck_content_when_watch_events_are_missed() {
+    use crate::remote;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let native = root.path().join("file.txt");
+    std::fs::write(&native, "first\n").unwrap();
+    let workspace = remote::workspace::Workspace::new(remote::tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
+    let mut app = App::new_deferred(workspace.view_root.clone());
+    workspace.client.set_wake(app.background.wake_handle());
+    app.remote_workspace = Some(workspace.clone());
+    app.source_control_enabled = false;
+    app.open_file(&workspace.target_key("file.txt").unwrap());
+    let timeout = Duration::from_secs(5);
+    app.wait_for_background(timeout, |app| {
+        app.editor().is_some_and(|editor| editor.rope == "first\n")
+    });
+    app.workspace_watcher_active = true;
+    let view = app.editor().unwrap().navigation_id;
+    let modified = app.editor().unwrap().last_disk_modified.unwrap();
+    let replace_contents = |text| {
+        std::fs::write(&native, text).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&native)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+    };
+
+    app.new_file();
+    let mut previous_view = app.editor().map(|editor| editor.navigation_id);
+    replace_contents("other\n");
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
+    );
+    assert_eq!(app.editor().unwrap().navigation_id, view);
+    recheck_activated_remote_file(&mut app, &mut previous_view);
+    app.wait_for_background(timeout, |app| app.editor().unwrap().rope == "other\n");
+
+    replace_contents("third\n");
+    recheck_open_files_on_focus(&mut app);
+    app.wait_for_background(timeout, |app| app.editor().unwrap().rope == "third\n");
+    assert_eq!(app.editor().unwrap().navigation_id, view);
+    assert!(!app.editor().unwrap().modified);
+    workspace.client.call(remote::Command::Shutdown).unwrap();
 }
 
 fn assert_disk_paths(cache: &mut PeriodicDiskPaths, app: &App, expected: &[PathBuf]) {
