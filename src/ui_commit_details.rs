@@ -1065,6 +1065,54 @@ fn message_byte_at(
         .or_else(|| below.iter().flatten().next().map(|range| range.start))
 }
 
+pub(crate) fn captured_scrollbar_mouse(app: &mut App, mouse: MouseEvent) -> bool {
+    let Some(drag) = app.commit_details.review.horizontal_drag else {
+        return false;
+    };
+    if !matches!(
+        mouse.kind,
+        MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+    ) {
+        return false;
+    }
+    let active = app.terminal_has_focus
+        && app.commit_details.visible
+        && !obscured(app)
+        && app.commit_details_tab_group().is_some()
+        && !app.commit_details.review.collapsed.contains(&drag.file)
+        && app.commit_details.review.visible.iter().any(|card| {
+            card.file == drag.file
+                && card
+                    .scrollbars
+                    .iter()
+                    .flatten()
+                    .any(|bar| bar.same_track(drag.bar))
+        });
+    if active {
+        app.scroll_commit_review_file_to(drag.file, drag.bar.side, drag.offset_at(mouse.column));
+    }
+    if !active || mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+        app.commit_details.review.horizontal_drag = None;
+    }
+    app.mouse_col = mouse.column;
+    app.mouse_row = mouse.row;
+    app.mouse_hover_changed = true;
+    true
+}
+
+pub(crate) fn scrollbar_hover_changed(app: &App, previous: ratatui::layout::Position) -> bool {
+    let point = (app.mouse_col, app.mouse_row).into();
+    app.commit_details.visible
+        && !obscured(app)
+        && app
+            .commit_details
+            .review
+            .visible
+            .iter()
+            .flat_map(|card| card.scrollbars.iter().flatten())
+            .any(|bar| bar.area.contains(previous) != bar.area.contains(point))
+}
+
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if !app.commit_details.visible || obscured(app) {
         return false;
@@ -1120,6 +1168,14 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     let Some(group) = app.commit_details_tab_group() else {
         return false;
     };
+    let point = (mouse.column, mouse.row).into();
+    // A file scrollbar pans even when this card or editor group is inactive.
+    if !captured
+        && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && review::press_scrollbar(app, point)
+    {
+        return true;
+    }
     if mouse.kind == MouseEventKind::Moved && !view.patch.contains((mouse.column, mouse.row).into())
     {
         app.reset_hover_states();
@@ -1140,7 +1196,6 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             apply_context_draft(app);
         }
     }
-    let point = (mouse.column, mouse.row).into();
     if !captured
         && view.files.contains(point)
         && (matches!(

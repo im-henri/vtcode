@@ -47,6 +47,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.mouse_press_serial = app.mouse_press_serial.wrapping_add(1);
         app.commit_details.message_selection.dragging = false;
+        app.commit_details.review.horizontal_drag = None;
     }
     if app.handle_text_input_context_menu_mouse(mouse) { return; }
     if crate::ui_workspaces::handle_mouse(app, mouse) { return; }
@@ -69,6 +70,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if crate::terminal_scrollbar::captured_mouse(app, mouse) { return; }
     if crate::ui_panels::captured_mouse(app, mouse) { return; }
     if crate::ui_minimap_resize::captured_mouse(app, mouse) { return; }
+    if crate::ui_commit_details::captured_scrollbar_mouse(app, mouse) { return; }
     if crate::ui_side_notice::handle_mouse(app, mouse) { return; }
     if crate::ui_logs::mouse(app, mouse) { return; }
     if crate::ui_remote_connection::handle_mouse(app, mouse) { return; }
@@ -85,6 +87,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     handle_mouse_inner(app, mouse);
     if mouse.kind == MouseEventKind::Moved {
         app.mouse_hover_changed |= crate::ui_minimap_resize::hover_changed(app, previous)
+            || crate::ui_commit_details::scrollbar_hover_changed(app, previous)
             || diff_divider_hit(app, previous.x, previous.y)
                 != diff_divider_hit(app, app.mouse_col, app.mouse_row);
     }

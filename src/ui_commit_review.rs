@@ -1,7 +1,10 @@
 //! File cards in a single scrolling review. There are no nested vertical
 //! scroll regions: the native diff renderer paints only each visible slice.
 use super::*;
-use crate::commit_review::{CONTEXT_STEP, Card, ContextButton, ContextExpansion, Geometry};
+use crate::{
+    commit_review::{CONTEXT_STEP, Card, ContextButton, ContextExpansion, DiffSide, Geometry, HorizontalDrag},
+    ui_editor_highlight::{HScrollbarParams, draw_horizontal_scrollbar},
+};
 use ratatui::{layout::Position, widgets::Clear};
 
 pub(super) fn draw_controls(f: &mut Frame, app: &App, view: &InspectorLayout) {
@@ -339,6 +342,33 @@ fn draw_context_buttons(f: &mut Frame, app: &App, card: &Card, buttons: &mut Vec
     }
 }
 
+fn draw_file_scrollbars(f: &mut Frame, app: &App, card: &Card) {
+    for bar in card.scrollbars.iter().flatten() {
+        let active = app
+            .commit_details
+            .review
+            .horizontal_drag
+            .is_some_and(|drag| drag.file == card.file && drag.bar.same_track(*bar));
+        draw_horizontal_scrollbar(
+            f,
+            HScrollbarParams {
+                area: bar.area,
+                total_width: bar.total,
+                visible_width: usize::from(bar.area.width),
+                scroll: bar.offset,
+                bg_editor: if bar.side == DiffSide::Original {
+                    app.colors.bg_dark
+                } else {
+                    app.colors.bg_editor
+                },
+                hovered: app.terminal_has_focus && bar.area.contains((app.mouse_col, app.mouse_row).into()),
+                active,
+                colors: &app.colors.ui,
+            },
+        );
+    }
+}
+
 pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     let area = view.files;
     app.commit_details.review.context_buttons.clear();
@@ -473,6 +503,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
                 crate::ui_diff_display::draw_inline_diff(f, app, card.body);
             }
             draw_context_buttons(f, app, card, &mut context_buttons);
+            card.scrollbars = crate::commit_review::capture_scrollbars(
+                app, mode == crate::app::DiffMode::SideBySide,
+            );
+            draw_file_scrollbars(f, app, card);
             // Use one scrollbar for the review, not one thumb per file.
             if let Some(bar) = app.scrollbar_area.take() {
                 f.render_widget(Block::default().style(Style::default().bg(bg)), bar);
@@ -598,6 +632,22 @@ pub(super) fn toggle(app: &mut App, file: usize) {
         review.scroll = review.scroll.min(card.start);
     }
     review.toggle(file);
+}
+
+pub(super) fn press_scrollbar(app: &mut App, point: Position) -> bool {
+    let Some(drag) = app.commit_details.review.visible.iter().find_map(|card| {
+        let bar = card
+            .scrollbars
+            .iter()
+            .flatten()
+            .find(|bar| bar.area.contains(point))?;
+        HorizontalDrag::start(card.file, *bar, point.x)
+    }) else {
+        return false;
+    };
+    app.scroll_commit_review_file_to(drag.file, drag.bar.side, drag.offset_at(point.x));
+    app.commit_details.review.horizontal_drag = Some(drag);
+    true
 }
 
 pub(super) fn click_context(app: &mut App, point: Position) -> bool {

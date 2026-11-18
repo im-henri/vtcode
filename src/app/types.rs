@@ -576,6 +576,7 @@ pub(crate) struct DiffRenderCache {
     pub target_changes: Vec<(usize, char)>,
     pub max_left_line: usize,
     pub max_left_text_width: usize,
+    pub max_right_text_width: usize,
     pub max_inline_text_width: usize,
     target_content_lines: usize,
     aligned_target_rows: Vec<usize>,
@@ -601,6 +602,7 @@ impl Default for DiffRenderCache {
             target_changes: Vec::new(),
             max_left_line: 1,
             max_left_text_width: 0,
+            max_right_text_width: 0,
             max_inline_text_width: 0,
             target_content_lines: 0,
             aligned_target_rows: vec![0],
@@ -642,9 +644,10 @@ impl DiffRenderCache {
             .unwrap_or(0);
 
         let last_target_line = max_right_line.saturating_sub(1);
-        let max_inline_text_width = rows.iter()
+        let max_right_text_width = rows.iter()
             .map(AlignedDiffRow::right_cell_len)
-            .max().unwrap_or(0).max(max_left_text_width);
+            .max().unwrap_or(0);
+        let max_inline_text_width = max_right_text_width.max(max_left_text_width);
         let mut hunks = Vec::new();
         let mut target_line = 0usize;
         let mut hunk_start: Option<usize> = None;
@@ -747,6 +750,7 @@ impl DiffRenderCache {
             target_changes,
             max_left_line,
             max_left_text_width,
+            max_right_text_width,
             max_inline_text_width,
             target_content_lines,
             aligned_target_rows,
@@ -1033,8 +1037,9 @@ impl DiffRenderCache {
         let inline_target_text_rows = Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
         let max_left_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
             .map(AlignedDiffRow::left_cell_len).max().unwrap_or(0);
-        let max_inline_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
-            .map(AlignedDiffRow::right_cell_len).max().unwrap_or(0).max(max_left_text_width);
+        let max_right_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
+            .map(AlignedDiffRow::right_cell_len).max().unwrap_or(0);
+        let max_inline_text_width = max_right_text_width.max(max_left_text_width);
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
         Self {
@@ -1054,6 +1059,7 @@ impl DiffRenderCache {
             target_changes: self.target_changes.clone(),
             max_left_line: self.max_left_line,
             max_left_text_width,
+            max_right_text_width,
             max_inline_text_width,
             target_content_lines: self.target_content_lines,
             selectable_rows,

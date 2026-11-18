@@ -1,6 +1,6 @@
 use super::*;
 use crate::commit_details::{CommitData, CommitDiff, CommitFile};
-use crate::commit_review::ContextExpansion;
+use crate::commit_review::{ContextExpansion, DiffSide, HorizontalScrollbar};
 use ratatui::{Terminal, backend::TestBackend};
 
 fn fixture() -> App {
@@ -332,6 +332,199 @@ fn commit_review_shift_wheel_pans_the_hovered_file_without_stealing_selection() 
     assert!(app.editor().unwrap().horizontal_scroll > 0);
     app.activate_commit_review_file(0);
     assert_eq!(app.editor().unwrap().horizontal_scroll, 0);
+}
+
+fn wide_review_fixture(mode: crate::app::DiffMode) -> App {
+    let mut app = review_fixture(2);
+    for file in 0..2 {
+        assert!(app.activate_commit_review_file(file));
+        app.install_commit_diff(crate::commit_details::prepare_diff(
+            crate::commit_details::DiffContents {
+                path: app.explorer.root.join(format!("src/review_{file}.rs")),
+                base: format!("{} ORIGINAL_{file}_END\n", "abcdefg".repeat(47 + file)),
+                target: format!("{} TARGET_{file}_END\n", "hijklmn".repeat(30 + file)),
+                labels: crate::app::DiffLabels::new("Parent", "Commit"),
+            },
+        ));
+    }
+    assert!(app.activate_commit_review_file(0));
+    app.commit_details.diff_expanded = true;
+    app.commit_details.review.forced_mode = Some(mode);
+    app
+}
+
+fn file_scrollbar(app: &App, file: usize, side: DiffSide) -> HorizontalScrollbar {
+    app.commit_details
+        .review
+        .visible
+        .iter()
+        .find(|card| card.file == file)
+        .and_then(|card| {
+            card.scrollbars
+                .iter()
+                .flatten()
+                .find(|bar| bar.side == side)
+        })
+        .copied()
+        .unwrap_or_else(|| panic!("missing {side:?} scrollbar for file {file}"))
+}
+
+#[test]
+fn commit_review_scrollbar_click_and_drag_stay_with_the_pressed_file_and_side() {
+    for mode in [
+        crate::app::DiffMode::Inline,
+        crate::app::DiffMode::SideBySide,
+    ] {
+        let mut app = wide_review_fixture(mode);
+        let mut terminal = Terminal::new(TestBackend::new(140, 34)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let first = file_scrollbar(&app, 0, DiffSide::Target);
+        let second = file_scrollbar(&app, 1, DiffSide::Target);
+        let review_scroll = app.commit_details.review.scroll;
+        let scroll = app.editor().unwrap().scroll_offset;
+
+        let bar_end = second.area.right() - 1;
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            crate::mouse::handle_mouse(&mut app, mouse_at(kind, bar_end, second.area.y));
+        }
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert_eq!(
+            file_scrollbar(&app, 1, DiffSide::Target).offset,
+            second.maximum()
+        );
+        assert_eq!(file_scrollbar(&app, 0, DiffSide::Target).offset, 0);
+
+        if mode == crate::app::DiffMode::SideBySide {
+            let original = file_scrollbar(&app, 1, DiffSide::Original);
+            assert_eq!(original.offset, 0);
+            for kind in [
+                MouseEventKind::Down(MouseButton::Left),
+                MouseEventKind::Up(MouseButton::Left),
+            ] {
+                crate::mouse::handle_mouse(
+                    &mut app,
+                    mouse_at(kind, original.area.right() - 1, original.area.y),
+                );
+            }
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+            assert_eq!(
+                file_scrollbar(&app, 1, DiffSide::Original).offset,
+                original.maximum()
+            );
+            assert_eq!(
+                file_scrollbar(&app, 1, DiffSide::Target).offset,
+                second.maximum()
+            );
+            assert_eq!(file_scrollbar(&app, 0, DiffSide::Original).offset, 0);
+        }
+
+        crate::mouse::handle_mouse(
+            &mut app,
+            mouse_at(
+                MouseEventKind::Down(MouseButton::Left),
+                bar_end,
+                second.area.y,
+            ),
+        );
+        assert_eq!(
+            app.commit_details
+                .review
+                .horizontal_drag
+                .map(|drag| drag.file),
+            Some(1)
+        );
+        crate::mouse::handle_mouse(
+            &mut app,
+            mouse_at(
+                MouseEventKind::Drag(MouseButton::Left),
+                first.area.x,
+                first.area.y,
+            ),
+        );
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert_eq!(file_scrollbar(&app, 1, DiffSide::Target).offset, 0);
+        assert!(app.commit_details.review.horizontal_drag.is_some());
+        crate::mouse::handle_mouse(
+            &mut app,
+            mouse_at(MouseEventKind::Up(MouseButton::Left), 139, 0),
+        );
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(app.commit_details.review.horizontal_drag.is_none());
+        assert_eq!(
+            file_scrollbar(&app, 1, DiffSide::Target).offset,
+            second.maximum()
+        );
+        assert_eq!(file_scrollbar(&app, 0, DiffSide::Target).offset, 0);
+        if mode == crate::app::DiffMode::SideBySide {
+            let original = file_scrollbar(&app, 1, DiffSide::Original);
+            assert_eq!(original.offset, original.maximum());
+        }
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        let tail = if mode == crate::app::DiffMode::Inline {
+            "ORIGINAL_1_END"
+        } else {
+            "TARGET_1_END"
+        };
+        assert!(screen.contains(tail));
+
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            crate::mouse::handle_mouse(
+                &mut app,
+                mouse_at(kind, first.area.right() - 1, first.area.y),
+            );
+        }
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert_eq!(
+            file_scrollbar(&app, 0, DiffSide::Target).offset,
+            first.maximum()
+        );
+        assert_eq!(
+            file_scrollbar(&app, 1, DiffSide::Target).offset,
+            second.maximum()
+        );
+        assert_eq!(app.commit_details.selected_file(), Some(0));
+        assert_eq!(app.commit_details.diff_file, Some(0));
+        assert_eq!(app.commit_details.review.scroll, review_scroll);
+        assert_eq!(app.editor().unwrap().scroll_offset, scroll);
+    }
+}
+
+#[test]
+fn commit_review_scrollbar_pans_an_inactive_inspector_without_focusing_it() {
+    let mut app = wide_review_fixture(crate::app::DiffMode::Inline);
+    add_code_tab(&mut app);
+    app.create_split_group_dir(0, crate::app::SplitDirection::Horizontal);
+    let inspector = app.active_group;
+    app.switch_group(0);
+    assert_ne!(app.active_group, inspector);
+    let mut terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let bar = file_scrollbar(&app, 0, DiffSide::Target);
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        crate::mouse::handle_mouse(&mut app, mouse_at(kind, bar.area.right() - 1, bar.area.y));
+    }
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.active_group, 0);
+    assert_eq!(
+        file_scrollbar(&app, 0, DiffSide::Target).offset,
+        bar.maximum()
+    );
+    assert_eq!(file_scrollbar(&app, 1, DiffSide::Target).offset, 0);
 }
 
 #[test]

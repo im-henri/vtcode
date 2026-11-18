@@ -24,6 +24,7 @@ pub(crate) struct InlineDiffScroll {
     cursor: Option<(usize, usize)>,
     terminal_empty_line: Option<usize>,
     pub(crate) original_terminal: bool,
+    review: bool,
     vertical_grab: usize,
     horizontal_grab: usize,
 }
@@ -123,9 +124,15 @@ impl InlineDiffScroll {
         if self.wrap.enabled() {
             return 0;
         }
-        self.cache
-            .max_inline_text_width
-            .saturating_sub(self.text_area.width as usize)
+        self.horizontal_width().saturating_sub(self.text_area.width as usize)
+    }
+
+    fn horizontal_width(&self) -> usize {
+        if self.review {
+            crate::commit_review::target_scroll_width(&self.cache, self.aligned)
+        } else {
+            self.cache.max_inline_text_width
+        }
     }
 
     pub fn layout(&mut self, cache: Arc<DiffRenderCache>, editor: &mut Editor) {
@@ -203,6 +210,7 @@ impl InlineDiffScroll {
     /// exact deletion-only row anchors and allow its tail to occupy fewer than
     /// a viewport's rows, without the native pane clamping it back to the top.
     pub(crate) fn layout_review(&mut self, cache: Arc<DiffRenderCache>, editor: &mut Editor, row: usize) {
+        self.review = true;
         self.layout(cache, editor);
         self.row = row.min(self.row_count().saturating_sub(1));
         self.sync_editor(editor);
@@ -261,6 +269,11 @@ impl InlineDiffScroll {
         self.sync_editor(editor);
     }
 
+    pub(crate) fn scroll_to_column(&mut self, editor: &mut Editor, column: usize) {
+        self.column = column.min(self.max_column());
+        editor.horizontal_scroll = self.column;
+    }
+
     pub fn scrollbar(&mut self, editor: &mut Editor, position: u16, horizontal: bool, begin: bool) {
         let row_count = self.row_count();
         let (area, total, visible, offset, grab) = if horizontal {
@@ -269,7 +282,7 @@ impl InlineDiffScroll {
             };
             (
                 area,
-                self.cache.max_inline_text_width,
+                self.horizontal_width(),
                 self.text_area.width as usize,
                 &mut self.column,
                 &mut self.horizontal_grab,

@@ -292,9 +292,6 @@ pub(crate) struct CommitFileView {
 }
 
 impl CommitFileView {
-    pub(crate) fn pan(&mut self, col: u16, row: u16, delta: isize) {
-        self.view.pan(&mut self.editor, col, row, delta);
-    }
     pub(crate) fn review_height(
         &mut self, context: crate::commit_details::DiffContext, expanded: &[std::ops::Range<usize>],
         mode: DiffMode, width: u16,
@@ -375,16 +372,44 @@ impl DiffViewState {
 }
 
 impl App {
-    pub(crate) fn pan_commit_review_file(&mut self, file: usize, col: u16, row: u16, delta: isize) {
+    fn cached_commit_review_diff(
+        &mut self, file: usize,
+    ) -> Option<(&mut DiffViewState, &mut crate::editor::Editor)> {
+        let inactive = self.commit_details.diff_file == Some(file) && !self.is_commit_details_tab();
         if let Some(view) = self.commit_details.review.cached.get_mut(&file) {
-            view.pan(col, row, delta);
-        } else if self.commit_details.diff_file == Some(file) {
-            if self.is_commit_details_tab() { self.scroll_diff_at(col, row, true, delta); }
-            else if let Some(view) = self.diff_tabs.views.get_mut(&COMMIT_DIFF_ID)
-                && let Some(tab) = self.tabs.iter_mut()
-                    .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
-                    .find(|tab| tab.kind == TabKind::CommitDetails)
-            { view.pan(&mut tab.editor, col, row, delta); }
+            return Some((&mut view.view, &mut view.editor));
+        }
+        if !inactive { return None; }
+        let view = self.diff_tabs.views.get_mut(&COMMIT_DIFF_ID)?;
+        let tab = self.tabs.iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+            .find(|tab| tab.kind == TabKind::CommitDetails)?;
+        Some((view, &mut tab.editor))
+    }
+
+    pub(crate) fn pan_commit_review_file(&mut self, file: usize, col: u16, row: u16, delta: isize) {
+        if self.commit_details.diff_file == Some(file) && self.is_commit_details_tab() {
+            self.scroll_diff_at(col, row, true, delta);
+        } else if let Some((view, editor)) = self.cached_commit_review_diff(file) {
+            view.pan(editor, col, row, delta);
+        }
+    }
+
+    pub(crate) fn scroll_commit_review_file_to(
+        &mut self, file: usize, side: crate::commit_review::DiffSide, offset: usize,
+    ) {
+        use crate::commit_review::DiffSide::{Original, Target};
+
+        if self.commit_details.diff_file == Some(file) && self.is_commit_details_tab() {
+            match side {
+                Original => self.diff_left_horizontal_scroll = offset,
+                Target => self.diff_inline_scroll.scroll_to_column(&mut self.tabs[self.active_tab].editor, offset),
+            }
+        } else if let Some((view, editor)) = self.cached_commit_review_diff(file) {
+            match side {
+                Original => view.left_scroll = offset,
+                Target => view.inline_scroll.scroll_to_column(editor, offset),
+            }
         }
     }
     /// Route wheel input using the rendered pane without changing keyboard focus.

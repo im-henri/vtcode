@@ -1451,7 +1451,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     );
     // Whole-document analysis belongs to the active editor. Inactive panes
     // have their own visible-line cache, not the active file's width estimate.
-    let max_line_width = if editor.large_file_mode || app.rendering_inactive_editor {
+    let review_diff = crate::commit_review::painting_row(app).is_some()
+        && app.diff_mode == crate::app::DiffMode::SideBySide;
+    let max_line_width = if review_diff {
+        crate::commit_review::target_scroll_width(&app.diff_render_cache, true)
+    } else if editor.large_file_mode || app.rendering_inactive_editor {
         visible_max_line_width
     } else {
         app.cached_max_line_width.max(visible_max_line_width)
@@ -1486,9 +1490,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0
     };
-    let code_width_estimate = area
-        .width
-        .saturating_sub(gutter_width as u16 + 2 + scope_rail_width + minimap_est + 1);
+    let scrollbar_width = 1 + u16::from(review_diff);
+    let code_width_estimate = area.width.saturating_sub(
+        gutter_width as u16 + 2 + scope_rail_width + minimap_est + scrollbar_width,
+    );
     let wrapped_diff = app.diff_inline_scroll.aligned && app.diff_inline_scroll.wrap.enabled()
         && app.should_render_diff_for_active_editor();
     let show_h_scrollbar = max_line_width > code_width_estimate as usize

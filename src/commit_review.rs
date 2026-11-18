@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use crate::{
     app::{App, DiffMode, DiffRenderCache},
     commit_details::DiffContext,
+    ui_editor_highlight::horizontal_scrollbar_thumb,
 };
 
 #[derive(Default)]
@@ -20,6 +21,7 @@ pub(crate) struct Review {
     pub heights: rustc_hash::FxHashMap<usize, usize>,
     pub visible: Vec<Card>,
     pub context_buttons: Vec<ContextButton>,
+    pub horizontal_drag: Option<HorizontalDrag>,
     /// Ranges in each full diff, kept even when its rendered cache is evicted.
     pub expanded_context: rustc_hash::FxHashMap<usize, Vec<Range<usize>>>,
     pub total: usize,
@@ -41,6 +43,128 @@ pub(crate) struct Card {
     pub open: Rect,
     pub first_row: usize,
     pub geometry: Geometry,
+    pub scrollbars: [Option<HorizontalScrollbar>; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DiffSide {
+    Original,
+    Target,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HorizontalScrollbar {
+    pub area: Rect,
+    pub side: DiffSide,
+    pub total: usize,
+    pub offset: usize,
+}
+
+impl HorizontalScrollbar {
+    fn new(area: Option<Rect>, side: DiffSide, total: usize, offset: usize) -> Option<Self> {
+        let area = area.filter(|area| !area.is_empty() && total > usize::from(area.width))?;
+        Some(Self {
+            area,
+            side,
+            total,
+            offset,
+        })
+    }
+
+    pub fn maximum(self) -> usize {
+        self.total.saturating_sub(usize::from(self.area.width))
+    }
+
+    fn thumb(self) -> Option<Range<usize>> {
+        let width = usize::from(self.area.width);
+        horizontal_scrollbar_thumb(width, self.total, width, self.offset)
+    }
+
+    fn offset_at(self, column: u16, grab: usize, travel: usize) -> usize {
+        if travel == 0 {
+            return self.offset;
+        }
+        let position = usize::from(column.saturating_sub(self.area.x))
+            .saturating_sub(grab)
+            .min(travel);
+        // The painted thumb rounds down. Invert that mapping to keep the grip
+        // under the pointer and reach the exact ends of the text.
+        (position as u128 * self.maximum() as u128).div_ceil(travel as u128) as usize
+    }
+
+    pub fn same_track(self, other: Self) -> bool {
+        self.area == other.area && self.side == other.side && self.total == other.total
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HorizontalDrag {
+    pub file: usize,
+    pub bar: HorizontalScrollbar,
+    column: u16,
+    offset: usize,
+    grab: usize,
+    travel: usize,
+}
+
+impl HorizontalDrag {
+    pub fn start(file: usize, bar: HorizontalScrollbar, column: u16) -> Option<Self> {
+        let thumb = bar.thumb()?;
+        let travel = usize::from(bar.area.width) - thumb.len();
+        let relative = usize::from(column.saturating_sub(bar.area.x));
+        let (grab, offset) = if thumb.contains(&relative) {
+            (relative - thumb.start, bar.offset)
+        } else {
+            let grab = thumb.len() / 2;
+            (grab, bar.offset_at(column, grab, travel))
+        };
+        Some(Self {
+            file,
+            bar,
+            column,
+            offset,
+            grab,
+            travel,
+        })
+    }
+
+    pub fn offset_at(self, column: u16) -> usize {
+        if column == self.column {
+            self.offset
+        } else {
+            self.bar.offset_at(column, self.grab, self.travel)
+        }
+    }
+}
+
+pub(crate) fn target_scroll_width(cache: &DiffRenderCache, aligned: bool) -> usize {
+    if aligned {
+        // The comparison paints a two-cell change marker inside the target text area.
+        cache.max_right_text_width.saturating_add(2)
+    } else {
+        cache.max_inline_text_width
+    }
+}
+
+pub(crate) fn capture_scrollbars(app: &App, aligned: bool) -> [Option<HorizontalScrollbar>; 2] {
+    let cache = &app.diff_render_cache;
+    let original = if aligned {
+        HorizontalScrollbar::new(
+            app.diff_left_h_scrollbar_area,
+            DiffSide::Original,
+            cache.max_left_text_width,
+            app.diff_left_horizontal_scroll,
+        )
+    } else {
+        None
+    };
+    let target = HorizontalScrollbar::new(
+        app.h_scrollbar_area,
+        DiffSide::Target,
+        target_scroll_width(cache, aligned),
+        app.editor().map_or(0, |editor| editor.horizontal_scroll),
+    );
+    [original, target]
 }
 
 pub(crate) const CONTEXT_STEP: usize = 10;
@@ -95,7 +219,11 @@ impl Geometry {
             gutter: app.gutter_area,
             gutter_width: app.gutter_width,
             horizontal: app.h_scrollbar_area,
-            left_horizontal: app.diff_left_h_scrollbar_area,
+            left_horizontal: if app.diff_mode == DiffMode::SideBySide {
+                app.diff_left_h_scrollbar_area
+            } else {
+                None
+            },
             vertical: app.scrollbar_area,
             minimap: app.minimap_area,
             split: app.diff_split_area,
@@ -174,6 +302,7 @@ impl Review {
         self.heights.clear();
         self.visible.clear();
         self.context_buttons.clear();
+        self.horizontal_drag = None;
         self.reveal = true;
     }
 

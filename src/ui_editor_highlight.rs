@@ -7,7 +7,7 @@ use ratatui::{
 };
 #[cfg(test)]
 use ratatui::text::Line;
-use std::fmt::Write as FmtWrite;
+use std::{fmt::Write as FmtWrite, ops::Range};
 
 use crate::app::App;
 use crate::app::WhitespaceMode;
@@ -2194,6 +2194,21 @@ pub(crate) struct HScrollbarParams<'a> {
     pub(crate) colors: &'a crate::theme_workbench::WorkbenchColors,
 }
 
+pub(crate) fn horizontal_scrollbar_thumb(
+    track: usize,
+    total: usize,
+    visible: usize,
+    offset: usize,
+) -> Option<Range<usize>> {
+    if track == 0 || total <= visible {
+        return None;
+    }
+    let size = ((visible as f64 / total as f64 * track as f64).max(HSCROLLBAR_MIN_THUMB) as usize)
+        .min(track);
+    let top = (offset as f64 / (total - visible) as f64 * (track - size) as f64) as usize;
+    Some(top..top.saturating_add(size))
+}
+
 pub(crate) fn draw_horizontal_scrollbar(f: &mut Frame, p: HScrollbarParams) {
     #[cfg(test)]
     if REFERENCE_EDITOR_CHROME.get() {
@@ -2201,19 +2216,22 @@ pub(crate) fn draw_horizontal_scrollbar(f: &mut Frame, p: HScrollbarParams) {
         return;
     }
     let HScrollbarParams {
-        area, total_width, visible_width, scroll, bg_editor, hovered, active, colors,
+        area,
+        total_width,
+        visible_width,
+        scroll,
+        bg_editor,
+        hovered,
+        active,
+        colors,
     } = p;
-    let bar_width = area.width as usize;
-    if bar_width == 0 || total_width <= visible_width {
-        f.buffer_mut().set_style(area, Style::default().bg(bg_editor));
+    let Some(thumb) =
+        horizontal_scrollbar_thumb(area.width as usize, total_width, visible_width, scroll)
+    else {
+        f.buffer_mut()
+            .set_style(area, Style::default().bg(bg_editor));
         return;
-    }
-    let thumb_size = (((visible_width as f64 / total_width as f64) * bar_width as f64)
-        .max(HSCROLLBAR_MIN_THUMB) as usize).min(bar_width);
-    let max_scroll = total_width.saturating_sub(visible_width);
-    let thumb_pos = if max_scroll > 0 {
-        ((scroll as f64 / max_scroll as f64) * (bar_width - thumb_size) as f64) as usize
-    } else { 0 };
+    };
     let (track_color, thumb_color) = colors.scrollbar_colors(bg_editor, hovered, active);
     let track_style = Style::default().fg(track_color).bg(track_color);
     let thumb_style = Style::default().fg(thumb_color).bg(thumb_color);
@@ -2222,12 +2240,16 @@ pub(crate) fn draw_horizontal_scrollbar(f: &mut Frame, p: HScrollbarParams) {
     // Paragraph first intersects its area with the buffer, then paints the
     // first text row there. Preserve that origin for offset pane buffers too.
     // Existing modifiers/underline colors are patched, not reset.
-    if clipped.height == 0 { return; }
+    if clipped.height == 0 {
+        return;
+    }
     for x in clipped.x..clipped.right() {
         let col = usize::from(x - clipped.x);
-        let style = if col >= thumb_pos && col < thumb_pos + thumb_size {
+        let style = if thumb.contains(&col) {
             thumb_style
-        } else { track_style };
+        } else {
+            track_style
+        };
         buffer[(x, clipped.y)].set_symbol("▁").set_style(style);
     }
 }
