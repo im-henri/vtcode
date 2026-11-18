@@ -319,7 +319,7 @@ fn file_find_does_not_reopen_after_the_last_editor_closes() {
     for pane in [ActivePane::Editor, ActivePane::Explorer] {
         app.active_pane = pane;
         for fallback in [false, true] {
-            app.keybindings = if fallback { Vec::new() } else { configured_keybindings.clone() };
+            app.keybindings = if fallback { Default::default() } else { configured_keybindings.clone() };
             for code in [KeyCode::Char('f'), KeyCode::Char('h')] {
                 key(&mut app, code, KeyModifiers::CONTROL);
                 draw(&mut app, &mut terminal);

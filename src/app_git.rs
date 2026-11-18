@@ -905,18 +905,11 @@ impl App {
     /// for every hunk (tens of milliseconds each on Windows).
     fn queue_index_hunk_action(&mut self, file: &Path, line: usize, unstage: bool) {
         let action = if unstage { "unstage hunk" } else { "stage hunk" };
-        if let Err(err) = self.ensure_hunk_actions_ready(file, false) {
+        if let Err(err) = self.ensure_hunk_editor_ready(file, false) {
             crate::git_output::native(&self.git_output(), action, file).failed(&err);
             self.notify_error(err);
             return;
         }
-        let (repo_root, rel_path) = match self.git_repo_root_and_rel_path(file) {
-            Ok(location) => location,
-            Err(err) => {
-                self.notify_error(format!("{} failed: {err}", if unstage { "Revert hunk" } else { "Stage hunk" }));
-                return;
-            }
-        };
         let preview = self.hunk_peek.as_ref()
             .filter(|_| self.hunk_popup_active && self.hunk_popup_file.as_deref() == Some(file))
             .map(|peek| (peek.source.header.clone(), peek.source.hunks[peek.selected].clone()));
@@ -924,13 +917,18 @@ impl App {
         let label = Self::git_hunk_label(file);
         let file = file.to_path_buf();
         self.run_git_action_async(if unstage { "git-unstage-hunk" } else { "git-stage-hunk" }, action, move |_| {
-            let patch_text = Self::git_diff_patch_text_at(&repo_root, &rel_path, unstage)?;
+            let (repo, rel_path) = Self::hunk_repository(&file, hint.as_deref())?;
+            if !Self::git_file_is_trackable(&repo, &rel_path) {
+                return Err("Hunk actions are unavailable for untracked files".into());
+            }
+            let repo_root = repo.workdir().expect("hunk repository has a worktree");
+            let patch_text = Self::git_diff_patch_text_at(repo_root, &rel_path, unstage)?;
             let patch = parse_git_file_patch(&patch_text).ok_or_else(|| format!(
                 "No {} hunks found in {}", if unstage { "staged" } else { "unstaged" }, file.display()))?;
             let selected = if let Some((header, expected)) = preview {
                 Self::validated_preview_patch(&patch, &header, &expected)?
             } else if unstage {
-                let (index_text, worktree_text) = read_index_and_worktree_text_at(&file, hint.as_deref(), None)?;
+                let (index_text, worktree_text) = read_index_and_worktree_text_at(&repo, &rel_path, &file)?;
                 let worktree_line_number = line.saturating_add(1);
                 let mapped_line_number = map_worktree_line_to_index_line(&index_text, &worktree_text, line)
                     .map(|mapped| mapped.saturating_add(1))
@@ -946,7 +944,7 @@ impl App {
             let mut args = vec!["apply".to_string(), "--cached".to_string()];
             if unstage { args.push("--reverse".to_string()); }
             args.extend(["--whitespace=nowarn".to_string(), "--unidiff-zero".to_string()]);
-            Self::run_git_apply(&repo_root, &args, &selected)?;
+            Self::run_git_apply(repo_root, &args, &selected)?;
             Ok(crate::background::GitActionOutcome {
                 message: format!("{} hunk in {label}", if unstage { "Reverted" } else { "Staged" }),
                 refresh_line_status: true,
@@ -1344,6 +1342,18 @@ impl App {
     }
 
     pub(crate) fn ensure_hunk_actions_ready(&mut self, file: &Path, discard: bool) -> Result<(), String> {
+        self.ensure_hunk_editor_ready(file, discard)?;
+        if self.remote_workspace.is_none() {
+            let hint = self.repository_hint_for_path(file);
+            let (repo, path) = Self::hunk_repository(file, hint.as_deref())?;
+            if !Self::git_file_is_trackable(&repo, &path) {
+                return Err("Hunk actions are unavailable for untracked files".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_hunk_editor_ready(&self, file: &Path, discard: bool) -> Result<(), String> {
         if !self.source_control_enabled { return Err("Source Control is disabled".into()); }
         if self.bg_git_action_running || self.bg_git_remote_running {
             return Err("Another git operation is already running".into());
@@ -1373,9 +1383,6 @@ impl App {
                 return Err("Cannot discard a hunk while the file is read-only".into());
             }
         }
-        if self.remote_workspace.is_none() && !self.git_file_is_trackable(file)? {
-            return Err("Hunk actions are unavailable for untracked files".to_string());
-        }
         Ok(())
     }
 
@@ -1391,37 +1398,22 @@ impl App {
         file: &Path,
     ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
         let hint = self.repository_hint_for_path(file);
-        let repo = crate::git_repositories::open_file_repository(file, hint.as_deref())?;
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| "Bare repositories are not supported".to_string())?
-            .to_path_buf();
-        let rel_path = repository_relative_path(&workdir, file)
-            .ok_or_else(|| format!("{} is not inside the repository worktree", file.display()))?;
-        Ok((workdir, rel_path))
+        let (repo, path) = Self::hunk_repository(file, hint.as_deref())?;
+        Ok((repo.workdir().expect("hunk repository has a worktree").to_owned(), path))
     }
 
-    fn git_file_is_trackable(&mut self, file: &Path) -> Result<bool, String> {
-        let hint = self.repository_hint_for_path(file);
-        let repo = crate::git_repositories::open_file_repository(file, hint.as_deref())?;
-        let workdir = repo
-            .workdir()
-            .ok_or_else(|| "Bare repositories are not supported".to_string())?
-            .to_path_buf();
-        let rel_path = repository_relative_path(&workdir, file)
+    fn hunk_repository(file: &Path, hint: Option<&Path>) -> Result<(git2::Repository, PathBuf), String> {
+        let repo = crate::git_repositories::open_file_repository(file, hint)?;
+        let workdir = repo.workdir().ok_or_else(|| "Bare repositories are not supported".to_string())?;
+        let rel_path = repository_relative_path(workdir, file)
             .ok_or_else(|| format!("{} is not inside the repository worktree", file.display()))?;
-        let in_index = repo
-            .index()
-            .ok()
-            .and_then(|index| index.get_path(&rel_path, 0))
-            .is_some();
-        let in_head = repo
-            .head()
-            .ok()
-            .and_then(|head| head.peel_to_tree().ok())
-            .and_then(|tree| tree.get_path(&rel_path).ok())
-            .is_some();
-        Ok(in_index || in_head)
+        Ok((repo, rel_path))
+    }
+
+    fn git_file_is_trackable(repo: &git2::Repository, path: &Path) -> bool {
+        repo.index().is_ok_and(|index| index.get_path(path, 0).is_some())
+            || repo.head().and_then(|head| head.peel_to_tree())
+                .is_ok_and(|tree| tree.get_path(path).is_ok())
     }
 
     pub(crate) fn run_git_capture(repo_root: &Path, args: &[String]) -> Result<String, String> {
@@ -2083,22 +2075,14 @@ mod amend_tests;
 #[path = "source_control_loading_tests.rs"]
 mod loading_tests;
 
-/// Index and worktree (or live buffer) text of `file`, line endings normalized.
+/// Index and worktree text of `file`, line endings normalized.
 fn read_index_and_worktree_text_at(
+    repo: &git2::Repository,
+    rel_path: &Path,
     file: &Path,
-    hint: Option<&Path>,
-    live: Option<&ropey::Rope>,
 ) -> Result<(String, String), String> {
-    let repo = crate::git_repositories::open_file_repository(file, hint)?;
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| "Bare repositories are not supported".to_string())?
-        .to_path_buf();
-    let rel_path = repository_relative_path(&workdir, file)
-        .ok_or_else(|| format!("{} is not inside the repository worktree", file.display()))?;
-
     let index_text = if let Ok(index) = repo.index() {
-        if let Some(entry) = index.get_path(&rel_path, 0) {
+        if let Some(entry) = index.get_path(rel_path, 0) {
             if let Ok(blob) = repo.find_blob(entry.id) {
                 String::from_utf8_lossy(blob.content()).into_owned()
             } else {
@@ -2110,11 +2094,8 @@ fn read_index_and_worktree_text_at(
     } else {
         String::new()
     };
-    let worktree_text = match live {
-        Some(rope) => rope.to_string(),
-        None => std::fs::read_to_string(file)
-            .map_err(|err| format!("Failed to read {}: {err}", file.display()))?,
-    };
+    let worktree_text = std::fs::read_to_string(file)
+        .map_err(|err| format!("Failed to read {}: {err}", file.display()))?;
     // Git's index commonly uses LF while a Windows buffer uses CRLF.
     // Match the gutter's line comparison without treating every line as
     // changed or losing the index/buffer mapping for staged hunks.

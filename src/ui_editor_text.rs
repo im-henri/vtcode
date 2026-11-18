@@ -42,8 +42,7 @@ pub(super) fn paint(buffer: &mut Buffer, area: Rect, lines: Vec<Line<'_>>, style
     paint_rows(buffer, area, &lines, style);
 }
 
-#[cfg(test)]
-fn paint_rows(buffer: &mut Buffer, area: Rect, lines: &[Line<'_>], style: Style) {
+pub(crate) fn paint_rows(buffer: &mut Buffer, area: Rect, lines: &[Line<'_>], style: Style) {
     let area = area.intersection(buffer.area);
     if area.is_empty() {
         return;

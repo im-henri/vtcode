@@ -60,6 +60,60 @@ mod defaults;
 
 pub(crate) type Stroke = (KeyModifiers, KeyCode);
 
+/// Index exact and factory strokes once per edit to the shortcut table.
+/// Mutating through the ordinary vector API always invalidates both indexes.
+#[derive(Default)]
+#[cfg_attr(test, derive(Clone))]
+pub(crate) struct KeyBindings {
+    bindings: Vec<KeyBinding>,
+    index: std::cell::OnceCell<StrokeIndex>,
+}
+
+#[derive(Default)]
+#[cfg_attr(test, derive(Clone))]
+struct StrokeIndex {
+    current: rustc_hash::FxHashMap<Stroke, Vec<usize>>,
+    defaults: rustc_hash::FxHashMap<Stroke, Vec<usize>>,
+}
+
+impl From<Vec<KeyBinding>> for KeyBindings {
+    fn from(bindings: Vec<KeyBinding>) -> Self {
+        Self { bindings, index: Default::default() }
+    }
+}
+
+impl std::ops::Deref for KeyBindings {
+    type Target = Vec<KeyBinding>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.bindings
+    }
+}
+
+impl std::ops::DerefMut for KeyBindings {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.index.take();
+        &mut self.bindings
+    }
+}
+
+impl KeyBindings {
+    fn index(&self) -> &StrokeIndex {
+        self.index.get_or_init(|| {
+            let mut index = StrokeIndex::default();
+            for (position, binding) in self.bindings.iter().enumerate() {
+                if binding.code != KeyCode::Null {
+                    index.current.entry(normalize((binding.modifiers, binding.code)))
+                        .or_default().push(position);
+                }
+                index.defaults.entry(normalize((binding.default_modifiers, binding.default_code)))
+                    .or_default().push(position);
+            }
+            index
+        })
+    }
+}
+
 fn blocked_by_popup(app: &App) -> bool {
     app.menu_active
         || app.context_menu_active
@@ -533,14 +587,13 @@ impl App {
     ) -> Option<&KeyBinding> {
         let first = normalize(first);
         let context = std::cell::OnceCell::new();
+        let index = self.keybindings.index();
         let find = |stroke: Stroke, shifted: bool| {
-            self.keybindings
+            index.current.get(&stroke)?
                 .iter()
-                .enumerate()
+                .map(|&position| (position, &self.keybindings[position]))
                 .filter(|(_, binding)| {
-                    binding.code != KeyCode::Null
-                        && normalize((binding.modifiers, binding.code)) == stroke
-                        && second
+                    second
                             .is_none_or(|key| binding.chord.map(normalize) == Some(normalize(key)))
                         && (!shifted
                             || (!binding.uses_native_handler()
@@ -567,10 +620,8 @@ impl App {
                 && matches!(code, KeyCode::Char(c) if c.is_ascii_alphabetic())
                 && !(modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(code, KeyCode::Char('s' | 'z' | 'v')))
-                && !self.keybindings.iter().any(|binding| {
-                    normalize((binding.modifiers, binding.code)) == first
-                        || normalize((binding.default_modifiers, binding.default_code)) == first
-                })
+                && !index.current.contains_key(&first)
+                && !index.defaults.contains_key(&first)
             {
                 find((modifiers - KeyModifiers::SHIFT, code), true)
             } else {
@@ -596,10 +647,11 @@ impl App {
 
     pub(crate) fn shortcut_default_overridden(&self, stroke: Stroke) -> bool {
         let stroke = normalize(stroke);
+        let Some(bindings) = self.keybindings.index().defaults.get(&stroke) else { return false; };
         let context = std::cell::OnceCell::new();
-        self.keybindings.iter().any(|binding| {
+        bindings.iter().any(|&position| {
+            let binding = &self.keybindings[position];
             binding.default_chord.is_none()
-                && normalize((binding.default_modifiers, binding.default_code)) == stroke
                 && binding.is_modified()
                 && binding
                     .default_when()

@@ -404,9 +404,9 @@ fn local_expansion_marks_the_folder_and_completion_clears_loading() {
         .sender
         .send(BackgroundResult::ExplorerRefreshed {
             generation: app.explorer_refresh_generation,
-            canonical_root: app.explorer.root.clone(),
-            entries: app.explorer.entries.clone(),
-            matches: Default::default(),
+            snapshot: Box::new(app.explorer.presentation().prepare(
+                app.explorer.root.clone(), app.explorer.entries.clone(), Default::default(),
+            )),
         })
         .unwrap();
     assert!(app.poll_background_results());

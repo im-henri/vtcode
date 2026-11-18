@@ -35,6 +35,24 @@ pub(crate) struct HorizontalScroll {
 
 impl HorizontalScroll {
     pub(super) fn invalidate(&self) { self.measured.set([None; 3]); }
+
+    pub(super) fn install_widths(&self, entries: &[FileEntry], widths: [usize; 3]) {
+        self.measured.set(widths.map(|width| Some((entries.as_ptr() as usize, entries.len(), width))));
+    }
+
+    pub(super) fn update_widths(&self, before: [usize; 3], after: [usize; 3]) {
+        let mut measured = self.measured.get();
+        for ((cached, before), after) in measured.iter_mut().zip(before).zip(after) {
+            if let Some((_, _, width)) = cached {
+                if *width == before && after < before {
+                    *cached = None;
+                } else {
+                    *width = (*width).max(after);
+                }
+            }
+        }
+        self.measured.set(measured);
+    }
 }
 
 impl FileEntry {
@@ -44,28 +62,58 @@ impl FileEntry {
     }
 }
 
+fn trailing_width(entry: &FileEntry, descendants: usize, visibility: GitBadgeVisibility) -> usize {
+    let badges = if matches!(visibility, GitBadgeVisibility::None) { 0 } else if entry.is_dir {
+        entry.git_status_summary.statuses().filter(|status| visibility.shows(*status)).count()
+    } else { usize::from(visibility.shows(entry.git_status)) };
+    let mut width = badges.saturating_mul(2).saturating_sub(1);
+    if descendants > 0 {
+        width += usize::from(width > 0) + descendants.ilog10() as usize + 1;
+    }
+    width + usize::from(width > 0)
+}
+
+fn match_count(entry: &FileEntry, matches: &crate::explorer_find::Matches, show_counts: bool) -> usize {
+    if entry.is_dir && show_counts {
+        matches.rows.get(&entry.path).map_or(0, |found| found.descendants)
+    } else { 0 }
+}
+
+pub(super) fn measure_rows(entries: &[FileEntry], matches: &crate::explorer_find::Matches,
+    show_counts: bool,
+) -> [usize; 3] {
+    let mut widths = [0; 3];
+    for entry in entries {
+        for (width, row_width) in widths.iter_mut().zip(measure_row(entry, matches, show_counts)) {
+            *width = (*width).max(row_width);
+        }
+    }
+    widths
+}
+
+pub(super) fn measure_row(entry: &FileEntry, matches: &crate::explorer_find::Matches,
+    show_counts: bool,
+) -> [usize; 3] {
+    let base = entry.prefix_width() + UnicodeWidthStr::width(entry.name.as_str());
+    let descendants = match_count(entry, matches, show_counts);
+    [GitBadgeVisibility::None, GitBadgeVisibility::Tracked, GitBadgeVisibility::All]
+        .map(|visibility| base + trailing_width(entry, descendants, visibility))
+}
+
 impl FileExplorer {
     pub(crate) fn indexed_row_width(&self, path: &std::path::Path, visibility: GitBadgeVisibility) -> Option<usize> {
         // Rendering reads an indexed snapshot. Most dirty documents may be
         // outside its expanded tree: an absent key must not scan every entry.
         // Keep find_path's general stale-index fallback for navigation callers.
-        if !self.path_indices.contains_key(&Self::path_key(path))
-            && self.parent_indices.len() == self.entries.len() { return None; }
+        if !self.indices.paths.contains_key(&Self::path_key(path))
+            && self.indices.parents.len() == self.entries.len() { return None; }
         self.find_path(path).map(|index| self.row_width(&self.entries[index], visibility))
     }
 
     pub(crate) fn row_width(&self, entry: &FileEntry, visibility: GitBadgeVisibility) -> usize {
-        let badges = if matches!(visibility, GitBadgeVisibility::None) { 0 } else if entry.is_dir {
-            entry.git_status_summary.statuses().filter(|status| visibility.shows(*status)).count()
-        } else { usize::from(visibility.shows(entry.git_status)) };
-        let mut trailing = badges.saturating_mul(2).saturating_sub(1);
-        if entry.is_dir && !self.find.filter
-            && let Some(found) = self.find.results.rows.get(&entry.path).filter(|found| found.descendants > 0)
-        {
-            trailing += usize::from(trailing > 0) + found.descendants.ilog10() as usize + 1;
-        }
+        let descendants = match_count(entry, &self.find.results, !self.find.filter);
         entry.prefix_width().saturating_add(UnicodeWidthStr::width(entry.name.as_str()))
-            .saturating_add(trailing).saturating_add(usize::from(trailing > 0))
+            .saturating_add(trailing_width(entry, descendants, visibility))
     }
 
     pub(crate) fn content_width(&self, visibility: GitBadgeVisibility) -> usize {

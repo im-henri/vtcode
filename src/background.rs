@@ -418,9 +418,7 @@ pub enum BackgroundResult {
     /// Visible Explorer entries rebuilt away from the terminal event loop.
     ExplorerRefreshed {
         generation: u64,
-        canonical_root: PathBuf,
-        entries: Vec<crate::explorer::FileEntry>,
-        matches: crate::explorer_find::Matches,
+        snapshot: Box<crate::explorer::ExplorerRefresh>,
     },
     ExplorerRefreshFailed { generation: u64, error: String },
     /// Metadata and optional line count requested by an Explorer hover.

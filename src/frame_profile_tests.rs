@@ -690,11 +690,17 @@ fn profile_explorer_expand_phases() {
         let (canonical2, entries2, matches2) = crate::explorer::FileExplorer::build_refresh_entries(request);
         eprintln!("PROFILE explorer {folder} round {round} warm build {} entries: {:?}", entries2.len(), started.elapsed());
         let started = Instant::now();
-        explorer.apply_refresh_entries(canonical, entries, matches);
-        eprintln!("PROFILE explorer round {round} apply on UI: {:?}", started.elapsed());
+        let first = explorer.presentation().prepare(canonical, entries, matches);
+        let second = explorer.presentation().prepare(canonical2, entries2, matches2);
+        eprintln!("PROFILE explorer round {round} prepare two snapshots on worker: {:?}", started.elapsed());
         let started = Instant::now();
-        explorer.apply_refresh_entries(canonical2, entries2, matches2);
+        let retired = explorer.apply_prepared_refresh(first);
+        eprintln!("PROFILE explorer round {round} apply on UI: {:?}", started.elapsed());
+        drop(retired);
+        let started = Instant::now();
+        let retired = explorer.apply_prepared_refresh(second);
         eprintln!("PROFILE explorer round {round} re-apply on UI: {:?}", started.elapsed());
+        drop(retired);
     }
 }
 

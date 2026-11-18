@@ -376,7 +376,7 @@ pub(crate) struct Context<'a> {
     app: &'a App,
     terminal: bool,
     remote_connection: bool,
-    input: Option<TextInputId>,
+    input: std::cell::OnceCell<Option<TextInputId>>,
 }
 
 impl<'a> Context<'a> {
@@ -386,7 +386,7 @@ impl<'a> Context<'a> {
             app,
             terminal,
             remote_connection: !terminal && crate::ui_remote_targets::connection_has_focus(app),
-            input: app.focused_text_input_id(),
+            input: Default::default(),
         }
     }
 
@@ -395,18 +395,23 @@ impl<'a> Context<'a> {
     }
 
     pub(crate) fn shell_input_has_focus(&self) -> bool {
-        self.shell_focus() && self.input.is_none()
+        self.shell_focus() && self.focused_input().is_none()
+    }
+
+    fn focused_input(&self) -> Option<TextInputId> {
+        *self.input.get_or_init(|| self.app.focused_text_input_id())
     }
 
     fn value(&self, key: Key) -> Value<'_> {
         use std::borrow::Cow;
         let app = self.app;
+        let input = self.focused_input();
         let tab = app.tabs.get(app.active_tab);
         let search_results =
             !self.shell_focus() && app.global_search_active && app.global_search_results_focused;
         let editor_area = app.active_pane == ActivePane::Editor
             && !self.shell_focus()
-            && self.input.is_none()
+            && input.is_none()
             && !search_results;
         let file = tab.filter(|tab| {
             matches!(
@@ -417,15 +422,15 @@ impl<'a> Context<'a> {
         let text_editor = editor_area && file.is_some();
         let editor = text_editor
             || (editor_area && tab.is_some_and(|tab| tab.kind == TabKind::ExtensionView));
-        let terminal = self.terminal && self.input.is_none();
+        let terminal = self.terminal && input.is_none();
         let sidebar = app.active_pane == ActivePane::Explorer
             && !self.shell_focus()
             && app.sidebar_is_visible();
         let search = sidebar && app.sidebar_view == SidebarView::Search
-            || matches!(self.input, Some(TextInputId::GlobalSearch(_)))
+            || matches!(input, Some(TextInputId::GlobalSearch(_)))
             || search_results;
         let find = matches!(
-            self.input,
+            input,
             Some(TextInputId::SearchFind | TextInputId::SearchReplace)
         );
         let settings = !self.shell_focus()
@@ -461,14 +466,14 @@ impl<'a> Context<'a> {
             Key::TerminalAltScreen => terminal && app.focused_terminal_is_fullscreen(),
             Key::TerminalOpen => (0..app.terminals.len()).any(|index| app.terminal_is_open(index)),
             Key::TerminalSelected => terminal && app.focused_terminal_has_selection(),
-            Key::RemoteConnection => self.remote_connection && self.input.is_none(),
+            Key::RemoteConnection => self.remote_connection && input.is_none(),
             Key::Sidebar => sidebar,
             Key::Explorer => {
-                sidebar && app.sidebar_view == SidebarView::Explorer && self.input.is_none()
+                sidebar && app.sidebar_view == SidebarView::Explorer && input.is_none()
             }
             Key::Search => search,
-            Key::SearchInput => matches!(self.input, Some(TextInputId::GlobalSearch(_))),
-            Key::SearchResults => search_results && self.input.is_none(),
+            Key::SearchInput => matches!(input, Some(TextInputId::GlobalSearch(_))),
+            Key::SearchResults => search_results && input.is_none(),
             Key::FindInput => find,
             Key::FindVisible => app.file_search_visible(),
             Key::SourceControl => sidebar && app.sidebar_view == SidebarView::SourceControl,
@@ -477,7 +482,7 @@ impl<'a> Context<'a> {
             Key::Keybindings => !self.shell_focus() && crate::ui_keybindings::focused(app),
             Key::Chat => chat,
             Key::Panel => app.active_pane == ActivePane::Panel || app.docked_terminal_has_focus(),
-            Key::Input => text_editor || self.input.is_some(),
+            Key::Input => text_editor || input.is_some(),
             Key::Suggest => text_editor && (app.lsp_completion_active || app.vtcomplete_active),
             Key::Zen => app.zen_mode,
             Key::Recording => app.macro_recording,

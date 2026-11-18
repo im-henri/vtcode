@@ -766,7 +766,7 @@ pub(crate) struct App {
     pub(crate) commit_details: crate::commit_details::CommitDetails,
     pub(crate) sc_graph_focused: bool,
     // Keybindings
-    pub keybindings: Vec<KeyBinding>,
+    pub(crate) keybindings: crate::app_shortcuts::KeyBindings,
     pub(crate) keybindings_ui: crate::ui_keybindings::State,
     pub keybindings_selected: usize,
     pub keybindings_editing: bool, // waiting for new key combo
@@ -1760,7 +1760,7 @@ impl App {
             git_log_selected: 0,
             commit_details: crate::commit_details::CommitDetails::default(),
             sc_graph_focused: false,
-            keybindings: default_keybindings(),
+            keybindings: default_keybindings().into(),
             keybindings_ui: Default::default(),
             keybindings_selected: 0,
             keybindings_editing: false,
@@ -2220,17 +2220,28 @@ impl App {
                 }
                 crate::background::BackgroundResult::ExplorerRefreshed {
                     generation,
-                    canonical_root,
-                    entries,
-                    matches,
+                    snapshot,
                 } => {
-                    if self.finish_explorer_refresh(generation) {
+                    if generation == self.explorer_refresh_generation
+                        && self.explorer_refresh_active_generation.is_none_or(|active| active == generation)
+                        && !self.bg_explorer_refresh_pending
+                        && !snapshot.matches_presentation(&self.explorer)
+                    {
+                        let presentation = self.explorer.presentation();
+                        let sender = self.background.sender.clone();
+                        self.background.spawn("explorer-refresh", move || {
+                            let snapshot = Box::new(snapshot.reprepare(presentation));
+                            let _ = sender.send(crate::background::BackgroundResult::ExplorerRefreshed { generation, snapshot });
+                        });
+                    } else if self.finish_explorer_refresh(generation) {
                         self.remote_explorer_error = None;
                         self.explorer_expanding.clear();
                         let select_find_match = self.explorer.find.select_first;
                         self.cancel_stale_terminal_directory_reveal();
-                        self.explorer
-                            .apply_refresh_entries(canonical_root, entries, matches);
+                        let retired = self.explorer.apply_prepared_refresh(*snapshot);
+                        if retired.is_large() {
+                            let _ = self.background.pool_sender().send(Box::new(move || drop(retired)));
+                        }
                         if self.remote_workspace.is_some() && self.rename.active && self.rename.placeholder_active
                             && let Some(path) = self.rename.target.clone()
                         {
@@ -2244,6 +2255,8 @@ impl App {
                         self.finish_explorer_paste_reveal();
                         self.finish_terminal_directory_reveal(None);
                         has_visual_changes = true;
+                    } else if snapshot.is_large() {
+                        let _ = self.background.pool_sender().send(Box::new(move || drop(snapshot)));
                     }
                 }
                 crate::background::BackgroundResult::ExplorerRefreshFailed { generation, error } => {
@@ -4427,7 +4440,7 @@ impl App {
         self.explorer.find.cancel = Some(crate::background::CancellationToken::new());
         let generation = self.explorer_refresh_generation;
         self.explorer_refresh_active_generation = Some(generation);
-        let request = self.explorer.refresh_request();
+        let presentation = self.explorer.presentation();
         if let Some(remote) = self.remote_workspace.clone() {
             let expanded = self.explorer.expanded_snapshot();
             let sort = self.explorer.sort_mode;
@@ -4440,7 +4453,8 @@ impl App {
             self.background.read_for_file("remote-explorer", &self.explorer.root, true, move || {
                 let result = match remote.explorer_tree(&expanded,sort,find,source_control,&files_exclude,&cancel) {
                     Ok((entries, matches)) => crate::background::BackgroundResult::ExplorerRefreshed {
-                        generation, canonical_root: remote.view_root, entries, matches,
+                        generation,
+                        snapshot: Box::new(presentation.prepare(remote.view_root, entries, matches)),
                     },
                     Err(error) => crate::background::BackgroundResult::ExplorerRefreshFailed {
                         generation, error: error.to_string(),
@@ -4452,15 +4466,14 @@ impl App {
             });
             return;
         }
+        let request = self.explorer.refresh_request();
         let sender = self.background.sender.clone();
         self.background.spawn("explorer-refresh", move || {
             let (canonical_root, entries, matches) =
                 crate::explorer::FileExplorer::build_refresh_entries(request);
             let _ = sender.send(crate::background::BackgroundResult::ExplorerRefreshed {
                 generation,
-                canonical_root,
-                entries,
-                matches,
+                snapshot: Box::new(presentation.prepare(canonical_root, entries, matches)),
             });
         });
     }
@@ -5001,7 +5014,8 @@ mod tests {
         let visible: Vec<_> = app.explorer.viewport_indices(10).into_iter()
             .map(|index| app.explorer.entries[index].path.clone()).collect();
         app.background.sender.send(crate::background::BackgroundResult::ExplorerRefreshed {
-            generation, canonical_root, entries, matches,
+            generation,
+            snapshot: Box::new(app.explorer.presentation().prepare(canonical_root, entries, matches)),
         }).unwrap();
         app.poll_background_results();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| {
@@ -5205,9 +5219,7 @@ mod tests {
             .sender
             .send(crate::background::BackgroundResult::ExplorerRefreshed {
                 generation,
-                canonical_root,
-                entries,
-                matches,
+                snapshot: Box::new(app.explorer.presentation().prepare(canonical_root, entries, matches)),
             })
             .unwrap();
         app.poll_background_results();

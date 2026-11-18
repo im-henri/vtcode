@@ -162,7 +162,7 @@ fn tab_navigation_accepts_custom_backtab_bindings_in_both_encodings() {
     let previous = app.keybindings.iter_mut().find(|binding| binding.id == "prev_tab").unwrap();
     previous.code = KeyCode::BackTab;
     previous.modifiers = KeyModifiers::CONTROL;
-    app.keybindings = App::keybindings_for_settings(&app.current_settings());
+    app.keybindings = App::keybindings_for_settings(&app.current_settings()).into();
     handle_keyboard_event(&mut app,
         KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT));
     assert_eq!(app.active_tab, 2);
@@ -177,7 +177,7 @@ fn tab_navigation_bindings_can_be_reassigned_and_restored_independently() {
     let page = app.keybindings.iter_mut().find(|binding| binding.id == "next_tab_page").unwrap();
     page.code = KeyCode::F(6);
     page.modifiers = KeyModifiers::NONE;
-    app.keybindings = App::keybindings_for_settings(&app.current_settings());
+    app.keybindings = App::keybindings_for_settings(&app.current_settings()).into();
     handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE));
     assert_eq!(app.active_tab, 1);
     handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));

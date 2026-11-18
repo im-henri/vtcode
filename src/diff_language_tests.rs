@@ -128,6 +128,41 @@ fn extensionless_source_control_diff_inherits_language_in_both_layouts_and_panes
 }
 
 #[test]
+fn scrolling_a_diff_only_highlights_rows_missing_from_the_cache() {
+    use std::rc::Rc;
+
+    let suffix = (0..180).map(|line| format!("fn line_{line}() {{}}\n")).collect::<String>();
+    let (_dir, path, mut app) = fixture_with_source(
+        &(BASE.to_owned() + &suffix),
+        &(INDEX.to_owned() + &suffix),
+        &(WORKING.to_owned() + &suffix),
+    );
+    app.execute_editor_command(&crate::app_menu::language_command_id("Rust"));
+    app.open_source_control_diff_tab(&path, false, false);
+    settle_diff(&mut app);
+    app.diff_mode = DiffMode::SideBySide;
+    let cache = app.diff_render_cache.clone();
+    let lookup = |app: &App, line| {
+        let row = &cache.rows[cache.aligned_row_for_target_line(line)];
+        app.highlighter.highlighted_fragment_by_hash_if_cached(
+            row.right_highlight_hash(), line, Some(&path), Some("Rust"), &app.syntax_theme,
+        )
+    };
+    let editor = app.editor_mut().unwrap();
+    editor.scroll_offset = 0;
+    editor.viewport_height = 24;
+    app.refresh_visible_highlights_async();
+    app.wait_for_background(Duration::from_secs(5), |app| lookup(app, 60).is_some());
+    let before = lookup(&app, 60).unwrap();
+    assert!(lookup(&app, 100).is_none());
+
+    app.editor_mut().unwrap().scroll_offset = 45;
+    app.refresh_visible_highlights_async();
+    app.wait_for_background(Duration::from_secs(5), |app| lookup(app, 100).is_some());
+    assert!(Rc::ptr_eq(&before, &lookup(&app, 60).unwrap()));
+}
+
+#[test]
 fn loading_a_source_control_diff_keeps_the_visible_working_files_syntax_cache() {
     use crate::app::SplitDirection;
     use std::rc::Rc;

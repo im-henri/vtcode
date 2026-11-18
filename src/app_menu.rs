@@ -807,7 +807,7 @@ impl App {
     pub(crate) fn refresh_shortcut_hints(&mut self) {
         // Build lookup from keybindings first (avoids borrow conflict)
         let mut shortcut_map = std::collections::HashMap::new();
-        for kb in &self.keybindings {
+        for kb in self.keybindings.iter() {
             let d = kb.display();
             if d != "Unassigned" {
                 shortcut_map.entry(kb.id).or_insert(d);

@@ -1096,10 +1096,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         lines_out.push(Line::from(row_spans));
     }
 
-    f.render_widget(
-        Paragraph::new(lines_out).style(Style::default().remove_modifier(Modifier::DIM)),
-        content_area,
-    );
+    paint_diff_rows(f, content_area, lines_out, Style::default().remove_modifier(Modifier::DIM));
 
     if show_h_scrollbar {
         let track_row = area.bottom().saturating_sub(1);
@@ -1370,22 +1367,10 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         f.render_widget(Clear, gutter_area);
         f.render_widget(Clear, code_area);
     }
-    f.render_widget(
-        Paragraph::new(gutter_lines).style(
-            Style::default()
-                .bg(app.colors.bg_dark)
-                .remove_modifier(Modifier::DIM),
-        ),
-        gutter_area,
-    );
-    f.render_widget(
-        Paragraph::new(code_lines).style(
-            Style::default()
-                .bg(app.colors.bg_editor)
-                .remove_modifier(Modifier::DIM),
-        ),
-        code_area,
-    );
+    paint_diff_rows(f, gutter_area, gutter_lines,
+        Style::default().bg(app.colors.bg_dark).remove_modifier(Modifier::DIM));
+    paint_diff_rows(f, code_area, code_lines,
+        Style::default().bg(app.colors.bg_editor).remove_modifier(Modifier::DIM));
 
     // The gutter, scope rail and code are separate regions. Hidden-context
     // separators span all three, independently of horizontal text scrolling.
@@ -1412,6 +1397,15 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             }
         }
     }
+}
+
+fn paint_diff_rows(frame: &mut Frame, area: Rect, lines: Vec<Line<'_>>, style: Style) {
+    #[cfg(test)]
+    if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) {
+        frame.render_widget(Paragraph::new(lines).style(style), area);
+        return;
+    }
+    crate::ui_editor::prepared_text::paint_rows(frame.buffer_mut(), area, &lines, style);
 }
 
 fn pad_wrapped_diff_row(spans: &mut Vec<Span<'_>>, width: usize, bg: Color) {
@@ -1783,14 +1777,8 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         render_lines.push(Line::from(row_spans));
     }
 
-    f.render_widget(
-        Paragraph::new(render_lines).style(
-            Style::default()
-                .bg(app.colors.bg_editor)
-                .remove_modifier(Modifier::DIM),
-        ),
-        layout.code_area,
-    );
+    paint_diff_rows(f, layout.code_area, render_lines,
+        Style::default().bg(app.colors.bg_editor).remove_modifier(Modifier::DIM));
 
     if app.context_diff_active() || widths.is_some() {
         crate::diff_context::map_visible_rows(app, false);

@@ -584,52 +584,42 @@ impl App {
             .map(|start| (start, editor.syntax_dirty_through.unwrap_or(start)));
         let theme_key = self.syntax_theme.as_str();
         let inline_diff = diff_active && self.diff_mode == crate::app::DiffMode::Inline;
-        let (start, end, source_generation) = if diff_active {
-            let display_start = self.diff_inline_scroll.wrap.row_at(self.diff_inline_scroll.row).logical;
-            let start = if inline_diff {
-                // Deleted rows can span many viewports without moving the
-                // target file's scroll offset. Follow the rendered inline row.
-                if !self.diff_inline_scroll.aligned && std::sync::Arc::ptr_eq(
-                    &self.diff_inline_scroll.cache,
-                    &self.diff_render_cache,
-                ) && self.diff_render_cache.target_line_for_inline_row(display_start) == scroll {
-                    display_start
-                } else {
-                    self.diff_render_cache.inline_row_for_target_line(scroll)
-                }
+        let (visible_start, row_count, source_generation) = if diff_active {
+            let scroll_state = &self.diff_inline_scroll;
+            // Original-only rows can scroll without moving the target file.
+            // In both layouts use the rendered row when it still owns the anchor.
+            let start = if scroll_state.aligned != inline_diff
+                && std::sync::Arc::ptr_eq(&scroll_state.cache, &self.diff_render_cache)
+                && scroll_state.source_scroll_matches(scroll)
+            {
+                scroll_state.wrap.row_at(scroll_state.row).logical
+            } else if inline_diff {
+                self.diff_render_cache.inline_row_for_target_line(scroll)
             } else {
                 self.diff_render_cache.aligned_row_for_target_line(scroll)
             };
-            let row_count = if inline_diff {
+            let count = if inline_diff {
                 self.diff_render_cache.inline_rows.len()
             } else {
                 self.diff_render_cache.rows.len()
             };
-            let end = (start + viewport_height + 25).min(row_count);
-            // Inline and side-by-side ranges use different display coordinates.
-            (
-                start,
-                end,
-                self.diff_refresh_generation
-                    .wrapping_add(self.git_compare_generation)
-                    .wrapping_add(1)
-                    .wrapping_mul(2)
-                    .wrapping_add(u64::from(inline_diff)),
-            )
+            let generation = self.diff_refresh_generation
+                .wrapping_add(self.git_compare_generation)
+                .wrapping_add(1)
+                .wrapping_mul(2)
+                .wrapping_add(u64::from(inline_diff));
+            (start.min(count), count, generation)
         } else {
-            // Keep a small margin in both directions so reverse scrolling can
-            // use already-colored rows as well as forward scrolling.
-            let start = scroll.saturating_sub(25).min(editor.rope.len_lines());
-            let end = (scroll + viewport_height + 25).min(editor.rope.len_lines());
-            (start, end, 0)
+            (scroll.min(editor.rope.len_lines()), editor.rope.len_lines(), 0)
         };
+        let visible_end = visible_start.saturating_add(viewport_height).min(row_count);
+        let start = visible_start.saturating_sub(25);
+        let end = visible_end.saturating_add(25).min(row_count);
         if self.visible_highlight_key.as_ref().is_some_and(|current| {
             current.0 == file_path && current.1 == content_version
                 && current.4 == theme_key && current.5.as_deref() == language
                 && current.6 == source_generation
-                && (current.2 == start && current.3 == end
-                    || !diff_active && current.2 <= scroll
-                        && current.3 >= (scroll + viewport_height).min(editor.rope.len_lines()))
+                && current.2 <= visible_start && current.3 >= visible_end
         })
         {
             // Do not cancel useful work on every wheel tick while its
@@ -656,69 +646,63 @@ impl App {
             }
             self.provisional_highlight_key = None;
         }
-        if diff_active {
+        if let Some(diff_cache) = diff_cache {
             self.visible_highlight_key = Some(key);
+            let mut pending = Vec::new();
+            let mut seen = rustc_hash::FxHashSet::default();
+            for display_row in start..end {
+                let aligned_row = if inline_diff {
+                    diff_cache.inline_rows[display_row].aligned_row
+                } else {
+                    display_row
+                };
+                let row = &diff_cache.rows[aligned_row];
+                let candidates = [
+                    (row.left_line, row.left_char_len(), row.left_highlight_hash()),
+                    (row.right_line, row.right_char_len(), row.right_highlight_hash()),
+                ];
+                for (side, (line, chars, hash)) in candidates.into_iter().enumerate() {
+                    if let Some(line) = line
+                        && chars <= crate::highlight::MAX_SYNTAX_LINE_CHARS
+                        && seen.insert((line, hash))
+                        && self.highlighter.highlighted_fragment_by_hash_if_cached(
+                            hash, line, Some(&file_path), language.as_deref(), &theme_key,
+                        ).is_none()
+                    {
+                        pending.push((aligned_row, side, line, hash));
+                    }
+                }
+            }
+            if pending.is_empty() {
+                return;
+            }
             let registry_generation = self.highlighter.registry_generation();
             let (syntax_set, theme_set) = self.highlighter.shared_sets();
             let sender = self.background.sender.clone();
-            let Some(diff_cache) = diff_cache else {
-                return;
-            };
             let activity = self.background.activity.start("Highlighting", activity_path.as_deref());
             let token = self.background.submit_interactive(move |cancel| {
                 let _activity = activity.cancellable(cancel.clone()).running();
-                use crate::highlight::Highlighter;
-                if cancel.is_cancelled() {
-                    return;
-                }
-                let highlighters = diff_cache.syntax_first_lines.each_ref().map(|first_line| {
-                    crate::highlight::FragmentHighlighter::new(
-                        first_line, Some(&file_path), language.as_deref(), &theme_key,
-                        &syntax_set, &theme_set,
-                    )
-                });
-                let mut entries = Vec::with_capacity(end.saturating_sub(start) * 2);
-                let mut highlight = |side: usize, idx: usize, text: &str, hash: u64| {
-                    let mut line = text.to_string();
-                    Highlighter::normalize_line_for_highlighting(&mut line);
-                    let spans = highlighters[side].highlight_line(&line);
-                    entries.push((idx, hash, spans));
-                };
-                for display_row in start..end {
+                use crate::highlight::{FragmentHighlighter, Highlighter};
+                let highlighters = [std::cell::OnceCell::new(), std::cell::OnceCell::new()];
+                let mut line = String::new();
+                let mut entries = Vec::with_capacity(pending.len());
+                for (aligned_row, side, idx, hash) in pending {
                     if cancel.is_cancelled() {
                         return;
                     }
-                    // A grouped inline replacement jumps back to its first
-                    // aligned row between the removed and added blocks.
-                    let aligned_row = if inline_diff {
-                        diff_cache.inline_rows[display_row].aligned_row
-                    } else {
-                        display_row
-                    };
                     let row = &diff_cache.rows[aligned_row];
-                    if let Some(idx) = row.left_line {
-                        highlight(
-                            0,
-                            idx,
-                            row.left_text_window(0, crate::highlight::MAX_SYNTAX_LINE_CHARS),
-                            row.left_highlight_hash(),
-                        );
-                    }
-                    if let Some(idx) = row.right_line {
-                        highlight(
-                            1,
-                            idx,
-                            row.right_text_window(0, crate::highlight::MAX_SYNTAX_LINE_CHARS),
-                            row.right_highlight_hash(),
-                        );
-                    }
+                    let text = if side == 0 { &row.left_text } else { &row.right_text };
+                    line.clear();
+                    line.push_str(text);
+                    Highlighter::normalize_line_for_highlighting(&mut line);
+                    let highlighter = highlighters[side].get_or_init(|| FragmentHighlighter::new(
+                        &diff_cache.syntax_first_lines[side], Some(&file_path), language.as_deref(),
+                        &theme_key, &syntax_set, &theme_set,
+                    ));
+                    entries.push((idx, hash, highlighter.highlight_line(&line)));
                 }
                 let _ = sender.send(crate::background::BackgroundResult::HighlightFragments {
-                    registry_generation,
-                    file_path,
-                    theme_key,
-                    language,
-                    entries,
+                    registry_generation, file_path, theme_key, language, entries,
                 });
             });
             self.visible_highlight_cancel_token = Some(token);

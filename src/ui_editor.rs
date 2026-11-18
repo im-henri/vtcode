@@ -20,7 +20,7 @@ use crate::ui_welcome::draw_welcome_screen;
 
 use crate::ui_editor_highlight::*;
 #[path = "ui_editor_text.rs"]
-mod prepared_text;
+pub(crate) mod prepared_text;
 #[path = "ui_editor_plain_runs.rs"]
 mod plain_runs;
 #[path = "ui_editor_source_lines.rs"]

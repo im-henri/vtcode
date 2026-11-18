@@ -560,6 +560,23 @@ fn conditional_chord_rechecks_focus_on_its_second_key() {
 }
 
 #[test]
+fn warmed_shortcut_index_tracks_in_place_reassignments_and_resets() {
+    let mut app = fixture();
+    let shortcut = (KeyModifiers::NONE, KeyCode::Char('r'));
+    let reopen = index(&app, "reopen_closed");
+    assert!(app.resolve_shortcut(shortcut, None).is_none());
+
+    app.keybindings[reopen].assign(shortcut.0, shortcut.1, None);
+    assert_eq!(app.resolve_shortcut(shortcut, None).unwrap().id, "reopen_closed");
+    app.keybindings[reopen].reset();
+    assert!(app.resolve_shortcut(shortcut, None).is_none());
+    assert_eq!(
+        app.lookup_keybinding(KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('T')),
+        Some("reopen_closed")
+    );
+}
+
+#[test]
 fn an_inactive_shift_shortcut_keeps_its_unshifted_action_independent() {
     let mut app = fixture();
     app.settings_global = serde_json::from_str(

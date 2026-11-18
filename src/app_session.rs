@@ -725,7 +725,7 @@ impl App {
             }
         }
         if let Some(custom_keybindings) = &s.keybindings {
-            for kb in &mut self.keybindings {
+            for kb in self.keybindings.iter_mut() {
                 kb.reset();
             }
             Self::apply_shortcut_overrides(&mut self.keybindings, custom_keybindings);
@@ -836,7 +836,7 @@ impl App {
     pub(crate) fn apply_setting_value(&mut self, id: &str, settings: &Settings) {
         let Some(key) = Self::setting_json_key(id) else { return; };
         if key == "keybindings" {
-            self.keybindings = Self::keybindings_for_settings(settings);
+            self.keybindings = Self::keybindings_for_settings(settings).into();
             self.rebuild_keybinding_settings_cache();
             return;
         }
@@ -918,7 +918,7 @@ impl App {
         // Applying a complete stack must actively clear a previously applied
         // override instead of leaving stale runtime state behind.
         if settings.keybindings.is_none() {
-            for keybinding in &mut self.keybindings {
+            for keybinding in self.keybindings.iter_mut() {
                 keybinding.reset();
             }
         }
