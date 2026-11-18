@@ -211,28 +211,21 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
         let highlighted = !app.rendering_inactive_editor
             && (app.resizing_diff_split
                 || (app.terminal_has_focus && diff_divider_hit(app, app.mouse_col, app.mouse_row)));
-        let accent = highlighted.then(|| {
-            app.colors
-                .ui
-                .sash_hover_border
-                .border(bg)
-                .unwrap_or(app.colors.fg_accent)
-        });
-        let border = accent.or(app.colors.ui.border_diff);
+        let border = highlighted
+            .then(|| {
+                app.colors
+                    .ui
+                    .sash_hover_border
+                    .border(bg)
+                    .unwrap_or(app.colors.fg_accent)
+            })
+            .or(app.colors.ui.border_diff);
         let line_style = Style::default().fg(border.unwrap_or(bg)).bg(bg);
         let line_symbol = if border.is_some() { "│" } else { " " };
-        let grip_y = layout.divider.y + layout.divider.height / 2;
         let buffer = f.buffer_mut();
         for y in layout.divider.top()..layout.divider.bottom() {
             if let Some(cell) = buffer.cell_mut((layout.divider.x, y)) {
-                if y == grip_y && let Some(accent) = accent {
-                    let style = Style::default()
-                        .fg(app.colors.ui.widget_text_color(accent))
-                        .bg(accent);
-                    cell.set_symbol("↔").set_style(style);
-                } else {
-                    cell.set_symbol(line_symbol).set_style(line_style);
-                }
+                cell.set_symbol(line_symbol).set_style(line_style);
             }
         }
     }
@@ -2149,7 +2142,7 @@ mod tests {
     }
 
     #[test]
-    fn side_by_side_diff_divider_reveals_resize_handle_on_hover() {
+    fn side_by_side_diff_divider_highlights_as_a_continuous_line() {
         use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
 
         let mut app = app_with_diff("before\n", "after\n");
@@ -2178,20 +2171,23 @@ mod tests {
 
         draw(&mut terminal, &mut app);
         let divider = app.diff_divider_area.unwrap();
-        let grip = (divider.x, divider.y + divider.height / 2);
-        assert_eq!(terminal.backend().buffer()[grip].symbol(), " ");
+        let center = (divider.x, divider.y + divider.height / 2);
+        assert_eq!(terminal.backend().buffer()[center].symbol(), " ");
 
         move_to(&mut app, divider.right(), divider.y + 1);
         draw(&mut terminal, &mut app);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(divider.x, divider.y)].fg, accent);
-        assert_eq!(buffer[grip].symbol(), "↔");
-        assert_eq!(buffer[grip].bg, accent);
+        for y in divider.top()..divider.bottom() {
+            let cell = &buffer[(divider.x, y)];
+            assert_eq!(cell.symbol(), "│");
+            assert_eq!(cell.fg, accent);
+            assert_eq!(cell.bg, app.colors.bg_editor);
+        }
 
         let code = app.code_area.unwrap();
         move_to(&mut app, code.x + 4, code.y + 1);
         draw(&mut terminal, &mut app);
-        assert_eq!(terminal.backend().buffer()[grip].symbol(), " ");
+        assert_eq!(terminal.backend().buffer()[center].symbol(), " ");
     }
 
     #[test]
