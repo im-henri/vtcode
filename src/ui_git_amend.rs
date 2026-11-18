@@ -24,7 +24,6 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         5.min(area.width.saturating_sub(1) / 2)
     };
-    let abort = Rect::new(row.right() - button_width, row.y, button_width, 1);
     let (amend_label, amend_width) = if area.width >= 52
         && app
             .lookup_keybinding(KeyModifiers::ALT, KeyCode::Char('a'))
@@ -35,12 +34,8 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         ("Amend", button_width)
     };
-    let amend = Rect::new(
-        abort.x.saturating_sub(amend_width + 1).max(row.x),
-        row.y,
-        amend_width,
-        1,
-    );
+    let amend = Rect::new(row.x, row.y, amend_width, 1);
+    let abort = Rect::new(amend.right() + 1, row.y, button_width, 1);
     let view = app.tabs[app.active_tab].editor.navigation_id;
     let Some(draft) = app.amend_commits.get_mut(&view) else {
         return;
@@ -59,11 +54,12 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         "Loading commit message…".into()
     };
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), row);
-    let label = Rect::new(row.x, row.y, amend.x.saturating_sub(row.x + 1), 1);
-    let detail = crate::ui_workspaces::clipped(&detail, label.width as usize);
+    let detail_x = abort.right().saturating_add(1).min(row.right());
+    let detail_area = Rect::new(detail_x, row.y, row.right() - detail_x, 1);
+    let detail = crate::ui_workspaces::clipped(&detail, detail_area.width as usize);
     frame.render_widget(
         Paragraph::new(detail).style(Style::default().bg(bg).fg(colors.ui.description_color(bg))),
-        label,
+        detail_area,
     );
     for (button, label, primary, enabled) in [
         (

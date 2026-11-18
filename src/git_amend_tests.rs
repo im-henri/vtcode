@@ -249,6 +249,34 @@ fn amend_button_and_shortcut_preserve_full_messages_locally_and_remotely() {
 }
 
 #[test]
+fn amend_tab_places_both_actions_at_the_left_edge() {
+    let mut fixture = Fixture::new(false);
+    fixture.amend(true);
+    let view = fixture.app.editor().unwrap().navigation_id;
+    let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+
+    for width in [70, 20, 11] {
+        let area = Rect::new(4, 2, width, 6);
+        terminal
+            .draw(|frame| crate::ui_git_amend::draw(frame, &mut fixture.app, area))
+            .unwrap();
+
+        let buttons = fixture.app.amend_commits[&view].buttons.unwrap();
+        assert_eq!(buttons.amend.x, area.x);
+        assert_eq!(buttons.abort.x, buttons.amend.right() + 1);
+        assert!(buttons.abort.right() <= area.right());
+
+        let button_text = |button: Rect| {
+            (button.x..button.right())
+                .map(|x| terminal.backend().buffer()[(x, button.y)].symbol())
+                .collect::<String>()
+        };
+        assert!(button_text(buttons.amend).contains("Amend"));
+        assert!(button_text(buttons.abort).contains("Abort"));
+    }
+}
+
+#[test]
 fn explicit_multiline_amend_messages_keep_every_paragraph_and_trailer() {
     for remote in [false, true] {
         for keyboard in [false, true] {
