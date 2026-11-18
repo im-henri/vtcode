@@ -736,6 +736,13 @@ impl Editor {
         Some((start_idx, end_idx, sl, start_col))
     }
 
+    pub(crate) fn selection_is_whitespace(&self) -> bool {
+        self.clamped_selection_indices()
+            .is_some_and(|(start, end, _, _)| {
+                self.rope.slice(start..end).chars().all(char::is_whitespace)
+            })
+    }
+
     /// Get selected text
     pub(crate) fn selected_text(&self) -> Option<String> {
         if let Some(view) = &self.markdown_preview_scroll {

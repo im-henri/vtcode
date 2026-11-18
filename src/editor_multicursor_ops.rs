@@ -365,42 +365,63 @@ impl Editor {
     pub(crate) fn multi_cursor_insert_tab(&mut self) {
         crate::editor_document::edit!(self, {
         let mut cursors = self.prepare_multi_cursor_edits();
-        cursors.sort_unstable_by_key(|cursor| (cursor.line, cursor.col, cursor.index));
-        let mut previous_line = None;
-        let mut previous_col = 0;
-        let mut cells = 0;
+        for cursor in &mut cursors {
+            if cursor.start != cursor.end
+                && self.rope.slice(cursor.start..cursor.end)
+                    .chars()
+                    .any(|ch| !ch.is_whitespace())
+            {
+                cursor.start = cursor.position;
+                cursor.end = cursor.position;
+            }
+        }
+        cursors.sort_unstable_by_key(|cursor| {
+            (cursor.start, std::cmp::Reverse(cursor.end), cursor.index)
+        });
+        let mut last_end = 0;
         let mut chars = self.rope.chars();
         let tab_size = self.tab_size.max(1);
+        let mut previous_cols = tab_size;
         let spaces = crate::helpers::spaces(if self.use_tabs { 0 } else { tab_size });
         let edits = cursors
             .iter()
             .map(|cursor| {
-                if previous_line != Some(cursor.line) {
-                    previous_line = Some(cursor.line);
-                    previous_col = 0;
-                    cells = 0;
-                    chars = self.rope.chars_at(cursor.line_start);
-                }
-                if !self.use_tabs {
-                    // Walk each source prefix once. Earlier inserted spaces
-                    // also affect any hard tab between this caret and the last.
-                    for ch in chars.by_ref().take(cursor.col - previous_col) {
-                        cells += if ch == '\t' { tab_size - cells % tab_size }
-                            else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) };
-                    }
-                }
-                previous_col = cursor.col;
                 let cols = if self.use_tabs {
                     1
                 } else {
-                    tab_size - cells % tab_size
+                    if cursor.start >= last_end {
+                        let line_start = if cursor.start < cursor.line_start {
+                            self.rope.line_to_char(self.rope.char_to_line(cursor.start))
+                        } else {
+                            cursor.line_start
+                        };
+                        // The previous tab ends at a stop. Measure only the
+                        // untouched text since that tab or the start of this line.
+                        let prefix_start = line_start.max(last_end);
+                        if prefix_start != last_end {
+                            chars = self.rope.chars_at(prefix_start);
+                        }
+                        let mut cells = 0;
+                        for ch in chars.by_ref().take(cursor.start - prefix_start) {
+                            cells += if ch == '\t' {
+                                tab_size - cells % tab_size
+                            } else {
+                                unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                            };
+                        }
+                        previous_cols = tab_size - cells % tab_size;
+                    }
+                    if cursor.end > cursor.start.max(last_end) {
+                        chars = self.rope.chars_at(cursor.end);
+                    }
+                    last_end = last_end.max(cursor.end);
+                    previous_cols
                 };
-                cells += cols;
                 CursorEdit {
                     index: cursor.index,
                     line: (cursor.line, cursor.line_start, cursor.line_len),
-                    start: cursor.position,
-                    end: cursor.position,
+                    start: cursor.start,
+                    end: cursor.end,
                     text: if self.use_tabs {
                         "\t"
                     } else {

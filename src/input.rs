@@ -1214,7 +1214,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                     ed.multi_cursor_insert_tab();
                 } else if shift {
                     ed.dedent_line();
-                } else if ed.has_selection() {
+                } else if ed.has_selection() && !ed.selection_is_whitespace() {
                     ed.indent_lines();
                 } else {
                     ed.insert_tab_replacing_selection();
@@ -1386,6 +1386,89 @@ mod tests {
     use super::*;
     use crate::app::{App, Tab};
     use crate::editor::Editor;
+
+    #[test]
+    fn tab_replaces_whitespace_only_selections() {
+        for (source, anchor, caret, use_tabs, expected, end) in [
+            ("        value\n", (0, 0), (0, 8), false, "    value\n", (0, 4)),
+            (" \t  value\n", (0, 4), (0, 0), true, "\tvalue\n", (0, 1)),
+            (
+                "a \t\r\n\u{2003} b\r\n",
+                (0, 1),
+                (1, 2),
+                false,
+                "a   b\r\n",
+                (0, 4),
+            ),
+        ] {
+            let mut app = App::test_new();
+            let mut editor = Editor::test_with_text(source);
+            editor.tab_size = 4;
+            editor.use_tabs = use_tabs;
+            editor.selection_anchor = Some(anchor);
+            (editor.cursor_line, editor.cursor_col) = caret;
+            app.tabs.push(Tab::new_file(editor));
+            app.active_pane = ActivePane::Editor;
+
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            );
+
+            let editor = app.editor_mut().unwrap();
+            assert_eq!(editor.rope.to_string(), expected);
+            assert_eq!((editor.cursor_line, editor.cursor_col), end);
+            assert!(!editor.has_selection());
+            editor.undo();
+            assert_eq!(editor.rope.to_string(), source);
+            assert!(!editor.can_undo());
+        }
+    }
+
+    #[test]
+    fn tab_indents_lines_with_text_selected() {
+        let mut app = App::test_new();
+        let mut editor = Editor::test_with_text("  first\n  second\n");
+        editor.tab_size = 4;
+        editor.use_tabs = false;
+        editor.selection_anchor = Some((0, 1));
+        (editor.cursor_line, editor.cursor_col) = (1, 4);
+        app.tabs.push(Tab::new_file(editor));
+        app.active_pane = ActivePane::Editor;
+
+        handle_editor_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+        let editor = app.editor().unwrap();
+        assert_eq!(editor.rope.to_string(), "      first\n      second\n");
+        assert!(editor.has_selection());
+    }
+
+    #[test]
+    fn tab_replaces_whitespace_selections_at_multiple_carets() {
+        let mut app = App::test_new();
+        let source = "ab       first\r\nx \t\r\n  y z\r\n";
+        let mut editor = Editor::test_with_text(source);
+        editor.tab_size = 4;
+        editor.use_tabs = false;
+        editor.cursor_col = 7;
+        editor.selection_anchor = Some((0, 2));
+        editor.extra_cursors = vec![(0, 5), (0, 10), (2, 2), (2, 3)];
+        editor.extra_cursor_anchors = vec![Some((0, 9)), None, Some((1, 1)), Some((2, 2))];
+        app.tabs.push(Tab::new_file(editor));
+        app.active_pane = ActivePane::Editor;
+
+        handle_editor_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+        let editor = app.editor_mut().unwrap();
+        assert_eq!(editor.rope.to_string(), "ab  f   irst\r\nx   y    z\r\n");
+        assert_eq!((editor.cursor_line, editor.cursor_col), (0, 4));
+        assert_eq!(editor.extra_cursors, [(0, 8), (1, 4), (1, 8)]);
+        assert!(!editor.has_selection());
+        assert_eq!(editor.extra_cursor_anchors, [None; 3]);
+        editor.undo();
+        assert_eq!(editor.rope.to_string(), source);
+        assert!(!editor.can_undo());
+    }
 
     #[test]
     fn enter_never_requests_on_type_formatting() {
