@@ -227,12 +227,13 @@ pub(crate) fn toggle(app: &mut App) {
         app.notify("Git blame is available in a file editor.");
         return;
     }
-    if let Some(notice) = history_document(app).and_then(|doc| doc.notice.clone()) {
+    let enabled = !app.editor().unwrap().blame.enabled;
+    if enabled && let Some(notice) = history_document(app).and_then(|doc| doc.notice.clone()) {
         app.notify(notice);
         return;
     }
     let editor = app.editor_mut().unwrap();
-    editor.blame.enabled = !editor.blame.enabled;
+    editor.blame.enabled = enabled;
     editor.blame.dismiss_details();
     if editor.blame.history_loading {
         editor.blame.history_request = editor.blame.history_request.wrapping_add(1);
@@ -1195,17 +1196,10 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if key.code == KeyCode::Esc
         && app.active_pane == ActivePane::Editor
-        && app
-            .editor()
-            .is_some_and(|editor| editor.blame.selected.is_some() || editor.blame.panel.is_some())
+        && app.editor().is_some_and(|editor| editor.blame.enabled)
+        && eligible(app)
     {
-        let unavailable =
-            git_blame::cached(app, app.editor().unwrap()).is_some_and(|doc| doc.notice.is_some());
-        let view = &mut app.editor_mut().unwrap().blame;
-        view.dismiss_details();
-        if unavailable {
-            view.enabled = false;
-        }
+        toggle(app);
         return true;
     }
     false

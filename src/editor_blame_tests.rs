@@ -870,15 +870,22 @@ fn blame_toggle_and_commit_inspector_do_not_change_source_or_other_tabs() {
     assert!(!output(&terminal).contains("Commit details"));
     pointer(&mut app, hit, MouseEventKind::Down(MouseButton::Left));
     render(&mut app, &mut terminal);
-    crate::input_keyboard::handle_keyboard_event(
-        &mut app,
-        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
-    );
+    let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    crate::input_keyboard::handle_keyboard_event(&mut app, escape);
+    assert!(!app.editor().unwrap().blame.enabled);
     assert!(app.editor().unwrap().blame.selected.is_none());
     assert!(app.editor().unwrap().blame.panel.is_none());
     pointer(&mut app, button, MouseEventKind::Down(MouseButton::Left));
     render(&mut app, &mut terminal);
     assert_eq!(app.editor().unwrap().blame.button, Some(button));
+    assert!(app.editor().unwrap().blame.enabled);
+    assert!(app.editor().unwrap().blame.selected.is_none());
+    assert!(!app.editor().unwrap().blame.hits.is_empty());
+
+    crate::input_keyboard::handle_keyboard_event(&mut app, escape);
+    render(&mut app, &mut terminal);
+    assert!(!app.editor().unwrap().blame.enabled);
+    assert!(app.editor().unwrap().blame.hits.is_empty());
     assert!(app.editor().unwrap().rope.is_instance(&before));
 }
 
