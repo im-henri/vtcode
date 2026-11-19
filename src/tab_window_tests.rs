@@ -142,7 +142,7 @@ fn opening_a_file_in_an_existing_window_shares_the_live_document() {
 }
 
 #[test]
-fn detached_frame_keeps_tabs_and_hides_workbench_chrome() {
+fn detached_frame_keeps_tabs_and_the_interactive_status_bar() {
     let mut app = app_with_tabs(&["first.txt", "second.txt"]);
     let view = app.tabs[0].editor.navigation_id;
     app.show_menu_bar = true;
@@ -154,6 +154,8 @@ fn detached_frame_keeps_tabs_and_hides_workbench_chrome() {
     assert!(app.activate_window(1));
     app.show_explorer = true;
     app.show_panel = true;
+    app.cached_git_branch = "detached-branch".into();
+    app.editor_mut().unwrap().set_cursor(0, 3);
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     terminal
         .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -164,10 +166,85 @@ fn detached_frame_keeps_tabs_and_hides_workbench_chrome() {
     assert!(app.activity_bar_area.is_none());
     assert!(app.explorer_area.is_none());
     assert!(app.panel_area.is_none());
-    assert!(app.status_bar_area.is_none());
+    let status_area = Rect::new(0, 29, 100, 1);
+    assert_eq!(app.status_bar_area, Some(status_area));
+    let text = screen_text(&terminal);
+    for label in ["detached-branch", "Ln 1, Col 4", "GPTComplete"] {
+        assert!(text.contains(label), "status label {label:?} is missing");
+    }
+    let click_status = |app: &mut App, action| {
+        let &(column, _, _) = app.status_bar_items.iter().find(|item| item.2 == action).unwrap();
+        crate::mouse::handle_mouse(app, MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: status_area.y,
+            modifiers: KeyModifiers::NONE,
+        });
+    };
+    click_status(&mut app, "neural_completion");
+    assert!(crate::ui_status::gptcomplete_menu_open(&app));
+    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::from(KeyCode::Esc));
+    click_status(&mut app, "performance");
+    assert!(app.background.activity.details_open);
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+    );
+    assert!(app.performance_view.pinned);
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert!(app.performance_area.is_some_and(|area| area.bottom() <= status_area.y));
+    assert_eq!(app.status_bar_area, Some(status_area));
+    crate::ui_performance_details::dismiss(&mut app);
+
+    for (show_status_bar, zen_mode) in [(false, false), (true, true)] {
+        app.show_status_bar = show_status_bar;
+        app.zen_mode = zen_mode;
+        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        assert!(app.status_bar_area.is_none());
+        assert!(app.status_bar_items.is_empty());
+    }
+    app.zen_mode = false;
     assert!(app.activate_window(MAIN_WINDOW));
     assert!(app.show_explorer);
     assert!(!app.show_tab_bar);
+}
+
+#[test]
+fn background_detached_status_uses_its_editor_and_preserves_foreground_hit_targets() {
+    let mut app = app_with_tabs(&["main.txt", "detached.txt"]);
+    app.show_status_bar = true;
+    app.tabs[0].editor.set_cursor(0, 3);
+    app.tabs[0].editor.selection_anchor = Some((0, 0));
+    let detached = &mut app.tabs[1].editor;
+    detached.set_cursor(0, 8);
+    let view = detached.navigation_id;
+    app.editor_analysis_memo.remember(
+        (view, detached.content_version, detached.rope.len_bytes()),
+        crate::app_event_loop::AnalysisSummary {
+            errors: 0,
+            warnings: 2,
+            max_line_width: 11,
+            word_count: 2,
+            sticky_scopes: Default::default(),
+        },
+    );
+    assert!(app.open_detached_window(1, view));
+    app.cached_error_count = 9;
+    let mut foreground = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    foreground.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let hits = app.status_bar_items.clone();
+    let status_area = app.status_bar_area.unwrap();
+    assert_eq!(app.cached_sel_stats.as_deref(), Some("(3 selected)"));
+
+    let mut background = Terminal::new(TestBackend::new(90, 22)).unwrap();
+    background.draw(|frame| crate::ui::draw_background_window(frame, &mut app, 1)).unwrap();
+    let text = screen_text(&background);
+    assert!(text.contains("Ln 1, Col 9"));
+    assert!(text.contains("⚠ 2"));
+    assert!(!text.contains("3 selected"));
+    assert_eq!(app.cached_sel_stats.as_deref(), Some("(3 selected)"));
+    assert_eq!(app.status_bar_area, Some(status_area));
+    assert_eq!(app.status_bar_items, hits);
 }
 
 fn screen_text(terminal: &Terminal<TestBackend>) -> String {

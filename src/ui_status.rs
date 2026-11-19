@@ -1,5 +1,8 @@
 //! Quiet, responsive workbench status and an on-demand file-details surface.
-use std::time::{Duration, Instant};
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -377,9 +380,11 @@ pub(crate) fn activate(app: &mut App, action: &str) {
         }
         "problems" => {
             dismiss(app);
-            app.panel_tab = 1;
-            app.show_panel = true;
-            app.terminal_panel_focused = false;
+            if !app.detached_chrome_command("toggle_problems") {
+                app.panel_tab = 1;
+                app.show_panel = true;
+                app.terminal_panel_focused = false;
+            }
         }
         "goto_line" | "selection" | "scroll" => {
             dismiss(app);
@@ -476,21 +481,28 @@ impl StatusItem {
     }
 }
 
+fn selection_counts(app: &App) -> Option<(usize, usize)> {
+    let editor = editor(app)?;
+    let (start, end, _, _) = editor.clamped_selection_indices()?;
+    let slice = editor.rope.slice(start..end);
+    Some((slice.len_chars(), slice.len_lines().max(1)))
+}
+
+fn format_selection_counts((chars, lines): (usize, usize)) -> String {
+    if lines > 1 {
+        format!("({chars} selected, {lines} lines)")
+    } else {
+        format!("({chars} selected)")
+    }
+}
+
 fn cache_selection(app: &mut App) {
-    let selection = editor(app).and_then(|editor| {
-        let (start, end, _, _) = editor.clamped_selection_indices()?;
-        let slice = editor.rope.slice(start..end);
-        Some((slice.len_chars(), slice.len_lines().max(1)))
-    });
-    if let Some((chars, lines)) = selection {
+    let selection = selection_counts(app);
+    if let Some(counts) = selection {
         // Cache the displayed counts, which remain valid across tab switches
         // and reloads even when document versions and selection offsets match.
         if app.cached_sel_stats_key != selection || app.cached_sel_stats.is_none() {
-            app.cached_sel_stats = Some(if lines > 1 {
-                format!("({chars} selected, {lines} lines)")
-            } else {
-                format!("({chars} selected)")
-            });
+            app.cached_sel_stats = Some(format_selection_counts(counts));
             app.cached_sel_stats_key = selection;
         }
     } else {
@@ -500,11 +512,16 @@ fn cache_selection(app: &mut App) {
 }
 
 pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
-    app.status_bar_items.clear();
+    let background = app.rendering_background_window;
+    if !background {
+        app.status_bar_items.clear();
+    }
     if area.is_empty() {
         return;
     }
-    cache_selection(app);
+    if !background {
+        cache_selection(app);
+    }
     let area = Rect::new(area.x, area.y, area.width, 1);
     let bg = app.colors.bg_statusbar;
     let fg = app
@@ -541,8 +558,15 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
         );
         items.push(StatusItem::new(branch, "git_branch", fg, 7, false));
     }
-    let errors = app.cached_error_count;
-    let warnings = app.cached_warning_count;
+    let (errors, warnings, background_word_count) = if background {
+        editor(app)
+            .and_then(|editor| app.editor_analysis_memo.recall(editor))
+            .map_or((0, 0, None), |(summary, _)| {
+                (summary.errors, summary.warnings, Some(summary.word_count))
+            })
+    } else {
+        (app.cached_error_count, app.cached_warning_count, None)
+    };
     let (diagnostics, color) = match (errors, warnings) {
         (0, 0) => ("✓".into(), fg),
         (0, warnings) => (format!("⚠ {warnings}"), app.colors.fg_warning),
@@ -575,7 +599,7 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
             9,
             false,
         ));
-    } else {
+    } else if !background {
         app.saving_flash = None;
     }
 
@@ -614,24 +638,31 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
                 3,
                 true,
             ));
-        } else if let Some(selection) = &app.cached_sel_stats {
-            items.push(
-                StatusItem::new(selection.trim_matches(['(', ')']), "selection", fg, 3, true)
-                    .compact(
-                        selection
-                            .trim_matches(['(', ')'])
-                            .split(',')
-                            .next()
-                            .unwrap_or_default(),
-                    ),
-            );
+        } else {
+            let selection = if background {
+                selection_counts(app).map(|counts| Cow::Owned(format_selection_counts(counts)))
+            } else {
+                app.cached_sel_stats.as_deref().map(Cow::Borrowed)
+            };
+            if let Some(selection) = selection {
+                let label = selection.trim_matches(['(', ')']);
+                let compact = label.split(',').next().unwrap_or_default();
+                items.push(StatusItem::new(label, "selection", fg, 3, true).compact(compact));
+            }
         }
-        if is_pinned(app, "word_count")
-            && let Some(count) = &app.cached_word_count
-        {
-            items.push(StatusItem::new(count, "word_count", fg, 6, true));
+        if is_pinned(app, "word_count") {
+            let count = if background {
+                background_word_count.map(|words| {
+                    format!("{words}W {}C {}L", editor.rope.len_chars(), editor.line_count())
+                })
+            } else {
+                app.cached_word_count.clone()
+            };
+            if let Some(count) = count {
+                items.push(StatusItem::new(count, "word_count", fg, 6, true));
+            }
         }
-        if is_pinned(app, "word_occ")
+        if !background && is_pinned(app, "word_occ")
             && let Some(occurrences) = &app.cached_word_occ
         {
             items.push(StatusItem::new(occurrences, "word_occ", fg, 6, true));
@@ -761,8 +792,9 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
         draw_item(f, app, details_area, "…", "file_details", fg);
     }
     if let Some(badge) = badge {
-        app.status_bar_items
-            .push((badge_area.x, badge_area.width, "performance"));
+        if !background {
+            app.status_bar_items.push((badge_area.x, badge_area.width, "performance"));
+        }
         crate::ui_performance::draw_badge(f, app, badge_area, badge);
     }
 
@@ -795,9 +827,10 @@ fn draw_item(
 ) {
     let index = app.status_bar_items.len();
     let normal_bg = app.colors.bg_statusbar;
-    let hovered = app.hovered_status_item == Some(index)
-        || (action == "file_details" && app.status_details.open)
-        || (action == GPTCOMPLETE_STATUS_ITEM && gptcomplete_menu_open(app));
+    let hovered = !app.rendering_background_window
+        && (app.hovered_status_item == Some(index)
+            || (action == "file_details" && app.status_details.open)
+            || (action == GPTCOMPLETE_STATUS_ITEM && gptcomplete_menu_open(app)));
     let bg = if hovered {
         if app.colors.bg_statusbar_item == normal_bg && !app.colors.ui.preserve_theme_colors {
             crate::app_theme::lerp_color(normal_bg, fg, 0.12)
@@ -821,7 +854,9 @@ fn draw_item(
         format!(" {text} ")
     };
     f.render_widget(Paragraph::new(label).style(style), area);
-    app.status_bar_items.push((area.x, area.width, action));
+    if !app.rendering_background_window {
+        app.status_bar_items.push((area.x, area.width, action));
+    }
 }
 
 struct DetailRow {

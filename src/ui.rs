@@ -447,7 +447,8 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
     // Top-level layout: menu bar + middle + status bar
     let detached = app.detached_window_id().is_some();
     let menu_bar_height: u16 = u16::from(!detached && (app.zen_mode || app.show_menu_bar));
-    let status_height: u16 = u16::from(!detached && !app.zen_mode && app.show_status_bar);
+    let show_status = !app.zen_mode && app.show_status_bar;
+    let status_height = u16::from(show_status);
     let top_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -484,10 +485,11 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         .split(middle_area);
 
     let activity_area = activity_layout[0];
-    let main_area = if detached {
-        activity_layout[1]
-    } else {
+    let performance_dock = !detached || !app.rendering_background_window;
+    let main_area = if performance_dock {
         crate::ui_performance_details::reserve_dock(app, activity_layout[1])
+    } else {
+        activity_layout[1]
     };
 
     if !detached && !app.zen_mode && app.show_activity_bar {
@@ -688,15 +690,19 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         crate::ui_panels::invalidate_layout(app);
     }
 
-    if !detached && !app.zen_mode && app.show_status_bar {
-        app.status_bar_area = Some(status_area);
+    if show_status && !status_area.is_empty() {
+        if !app.rendering_background_window {
+            app.status_bar_area = Some(status_area);
+        }
         ui_panels::draw_status_bar(f, app, status_area);
-    } else {
+    } else if !app.rendering_background_window {
         app.status_bar_area = None;
         app.status_bar_items.clear();
     }
 
-    if !detached { crate::ui_performance_details::draw_docked(f, app); }
+    if performance_dock {
+        crate::ui_performance_details::draw_docked(f, app);
+    }
 }
 
 fn draw_overlays(f: &mut Frame, app: &mut App) {

@@ -89,14 +89,11 @@ pub(crate) fn draw_badge(f: &mut Frame, app: &mut App, area: Rect, badge: Status
         return;
     }
     let bg = app.colors.bg_statusbar;
-    let hovered = app
-        .status_bar_items
-        .iter()
-        .enumerate()
-        .any(|(index, &(_, _, action))| {
-            action == "performance" && app.hovered_status_item == Some(index)
-        })
-        || app.background.activity.details_open;
+    let hovered = !app.rendering_background_window
+        && (app.background.activity.details_open
+            || app.status_bar_items.iter().enumerate().any(|(index, &(_, _, action))| {
+                action == "performance" && app.hovered_status_item == Some(index)
+            }));
     let bg = if hovered {
         if app.colors.bg_statusbar_item == bg && !app.colors.ui.preserve_theme_colors {
             crate::app_theme::lerp_color(bg, app.colors.fg_statusbar, 0.12)

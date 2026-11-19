@@ -2916,7 +2916,7 @@ impl AnalysisMemo {
     }
 
     /// The last summary for this editor, and whether it is for this exact text.
-    fn recall(&self, editor: &crate::editor::Editor) -> Option<(&AnalysisSummary, bool)> {
+    pub(crate) fn recall(&self, editor: &crate::editor::Editor) -> Option<(&AnalysisSummary, bool)> {
         self.0.iter().find(|(id, ..)| *id == editor.navigation_id).map(|(_, version, len, summary)| {
             (summary, *version == editor.content_version && *len == editor.rope.len_bytes())
         })
