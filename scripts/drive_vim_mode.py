@@ -661,9 +661,13 @@ def scenario_mouse_still_works(e, d):
     moved = wait_for(e, lambda: (d / "sub" / "b.txt").exists() and not (d / "b.txt").exists())
     # Pressing on b.txt opened it; return to a.txt by keyboard.
     e.keys(":e " + str(d / "a.txt") + CR)
-    wait_for(e, lambda: cell_of(e, "gamma", min_x=36) is not None)
+    # The editor's "gamma" is the one after line number 2 in the gutter.
+    def editor_word():
+        cell = cell_of(e, "2  gamma")
+        return cell and (cell[0] + 3, cell[1])
+    wait_for(e, lambda: editor_word() is not None)
     # A click in the text puts the cursor there; a drag selects in Visual mode.
-    word = cell_of(e, "gamma", min_x=36)
+    word = editor_word()
     mouse(e, 0, *word)
     mouse(e, 0, *word, release=True)
     e.settle(0.4)
