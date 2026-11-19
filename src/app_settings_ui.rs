@@ -441,7 +441,7 @@ impl App {
             "whitespace" => "Controls rendering of whitespace: None, Boundary (tabs, indentation, repeated and trailing spaces), Selection (only selected), Trailing, All.",
             "comment_whitespace" => "Render spaces as dots and tabs as arrows inside syntax-recognized comments. Defaults to All. Inherit uses Render Whitespace; other modes override it only inside comments.",
             "read_only" => "Prevent text edits in the active editor tab.",
-            "quick_suggestions" => "Show VTComplete, language-server, and GPT-based suggestions while typing. Ctrl+Space opens the suggestion list and Alt+I requests an inline prediction.",
+            "quick_suggestions" => "Show suggestions from VTComplete, GPTComplete, and language servers while typing. Ctrl+Space opens the suggestion list and Alt+I requests an inline prediction.",
             "hover_enabled" => "Show language information when the pointer rests over editor text.",
             "format_on_type" => "When Language Server is the chosen formatter, adjust text after supported trigger characters. New lines are never formatted by this setting. External tools run on Format Document or Format on Save.",
             "theme" => "Select the active color theme for the whole editor.",

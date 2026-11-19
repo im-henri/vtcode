@@ -35,6 +35,9 @@ fn draw(app: &mut App, width: u16, height: u16) -> Terminal<TestBackend> {
     terminal
         .draw(|frame| {
             draw_bar(frame, app, Rect::new(0, height - 1, width, 1));
+            if app.context_menu_active {
+                crate::ui_dialogs::draw_context_menu(frame, app);
+            }
             draw_overlays(frame, app);
         })
         .unwrap();
@@ -64,6 +67,88 @@ fn edge_case_selection_counts_follow_the_active_document() {
     editor.selection_anchor = Some((0, 0));
     draw(&mut app, 160, 24);
     assert_eq!(app.cached_sel_stats.as_deref(), Some("(3 selected)"));
+}
+
+fn open_gptcomplete_menu_from_bar(app: &mut App) -> Terminal<TestBackend> {
+    draw(app, 100, 24);
+    let &(x, _, _) = app.status_bar_items.iter().find(|item| item.2 == GPTCOMPLETE_STATUS_ITEM).unwrap();
+    crate::mouse::handle_mouse(app, mouse(MouseEventKind::Down(MouseButton::Left), x, 23));
+    assert!(gptcomplete_menu_open(app));
+    let terminal = draw(app, 100, 24);
+    assert!(app.context_menu_inner.unwrap().bottom() < 23);
+    terminal
+}
+
+fn choose_gptcomplete_menu_item(app: &mut App, index: usize) {
+    for key in std::iter::repeat_n(KeyCode::Down, index).chain([KeyCode::Enter]) {
+        crate::input_keyboard::handle_keyboard_event(app, KeyEvent::new(key, KeyModifiers::NONE));
+    }
+    assert!(!gptcomplete_menu_open(app));
+}
+
+#[test]
+fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
+    let mut app = app_with_file();
+    assert!(row(&draw(&mut app, 100, 24), 23).contains("GPTComplete On"));
+    for (index, minutes, label) in [
+        (0, 1, "Snooze for 1 Minute"),
+        (1, 5, "Snooze for 5 Minutes"),
+        (2, 10, "Snooze for 10 Minutes"),
+    ] {
+        let terminal = open_gptcomplete_menu_from_bar(&mut app);
+        let inner = app.context_menu_inner.unwrap();
+        assert!(row(&terminal, inner.y + index as u16).contains(label));
+        let started = Instant::now();
+        if index == 0 {
+            let (_sender, receiver) = std::sync::mpsc::channel();
+            let mut pump = crate::app_event_loop::TerminalEventPump::from_receiver(receiver);
+            crate::app_event_loop::handle_mouse_input(
+                &mut app,
+                &mut pump,
+                mouse(MouseEventKind::Down(MouseButton::Left), inner.x + 1, inner.y),
+            );
+        } else {
+            choose_gptcomplete_menu_item(&mut app, index);
+        }
+        let duration = Duration::from_secs(minutes * 60);
+        let deadline = app.inline_snooze_deadline().unwrap();
+        assert!(deadline >= started + duration && deadline <= Instant::now() + duration);
+        let terminal = open_gptcomplete_menu_from_bar(&mut app);
+        assert!(row(&terminal, 23).contains("GPTComplete Snoozed"));
+        assert_eq!(app.context_menu_items[0].label, "Resume GPTComplete");
+        choose_gptcomplete_menu_item(&mut app, 0);
+        assert_eq!(app.inline_availability(), Availability::Enabled);
+        assert!(app.inline_snooze_deadline().is_none());
+    }
+
+    open_gptcomplete_menu_from_bar(&mut app);
+    assert_eq!(app.context_menu_items[3].label, "Snooze Until Resumed");
+    choose_gptcomplete_menu_item(&mut app, 3);
+    assert_eq!(app.inline_availability(), Availability::Snoozed);
+    assert!(app.inline_snooze_deadline().is_none());
+    open_gptcomplete_menu_from_bar(&mut app);
+    assert_eq!(app.context_menu_items[1].label, "Turn Off GPTComplete");
+    choose_gptcomplete_menu_item(&mut app, 1);
+    let terminal = open_gptcomplete_menu_from_bar(&mut app);
+    assert!(row(&terminal, 23).contains("GPTComplete Off"));
+    assert_eq!(app.context_menu_items[0].label, "Turn On GPTComplete");
+    choose_gptcomplete_menu_item(&mut app, 0);
+    assert_eq!(app.inline_availability(), Availability::Enabled);
+}
+
+#[test]
+fn unpinned_gptcomplete_controls_stay_reachable_from_status_details() {
+    let mut app = app_with_file();
+    app.set_status_bar_item_pinned(GPTCOMPLETE_STATUS_ITEM, false);
+    draw(&mut app, 100, 24);
+    open_details(&mut app);
+    app.status_details.selected = detail_rows(&app)
+        .iter()
+        .position(|row| row.id == GPTCOMPLETE_STATUS_ITEM)
+        .unwrap();
+    assert!(handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    assert!(gptcomplete_menu_open(&app));
+    assert!(!app.status_details.open);
 }
 
 #[test]
@@ -262,6 +347,7 @@ fn status_resizes_without_overlaps_or_partial_hit_targets() {
                     .any(|item| item.2 == "goto_line")
             );
             assert!(app.status_bar_items.iter().any(|item| item.2 == "problems"));
+            assert!(app.status_bar_items.iter().any(|item| item.2 == GPTCOMPLETE_STATUS_ITEM));
             assert!(row(&terminal, 1).contains('…'));
         }
     }

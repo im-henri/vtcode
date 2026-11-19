@@ -1,9 +1,10 @@
-//! Editor integration for VTComplete inline predictions (ghost text).
+//! Editor integration for GPTComplete inline predictions (ghost text).
 //!
 //! Typing asks the shared completion worker for a continuation of the caret
 //! line. The answer is painted after the caret without touching the buffer;
 //! Tab inserts it as one undoable edit.
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::app::{ActivePane, App, TabKind};
 use crate::background::{
@@ -14,6 +15,13 @@ use crate::vtcomplete_inline::{Caret, Engine, MAX_DOCUMENT_BYTES, Options, Synta
 const MAX_BELOW_BYTES: usize = 256 * 1024;
 /// Longest the word popup waits for a pending prediction.
 const INLINE_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Availability {
+    Enabled,
+    Snoozed,
+    Disabled,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Target {
@@ -95,6 +103,7 @@ fn accepted(rope: &ropey::Rope, cursor: (usize, usize), text: &str) -> Option<(r
 #[derive(Default)]
 pub(crate) struct State {
     queue: Arc<Mutex<Queue>>,
+    snooze_until: Option<Instant>,
     ghost: Option<Ghost>,
     generation: u64,
     cancel: Option<CancellationToken>,
@@ -173,6 +182,9 @@ fn split(rope: &ropey::Rope, cursor: (usize, usize)) -> Option<(String, String, 
 /// respelling of the typed start of its first word.
 fn predict(engine: &mut Engine, job: &Job) -> Option<Option<(String, Option<String>)>> {
     let cancelled = || job.cancel.is_cancelled();
+    if cancelled() {
+        return None;
+    }
     let (before, rest, below, window) = split(&job.rope, job.target.cursor)?;
     if cancelled() {
         return None;
@@ -247,8 +259,13 @@ fn run(queue: Arc<Mutex<Queue>>) {
         {
             let (text, retype) = answer.unzip();
             let respelled = retype.as_ref().is_some_and(Option::is_some);
-            queue.lock().unwrap_or_else(|error| error.into_inner()).retype =
-                retype.flatten().map(|retype| (job.generation, retype));
+            {
+                let mut queue = queue.lock().unwrap_or_else(|error| error.into_inner());
+                if job.cancel.is_cancelled() {
+                    continue;
+                }
+                queue.retype = retype.flatten().map(|retype| (job.generation, retype));
+            }
             let _ = job.sender.send(BackgroundResult::VtCompleteInline {
                 generation: job.generation,
                 target: job.target.clone(),
@@ -269,15 +286,16 @@ fn run(queue: Arc<Mutex<Queue>>) {
                 job.explicit = false;
                 job.rope = rope;
                 job.target.cursor = cursor;
-                if let Some(Some((next, None))) = predict(&mut engine, &job)
-                    && !job.cancel.is_cancelled()
-                {
-                    queue.lock().unwrap_or_else(|error| error.into_inner()).speculation = Some(Speculation {
-                        document: job.target.document,
-                        cursor,
-                        rope: job.rope.clone(),
-                        text: next,
-                    });
+                if let Some(Some((next, None))) = predict(&mut engine, &job) {
+                    let mut queue = queue.lock().unwrap_or_else(|error| error.into_inner());
+                    if !job.cancel.is_cancelled() {
+                        queue.speculation = Some(Speculation {
+                            document: job.target.document,
+                            cursor,
+                            rope: job.rope.clone(),
+                            text: next,
+                        });
+                    }
                 }
             }
         }
@@ -337,10 +355,63 @@ pub(crate) fn trigger_key(key: crossterm::event::KeyEvent) -> bool {
 }
 
 impl App {
+    pub(crate) fn inline_availability(&self) -> Availability {
+        if !self.completion_preferences.inline_predictions {
+            Availability::Disabled
+        } else if self.completion_preferences.inline_snoozed
+            || self
+                .inline_snooze_deadline()
+                .is_some_and(|deadline| deadline > Instant::now())
+        {
+            Availability::Snoozed
+        } else {
+            Availability::Enabled
+        }
+    }
+
+    pub(crate) fn inline_snooze_deadline(&self) -> Option<Instant> {
+        self.vtcomplete_inline.snooze_until
+    }
+
+    pub(crate) fn expire_inline_snooze(&mut self, now: Instant) -> bool {
+        self.vtcomplete_inline
+            .snooze_until
+            .take_if(|deadline| *deadline <= now)
+            .is_some()
+    }
+
+    pub(crate) fn snooze_inline_predictions(&mut self, duration: Duration) {
+        if self.inline_availability() == Availability::Enabled {
+            self.vtcomplete_inline.snooze_until = Some(Instant::now() + duration);
+            self.stop_inline_work();
+        }
+    }
+
+    pub(crate) fn reset_inline_prediction_state(&mut self) {
+        self.vtcomplete_inline.snooze_until = None;
+        self.stop_inline_work();
+    }
+
+    fn stop_inline_work(&mut self) {
+        self.clear_inline();
+        self.vtcomplete_inline.requested = None;
+        self.vtcomplete_inline.warmed = None;
+        let pending = {
+            let mut queue = self.vtcomplete_inline.queue
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            queue.retype = None;
+            queue.speculation = None;
+            queue.pending.take()
+        };
+        drop(pending);
+    }
+
     /// The caret position a prediction would apply to, when the editor is in
     /// a state where ghost text may be shown and accepted.
     pub(crate) fn inline_target(&self) -> Option<Target> {
-        if self.active_pane != ActivePane::Editor
+        if self.inline_availability() != Availability::Enabled
+            || self.active_pane != ActivePane::Editor
             || !self.terminal_has_focus
             || self.docked_terminal_has_focus()
             || self.focused_text_input_id().is_some()
@@ -394,10 +465,6 @@ impl App {
         })
     }
 
-    fn inline_enabled(&self) -> bool {
-        self.completion_preferences.inline_predictions && self.quick_suggestions
-    }
-
     pub(crate) fn begin_inline_key(&mut self) {
         self.vtcomplete_inline.key_start = self
             .editor()
@@ -408,7 +475,7 @@ impl App {
     /// prediction; text typed along a visible prediction keeps its remainder.
     pub(crate) fn finish_inline_key(&mut self, trigger: bool) {
         let start = self.vtcomplete_inline.key_start.take();
-        let Some(target) = self.inline_target().filter(|_| self.inline_enabled()) else {
+        let Some(target) = self.inline_target() else {
             self.clear_inline();
             return;
         };
@@ -420,6 +487,10 @@ impl App {
                 .as_ref()
                 .is_some_and(|ghost| ghost.target == target)
         {
+            return;
+        }
+        if !self.quick_suggestions {
+            self.clear_inline();
             return;
         }
         let edited = start.is_some_and(|(document, version)| {
@@ -464,6 +535,17 @@ impl App {
     /// The "Predict Here" command: ask for a prediction at the caret now,
     /// and show the best guess even when it is uncertain.
     pub(crate) fn request_inline_prediction(&mut self) {
+        match self.inline_availability() {
+            Availability::Enabled => {}
+            Availability::Disabled => {
+                self.notify("GPTComplete is turned off");
+                return;
+            }
+            Availability::Snoozed => {
+                self.notify("GPTComplete is snoozed");
+                return;
+            }
+        }
         let Some(target) = self.inline_target() else {
             self.notify("Predictions are available while editing a file");
             return;
@@ -585,7 +667,8 @@ impl App {
         {
             return false;
         }
-        self.vtcomplete_inline.cancel = None;
+        // The worker can still be reading ahead after delivering the result.
+        // Keep its cancellation token so snooze and disable stop that work too.
         // The answer ends a hold on the word popup, which then shows if no
         // prediction covers it.
         let held = self.vtcomplete_inline.holding.take().is_some();
@@ -711,7 +794,7 @@ impl App {
                 text: text[end..].to_owned(),
                 retype: None,
             });
-        } else if self.inline_enabled() {
+        } else if self.quick_suggestions {
             // The prediction made ahead for exactly this text shows at once.
             let speculation = self
                 .vtcomplete_inline

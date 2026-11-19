@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the small language model used by VTComplete inline prediction.
+"""Train the small language model used by GPTComplete.
 
 A causal transformer reads text as subword tokens (byte pairs, as large
 language models do), so it can write any text: names it has never seen,

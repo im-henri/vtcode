@@ -603,6 +603,9 @@ pub(crate) fn handle_paste_input(app: &mut App, text: &str) {
 }
 
 fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
+    if crate::ui_status::gptcomplete_menu_open(app) {
+        return;
+    }
     if app.workspaces.popup.open {
         if app.accept_terminal_paste() { crate::ui_workspace_sets::paste(app, value.as_ref()); }
         return;
@@ -2127,6 +2130,28 @@ mod tests {
     }
 
     #[test]
+    fn inline_snooze_arms_one_deadline_and_indefinite_snooze_stays_idle() {
+        use crate::app_vtcomplete_inline::Availability;
+
+        let mut app = crate::app::App::test_new();
+        app.workspace_watcher_active = true;
+        app.idle_quiescent = true;
+        app.snooze_inline_predictions(Duration::from_secs(60));
+        let deadline = app.inline_snooze_deadline().unwrap();
+        assert!(next_event_wait(&app, false, false)
+            .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(60)));
+        assert!(!app.expire_inline_snooze(deadline - Duration::from_millis(1)));
+        assert!(app.expire_inline_snooze(deadline));
+        assert_eq!(app.inline_availability(), Availability::Enabled);
+        assert_eq!(next_event_wait(&app, false, false), None);
+
+        app.snooze_inline_until_resumed();
+        assert!(!app.expire_inline_snooze(deadline));
+        assert_eq!(app.inline_availability(), Availability::Snoozed);
+        assert_eq!(next_event_wait(&app, false, false), None);
+    }
+
+    #[test]
     fn stable_workbench_has_no_periodic_poll_deadline() {
         let mut app = crate::app::App::test_new();
         app.workspace_watcher_active = true;
@@ -3053,6 +3078,9 @@ fn next_event_wait(
     if let Some(wait) = app.inline_hold_wait() {
         include(wait);
     }
+    if let Some(deadline) = app.inline_snooze_deadline() {
+        include(deadline.saturating_duration_since(std::time::Instant::now()));
+    }
     if let Some(wait) = crate::app_explorer_hover::next_wait(app, std::time::Instant::now()) {
         include(wait);
     }
@@ -3810,6 +3838,12 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             needs_redraw = true;
         }
         if app.expire_inline_hold() {
+            needs_redraw = true;
+        }
+        if app.expire_inline_snooze(std::time::Instant::now()) {
+            if crate::ui_status::gptcomplete_menu_open(app) {
+                app.context_menu_active = false;
+            }
             needs_redraw = true;
         }
 

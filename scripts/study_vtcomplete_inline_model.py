@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Study what the VTComplete inline model knows when it writes a token.
+"""Study what the GPTComplete model knows when it writes a token.
 
 Reads a directory written by the replay benchmark with `VT_RECORD=1 ...
 vtcomplete_inline_bench --record DIR PATH...` and reports:

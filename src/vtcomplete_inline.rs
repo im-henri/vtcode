@@ -1,4 +1,4 @@
-//! Multi-token inline prediction for VTComplete.
+//! Multi-token inline prediction for GPTComplete.
 //!
 //! The predictor is a variable-order sequence model over lexical tokens of
 //! the text the editor already holds. It retrieves earlier positions whose

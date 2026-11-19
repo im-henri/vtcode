@@ -8,7 +8,7 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::App;
-use crate::app_settings_navigation::{GPT_BASED_SECTION, VTCOMPLETE_SECTION};
+use crate::app_settings_navigation::{GPTCOMPLETE_SECTION, VTCOMPLETE_SECTION};
 use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
 use crate::text_input::TextInputId;
 use crate::ui_pickers::truncate_to_width;
@@ -715,7 +715,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
     let header_height = if spacious_header { 4 } else { 2 };
     let introduction = match section {
         Some(VTCOMPLETE_SECTION) => "Word suggestions use the active file as you type or press Ctrl+Space.",
-        Some(GPT_BASED_SECTION) => "The built-in language model runs locally and predicts text at the caret.",
+        Some(GPTCOMPLETE_SECTION) => "The built-in language model runs locally and predicts text at the caret.",
         _ => "",
     };
     let mut introduction = App::wrap_setting_text_for_width(introduction, heading_area.width as usize);

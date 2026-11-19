@@ -1,4 +1,4 @@
-//! Preferences for the VTComplete popup and inline predictions.
+//! Preferences for VTComplete word suggestions and GPTComplete inline predictions.
 use std::{
     io,
     path::{Path, PathBuf},
@@ -39,6 +39,7 @@ pub(crate) struct Preferences {
     pub(crate) complete_calls: bool,
     pub(crate) use_history: bool,
     pub(crate) inline_predictions: bool,
+    pub(crate) inline_snoozed: bool,
     pub(crate) inline_eagerness: InlineEagerness,
 }
 
@@ -50,6 +51,7 @@ impl Default for Preferences {
             complete_calls: true,
             use_history: true,
             inline_predictions: true,
+            inline_snoozed: false,
             inline_eagerness: InlineEagerness::Balanced,
         }
     }
@@ -162,7 +164,7 @@ pub(crate) const FIELDS: &[(&str, &str, &str, &str)] = &[
         "vtcomplete_inline_predictions",
         "Inline Predictions",
         "checkbox",
-        "Show a dimmed prediction after the caret. Tab accepts it, Ctrl+Right accepts one word, Esc hides it, and Alt+I requests one.",
+        "Enable GPTComplete for this workspace. Alt+I requests a prediction. Tab accepts it, Ctrl+Right accepts one word, and Esc hides it.",
     ),
     (
         "vtcomplete_inline_eagerness",
@@ -215,7 +217,12 @@ impl App {
         display(self.completion_preferences, id) != display(Preferences::default(), id)
     }
 
-    fn save_completion_preferences(&mut self, preferences: Preferences) {
+    fn save_completion_preferences(&mut self, mut preferences: Preferences) {
+        let inline_changed =
+            preferences.inline_predictions != self.completion_preferences.inline_predictions;
+        if inline_changed {
+            preferences.inline_snoozed = false;
+        }
         if preferences == self.completion_preferences {
             return;
         }
@@ -225,7 +232,36 @@ impl App {
             self.notify(format!("Could not save autocomplete settings ({error})"));
             return;
         }
+        let snooze_changed =
+            preferences.inline_snoozed != self.completion_preferences.inline_snoozed;
         self.completion_preferences = preferences;
+        if inline_changed || snooze_changed {
+            self.reset_inline_prediction_state();
+        }
+    }
+
+    pub(crate) fn set_inline_predictions_enabled(&mut self, enabled: bool) {
+        let mut preferences = self.completion_preferences;
+        preferences.inline_predictions = enabled;
+        self.save_completion_preferences(preferences);
+    }
+
+    pub(crate) fn snooze_inline_until_resumed(&mut self) {
+        if self.completion_preferences.inline_predictions {
+            let mut preferences = self.completion_preferences;
+            preferences.inline_snoozed = true;
+            self.save_completion_preferences(preferences);
+        }
+    }
+
+    pub(crate) fn resume_inline_predictions(&mut self) {
+        if self.completion_preferences.inline_snoozed {
+            let mut preferences = self.completion_preferences;
+            preferences.inline_snoozed = false;
+            self.save_completion_preferences(preferences);
+        } else {
+            self.reset_inline_prediction_state();
+        }
     }
 
     pub(crate) fn change_completion_setting(&mut self, id: &str) -> bool {
@@ -294,8 +330,34 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_settings_navigation::{GPT_BASED_SECTION, VTCOMPLETE_SECTION};
+    use crate::app_settings_navigation::{GPTCOMPLETE_SECTION, VTCOMPLETE_SECTION};
     use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
+
+    #[test]
+    fn untimed_snooze_and_off_are_saved_for_the_workspace() {
+        use crate::app_vtcomplete_inline::Availability;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::new_deferred(root.path().to_owned());
+        app.settings_persistence_enabled = true;
+        app.snooze_inline_until_resumed();
+        assert_eq!(app.inline_availability(), Availability::Snoozed);
+        let saved = Preferences::load(root.path());
+        assert!(saved.inline_snoozed);
+        assert!(saved.inline_predictions);
+        app.resume_inline_predictions();
+        assert!(!Preferences::load(root.path()).inline_snoozed);
+
+        app.snooze_inline_until_resumed();
+        app.set_inline_predictions_enabled(false);
+        assert_eq!(app.inline_availability(), Availability::Disabled);
+        assert!(!Preferences::load(root.path()).inline_predictions);
+
+        app.set_inline_predictions_enabled(true);
+        assert_eq!(app.inline_availability(), Availability::Enabled);
+        assert!(Preferences::load(root.path()).inline_predictions);
+        std::fs::remove_file(settings_path(root.path())).unwrap();
+    }
 
     #[test]
     fn old_preferences_keep_completion_controls_and_ignore_index_settings() {
@@ -341,7 +403,7 @@ mod tests {
                 ][..],
             ),
             (
-                GPT_BASED_SECTION,
+                GPTCOMPLETE_SECTION,
                 &[
                     "vtcomplete_inline_predictions",
                     "vtcomplete_inline_eagerness",
@@ -359,7 +421,7 @@ mod tests {
         assert!(!app.set_completion_dropdown("vtcomplete_sources", "Entire workspace"));
 
         app.select_settings_page(category, Some(VTCOMPLETE_SECTION));
-        app.settings_editor_search = "GPT-Based".into();
+        app.settings_editor_search = "GPTComplete".into();
         let matches: Vec<_> = app
             .settings_filtered_indices_with_items(category, &items)
             .into_iter()

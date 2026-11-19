@@ -129,7 +129,7 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
     ("acp_chat", "Agent: Toggle Chat", "Ctrl+Shift+I"),
     ("settings", "Preferences: Open Settings", "Ctrl+,"),
     ("toggle_word_wrap", "View: Toggle Word Wrap", "Alt+Z"),
-    ("vtcomplete_inline_request", "VTComplete: Predict Here", "Alt+I"),
+    ("vtcomplete_inline_request", "GPTComplete: Predict Here", "Alt+I"),
     ("fold", "View: Fold", "Ctrl+Shift+["),
     ("unfold", "View: Unfold", "Ctrl+Shift+]"),
     (

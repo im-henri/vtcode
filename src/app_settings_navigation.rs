@@ -4,7 +4,7 @@ use crate::app::App;
 use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
 
 pub(crate) const VTCOMPLETE_SECTION: &str = "VTComplete";
-pub(crate) const GPT_BASED_SECTION: &str = "GPT-Based";
+pub(crate) const GPTCOMPLETE_SECTION: &str = "GPTComplete";
 
 impl App {
     pub(crate) fn settings_editor_has_focus(&self) -> bool {
@@ -46,7 +46,7 @@ impl App {
                 "Navigation",
                 "Shared Frame Rate",
             ],
-            SETTINGS_AUTOCOMPLETE_CATEGORY => &["General", VTCOMPLETE_SECTION, GPT_BASED_SECTION],
+            SETTINGS_AUTOCOMPLETE_CATEGORY => &["General", VTCOMPLETE_SECTION, GPTCOMPLETE_SECTION],
             _ => &[],
         }
     }
@@ -54,7 +54,7 @@ impl App {
     pub(crate) fn settings_section_for_id(id: &str) -> Option<&'static str> {
         if let Some(field) = crate::app_vtcomplete_settings::field(id) {
             return Some(match field.0 {
-                "vtcomplete_inline_predictions" | "vtcomplete_inline_eagerness" => GPT_BASED_SECTION,
+                "vtcomplete_inline_predictions" | "vtcomplete_inline_eagerness" => GPTCOMPLETE_SECTION,
                 _ => VTCOMPLETE_SECTION,
             });
         }

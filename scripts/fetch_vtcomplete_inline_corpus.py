@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch the open-source projects the VTComplete inline model is trained on.
+"""Fetch the open-source projects the GPTComplete model is trained on.
 
 Each project is a shallow clone of a public repository under a permissive
 licence (MIT, Apache-2.0, BSD, ISC, zlib). `train` projects teach the model;

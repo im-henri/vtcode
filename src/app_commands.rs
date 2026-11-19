@@ -4,6 +4,7 @@ use crate::app::{
 };
 use crate::app_theme::config_key_from_command_id;
 use crate::editor::Editor;
+use std::time::Duration;
 #[cfg(test)]
 use crate::app::Tab;
 
@@ -584,6 +585,13 @@ impl App {
             }
             "language_servers" => self.open_lsp_settings_page(),
             "vtcomplete_inline_request" => self.request_inline_prediction(),
+            "gptcomplete_snooze_1" => self.snooze_inline_predictions(Duration::from_secs(60)),
+            "gptcomplete_snooze_5" => self.snooze_inline_predictions(Duration::from_secs(300)),
+            "gptcomplete_snooze_10" => self.snooze_inline_predictions(Duration::from_secs(600)),
+            "gptcomplete_snooze_until_resumed" => self.snooze_inline_until_resumed(),
+            "gptcomplete_resume" => self.resume_inline_predictions(),
+            "gptcomplete_disable" => self.set_inline_predictions_enabled(false),
+            "gptcomplete_enable" => self.set_inline_predictions_enabled(true),
             "explorer_find" => self.open_explorer_find(),
             "restart_language_servers" => {
                 self.refresh_language_servers(true);

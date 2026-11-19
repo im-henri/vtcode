@@ -15,7 +15,7 @@ Built in Rust for Windows and Linux. Under active development.
 - **Remote Explorer:** save named SSH targets in the **Remote** sidebar, search and connect to them, and switch between local and remote folders. Saved targets also open with `vtcode --remote-target NAME`.
 - **Find and navigate:** quick file/symbol search, back/forward history, and find/replace across files. Explorer's **Find by Name…** filters filenames with substring, fuzzy, or regex matching. Right-click a folder to search only that folder and its descendants (or a file to search its containing folder). Edit the **In:** path (Alt+P) and press Enter to change folders; relative and absolute paths are supported. Clear the path or use **Workspace** (Alt+W) to search the workspace. **Find in Folder…** searches file contents.
 - **Delete files:** larger deletions show preparation, item counts, and a **Cancel** button while the editor stays usable. **File: Cancel Deletion** is also available in the Command Palette. Cancellation stops remaining items; it does not restore items already deleted.
-- **VTComplete:** built-in suggestions learned from your code, with no language server required.
+- **Autocomplete:** VTComplete suggests words from the active file. GPTComplete predicts inline continuations with a built-in language model.
 - **LSP features:** completion with documentation, hover, signature help, diagnostics, definitions, references, rename, code actions, inlay hints, and call/type hierarchies, depending on the language server.
 - **Format:** choose LSP or an external command per language, with format-on-save support.
 - **Git:** stage, unstage, or discard multiple files; commit, branch, stash, fetch, pull, and push. Source Control's **Show untracked files** choice is saved immediately as a User preference, follows an existing Workspace override, and also updates the change-count badge and Explorer decorations. Configure either scope in **Settings → Source Control → Show Untracked Files**. Review inline or side-by-side diffs, blame, and commit history; hover inline blame for commit details and the full message. **Disable** in Source Control pauses Git integration for the workspace; **Settings → Source Control → Enable Source Control** also supports a User-wide default.
@@ -323,20 +323,22 @@ when suggestions are requested. **Tab** inserts a suggestion, **↑/↓** select
 another, **Esc** dismisses the popup, and **Ctrl+Space** requests suggestions.
 
 Under **Settings → Autocomplete**, use **VTComplete** for word suggestions and
-**GPT-Based** for inline predictions. **General → Show Suggestions While Typing**
+**GPTComplete** for inline predictions. **General → Show Suggestions While Typing**
 controls automatic suggestions for both, as well as language-server completion.
 
-### Inline predictions
+## GPTComplete
 
-While you type, VTComplete also predicts the next several tokens — often the
+While you type, GPTComplete predicts the next several tokens — often the
 rest of the line, sometimes the following lines of a block — and shows them
 dimmed after the caret. **Tab** inserts the prediction, **Ctrl+Right** inserts
 its next word, **Esc** hides it, and typing along it keeps the remainder.
-**Alt+I** (or **VTComplete: Predict Here** in the Command Palette) asks for a
-prediction at the caret right now, even with automatic predictions off, and
-shows the best guess even when it is uncertain. The
-word popup returns when no prediction is shown, after **Esc**, or with
-**Ctrl+Space**.
+**Alt+I** (or **GPTComplete: Predict Here** in the Command Palette) shows the
+best guess at the caret, including when **Show Suggestions While Typing** is off.
+The word popup returns when no prediction is shown, after **Esc**, or with **Ctrl+Space**.
+
+Click **GPTComplete** in the status bar to snooze for **1, 5, or 10 minutes**,
+choose **Snooze Until Resumed**, or **Turn Off GPTComplete**. The workspace
+remembers untimed snoozes and Off across restarts. Snooze and Off also pause **Alt+I**.
 
 Two predictors work together. Both run on one background CPU thread, need no
 GPU and download nothing:
@@ -469,19 +471,19 @@ their own and letters count on; the steps must stand in neighbouring lines
 just above the caret.
 
 The model also scores continuations proposed by the pattern predictor, such
-as a consistent rename or the next step in a series. VTComplete weighs that
+as a consistent rename or the next step in a series. GPTComplete weighs that
 score alongside the evidence from the file.
 
 A small calibration model estimates how likely each token is to be right from
 both kinds of evidence. A prediction stops at the first uncertain token, so
 short answers are normal and no answer is common in code unlike anything
-nearby. **Settings → Autocomplete → GPT-Based → Inline Prediction Eagerness**
+nearby. **Settings → Autocomplete → GPTComplete → Inline Prediction Eagerness**
 controls how readily predictions appear. *Cautious* shows one
 only when fairly sure, *Balanced* (default) is a middle path, and *Eager* and
 *Always* show a guess almost every time, so more of them are wrong. Alt+I is
 always at least *Eager*. Inside comments and strings only the language model
 predicts, to the end of the line. Turn predictions off with **Settings →
-Autocomplete → GPT-Based → Inline Predictions**.
+Autocomplete → GPTComplete → Inline Predictions**.
 
 The prediction is the main suggestion. While one is being worked out, the
 word popup waits for it (up to a quarter of a second) instead of flashing up

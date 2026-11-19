@@ -1,4 +1,4 @@
-//! Subword tokens for the VTComplete neural model.
+//! Subword tokens for the GPTComplete language model.
 //!
 //! Text is cut into pieces (a word with the space before it, one digit, a run
 //! of signs, a line end with the next line's indentation), and every piece is

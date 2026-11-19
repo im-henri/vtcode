@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fit the VTComplete inline-prediction calibration model.
+"""Fit the GPTComplete calibration model.
 
 The predictor votes on each next token; this model estimates the probability
 that a voted token is right from the evidence behind it. It is a logistic

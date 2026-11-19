@@ -1,6 +1,6 @@
 use crate::{
     app::App,
-    app_settings_navigation::{GPT_BASED_SECTION, VTCOMPLETE_SECTION},
+    app_settings_navigation::{GPTCOMPLETE_SECTION, VTCOMPLETE_SECTION},
     app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY,
     ui_settings::draw_settings_editor,
 };
@@ -91,11 +91,11 @@ fn autocomplete_subpages_show_their_own_controls_and_wrap_their_introductions() 
                 "vtcomplete",
             ),
             (
-                GPT_BASED_SECTION,
+                GPTCOMPLETE_SECTION,
                 "The built-in language model runs locally and predicts text at the caret.",
                 "Inline Predictions",
                 "Minimum Prefix Characters",
-                "gpt-based",
+                "gptcomplete",
             ),
         ] {
             app.select_settings_page(SETTINGS_AUTOCOMPLETE_CATEGORY, Some(section));

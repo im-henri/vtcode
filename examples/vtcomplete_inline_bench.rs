@@ -1,4 +1,4 @@
-//! Replay benchmark for VTComplete inline prediction.
+//! Replay benchmark for GPTComplete inline prediction.
 //!
 //! Each source file is replayed as if it were being typed: at sampled lines
 //! the remainder of the line is hidden and the predictor is asked for it.

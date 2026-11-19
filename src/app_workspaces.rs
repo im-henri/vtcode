@@ -677,6 +677,9 @@ impl App {
         self.clear_tab_tooltip();
         self.menu_active = false;
         self.menu_open = false;
+        if crate::ui_status::gptcomplete_menu_open(self) {
+            self.context_menu_active = false;
+        }
         self.palette.active = false;
         self.chord_pending = false;
         self.shortcut_chord_prefix = None;

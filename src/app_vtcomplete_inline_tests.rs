@@ -369,13 +369,17 @@ fn the_predict_here_shortcut_asks_at_the_caret_without_typing() {
     press(&mut app, KeyCode::Char('i'), KeyModifiers::ALT);
     assert_eq!(app.vtcomplete_inline.submissions, 1);
     assert!(text(&app).ends_with("        self"), "the shortcut must not type");
-    // It works with automatic predictions turned off, and through the palette.
-    let mut settings = app.completion_preferences;
-    settings.inline_predictions = false;
-    app.completion_preferences = settings;
+    // Turning off suggestions while typing still allows manual predictions.
+    app.quick_suggestions = false;
+    press(&mut app, KeyCode::Char('i'), KeyModifiers::ALT);
+    assert_eq!(app.vtcomplete_inline.submissions, 2);
+    assert!(app.vtcomplete_inline.cancel.as_ref().is_some_and(|cancel| !cancel.is_cancelled()));
+    app.set_inline_predictions_enabled(false);
     app.execute_palette_command("vtcomplete_inline_request");
     assert_eq!(app.vtcomplete_inline.submissions, 2);
+
     // Where predictions cannot be shown it does nothing.
+    app.set_inline_predictions_enabled(true);
     app.editor_mut().unwrap().read_only = true;
     app.execute_palette_command("vtcomplete_inline_request");
     assert_eq!(app.vtcomplete_inline.submissions, 2);
@@ -392,9 +396,36 @@ fn inline_patterns_use_the_active_file() {
     app.tabs.push(crate::app::Tab::new_file(other));
     app.request_inline_prediction();
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
-        app.vtcomplete_inline.cancel.is_none()
+        app.vtcomplete_inline.holding.is_none()
     });
     assert!(app.inline_ghost_text().is_none());
+}
+
+#[test]
+fn snoozing_cancels_inline_work_and_keeps_the_word_popup_available() {
+    let mut app = app_with(SETTERS);
+    app.request_inline_prediction();
+    let generation = app.vtcomplete_inline.generation;
+    let cancel = app.vtcomplete_inline.cancel.clone().unwrap();
+    let target = app.inline_target().unwrap();
+    let rope = app.editor().unwrap().rope.clone();
+    show(&mut app, ".right = right;");
+    app.vtcomplete_active = true;
+    assert!(app.inline_ghost_visible());
+
+    app.snooze_inline_until_resumed();
+    assert!(cancel.is_cancelled());
+    assert!(app.vtcomplete_active);
+    assert!(!app.inline_hides_popup());
+    assert!(!app.accept_inline(false));
+    assert!(!app.receive_inline(generation, target, rope, Some("stale".into())));
+    press(&mut app, KeyCode::Char('i'), KeyModifiers::ALT);
+    press(&mut app, KeyCode::Char('.'), KeyModifiers::NONE);
+    assert_eq!(app.vtcomplete_inline.submissions, 1);
+
+    app.resume_inline_predictions();
+    app.request_inline_prediction();
+    assert_eq!(app.vtcomplete_inline.submissions, 2);
 }
 
 #[test]
