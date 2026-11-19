@@ -370,7 +370,7 @@ fn invent(text: &str, common: &rustc_hash::FxHashSet<Vec<u8>>, seed: u64) -> Str
 /// Predict at every `<|>` mark of a file, as if the caret stood there with
 /// the other marks absent and the rest of its line not yet written, and
 /// print what would be shown beside what the line really says.
-fn try_marks(path: &Path, network: Option<Option<&'static inline::model::Network>>, options: inline::Options) {
+fn try_marks(path: &Path, network: Option<Option<&inline::model::Network<'_>>>, options: inline::Options) {
     const MARK: &str = "<|>";
     let marked = std::fs::read_to_string(path).expect("readable file").replace("\r\n", "\n");
     let name = any_language(path);
@@ -468,7 +468,7 @@ impl Recorder {
     /// the token matrix, final gain and bias, output bias, then for each of
     /// the last layers expand, expand bias and reduce; `vocab.txt` one
     /// token spelling (hex) per line.
-    fn write_weights(directory: &Path, network: &inline::model::Network) {
+    fn write_weights(directory: &Path, network: &inline::model::Network<'_>) {
         use std::io::Write;
         let mut out = std::io::BufWriter::new(std::fs::File::create(directory.join("weights.bin")).unwrap());
         let mut put = |values: &[f32]| {
@@ -664,15 +664,13 @@ fn main() {
     }
     // `--model PATH` evaluates a freshly trained network; `--no-model` only
     // the pattern predictor.
-    let network: Option<Option<&'static inline::model::Network>> = model.map(|path| {
-        if path.is_empty() {
-            return None;
-        }
-        let bytes = std::fs::read(&path).expect("model file");
-        Some(&*Box::leak(Box::new(
-            inline::model::Network::decode(&bytes).expect("valid model file"),
-        )))
+    let model_bytes = model.map(|path| {
+        (!path.is_empty()).then(|| std::fs::read(path).expect("model file"))
     });
+    let custom_network = model_bytes.as_ref().map(|bytes| {
+        bytes.as_deref().map(|bytes| inline::model::Network::decode(bytes).expect("valid model file"))
+    });
+    let network = custom_network.as_ref().map(Option::as_ref);
     if !tries.is_empty() {
         for path in &tries {
             try_marks(path, network, options);
@@ -680,7 +678,7 @@ fn main() {
         return;
     }
     if std::env::var_os("VTCODE_TIME_COLD").is_some() {
-        let network = network.flatten().or_else(inline::model::embedded).expect("a model");
+        let network = network.flatten().or_else(|| inline::model::embedded()).expect("a model");
         let tokens = network.window() / 2;
         let mut times = inline::model::time_cold(network, tokens, 12);
         times.drain(..2);
@@ -693,7 +691,7 @@ fn main() {
     }
     if let Some(path) = verify {
         let vectors = std::fs::read(&path).expect("vectors file");
-        let network = network.flatten().or_else(inline::model::embedded).expect("a model");
+        let network = network.flatten().or_else(|| inline::model::embedded()).expect("a model");
         match network.difference(&vectors) {
             Some(worst) => println!("largest probability difference from the trainer: {worst:.2e}"),
             None => println!("the vectors do not fit this model"),
@@ -701,7 +699,7 @@ fn main() {
         return;
     }
     if let (Some(_), Some(directory)) = (record.as_ref(), record_dir.as_ref()) {
-        let network = network.flatten().or_else(inline::model::embedded).expect("a model");
+        let network = network.flatten().or_else(|| inline::model::embedded()).expect("a model");
         Recorder::write_weights(directory, network);
     }
     let mut retriever = retrieval::Retriever::default();

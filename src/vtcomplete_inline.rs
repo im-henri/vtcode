@@ -94,6 +94,7 @@ struct Stream {
     tokens: Vec<u16>,
     /// Byte offset in `text` where each token starts.
     starts: Vec<u32>,
+    last_piece: usize,
     cache: subwords::Cache,
 }
 
@@ -912,7 +913,7 @@ struct Candidate {
     relative: String,
 }
 
-pub(crate) struct Engine {
+pub(crate) struct Engine<'a> {
     interner: Interner,
     /// `documents[0]` is the text before the caret, `documents[1]` the text
     /// below the caret line. Other entries are reference documents.
@@ -921,7 +922,7 @@ pub(crate) struct Engine {
     clock: u64,
     counts: FxHashMap<u32, u32>,
     subwords: Subwords,
-    network: Option<&'static model::Network>,
+    network: Option<&'a model::Network<'a>>,
     session: model::Session,
     /// The text before the caret as the neural model reads it.
     stream: Stream,
@@ -947,7 +948,7 @@ pub(crate) struct Engine {
     pub(crate) lexed_bytes: usize,
 }
 
-impl Engine {
+impl<'a> Engine<'a> {
     pub(crate) fn new() -> Self {
         Self {
             interner: Interner::default(),
@@ -975,7 +976,7 @@ impl Engine {
     /// Replace the neural model; None leaves only the pattern predictor.
     /// Used by tests and by the replay benchmark.
     #[allow(dead_code)]
-    pub(crate) fn set_network(&mut self, network: Option<&'static model::Network>) {
+    pub(crate) fn set_network(&mut self, network: Option<&'a model::Network<'a>>) {
         self.network = network;
     }
 
@@ -1054,6 +1055,11 @@ impl Engine {
     /// Refresh the active document. Only the changed tail is lexed again.
     fn set_active(&mut self, key: u64, before: &str, below: &str, syntax: Syntax) {
         self.reset_if_full();
+        if self.active_key != key && self.documents.len() == 2 {
+            self.interner = Interner::default();
+            self.documents.fill_with(Document::default);
+            self.counts = FxHashMap::default();
+        }
         let Self {
             documents,
             interner,
@@ -1085,7 +1091,7 @@ impl Engine {
             }
         }
         if keep == 0 {
-            counts.clear();
+            counts.retain(|_, count| *count != 0);
         }
         head.truncate_tokens(restart);
         head.text.truncate(restart);
@@ -1103,7 +1109,7 @@ impl Engine {
         head.key = key;
         self.active_key = key;
         let tail = &mut documents[1];
-        if tail.text != below {
+        if tail.key != key || tail.text != below {
             for &id in &tail.ids {
                 if kind(id) == IDENT
                     && let Some(count) = counts.get_mut(&id)
@@ -1127,7 +1133,7 @@ impl Engine {
 
     /// Refresh the neural model's reading of the text before the caret.
     /// Only the changed tail is read again.
-    fn set_stream(&mut self, network: &model::Network, key: u64, before: &str) {
+    fn set_stream(&mut self, network: &model::Network<'_>, key: u64, before: &str) {
         let stream = &mut self.stream;
         let common = if stream.key == key {
             stream
@@ -1138,6 +1144,8 @@ impl Engine {
                 .take_while(|(a, b)| a == b)
                 .count()
         } else {
+            stream.cache = subwords::Cache::default();
+            network.reset_context(&mut self.session);
             0
         };
         // A line end starts a piece: reading restarts at the last one before
@@ -1159,7 +1167,7 @@ impl Engine {
         stream.text.truncate(restart);
         stream.text.push_str(&before[restart..]);
         let held = stream.tokens.len();
-        network
+        stream.last_piece = restart + network
             .subwords()
             .encode(&before[restart..], &mut stream.cache, &mut stream.tokens, &mut stream.starts);
         for start in &mut stream.starts[held..] {
@@ -1173,7 +1181,7 @@ impl Engine {
     /// With `renew`, reading ahead while the caret rests, the passage from
     /// elsewhere is chosen again once the caret has gone on some way: the
     /// place most like the caret's context changes as code is written.
-    fn open_window(&mut self, network: &model::Network, below: &str, line_ends: bool, renew: bool) -> usize {
+    fn open_window(&mut self, network: &model::Network<'_>, below: &str, line_ends: bool, renew: bool) -> usize {
         const RENEW: usize = 96;
         let count = self.model_count();
         // Text below that differs from what the window was started above
@@ -1228,7 +1236,14 @@ impl Engine {
     /// What the neural model reads to continue `output` after the text
     /// before the caret: the tokens from token `from` of the document up to
     /// the last, unfinished piece, and that piece's bytes.
-    fn model_state(&mut self, network: &model::Network, from: usize, output: &str) -> (Vec<u16>, Vec<u8>) {
+    fn model_state(&mut self, network: &model::Network<'_>, from: usize, output: &str) -> (Vec<u16>, Vec<u8>) {
+        if output.is_empty() {
+            let end = self.model_count();
+            return (
+                self.stream.tokens[from.min(end)..end].to_vec(),
+                self.stream.text.as_bytes()[self.stream.last_piece..].to_vec(),
+            );
+        }
         let stream = &mut self.stream;
         let line = stream.text.rfind('\n').unwrap_or(0);
         let kept = stream.starts.partition_point(|&start| (start as usize) < line).max(1);
@@ -1238,15 +1253,16 @@ impl Engine {
         network
             .subwords()
             .encode(&tail[..last], &mut stream.cache, &mut tokens, &mut Vec::new());
+        // The model window can begin partway through the retokenized line.
+        let skip = from.saturating_sub(kept).min(tokens.len());
+        tokens.drain(..skip);
         (tokens, tail.as_bytes()[last..].to_vec())
     }
 
     /// Tokens before the caret's last, unfinished piece.
     fn model_count(&self) -> usize {
         let stream = &self.stream;
-        let line = stream.text.rfind('\n').unwrap_or(0);
-        let last = line + subwords::pieces(&stream.text[line..]).last().map_or(0, |&(start, _)| start);
-        stream.starts.partition_point(|&start| (start as usize) < last).max(1)
+        stream.starts.partition_point(|&start| (start as usize) < stream.last_piece).max(1)
     }
 
     /// The place outside the model's window most like the caret's context:
@@ -1304,7 +1320,7 @@ impl Engine {
     /// The passages for a window starting at token `from`: the text below
     /// the caret, and the place elsewhere (above the window, further below,
     /// or in a reference document) most like the caret's surroundings.
-    fn read_passages(&mut self, network: &model::Network, from: usize, line_ends: bool) -> model::Passages {
+    fn read_passages(&mut self, network: &model::Network<'_>, from: usize, line_ends: bool) -> model::Passages {
         let (most_elsewhere, most_below) = network.passage_sizes();
         let subwords = network.subwords();
         let cache = &mut self.stream.cache;
@@ -1417,7 +1433,7 @@ impl Engine {
             syntax,
             language,
         } = caret;
-        if before.len() > MAX_DOCUMENT_BYTES || below.len() > MAX_DOCUMENT_BYTES {
+        if before.len() > MAX_DOCUMENT_BYTES || rest.len() > MAX_DOCUMENT_BYTES || below.len() > MAX_DOCUMENT_BYTES {
             return None;
         }
         // The typed prefix of an unfinished word is matched by spelling.

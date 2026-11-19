@@ -1,7 +1,7 @@
 use super::*;
 
 /// The pattern predictor alone, independent of the shipped neural model.
-fn patterns_only() -> Engine {
+fn patterns_only() -> Engine<'static> {
     let mut engine = Engine::new();
     engine.set_network(None);
     engine
@@ -26,6 +26,47 @@ fn predict_in(engine: &mut Engine, language: &str, before: &str, rest: &str, bel
 
 fn predict(before: &str) -> Option<String> {
     predict_in(&mut patterns_only(), "Rust", before, "", "")
+}
+
+#[test]
+fn model_window_can_start_inside_a_long_line() {
+    let Some(network) = model::embedded() else { return };
+    let before = format!("let values = [\n    {}", "1234567890".repeat(410));
+    let mut engine = Engine::new();
+    engine.set_stream(network, 1, &before);
+    let from = network.fresh_start(engine.model_count());
+    assert!(from > network.window());
+
+    for output in ["", ", 23"] {
+        let extended = format!("{before}{output}");
+        let last = subwords::pieces(&extended).last().unwrap().0;
+        let mut expected = vec![network.subwords().document()];
+        network.subwords().encode(
+            &extended[..last],
+            &mut subwords::Cache::default(),
+            &mut expected,
+            &mut Vec::new(),
+        );
+        let (tokens, typed) = engine.model_state(network, from, output);
+        assert_eq!(tokens, expected[from..]);
+        assert_eq!(typed, extended.as_bytes()[last..]);
+        assert!(tokens.len() <= network.window());
+    }
+}
+
+#[test]
+fn switching_active_files_discards_old_identifiers() {
+    let mut engine = patterns_only();
+    let syntax = Syntax::for_language("Rust");
+    let below = "let tail_value = 0;";
+    engine.set_active(1, "let old_name = 1;", below, syntax);
+    engine.set_active(1, "let old_name = 2;", below, syntax);
+    assert!(engine.names("tail_value"));
+
+    engine.set_active(2, "let new_name = 3;", below, syntax);
+    assert!(!engine.interner.ids.contains_key("old_name"));
+    assert!(engine.names("new_name"));
+    assert!(engine.names("tail_value"));
 }
 
 const SETTERS: &str = "\

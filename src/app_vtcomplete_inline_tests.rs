@@ -241,6 +241,14 @@ fn large_documents_are_windowed_at_line_boundaries() {
     assert!(split(&rope, (rope.len_lines(), 0)).is_none());
 }
 
+#[test]
+fn oversized_suffix_is_skipped_before_copying_it() {
+    let rope = ropey::Rope::from_str(&"é".repeat(MAX_DOCUMENT_BYTES / 2 + 1));
+    assert!(split(&rope, (0, 0)).is_none());
+    let (_, rest, _, _) = split(&rope, (0, 1)).unwrap();
+    assert_eq!(rest.len(), MAX_DOCUMENT_BYTES);
+}
+
 fn render(app: &mut App, width: u16, height: u16) -> ratatui::Terminal<ratatui::backend::TestBackend> {
     use ratatui::{Terminal, backend::TestBackend, style::Color};
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -426,6 +434,19 @@ fn snoozing_cancels_inline_work_and_keeps_the_word_popup_available() {
     app.resume_inline_predictions();
     app.request_inline_prediction();
     assert_eq!(app.vtcomplete_inline.submissions, 2);
+}
+
+#[test]
+fn closing_the_last_file_releases_the_inline_engine() {
+    let mut app = app_with(SETTERS);
+    app.request_inline_prediction();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.vtcomplete_inline.queue.lock().unwrap().engine.is_some()
+    });
+    let old_queue = Arc::downgrade(&app.vtcomplete_inline.queue);
+    app.force_close_tab(0);
+    app.wait_for_background(Duration::from_secs(5), |_| old_queue.upgrade().is_none());
+    assert!(!app.inline_ghost_visible());
 }
 
 #[test]

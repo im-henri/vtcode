@@ -432,6 +432,7 @@ impl App {
             .chain(self.groups.iter().flat_map(|g| &g.tabs))
             .any(|tab| tab.kind == TabKind::File)
         {
+            self.stop_inline_work();
             self.search_active = false;
             self.search_input_focused = false;
             self.hovered_search_toggle = None;

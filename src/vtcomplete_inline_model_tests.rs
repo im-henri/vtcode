@@ -1,7 +1,7 @@
 use super::*;
 
 /// `text` as the model reads it from the start of a document.
-fn tokens(network: &Network, text: &str) -> Vec<u16> {
+fn tokens(network: &Network<'_>, text: &str) -> Vec<u16> {
     let mut tokens = vec![network.subwords().document()];
     network
         .subwords()
@@ -13,7 +13,7 @@ fn synthetic(count: usize) -> Vec<u16> {
     (0..count).map(|at| (300 + (at * 37) % 4000) as u16).collect()
 }
 
-fn read(network: &Network, session: &mut Session, passages: &Passages, tokens: &[u16]) -> Vec<f32> {
+fn read(network: &Network<'_>, session: &mut Session, passages: &Passages, tokens: &[u16]) -> Vec<f32> {
     assert!(network.read(session, passages, tokens, 0, 1, &|| false));
     network.probabilities(session).to_vec()
 }
@@ -28,7 +28,8 @@ fn damaged_model_files_are_rejected() {
     if bytes.is_empty() {
         return; // No model asset in this build.
     }
-    assert!(Network::decode(bytes).is_some());
+    let network = Network::decode(bytes).unwrap();
+    assert!(bytes.as_ptr_range().contains(&network.token.cells.as_ptr().cast()));
     assert!(Network::decode(&bytes[..bytes.len() - 1]).is_none());
     let mut longer = bytes.to_vec();
     longer.push(0);
@@ -216,9 +217,10 @@ fn a_cancelled_computation_leaves_the_session_usable() {
 #[test]
 fn the_blocked_product_matches_plain_inner_products_for_any_shape() {
     for (rows, cols, tokens) in [(1, 8, 1), (3, 16, 5), (6, 24, 4), (7, 40, 9), (9, 12, 3), (32, 64, 130), (64, 128, 64), (37, 64, 1)] {
+        let cells: Vec<i8> = (0..rows * cols).map(|i| (i * 31 % 17) as i8 - 8).collect();
         let weights = Matrix {
             scale: 0.125,
-            cells: (0..rows * cols).map(|i| (i * 31 % 17) as i8 - 8).collect(),
+            cells: &cells,
         };
         let input: Vec<f32> = (0..tokens * cols).map(|i| ((i * 13 % 11) as f32 - 5.) * 0.25).collect();
         let mut output = Vec::new();
@@ -235,9 +237,10 @@ fn the_blocked_product_matches_plain_inner_products_for_any_shape() {
     }
     // Large enough to be divided between threads.
     let (rows, cols, tokens) = (512usize, 512usize, 64usize);
+    let cells: Vec<i8> = (0..rows * cols).map(|i| (i * 7 % 13) as i8 - 6).collect();
     let weights = Matrix {
         scale: 0.01,
-        cells: (0..rows * cols).map(|i| (i * 7 % 13) as i8 - 6).collect(),
+        cells: &cells,
     };
     let input: Vec<f32> = (0..tokens * cols).map(|i| ((i * 5 % 9) as f32 - 4.) * 0.1).collect();
     let mut output = Vec::new();

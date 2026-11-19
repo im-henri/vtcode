@@ -259,7 +259,7 @@ impl App {
         if inline_changed || preferences.inline_snoozed != previous.inline_snoozed {
             self.reset_inline_prediction_state();
         } else if preferences.inline_eagerness != previous.inline_eagerness {
-            self.stop_inline_work();
+            self.clear_inline_context();
         }
     }
 

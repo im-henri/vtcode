@@ -112,12 +112,12 @@ fn floats(bytes: &mut &[u8], count: usize) -> Option<Vec<f32>> {
 /// A matrix as stored and as computed with: one signed byte per weight and
 /// one scale for all of them. Keeping the bytes makes the model a quarter of
 /// the size in memory, and reading them is most of the cost of one token.
-struct Matrix {
+struct Matrix<'a> {
     scale: f32,
-    cells: Vec<i8>,
+    cells: &'a [i8],
 }
 
-impl Matrix {
+impl Matrix<'_> {
     fn floats(&self) -> Vec<f32> {
         self.cells.iter().map(|&cell| f32::from(cell) * self.scale).collect()
     }
@@ -131,9 +131,12 @@ impl Matrix {
     }
 }
 
-fn matrix(bytes: &mut &[u8], count: usize) -> Option<Matrix> {
-    let [scale] = floats(bytes, 1)?.try_into().ok()?;
-    let cells = take(bytes, count)?.iter().map(|&value| value as i8).collect();
+fn matrix<'a>(bytes: &mut &'a [u8], count: usize) -> Option<Matrix<'a>> {
+    let scale = f32::from_le_bytes(take(bytes, 4)?.try_into().ok()?);
+    let cells = take(bytes, count)?;
+    // SAFETY: i8 and u8 have the same size and alignment, and every byte is
+    // a valid i8. The borrowed weights keep the model file's lifetime.
+    let cells = unsafe { std::slice::from_raw_parts(cells.as_ptr().cast(), cells.len()) };
     Some(Matrix { scale, cells })
 }
 
@@ -313,7 +316,7 @@ fn parallel(count: usize, run: &(dyn Fn(usize) + Sync)) {
 /// `output[token * rows + row] = weights[row] . input[token]` for several
 /// tokens at once. The weights are read once per group of tokens rather than
 /// once per token, and a long product is divided between threads.
-fn matmul(weights: &Matrix, cols: usize, input: &[f32], tokens: usize, output: &mut Vec<f32>) {
+fn matmul(weights: &Matrix<'_>, cols: usize, input: &[f32], tokens: usize, output: &mut Vec<f32>) {
     let rows = weights.cells.len() / cols;
     output.clear();
     output.resize(rows * tokens, 0.);
@@ -331,7 +334,7 @@ fn matmul(weights: &Matrix, cols: usize, input: &[f32], tokens: usize, output: &
     parallel(bands.len(), &|index| {
         let (start, end) = bands[index];
         let mut part = vec![0f32; (end - start) * tokens];
-        product(&weights.cells, cols, input, tokens, start, end, &mut part);
+        product(weights.cells, cols, input, tokens, start, end, &mut part);
         *parts[index].lock().unwrap_or_else(std::sync::PoisonError::into_inner) = part;
     });
     for (&(start, end), part) in bands.iter().zip(parts) {
@@ -618,29 +621,29 @@ fn soften(scores: &mut [f32]) {
     }
 }
 
-struct Block {
+struct Block<'a> {
     gain1: Vec<f32>,
     bias1: Vec<f32>,
-    query: Matrix,
-    key: Matrix,
-    value: Matrix,
-    project: Matrix,
+    query: Matrix<'a>,
+    key: Matrix<'a>,
+    value: Matrix<'a>,
+    project: Matrix<'a>,
     gain2: Vec<f32>,
     bias2: Vec<f32>,
-    expand: Matrix,
+    expand: Matrix<'a>,
     expand_bias: Vec<f32>,
-    reduce: Matrix,
+    reduce: Matrix<'a>,
     reduce_bias: Vec<f32>,
 }
 
-pub(crate) struct Network {
+pub(crate) struct Network<'a> {
     subwords: Subwords,
     width: usize,
     heads: usize,
     /// Most window positions a token sees, itself included.
     length: usize,
     /// Description of each token, as input and as output.
-    token: Matrix,
+    token: Matrix<'a>,
     language: Vec<f32>,
     /// What a position belongs to: the window, elsewhere, or below.
     segment: Vec<f32>,
@@ -651,7 +654,7 @@ pub(crate) struct Network {
     below: usize,
     /// Rotary rate of each pair of cells in a head.
     rates: Vec<f32>,
-    blocks: Vec<Block>,
+    blocks: Vec<Block<'a>>,
     final_gain: Vec<f32>,
     final_bias: Vec<f32>,
     output_bias: Vec<f32>,
@@ -793,8 +796,8 @@ fn agrees(spelling: &[u8], typed: &[u8], loose: bool) -> bool {
     }
 }
 
-impl Network {
-    pub(crate) fn decode(mut bytes: &[u8]) -> Option<Self> {
+impl<'weights> Network<'weights> {
+    pub(crate) fn decode(mut bytes: &'weights [u8]) -> Option<Self> {
         let bytes = &mut bytes;
         if take(bytes, MAGIC.len())? != MAGIC {
             return None;
@@ -905,7 +908,7 @@ impl Network {
     /// session's window rather than starting a new one.
     pub(crate) fn continues(&self, session: &Session, count: usize) -> bool {
         let held = session.held();
-        held > 0 && session.base < count && count <= session.base + held + self.slack()
+        held > 0 && session.base < count && count - session.base <= held.min(self.length) + self.slack()
     }
 
     /// First document token to read when `count` precede the caret: where
@@ -962,6 +965,14 @@ impl Network {
             tokens
         };
         self.advance(session, tokens, None, cancelled)
+    }
+
+    /// Start a different document context while reusing the model buffers.
+    pub(crate) fn reset_context(&self, session: &mut Session) {
+        self.cut(session, 0);
+        session.memory.clear();
+        session.memory_next.clear();
+        session.cache = Cache::default();
     }
 
     /// Forget every position from `mark` on.
@@ -1809,8 +1820,8 @@ impl Network {
 }
 
 /// The model shipped with the editor, or None when the asset is empty.
-pub(crate) fn embedded() -> Option<&'static Network> {
-    static NETWORK: std::sync::OnceLock<Option<Network>> = std::sync::OnceLock::new();
+pub(crate) fn embedded() -> Option<&'static Network<'static>> {
+    static NETWORK: std::sync::OnceLock<Option<Network<'static>>> = std::sync::OnceLock::new();
     NETWORK
         .get_or_init(|| Network::decode(include_bytes!("../assets/vtcomplete_inline_model.bin")))
         .as_ref()
@@ -1825,7 +1836,7 @@ fn filler(count: usize, step: usize) -> Vec<u16> {
 /// Time reading a new window with full passages, in milliseconds, for the
 /// replay benchmark.
 #[allow(dead_code)]
-pub(crate) fn time_cold(network: &Network, tokens: usize, rounds: usize) -> Vec<f64> {
+pub(crate) fn time_cold(network: &Network<'_>, tokens: usize, rounds: usize) -> Vec<f64> {
     let passages = Passages {
         elsewhere: filler(network.elsewhere, 41),
         below: filler(network.below, 43),
@@ -1845,7 +1856,7 @@ pub(crate) fn time_cold(network: &Network, tokens: usize, rounds: usize) -> Vec<
 /// Time reading one more token after a long context, in milliseconds, for
 /// the replay benchmark.
 #[allow(dead_code)]
-pub(crate) fn time_next(network: &Network, tokens: usize, rounds: usize) -> Vec<f64> {
+pub(crate) fn time_next(network: &Network<'_>, tokens: usize, rounds: usize) -> Vec<f64> {
     let passages = Passages {
         elsewhere: filler(network.elsewhere, 41),
         below: filler(network.below, 43),

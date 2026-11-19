@@ -65,7 +65,7 @@ struct Job {
 struct Queue {
     pending: Option<Job>,
     running: bool,
-    engine: Option<Box<Engine>>,
+    engine: Option<Box<Engine<'static>>>,
     /// How the answer of this generation spells the typed start of its word.
     retype: Option<(u64, String)>,
     /// The prediction made ahead for the text after accepting the latest one.
@@ -150,8 +150,12 @@ fn split(rope: &ropey::Rope, cursor: (usize, usize)) -> Option<(String, String, 
         line_chars -= 1;
     }
     let line_start = rope.line_to_char(line);
+    let line_end = line_start + line_chars;
     let caret = line_start + column.min(line_chars);
     let caret_byte = rope.char_to_byte(caret);
+    if rope.char_to_byte(line_end) - caret_byte > MAX_DOCUMENT_BYTES {
+        return None;
+    }
     // A window over a very large document starts at a line boundary.
     let limit = MAX_DOCUMENT_BYTES - 4096;
     let first = if caret_byte > limit {
@@ -164,7 +168,7 @@ fn split(rope: &ropey::Rope, cursor: (usize, usize)) -> Option<(String, String, 
         return None; // One enormous line.
     }
     let before = rope.slice(first..caret).to_string();
-    let rest = rope.slice(caret..line_start + line_chars).to_string();
+    let rest = rope.slice(caret..line_end).to_string();
     let below_start = rope.line_to_char((line + 1).min(rope.len_lines()));
     let below_end_byte = (rope.char_to_byte(below_start) + MAX_BELOW_BYTES).min(rope.len_bytes());
     let below_end = rope.line_to_char(rope.byte_to_line(below_end_byte));
@@ -180,12 +184,14 @@ fn split(rope: &ropey::Rope, cursor: (usize, usize)) -> Option<(String, String, 
 
 /// None when cancelled; otherwise the text to show, if any, with the
 /// respelling of the typed start of its first word.
-fn predict(engine: &mut Engine, job: &Job) -> Option<Option<(String, Option<String>)>> {
+fn predict(engine: &mut Engine<'_>, job: &Job) -> Option<Option<(String, Option<String>)>> {
     let cancelled = || job.cancel.is_cancelled();
     if cancelled() {
         return None;
     }
-    let (before, rest, below, window) = split(&job.rope, job.target.cursor)?;
+    let Some((before, rest, below, window)) = split(&job.rope, job.target.cursor) else {
+        return (!job.warm).then_some(None);
+    };
     if cancelled() {
         return None;
     }
@@ -237,15 +243,14 @@ fn run(queue: Arc<Mutex<Queue>>) {
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .engine
-        .take()
-        .unwrap_or_else(|| Box::new(Engine::new()));
+        .take();
     loop {
         let job = {
             let mut queue = queue.lock().unwrap_or_else(|error| error.into_inner());
             match queue.pending.take() {
                 Some(job) => job,
                 None => {
-                    queue.engine = Some(engine);
+                    queue.engine = engine;
                     queue.running = false;
                     return;
                 }
@@ -254,7 +259,8 @@ fn run(queue: Arc<Mutex<Queue>>) {
         if !job.activity.wait(|| job.cancel.is_cancelled()) {
             continue;
         }
-        if let Some(answer) = predict(&mut engine, &job)
+        let engine = engine.get_or_insert_with(|| Box::new(Engine::new()));
+        if let Some(answer) = predict(engine, &job)
             && !job.cancel.is_cancelled()
         {
             let (text, retype) = answer.unzip();
@@ -276,7 +282,7 @@ fn run(queue: Arc<Mutex<Queue>>) {
             // the next request.
             let mut job = job;
             job.warm = true;
-            let _ = predict(&mut engine, &job);
+            let _ = predict(engine, &job);
             // Then the prediction that follows accepting this one, so that
             // Tab after Tab never waits.
             if let Some(shown) = text.filter(|_| !respelled && !job.cancel.is_cancelled())
@@ -286,7 +292,7 @@ fn run(queue: Arc<Mutex<Queue>>) {
                 job.explicit = false;
                 job.rope = rope;
                 job.target.cursor = cursor;
-                if let Some(Some((next, None))) = predict(&mut engine, &job) {
+                if let Some(Some((next, None))) = predict(engine, &job) {
                     let mut queue = queue.lock().unwrap_or_else(|error| error.into_inner());
                     if !job.cancel.is_cancelled() {
                         queue.speculation = Some(Speculation {
@@ -393,7 +399,15 @@ impl App {
     }
 
     pub(crate) fn stop_inline_work(&mut self) {
+        self.clear_inline_context();
+        // A cancelled worker can finish on the old queue without returning
+        // its engine to this editor.
+        self.vtcomplete_inline.queue = Default::default();
+    }
+
+    pub(crate) fn clear_inline_context(&mut self) {
         self.clear_inline();
+        self.vtcomplete_inline.suppressed = None;
         self.vtcomplete_inline.requested = None;
         self.vtcomplete_inline.warmed = None;
         let pending = {

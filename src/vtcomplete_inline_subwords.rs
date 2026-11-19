@@ -164,10 +164,11 @@ impl Subwords {
         out.extend(symbols);
     }
 
-    /// Tokens of `text`, with the byte offset where each one starts.
-    /// `cache` keeps the spelling of pieces seen before.
-    pub(crate) fn encode(&self, text: &str, cache: &mut Cache, tokens: &mut Vec<u16>, starts: &mut Vec<u32>) {
+    /// Append tokens and their byte offsets, returning the start of the last piece.
+    pub(crate) fn encode(&self, text: &str, cache: &mut Cache, tokens: &mut Vec<u16>, starts: &mut Vec<u32>) -> usize {
+        let mut last = 0;
         for (start, end) in pieces(text) {
+            last = start;
             let piece = &text.as_bytes()[start..end];
             let spelled = match cache.0.get(piece) {
                 Some(spelled) => spelled,
@@ -187,6 +188,7 @@ impl Subwords {
                 at += self.spellings[token as usize].len();
             }
         }
+        last
     }
 
     /// The merges as stored in a model file: their count, then each pair.

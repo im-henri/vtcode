@@ -286,6 +286,7 @@ impl App {
     /// Clear transient editor state that shouldn't persist across tab switches.
     pub(crate) fn clear_transient_editor_state(&mut self) {
         self.dismiss_vtcomplete();
+        self.clear_inline_context();
         self.clear_tab_tooltip();
         self.clear_lsp_link_hover();
         self.dismiss_lsp_hover();
