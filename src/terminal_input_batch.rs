@@ -166,7 +166,6 @@ impl Ord for Segment {
 
 enum ReceiverKind {
     Queued(mpsc::Receiver<Batch>),
-    #[cfg(test)]
     Single(mpsc::Receiver<io::Result<Event>>),
 }
 
@@ -255,7 +254,6 @@ impl Receiver {
                     }
                 }
             }
-            #[cfg(test)]
             ReceiverKind::Single(receiver) => receiver.try_recv(),
         }
     }
@@ -268,7 +266,6 @@ impl From<mpsc::Sender<io::Result<Event>>> for Sender {
     }
 }
 
-#[cfg(test)]
 impl From<mpsc::Receiver<io::Result<Event>>> for Receiver {
     fn from(receiver: mpsc::Receiver<io::Result<Event>>) -> Self {
         Self {

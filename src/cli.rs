@@ -64,6 +64,7 @@ pub(crate) enum Command {
     Editor(Option<OsString>),
     InstallTheme(String),
     Headless(PathBuf),
+    DetachedWindow(OsString),
     Remote {
         program: OsString,
         args: Vec<OsString>,
@@ -181,6 +182,14 @@ fn option_value(
 
 pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String> {
     let mut args = args.into_iter().peekable();
+    if args.peek().is_some_and(|arg| arg == "--detached-window") {
+        args.next();
+        let endpoint = option_value("--detached-window", None, &mut args)?;
+        if args.next().is_some() {
+            return Err("unexpected arguments after the detached window endpoint".into());
+        }
+        return Ok(Command::DetachedWindow(endpoint));
+    }
     let mut mode = Mode::Editor;
     let mut remote = RemoteOptions::default();
     let mut value = None;

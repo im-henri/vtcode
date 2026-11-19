@@ -121,7 +121,7 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
     }
     let split_idx = app.groups[group_idx].active_tab.min(app.groups[group_idx].tabs.len().saturating_sub(1));
     let split_tab_kind = app.groups[group_idx].tabs[split_idx].kind;
-    let show_tabs = app.show_tab_bar && !app.zen_mode;
+    let show_tabs = app.group_in_detached_window(group_idx) || (app.show_tab_bar && !app.zen_mode);
     let show_breadcrumb = app.show_breadcrumbs && !app.zen_mode
         && matches!(
             split_tab_kind,

@@ -245,7 +245,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             && (key.code == KeyCode::Char('F') || key.code == KeyCode::Char('f'))
         {
             // Ctrl+Shift+F: focus global search
-            app.focus_global_search();
+            if !app.detached_chrome_command("global_search") { app.focus_global_search(); }
             return false;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -253,7 +253,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             && (key.code == KeyCode::Char('M') || key.code == KeyCode::Char('m'))
         {
             // Ctrl+Shift+M: toggle Problems panel
-            crate::ui_panels::toggle_problems(app);
+            if !app.detached_chrome_command("toggle_problems") { crate::ui_panels::toggle_problems(app); }
             return false;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -303,7 +303,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
                     return false;
                 }
                 KeyCode::Char('b') => {
-                    app.toggle_explorer();
+                    if !app.detached_chrome_command("toggle_explorer") { app.toggle_explorer(); }
                     return false;
                 }
                 KeyCode::Char('w') => {
@@ -987,6 +987,7 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
 }
 
 fn dispatch_shortcut(app: &mut App, cmd_id: &str) {
+    if app.detached_chrome_command(cmd_id) { return; }
     if app.route_explorer_edit_command(cmd_id) { return; }
     // End clipboard cycle on any keybinding that isn't clipboard_history
     if app.clipboard_cycle_active && cmd_id != "clipboard_history" {

@@ -438,8 +438,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.folder_browser_buttons.clear();
 
     // Top-level layout: menu bar + middle + status bar
-    let menu_bar_height: u16 = u16::from(app.zen_mode || app.show_menu_bar);
-    let status_height: u16 = u16::from(!app.zen_mode && app.show_status_bar);
+    let detached = app.detached_window_id().is_some();
+    let menu_bar_height: u16 = u16::from(!detached && (app.zen_mode || app.show_menu_bar));
+    let status_height: u16 = u16::from(!detached && !app.zen_mode && app.show_status_bar);
     let top_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -453,19 +454,19 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let middle_area = top_layout[1];
     let status_area = top_layout[2];
 
-    if !app.zen_mode && app.show_menu_bar {
+    if !detached && !app.zen_mode && app.show_menu_bar {
         app.menu_bar_area = Some(menu_bar_area);
         draw_static_chrome(f, app, menu_bar_area, ChromeRegion::Menu);
     } else {
         app.menu_bar_area = None;
-        if app.zen_mode {
+        if !detached && app.zen_mode {
             ui_chrome::draw_zen_exit_button(f, app, menu_bar_area);
         }
     }
 
     // Activity bar + main content
     // Four-character text labels, an active marker, and the sidebar separator.
-    let activity_width: u16 = if app.zen_mode || !app.show_activity_bar {
+    let activity_width: u16 = if detached || app.zen_mode || !app.show_activity_bar {
         0
     } else {
         6
@@ -476,9 +477,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         .split(middle_area);
 
     let activity_area = activity_layout[0];
-    let main_area = crate::ui_performance_details::reserve_dock(app, activity_layout[1]);
+    let main_area = if detached {
+        activity_layout[1]
+    } else {
+        crate::ui_performance_details::reserve_dock(app, activity_layout[1])
+    };
 
-    if !app.zen_mode && app.show_activity_bar {
+    if !detached && !app.zen_mode && app.show_activity_bar {
         app.activity_bar_area = Some(activity_area);
         draw_static_chrome(f, app, activity_area, ChromeRegion::Activity);
         if activity_area.width > 0 {
@@ -497,7 +502,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
 
     // Main layout: body + optional panel
-    let panel_height = if app.show_panel {
+    let panel_height = if !detached && app.show_panel {
         if app.panel_chrome.maximized { main_area.height.saturating_sub(2) } else { responsive_panel_height(main_area.height, app.panel_height) }
     } else {
         0
@@ -513,7 +518,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         .split(main_area);
 
     let body_area = outer[0];
-    let (body_area, chat_area) = if app.chat.visible && app.chat.layout.dock_visible && !app.zen_mode
+    let (body_area, chat_area) = if !detached && app.chat.visible && app.chat.layout.dock_visible && !app.zen_mode
         && (body_area.width >= 90 || app.active_pane == crate::app::ActivePane::Chat) {
         let width = if body_area.width < 90 { body_area.width } else { app.chat.width.min(body_area.width.saturating_sub(36)).max(36) };
         let split = Layout::default().direction(Direction::Horizontal)
@@ -524,7 +529,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let panel_area = outer[2];
 
     app.workbench_body_area = Some(body_area);
-    let terminal_sidebar_available = !app.zen_mode
+    let terminal_sidebar_available = !detached && !app.zen_mode
         && app.terminal_sidebar_revealed
         && app.has_terminal_in_dock(TerminalDock::Right)
         && body_area.width > 1;
@@ -541,7 +546,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     };
 
     // Body: sidebar + editor section
-    app.sidebar_auto_hide.edge = (!workbench_area.is_empty()).then(|| Rect::new(
+    app.sidebar_auto_hide.edge = (!detached && !workbench_area.is_empty()).then(|| Rect::new(
         if app.sidebar_right { workbench_area.right() - 1 } else { middle_area.x },
         workbench_area.y, 1, workbench_area.height,
     ));
@@ -676,7 +681,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         crate::ui_panels::invalidate_layout(app);
     }
 
-    if !app.zen_mode && app.show_status_bar {
+    if !detached && !app.zen_mode && app.show_status_bar {
         app.status_bar_area = Some(status_area);
         ui_panels::draw_status_bar(f, app, status_area);
     } else {
@@ -684,7 +689,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         app.status_bar_items.clear();
     }
 
-    crate::ui_performance_details::draw_docked(f, app);
+    if !detached { crate::ui_performance_details::draw_docked(f, app); }
     crate::ui_file_deletion::draw(f, app);
 
     if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Search {

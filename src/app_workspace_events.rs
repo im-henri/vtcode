@@ -10,7 +10,7 @@ impl App {
     ) -> bool {
         let mut has_visual_changes = false;
         if root != self.explorer.root { return false; }
-        if !self.workspace_visible {
+        if !self.workspace_visible && !self.has_detached_windows() {
             self.workspace_observation.pending.merge(changes, structure_changed, rescan, git_metadata_changed);
             return false;
         }

@@ -315,6 +315,21 @@ allows it, including VTCode's built-in terminal. Use your terminal's **Paste**
 shortcut for text copied in other applications; VTCode also remembers copied and
 pasted text across editor tabs without needing a remote desktop clipboard.
 
+### Detached tabs
+
+On Windows Terminal and X11 desktops, drag an editor tab outside its terminal
+window to open it in a separate terminal. Drop another tab onto that window to
+add it, or drag a tab onto the main window to return it. You can open as many
+detached windows as your desktop can host.
+
+Detached windows show the tab strip and editor panes. They share the same
+workspace, so unsaved edits, undo history, and terminal sessions travel with
+their tabs. Closing a detached terminal returns its tabs to the main window.
+
+Right-click a tab and choose **Move to New Window** or **Move to Window…**.
+Both commands are also in the Command Palette. Use these commands on Wayland
+or in terminals that report mouse coordinates only within their own viewport.
+
 ## VTComplete
 
 VTComplete provides word suggestions from the active editor buffer, including

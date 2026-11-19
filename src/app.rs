@@ -399,6 +399,8 @@ pub(crate) struct App {
     pub(crate) closed_file_views: rustc_hash::FxHashMap<PathBuf, crate::editor_view_state::ViewState>,
     pub dragging_tab: Option<usize>,
     pub dragging_tab_source_group: Option<usize>,
+    pub(crate) tab_window_request: Option<crate::tab_windows::Request>,
+    pub(crate) tab_window_document_changed: bool,
     pub dragging_terminal_tab: Option<usize>,
     pub dragging_explorer_path: Option<PathBuf>,
     pub drag_start_pos: Option<(u16, u16)>,
@@ -1430,6 +1432,8 @@ impl App {
             closed_file_views: Default::default(),
             dragging_tab: None,
             dragging_tab_source_group: None,
+            tab_window_request: None,
+            tab_window_document_changed: false,
             dragging_terminal_tab: None,
             dragging_explorer_path: None,
             drag_start_pos: None,
@@ -4750,6 +4754,7 @@ impl App {
         let (source, after) = tail.split_first_mut().unwrap();
         let identity = source.editor.save_identity;
         let path = source.editor.file_path.as_deref();
+        let mut shared_view_changed = false;
         for tab in before
             .iter_mut()
             .chain(after)
@@ -4761,6 +4766,7 @@ impl App {
                         && path.is_some_and(|p| tab.editor.file_path.as_deref() == Some(p))))
             {
                 tab.editor.copy_document_from(&source.editor);
+                shared_view_changed = true;
             }
         }
         self.desks.sync_stamp = Some(crate::app_desks::DocumentStamp::capture(
@@ -4768,6 +4774,7 @@ impl App {
             self.tabs.len(),
             self.groups.len(),
         ));
+        self.tab_window_document_changed |= shared_view_changed && self.has_detached_windows();
     }
 
     /// Execute rename symbol: replace all whole-word occurrences in current file

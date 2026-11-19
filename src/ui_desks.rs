@@ -21,6 +21,7 @@ pub(crate) enum Mode {
     Group(u64),
     AddGroup,
     Move { ids: Vec<u64>, copy: bool },
+    Window { view: u64 },
     Close,
 }
 #[derive(Clone)]
@@ -41,6 +42,8 @@ enum Action {
     Move(u64),
     MoveNew,
     MoveGroup(u64),
+    Window(crate::tab_windows::WindowId),
+    NewWindow,
     ConfirmClose,
     Cancel,
 }
@@ -110,7 +113,7 @@ fn host_area(app: &App) -> Option<Rect> {
 }
 
 pub(crate) fn controls(app: &App, area: Rect, group: usize) -> (Rect, Rect, u16) {
-    if group != app.desks.host || area.width < 4 || area.height == 0 {
+    if group != app.desks.host || area.width < 4 || area.height == 0 || app.detached_window_id().is_some() {
         return (Rect::default(), Rect::default(), 0);
     }
     if app.desk_count() <= 1 {
@@ -176,7 +179,7 @@ fn entries(app: &App, label_width: usize) -> Vec<(String, Action)> {
         app.desks
             .items
             .iter()
-            .filter(|d| !d.closed && d.name.to_lowercase().contains(&query))
+            .filter(|d| !d.closed && d.window.is_none() && d.name.to_lowercase().contains(&query))
     };
     match popup.mode.as_ref() {
         Some(Mode::Switch) => desks()
@@ -279,6 +282,13 @@ fn entries(app: &App, label_width: usize) -> Vec<(String, Action)> {
             .map(|d| (d.name.clone(), Action::Move(d.id)))
             .chain([("+ New desk…".into(), Action::MoveNew)])
             .collect(),
+        Some(Mode::Window { view }) => std::iter::once(crate::tab_windows::MAIN_WINDOW)
+            .chain(app.desks.items.iter().filter_map(|desk| desk.window))
+            .filter(|&window| Some(window) != app.tab_window(*view))
+            .map(|window| (app.window_name(window), Action::Window(window)))
+            .chain([("New Window".into(), Action::NewWindow)])
+            .filter(|(label, _)| label.to_lowercase().contains(&query))
+            .collect(),
         Some(Mode::Close) => vec![
             ("Cancel".into(), Action::Cancel),
             ("Close desk".into(), Action::ConfirmClose),
@@ -368,6 +378,18 @@ fn activate(app: &mut App, action: Action) {
                 app.move_tabs_to_desk(target, copy, &ids);
                 app.switch_desk(target);
             }
+        }
+        Action::Window(window) => {
+            if let Some(Mode::Window { view }) = app.desks.popup.mode {
+                app.tab_window_request = Some(crate::tab_windows::Request::Move { view, window });
+            }
+            app.desks.popup = Default::default();
+        }
+        Action::NewWindow => {
+            if let Some(Mode::Window { view }) = app.desks.popup.mode {
+                app.tab_window_request = Some(crate::tab_windows::Request::Open { view, point: None });
+            }
+            app.desks.popup = Default::default();
         }
         Action::ConfirmClose => app.close_desk(),
         Action::Cancel => app.desks.popup = Default::default(),
@@ -794,6 +816,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         Mode::AddGroup => "Add to Group",
         Mode::Move { copy: true, .. } => "Also Open in Desk",
         Mode::Move { .. } => "Move to Desk",
+        Mode::Window { .. } => "Move Tab to Window",
         Mode::Close => "Close Desk?",
     };
     let placeholder = match mode {
@@ -886,6 +909,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
 }
 
 pub(crate) fn command(app: &mut App, id: &str) -> bool {
+    if app.detached_window_id().is_some() && id.starts_with("desk_") {
+        return true;
+    }
     match id {
         "desk_new" => open(app, Mode::New),
         "desk_switch" => open(app, Mode::Switch),

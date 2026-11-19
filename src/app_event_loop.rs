@@ -292,7 +292,6 @@ impl TerminalEventPump {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn from_receiver(receiver: std::sync::mpsc::Receiver<io::Result<Event>>) -> Self {
         #[cfg(windows)]
         let receiver = receiver.into();
@@ -301,6 +300,19 @@ impl TerminalEventPump {
             #[cfg(windows)]
             windows_mouse: None,
         }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn poll_native_mouse(&mut self, enabled: bool) {
+        if let Some(input) = &mut self.windows_mouse {
+            input.poll_ready();
+            input.focus.set_enabled(enabled);
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn desktop_tracker(&self) -> Option<&crate::tab_windows::DesktopTracker> {
+        self.windows_mouse.as_ref().map(|input| &input.focus.tab_drag)
     }
 
     /// Deliver keys typed during startup before input received afterward.
@@ -3759,11 +3771,13 @@ fn note_user_activity(app: &mut App) {
 pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    mut event_pump: TerminalEventPump,
+    mut main_events: TerminalEventPump,
     mut startup_timings: Option<crate::startup::Timings>,
 ) -> io::Result<()> {
     use crate::performance::diagnostics::UiPhase;
     let ui_wake = app.background.wake_handle();
+    let mut windows = crate::tab_windows::Windows::new(app);
+    let mut deferred_window_event = None;
     let mut last_revealed_tab: Option<usize> = None;
     let mut last_revealed_path: Option<PathBuf> = None;
     let mut last_caret_state = capture_caret_state(app);
@@ -3800,6 +3814,23 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             periodic_disk_paths_cache = PeriodicDiskPaths::default();
             selection_drag = None;
         }
+        #[cfg(windows)]
+        main_events.poll_native_mouse(app.mouse_back_forward_to_navigate);
+        let previous_window = windows.active();
+        if windows.poll_drag(app, &main_events, false) | windows.poll(app) {
+            needs_redraw = true;
+            input_redraw = true;
+            unfocused_redraw_pending = true;
+        }
+        if previous_window != windows.active() {
+            selection_drag = None;
+            last_caret_state = capture_caret_state(app);
+            last_title_key = None;
+            last_revealed_tab = None;
+            last_revealed_path = None;
+            last_active_view = None;
+            periodic_disk_paths_cache = PeriodicDiskPaths::default();
+        }
         if app.terminal_has_focus {
             app.wheel_scroll.get_or_insert_with(Default::default);
         }
@@ -3810,13 +3841,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // arrive after its queue was polled but before we reach the wait below.
         // Taking a fresh snapshot there would forget that work and sleep until
         // an unrelated event or cosmetic timer wakes us again.
-        if (input_redraw && needs_redraw) || event_pump.has_pending_event() {
+        if (input_redraw && needs_redraw) || windows.active_pump(&mut main_events).has_pending_event() {
             app.vtcomplete_worker.activity().note_input();
-        }
-        #[cfg(windows)]
-        if let Some(input) = &mut event_pump.windows_mouse {
-            input.poll_ready();
-            input.focus.set_enabled(app.mouse_back_forward_to_navigate);
         }
         let current_caret_state = capture_caret_state(app);
         crate::app_explorer_hover::poll(app, std::time::Instant::now());
@@ -3856,16 +3882,19 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         while let Some(service) = service_scheduler.next(
             &mut service_turn,
             std::time::Instant::now(),
-            (input_redraw && needs_redraw) || !app.macro_replay_queue.is_empty() || event_pump.has_pending_event(),
+            (input_redraw && needs_redraw) || !app.macro_replay_queue.is_empty()
+                || windows.active_pump(&mut main_events).has_pending_event(),
         ) {
             use crate::ui_work::Service;
             let service_started = std::time::Instant::now();
-            let changed = app.service_workspaces_until(service, service_turn.deadline, || !event_pump.has_pending_event());
+            let changed = app.service_workspaces_until(service, service_turn.deadline,
+                || !windows.active_pump(&mut main_events).has_pending_event());
             if app.workspace_service_pending(service) {
                 service_scheduler.defer_last_service(&mut service_turn, observed_wake);
             }
             needs_redraw |= changed;
-            if matches!(service, Service::Terminals | Service::Agents) {
+            if changed { windows.invalidate_background(); }
+            if matches!(service, Service::Terminals | Service::Agents) || !windows.is_main() {
                 unfocused_redraw_pending |= changed;
             }
             if service == Service::Agents { agent_changed = changed; }
@@ -3913,17 +3942,18 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let cosmetic_allowed = app.terminal_has_focus
             && (needs_redraw
                 || !app.animation_settings.any_enabled()
-                || (app.macro_replay_queue.is_empty() && !event_pump.has_pending_event()));
+                || (app.macro_replay_queue.is_empty() && !windows.active_pump(&mut main_events).has_pending_event()));
         let animation_redraw = cosmetic_allowed && app
                 .animations
                 .advance_frame(&app.animation_settings, std::time::Instant::now());
         let loading_allowed = app.loading.active() && app.terminal_has_focus && (needs_redraw
-            || (app.macro_replay_queue.is_empty() && !event_pump.has_pending_event()));
+            || (app.macro_replay_queue.is_empty() && !windows.active_pump(&mut main_events).has_pending_event()));
         let loading_redraw = loading_allowed && app.loading.advance(
             app.terminal_has_focus, std::time::Instant::now(),
         );
         let copy_redraw = app.terminal_has_focus
-            && (needs_redraw || (app.macro_replay_queue.is_empty() && !event_pump.has_pending_event()))
+            && (needs_redraw || (app.macro_replay_queue.is_empty()
+                && !windows.active_pump(&mut main_events).has_pending_event()))
             && app.advance_copy_animation(std::time::Instant::now());
         let animation_redraw = animation_redraw || loading_redraw || copy_redraw;
         if app.sync_markdown_preview_state() {
@@ -3951,6 +3981,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         if !unfocused_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
             needs_redraw = false;
         }
+        needs_redraw |= windows.background_draw_ready();
 
         let activity_now = std::time::Instant::now();
         app.background.refresh_activity(activity_now);
@@ -3964,8 +3995,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
         let now = std::time::Instant::now();
         let background_frame_wait = app.animations.background_frame_wait(now);
-        let can_draw = input_redraw
-            || (!event_pump.has_pending_event() && background_frame_wait.is_zero());
+        let can_draw = windows.ready_to_draw() && (input_redraw
+            || (!windows.active_pump(&mut main_events).has_pending_event() && background_frame_wait.is_zero()));
         // Advance the actual viewport only when it can be painted. Clicks
         // and selection hit tests must still see the last presented rows.
         if can_draw && app.terminal_has_focus {
@@ -3985,7 +4016,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
 
             // Update terminal title with current file name (only when changed)
-            {
+            if windows.is_main() {
                 let title_key = app
                     .tabs.get(app.active_tab)
                     .map_or((u64::MAX, false), |tab| (tab.editor.navigation_id, tab.has_unsaved_changes()));
@@ -4009,7 +4040,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
 
             // Auto-reveal active file in explorer when tab changes
-            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer {
+            if windows.is_main() && app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer {
                 let tab_changed = Some(app.active_tab) != last_revealed_tab;
                 let current_path = app.tabs.get(app.active_tab)
                     .and_then(|tab| app.diff_tabs.explorer_auto_reveal_path(tab));
@@ -4028,7 +4059,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             pointer_event_loop_latency_tests::before_paint(app);
             if input_redraw && selection_drag.is_some() && !reference_input_batches() {
                 let started = std::time::Instant::now();
-                if refresh_selection_before_paint(app, &mut event_pump, &mut selection_drag) {
+                if refresh_selection_before_paint(app, windows.active_pump(&mut main_events), &mut selection_drag) {
                     last_caret_state = capture_caret_state(app);
                     // Cursor-dependent analysis may have been queued for the
                     // old position. Reconcile it using the normal cache path.
@@ -4042,13 +4073,20 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             let render_started = std::time::Instant::now();
             app.background.activity.ui.record(UiPhase::Preparation, render_started.saturating_duration_since(frame_started), render_started);
             let mut painting_elapsed = Duration::ZERO;
-            terminal.draw(|f| {
+            windows.paint_background(app);
+            if windows.is_main() {
+                terminal.draw(|f| {
+                    let painting_started = std::time::Instant::now();
+                    ui::draw(f, app);
+                    #[cfg(all(test, windows))]
+                    pointer_event_loop_latency_tests::paint_marker(f, app);
+                    painting_elapsed = painting_started.elapsed();
+                })?;
+            } else {
                 let painting_started = std::time::Instant::now();
-                ui::draw(f, app);
-                #[cfg(all(test, windows))]
-                pointer_event_loop_latency_tests::paint_marker(f, app);
+                windows.paint_active(app);
                 painting_elapsed = painting_started.elapsed();
-            })?;
+            }
             let render_finished = std::time::Instant::now();
             #[cfg(test)]
             if pointer_event_loop_latency_tests::presented(app) { return Ok(()); }
@@ -4294,18 +4332,26 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             input_priority.take();
         }
         let replaying_macro = !app.macro_replay_queue.is_empty();
+        if deferred_window_event.is_some() && needs_redraw && !windows.ready_to_draw() {
+            // Do not hit-test the old window while its replacement frame is
+            // waiting for the detached terminal's output pipe.
+            ui_wake.wait_for_change(observed_wake, None);
+            continue;
+        }
         let key_event: Option<crossterm::event::KeyEvent> = if !replaying_macro {
             // Every asynchronous producer signals `ui_wake`. With no queued
             // result, input, animation, or genuine deadline, this wait blocks
             // rather than periodically walking the application state.
-            let wait = next_event_wait_for_redraw(app, needs_redraw, input_redraw, !periodic_disk_paths.is_empty());
-            let mut next_event = event_pump.try_recv()?;
+            let wait = next_event_wait_for_redraw(app, needs_redraw && windows.ready_to_draw(),
+                input_redraw, !periodic_disk_paths.is_empty());
+            let mut next_event = deferred_window_event.take();
+            if next_event.is_none() { next_event = windows.next_event(&mut main_events)?; }
             if next_event.is_none() && !service_turn.deferred() && !app.workspaces_have_pending_results() {
                 ui_wake.wait_for_change(observed_wake, wait);
-                next_event = event_pump.try_recv()?;
+                next_event = windows.next_event(&mut main_events)?;
             }
             if next_event.is_none() {
-                if advance_editor_selection_scroll(app, &mut event_pump, std::time::Instant::now()) {
+                if advance_editor_selection_scroll(app, windows.active_pump(&mut main_events), std::time::Instant::now()) {
                     needs_redraw = true;
                     input_redraw = true;
                 }
@@ -4335,12 +4381,37 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 continue;
             }
 
-            let next_event = next_event.expect("terminal event checked above");
+            let (source, next_event) = next_event.expect("terminal event checked above");
+            let old_window = windows.active();
+            if !windows.accept_focus(app, source, &next_event) {
+                continue;
+            }
+            if source != old_window {
+                // A mouse press must hit the new terminal's layout, never the
+                // preceding window's rectangles.
+                deferred_window_event = Some((source, next_event));
+                needs_redraw = true;
+                input_redraw = true;
+                unfocused_redraw_pending = true;
+                selection_drag = None;
+                last_active_view = None;
+                last_caret_state = capture_caret_state(app);
+                last_title_key = None;
+                last_revealed_tab = None;
+                last_revealed_path = None;
+                periodic_disk_paths_cache = PeriodicDiskPaths::default();
+                continue;
+            }
             selection_drag = None;
             if !matches!(next_event, Event::Mouse(_)) {
                 app.editor_selection_scroll_at = None;
             }
-            let resized = crate::terminal_output::apply_resize(terminal, &next_event)?.is_some();
+            let resized = if windows.is_main() {
+                crate::terminal_output::apply_resize(terminal, &next_event)?.is_some()
+            } else {
+                windows.resize_active(&next_event);
+                true
+            };
             if matches!(next_event, Event::Resize(..)) {
                 app.cancel_wheel_scroll();
                 app.minimap_resize.cancel();
@@ -4367,6 +4438,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
             match next_event {
                 Event::Key(key) => {
+                    windows.cancel_drag(app, key);
                     needs_redraw |= app.update_link_hover_key(key);
                     if key.kind == KeyEventKind::Release || matches!(key.code, KeyCode::Modifier(_)) {
                         continue;
@@ -4374,7 +4446,15 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     Some(key)
                 }
                 Event::Mouse(mouse) => {
-                    let changed = handle_mouse_input(app, &mut event_pump, mouse);
+                    if mouse.kind == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left)
+                        && windows.poll_drag(app, &main_events, true)
+                    {
+                        needs_redraw = true;
+                        unfocused_redraw_pending = true;
+                        continue;
+                    }
+                    let changed = handle_mouse_input(app, windows.active_pump(&mut main_events), mouse);
+                    windows.after_mouse(app, &main_events, mouse);
                     let mouse = crossterm::event::MouseEvent {
                         column: app.mouse_col, row: app.mouse_row, ..mouse
                     };
@@ -4462,7 +4542,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let quit = if replaying_macro {
             input_keyboard::handle_keyboard_event(app, key)
         } else {
-            handle_keyboard_input(app, &mut event_pump, key)
+            handle_keyboard_input(app, windows.active_pump(&mut main_events), key)
         };
         if quit {
             return Ok(());

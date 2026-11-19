@@ -121,6 +121,8 @@ mod app_settings_navigation;
 mod app_sidebar;
 mod app_tabs;
 mod app_tab_close;
+mod app_tab_windows;
+mod tab_windows;
 mod tab_collection;
 mod app_wrap;
 mod app_terminal;
@@ -419,6 +421,7 @@ fn run_main() -> io::Result<()> {
             return Ok(());
         }
         cli::Command::Headless(root) => return remote::service::run(&root),
+        cli::Command::DetachedWindow(endpoint) => return tab_windows::run_frontend(endpoint),
         #[cfg(windows)]
         cli::Command::ConsoleHost(args) => {
             std::process::exit(remote::launch::run_host(&args)?);
@@ -458,29 +461,8 @@ fn run_main() -> io::Result<()> {
         default_panic(info);
     }));
 
-    #[cfg(windows)]
-    let console_input = windows_input::ConsoleInputMode::save()?;
-    let screen_cleanup = ScreenCleanup;
-    enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        // XTSHIFTESCAPE: ask supporting terminals to forward Shift gestures.
-        // Windows Terminal needs the focused native bridge in windows_mouse.
-        crossterm::style::Print("\x1b[>1s"),
-        EnableBracketedPaste,
-        EnableFocusChange
-    )?;
-    #[cfg(unix)]
-    let keyboard_protocol = unix_input::KeyboardProtocol::enable(&mut stdout)?;
-    // Mouse capture replaces the Windows input mode, so enable VT input last.
-    #[cfg(windows)]
-    {
-        console_input.use_alternate_screen_coordinates();
-        console_input.enable_virtual_terminal_input()?;
-    }
+    let screen = TerminalScreen::enter(&mut stdout)?;
     let backend = terminal_output::AnsiBackend::new(terminal_output::buffered_output(stdout));
     let mut terminal = terminal_output::event_driven_terminal(backend)?;
     startup_timings.mark("terminal_ready");
@@ -526,15 +508,53 @@ fn run_main() -> io::Result<()> {
     app.save_settings();
     app.finish_workspaces_on_shutdown();
 
-    #[cfg(unix)]
-    drop(keyboard_protocol);
-    drop(screen_cleanup);
+    drop(screen);
 
     if let Err(err) = res {
         eprintln!("Error: {err}");
     }
 
     Ok(())
+}
+
+struct TerminalScreen {
+    #[cfg(unix)]
+    _keyboard_protocol: unix_input::KeyboardProtocol,
+    _cleanup: ScreenCleanup,
+    #[cfg(windows)]
+    _console_input: windows_input::ConsoleInputMode,
+}
+
+impl TerminalScreen {
+    fn enter(stdout: &mut io::Stdout) -> io::Result<Self> {
+        #[cfg(windows)]
+        let console_input = windows_input::ConsoleInputMode::save()?;
+        let cleanup = ScreenCleanup;
+        enable_raw_mode()?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            crossterm::style::Print("\x1b[>1s"), // XTSHIFTESCAPE
+            EnableBracketedPaste,
+            EnableFocusChange
+        )?;
+        #[cfg(unix)]
+        let keyboard_protocol = unix_input::KeyboardProtocol::enable(stdout)?;
+        // Mouse capture replaces the Windows console input mode.
+        #[cfg(windows)]
+        {
+            console_input.use_alternate_screen_coordinates();
+            console_input.enable_virtual_terminal_input()?;
+        }
+        Ok(Self {
+            #[cfg(unix)]
+            _keyboard_protocol: keyboard_protocol,
+            _cleanup: cleanup,
+            #[cfg(windows)]
+            _console_input: console_input,
+        })
+    }
 }
 
 // Startup can now be cancelled before an App exists. Restore the terminal on

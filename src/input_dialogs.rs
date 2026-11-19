@@ -237,6 +237,7 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                     return Some(false);
                 }
                 match *cmd {
+                    "tab_new_window" | "tab_move_window" => app.request_tab_window(tab, *cmd == "tab_move_window"),
                     "tab_text_color" => app.open_tab_text_color_menu(tab),
                     "tab_rename_terminal" => app.rename_context_terminal(),
                     "tab_find_terminal" => {

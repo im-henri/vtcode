@@ -1081,7 +1081,7 @@ fn draw_divider(f: &mut Frame, area: Rect, direction: &Direction, style: Style) 
 fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, show_chrome: bool) {
     if group_id == app.active_group {
         let current_tab_kind = app.tabs.get(app.active_tab).map(|tab| tab.kind);
-        let show_tabs = show_chrome && app.show_tab_bar;
+        let show_tabs = app.detached_window_id().is_some() || (show_chrome && app.show_tab_bar);
         let show_breadcrumbs = show_chrome
             && app.show_breadcrumbs
             && matches!(
@@ -1253,6 +1253,48 @@ fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode,
     app.split_layout_cache = layout;
 }
 
+pub(crate) fn draw_background_window(
+    f: &mut Frame,
+    app: &mut App,
+    window: crate::tab_windows::WindowId,
+) {
+    let Some(layout) = app.window_desk(window).and_then(|desk| desk.layout.as_ref()) else {
+        return;
+    };
+    let area = f.area();
+    let mut panes = SplitPaneLayout::default();
+    let mut dividers = Vec::new();
+    if let Some(tree) = &layout.tree {
+        panes.collect(tree, area, &mut Vec::new(), &mut dividers);
+    } else {
+        panes.panes.push((layout.active_group, area));
+    }
+
+    let viewport = app.viewport;
+    let placements = std::mem::take(&mut app.chat.layout.placements);
+    let surface_count = app.terminal_surfaces.len();
+    f.buffer_mut().set_style(area, Style::default().bg(app.colors.bg_editor));
+    for (group, pane) in panes.panes {
+        draw_split_editor_for_group(f, app, pane, group);
+    }
+    for (rect, _, _, direction, _) in dividers {
+        let direction = match direction {
+            crate::app::SplitDirection::Horizontal => Direction::Horizontal,
+            crate::app::SplitDirection::Vertical => Direction::Vertical,
+        };
+        let background = app.colors.bg_editor;
+        let foreground = app.colors.ui.editor_split_borders[usize::from(direction == Direction::Vertical)]
+            .border(background).unwrap_or(background);
+        draw_divider(f, rect, &direction, Style::default().fg(foreground).bg(background));
+    }
+    if !app.chat.layout.placements.is_empty() {
+        crate::ui_chat::draw_surfaces(f, app, None);
+    }
+    app.chat.layout.placements = placements;
+    app.terminal_surfaces.truncate(surface_count);
+    app.viewport = viewport;
+}
+
 pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
     app.remote_targets.connection_area = Rect::default();
     app.remote_targets.connection_hits.clear();
@@ -1290,7 +1332,7 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
     app.diff_layout_toggle_area = None;
 
     // In split mode, each pane draws its own tab bar — skip top-level chrome
-    let show_tabs = show_chrome && !is_split && app.show_tab_bar;
+    let show_tabs = !is_split && (app.detached_window_id().is_some() || (show_chrome && app.show_tab_bar));
     let tab_height = u16::from(show_tabs);
     let show_breadcrumbs = show_chrome
         && !is_split

@@ -59,7 +59,7 @@ fn spawn_launcher(command: &mut Command) -> io::Result<Child> {
         .spawn()
 }
 
-fn launch(command: &mut Command) -> io::Result<()> {
+pub(crate) fn launch(command: &mut Command) -> io::Result<()> {
     let mut child = spawn_launcher(command)?;
     std::thread::spawn(move || {
         let _ = child.wait();

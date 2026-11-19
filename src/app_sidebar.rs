@@ -13,7 +13,7 @@ pub(crate) struct AutoHide {
 
 impl App {
     pub(crate) fn sidebar_is_visible(&self) -> bool {
-        self.show_explorer
+        self.detached_window_id().is_none() && self.show_explorer
             && (!self.sidebar_auto_hide.enabled
                 || (!self.zen_mode
                     && (self.sidebar_auto_hide.revealed

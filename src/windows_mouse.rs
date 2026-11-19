@@ -36,6 +36,7 @@ mod recovery;
 
 #[derive(Default)]
 pub(crate) struct MouseFocus {
+    pub(crate) tab_drag: crate::tab_windows::DesktopTracker,
     enabled: AtomicBool,
     host: AtomicIsize,
     geometry: geometry::Tracker,
@@ -265,7 +266,7 @@ fn foreground_terminal() -> isize {
     terminal_window(unsafe { GetForegroundWindow() as isize })
 }
 
-fn terminal_window(window: isize) -> isize {
+pub(crate) fn terminal_window(window: isize) -> isize {
     // SAFETY: this reads the foreground HWND and copies its class name into a
     // fixed writable buffer; no window is modified or owned by this function.
     unsafe {
@@ -586,7 +587,7 @@ impl HookContext {
     }
 }
 
-fn with_physical_coordinates<T>(read: impl FnOnce() -> T) -> T {
+pub(crate) fn with_physical_coordinates<T>(read: impl FnOnce() -> T) -> T {
     struct RestoreDpi(DPI_AWARENESS_CONTEXT);
     impl Drop for RestoreDpi {
         fn drop(&mut self) {
@@ -617,6 +618,7 @@ unsafe extern "system" fn mouse_hook(code: i32, message: usize, data: isize) -> 
                 let Some(context) = context else { return false };
                 // SAFETY: this only reads the foreground window's handle.
                 let foreground = unsafe { GetForegroundWindow() as isize };
+                context.focus.tab_drag.observe_windows(message as u32, event.pt, &context.wake);
                 if matches!(message as u32, WM_XBUTTONDOWN | WM_XBUTTONUP) {
                     context.handle_event(message as u32, event, foreground)
                 } else {

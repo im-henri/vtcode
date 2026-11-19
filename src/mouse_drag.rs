@@ -231,7 +231,7 @@ pub(crate) fn update_tab_drop_target(app: &mut App, col: u16, row: u16) {
     app.tab_drop_zone = target.and_then(|(_, zone)| zone);
 }
 
-fn dragged_editor_tab(app: &App) -> Option<&crate::app::Tab> {
+pub(crate) fn dragged_editor_tab(app: &App) -> Option<&crate::app::Tab> {
     let tab_index = app.dragging_tab?;
     let source_group = app.dragging_tab_source_group.unwrap_or(app.active_group);
     if source_group == app.active_group {
@@ -251,6 +251,7 @@ fn dragged_editor_terminal_index(app: &App) -> Option<usize> {
 }
 
 fn terminal_dock_target_at(app: &App, col: u16, row: u16) -> Option<TerminalDock> {
+    if app.detached_window_id().is_some() { return None; }
     let body = app.workbench_body_area?;
     if !rect_contains(body, col, row) {
         return None;
@@ -941,6 +942,14 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
         app.sc_graph_click_start = None;
     }
     if app.drag_has_moved {
+        if !app.viewport_area.is_empty()
+            && !app.viewport_area.contains((col, row).into())
+            && let Some(view) = dragged_editor_tab(app).map(|tab| tab.editor.navigation_id)
+        {
+            app.tab_window_request = Some(crate::tab_windows::Request::Open { view, point: None });
+            app.clear_drag_states();
+            return;
+        }
         // Mouse-up may arrive at a different position from the last drag event.
         // Resolve the destination before any transfer can compact group indices.
         let editor_target = tab_drop_target_at(app, col, row);

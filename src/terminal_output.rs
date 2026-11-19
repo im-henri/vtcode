@@ -113,6 +113,16 @@ impl<B: Backend> Backend for CursorBackend<B> {
     }
 }
 
+impl CursorBackend<AnsiBackend<Vec<u8>>> {
+    pub(crate) fn take_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.backend.writer)
+    }
+
+    pub(crate) fn for_window() -> Self {
+        Self::new(AnsiBackend { writer: Vec::new(), synchronized: false, force_ansi: true })
+    }
+}
+
 /// A Crossterm-compatible backend that encodes frame diffs compactly.
 ///
 /// Ratatui's Crossterm backend resends both colors whenever either changes,
@@ -130,12 +140,15 @@ impl<B: Backend> Backend for CursorBackend<B> {
 pub(crate) struct AnsiBackend<W: Write> {
     writer: W,
     synchronized: bool,
+    force_ansi: bool,
 }
 
 const BEGIN_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026h";
 const END_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026l";
 impl<W: Write> AnsiBackend<W> {
-    pub(crate) fn new(writer: W) -> Self { Self { writer, synchronized: false } }
+    pub(crate) fn new(writer: W) -> Self { Self { writer, synchronized: false, force_ansi: false } }
+
+    fn uses_ansi(&self) -> bool { self.force_ansi || ansi_supported() }
 
     fn begin_update(&mut self) -> std::io::Result<()> {
         if !self.synchronized {
@@ -156,6 +169,27 @@ fn ansi_supported() -> bool {
     { crossterm::ansi_support::supports_ansi() }
     #[cfg(not(windows))]
     { true }
+}
+
+pub(crate) fn queue_ansi(writer: &mut impl Write, command: impl crossterm::Command) -> std::io::Result<()> {
+    use crossterm::QueueableCommand;
+    #[cfg(windows)]
+    struct Ansi<C>(C);
+    #[cfg(windows)]
+    impl<C: crossterm::Command> crossterm::Command for Ansi<C> {
+        fn write_ansi(&self, out: &mut impl std::fmt::Write) -> std::fmt::Result {
+            self.0.write_ansi(out)
+        }
+
+        fn is_ansi_code_supported(&self) -> bool { true }
+
+        fn execute_winapi(&self) -> std::io::Result<()> {
+            unreachable!("this command is encoded for a different terminal")
+        }
+    }
+    #[cfg(windows)]
+    let command = Ansi(command);
+    writer.queue(command).map(|_| ())
 }
 
 fn push_decimal(out: &mut [u8; 32], len: &mut usize, value: u16) {
@@ -207,30 +241,31 @@ fn queue_modifier_diff(
     from: ratatui::style::Modifier,
     to: ratatui::style::Modifier,
 ) -> std::io::Result<()> {
-    use crossterm::{queue, style::{Attribute, SetAttribute}};
+    use crossterm::style::{Attribute, SetAttribute};
     use ratatui::style::Modifier;
+    let mut attribute = |value| queue_ansi(writer, SetAttribute(value));
     let removed = from - to;
-    if removed.contains(Modifier::REVERSED) { queue!(writer, SetAttribute(Attribute::NoReverse))?; }
+    if removed.contains(Modifier::REVERSED) { attribute(Attribute::NoReverse)?; }
     if removed.intersects(Modifier::BOLD | Modifier::DIM) {
-        queue!(writer, SetAttribute(Attribute::NormalIntensity))?;
-        if to.contains(Modifier::DIM) { queue!(writer, SetAttribute(Attribute::Dim))?; }
-        if to.contains(Modifier::BOLD) { queue!(writer, SetAttribute(Attribute::Bold))?; }
+        attribute(Attribute::NormalIntensity)?;
+        if to.contains(Modifier::DIM) { attribute(Attribute::Dim)?; }
+        if to.contains(Modifier::BOLD) { attribute(Attribute::Bold)?; }
     }
-    if removed.contains(Modifier::ITALIC) { queue!(writer, SetAttribute(Attribute::NoItalic))?; }
-    if removed.contains(Modifier::UNDERLINED) { queue!(writer, SetAttribute(Attribute::NoUnderline))?; }
-    if removed.contains(Modifier::CROSSED_OUT) { queue!(writer, SetAttribute(Attribute::NotCrossedOut))?; }
+    if removed.contains(Modifier::ITALIC) { attribute(Attribute::NoItalic)?; }
+    if removed.contains(Modifier::UNDERLINED) { attribute(Attribute::NoUnderline)?; }
+    if removed.contains(Modifier::CROSSED_OUT) { attribute(Attribute::NotCrossedOut)?; }
     if removed.intersects(Modifier::SLOW_BLINK | Modifier::RAPID_BLINK) {
-        queue!(writer, SetAttribute(Attribute::NoBlink))?;
+        attribute(Attribute::NoBlink)?;
     }
     let added = to - from;
-    if added.contains(Modifier::REVERSED) { queue!(writer, SetAttribute(Attribute::Reverse))?; }
-    if added.contains(Modifier::BOLD) { queue!(writer, SetAttribute(Attribute::Bold))?; }
-    if added.contains(Modifier::ITALIC) { queue!(writer, SetAttribute(Attribute::Italic))?; }
-    if added.contains(Modifier::UNDERLINED) { queue!(writer, SetAttribute(Attribute::Underlined))?; }
-    if added.contains(Modifier::DIM) { queue!(writer, SetAttribute(Attribute::Dim))?; }
-    if added.contains(Modifier::CROSSED_OUT) { queue!(writer, SetAttribute(Attribute::CrossedOut))?; }
-    if added.contains(Modifier::SLOW_BLINK) { queue!(writer, SetAttribute(Attribute::SlowBlink))?; }
-    if added.contains(Modifier::RAPID_BLINK) { queue!(writer, SetAttribute(Attribute::RapidBlink))?; }
+    if added.contains(Modifier::REVERSED) { attribute(Attribute::Reverse)?; }
+    if added.contains(Modifier::BOLD) { attribute(Attribute::Bold)?; }
+    if added.contains(Modifier::ITALIC) { attribute(Attribute::Italic)?; }
+    if added.contains(Modifier::UNDERLINED) { attribute(Attribute::Underlined)?; }
+    if added.contains(Modifier::DIM) { attribute(Attribute::Dim)?; }
+    if added.contains(Modifier::CROSSED_OUT) { attribute(Attribute::CrossedOut)?; }
+    if added.contains(Modifier::SLOW_BLINK) { attribute(Attribute::SlowBlink)?; }
+    if added.contains(Modifier::RAPID_BLINK) { attribute(Attribute::RapidBlink)?; }
     Ok(())
 }
 
@@ -239,10 +274,10 @@ impl<W: Write> Backend for AnsiBackend<W> {
 
     fn draw<'a, I>(&mut self, content: I) -> std::io::Result<()>
     where I: Iterator<Item = (u16, u16, &'a ratatui::buffer::Cell)> {
-        use crossterm::{queue, style::{Attribute, Colors, SetAttribute, SetColors, SetUnderlineColor}};
+        use crossterm::style::{Attribute, Colors, SetAttribute, SetColors, SetUnderlineColor};
         use ratatui::{backend::CrosstermBackend, style::{Color, Modifier}};
         use ratatui::backend::IntoCrossterm;
-        if !ansi_supported() {
+        if !self.uses_ansi() {
             return CrosstermBackend::new(&mut self.writer).draw(content);
         }
         let mut content = content.peekable();
@@ -268,12 +303,12 @@ impl<W: Write> Backend for AnsiBackend<W> {
             let foreground = (cell.fg != fg).then(|| cell.fg.into_crossterm());
             let background = (cell.bg != bg).then(|| cell.bg.into_crossterm());
             if foreground.is_some() || background.is_some() {
-                queue!(writer, SetColors(Colors { foreground, background }))?;
+                queue_ansi(writer, SetColors(Colors { foreground, background }))?;
                 fg = cell.fg;
                 bg = cell.bg;
             }
             if cell.underline_color != underline {
-                queue!(writer, SetUnderlineColor(cell.underline_color.into_crossterm()))?;
+                queue_ansi(writer, SetUnderlineColor(cell.underline_color.into_crossterm()))?;
                 underline = cell.underline_color;
             }
             let symbol = cell.symbol().as_bytes();
@@ -282,20 +317,22 @@ impl<W: Write> Backend for AnsiBackend<W> {
         }
         // Each frame starts from the default style; restore only what changed.
         if fg != Color::Reset || bg != Color::Reset {
-            queue!(writer, SetColors(Colors {
+            queue_ansi(writer, SetColors(Colors {
                 foreground: (fg != Color::Reset).then_some(crossterm::style::Color::Reset),
                 background: (bg != Color::Reset).then_some(crossterm::style::Color::Reset),
             }))?;
         }
-        if underline != Color::Reset { queue!(writer, SetUnderlineColor(crossterm::style::Color::Reset))?; }
-        if !modifier.is_empty() { queue!(writer, SetAttribute(Attribute::Reset))?; }
+        if underline != Color::Reset { queue_ansi(writer, SetUnderlineColor(crossterm::style::Color::Reset))?; }
+        if !modifier.is_empty() { queue_ansi(writer, SetAttribute(Attribute::Reset))?; }
         Ok(())
     }
     fn hide_cursor(&mut self) -> std::io::Result<()> {
-        crossterm::queue!(self.writer, crossterm::cursor::Hide)
+        if self.force_ansi { queue_ansi(&mut self.writer, crossterm::cursor::Hide) }
+        else { crossterm::queue!(self.writer, crossterm::cursor::Hide) }
     }
     fn show_cursor(&mut self) -> std::io::Result<()> {
-        crossterm::queue!(self.writer, crossterm::cursor::Show)
+        if self.force_ansi { queue_ansi(&mut self.writer, crossterm::cursor::Show) }
+        else { crossterm::queue!(self.writer, crossterm::cursor::Show) }
     }
     fn get_cursor_position(&mut self) -> std::io::Result<ratatui::layout::Position> {
         Write::flush(&mut self.writer)?;
@@ -303,7 +340,7 @@ impl<W: Write> Backend for AnsiBackend<W> {
     }
     fn set_cursor_position<P: Into<ratatui::layout::Position>>(&mut self, position: P) -> std::io::Result<()> {
         let position = position.into();
-        if !ansi_supported() {
+        if !self.uses_ansi() {
             return ratatui::backend::CrosstermBackend::new(&mut self.writer).set_cursor_position(position);
         }
         write_move(&mut self.writer, None, position.x, position.y)
@@ -314,7 +351,7 @@ impl<W: Write> Backend for AnsiBackend<W> {
     fn clear_region(&mut self, region: ratatui::backend::ClearType) -> std::io::Result<()> {
         use crossterm::terminal::{Clear, ClearType};
         use ratatui::backend::ClearType as Region;
-        if !ansi_supported() {
+        if !self.uses_ansi() {
             return ratatui::backend::CrosstermBackend::new(&mut self.writer).clear_region(region);
         }
         let clear = match region {
@@ -327,7 +364,7 @@ impl<W: Write> Backend for AnsiBackend<W> {
         // Ratatui invalidates the screen before it builds the resized frame.
         // Keep the erase in the same buffered, synchronized update as the paint.
         self.begin_update()?;
-        crossterm::queue!(self.writer, Clear(clear))
+        queue_ansi(&mut self.writer, Clear(clear))
     }
     fn append_lines(&mut self, count: u16) -> std::io::Result<()> {
         ratatui::backend::CrosstermBackend::new(&mut self.writer).append_lines(count)

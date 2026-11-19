@@ -20,6 +20,7 @@ impl App {
             "tab_group_edit" | "tab_group_remove" => self.tabs.get(self.tab_context_tab).is_none_or(|t| self.tab_group(t).is_none()),
             "duplicate_tab" => !self.can_duplicate_tab(self.tab_context_tab),
             "tab_text_color" => self.tabs.get(self.tab_context_tab).is_none(),
+            "tab_new_window" | "tab_move_window" => self.tabs.get(self.tab_context_tab).is_none(),
             "tab_select_compare" => self.tab_compare_path(self.tab_context_tab).is_none(),
             "tab_compare_selected" => self
                 .tab_compare_path(self.tab_context_tab)

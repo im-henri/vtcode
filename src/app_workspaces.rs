@@ -688,7 +688,9 @@ impl App {
         self.wheel_scroll = None;
         self.chat.background = true;
         self.idle_quiescent = true;
-        self.suspend_workspace_observation();
+        if !self.has_detached_windows() {
+            self.suspend_workspace_observation();
+        }
     }
 
     fn prepare_workspace_show(&mut self, focus: bool) {
@@ -784,7 +786,8 @@ impl App {
             redraw |= if index == 0 {
                 changed
             } else {
-                unread != app.workspace_activity.unread || (changed && registry.popup.open)
+                unread != app.workspace_activity.unread
+                    || (changed && (registry.popup.open || app.has_detached_windows()))
             };
             if visited + 1 < remaining && (Instant::now() >= deadline || !can_continue()) {
                 break;
@@ -1101,6 +1104,7 @@ impl App {
     }
 
     pub(crate) fn save_finished_workspace(&mut self) -> io::Result<()> {
+        self.return_all_detached_tabs();
         // The earlier backup is still needed. Finishing a workspace can skip
         // its layout save after the user has saved or discarded current edits.
         if self.incomplete_session_recovery.is_some() {

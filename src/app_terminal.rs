@@ -357,6 +357,14 @@ impl App {
         let mut exited = Vec::new();
         let mut completions = Vec::new();
         let count = self.terminals.len();
+        let detached_terminals: Vec<_> = if self.has_detached_windows() {
+            self.groups.iter().enumerate()
+                .filter(|(index, _)| self.group_in_detached_window(*index))
+                .filter_map(|(_, pane)| pane.tabs.get(pane.active_tab)?.terminal_idx)
+                .collect()
+        } else {
+            Vec::new()
+        };
         for visited in 0..count {
             let index = self.next_terminal_to_process % count;
             self.next_terminal_to_process = (index + 1) % count;
@@ -369,7 +377,7 @@ impl App {
                     processed_output = true;
                     needs_redraw |= self.terminal_surfaces.iter().any(|surface| {
                         surface.index == index && !surface.area.is_empty()
-                    }) || terminal.input_activity.visible();
+                    }) || detached_terminals.contains(&index) || terminal.input_activity.visible();
                 }
                 // The acknowledgement may arrive before this processing turn
                 // ever sampled the pending state. Clear a rendered spinner in

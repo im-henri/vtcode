@@ -81,6 +81,7 @@ impl App {
     }
 
     pub(crate) fn execute_palette_command(&mut self, id: &str) -> bool {
+        if self.detached_chrome_command(id) { return true; }
         self.copy_animation.clear();
         self.record_navigation();
         if matches!(id, "goto_last_edit" | "next_bookmark" | "prev_bookmark" | "next_diagnostic" | "prev_diagnostic" | "goto_bracket" | "next_diff_hunk" | "prev_diff_hunk") {
@@ -110,6 +111,10 @@ impl App {
     }
 
     fn execute_palette_command_inner(&mut self, id: &str) -> bool {
+        if matches!(id, "tab_new_window" | "tab_move_window") {
+            self.request_tab_window(self.active_tab, id == "tab_move_window");
+            return true;
+        }
         if !self.has_open_folder() {
             match id {
                 "new_folder" | "goto_workspace_symbol" => { crate::ui_workspaces::open_folder(self); return true; }

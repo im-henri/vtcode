@@ -262,6 +262,14 @@ pub(crate) fn field_changed(app: &mut App) {
     app.modal.overwrite = None;
 }
 
+pub(crate) fn dismiss_tab_dialog(app: &mut App) {
+    while let Some(kind @ (Kind::Close | Kind::SaveAs | Kind::Rename | Kind::Goto
+        | Kind::RenameTerminal)) = active(app)
+    {
+        dismiss(app, kind);
+    }
+}
+
 fn dismiss(app: &mut App, kind: Kind) {
     match kind {
         Kind::About => app.about_info = None,

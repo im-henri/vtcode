@@ -124,7 +124,7 @@ impl App {
         self.initialize_extensions();
     }
 
-    pub(super) fn suspend_workspace_observation(&mut self) {
+    pub(crate) fn suspend_workspace_observation(&mut self) {
         self.workspace_observation.file_checks.cancel();
         self.workspace_observation.file_checks = crate::background::CancellationToken::new();
         self.background.pause_file_watcher();

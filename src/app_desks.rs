@@ -38,6 +38,8 @@ pub(crate) struct Desk {
     pub layout: Option<DeskLayout>,
     #[serde(default)]
     pub closed: bool,
+    #[serde(skip)]
+    pub window: Option<crate::tab_windows::WindowId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,6 +85,7 @@ pub(crate) struct SavedDesks {
 pub(crate) struct Desks {
     pub items: Vec<Desk>,
     pub active: u64,
+    pub main_window_desk: u64,
     pub host: usize,
     pub previous: Option<u64>,
     pub closed: Vec<u64>,
@@ -161,8 +164,10 @@ impl Default for Desks {
                 name: "Main".into(),
                 layout: None,
                 closed: false,
+                window: None,
             }],
             active: 0,
+            main_window_desk: 0,
             host: 0,
             previous: None,
             closed: Vec::new(),
@@ -179,7 +184,7 @@ impl Default for Desks {
 }
 
 impl Desks {
-    fn allocate_id(&mut self) -> u64 {
+    pub(crate) fn allocate_id(&mut self) -> u64 {
         loop {
             let id = self.next_id;
             self.next_id = self.next_id.wrapping_add(1).max(1);
@@ -617,7 +622,7 @@ impl App {
     }
 
     pub(crate) fn desk_count(&self) -> usize {
-        self.desks.items.iter().filter(|desk| !desk.closed).count()
+        self.desks.items.iter().filter(|desk| !desk.closed && desk.window.is_none()).count()
     }
 
     pub(crate) fn current_desk_is_empty(&self) -> bool {
@@ -722,6 +727,9 @@ impl App {
         ];
         self.global_search_field_selection_anchors = [None; 4];
         self.global_search_active = self.show_explorer && self.sidebar_view == SidebarView::Search;
+        if self.detached_window_id().is_some() {
+            self.global_search_active = false;
+        }
         self.sync_activity_bar_selection();
     }
 
@@ -783,7 +791,14 @@ impl App {
             .insert(old, std::mem::take(&mut self.navigation));
         self.save_active_group();
         self.desks.active = id;
-        self.desks.previous = Some(old);
+        if self.detached_window_id().is_none() {
+            if !self.desks.items.iter().any(|desk| desk.id == old && desk.window.is_some()) {
+                self.desks.previous = Some(old);
+            }
+            self.desks.main_window_desk = id;
+        } else if self.desks.items.iter().any(|desk| desk.id == old && desk.window.is_none()) {
+            self.desks.main_window_desk = old;
+        }
         self.desks.selected_tabs.clear();
         self.desks.popup = Default::default();
         self.apply_desk_layout(layout);
@@ -880,6 +895,7 @@ impl App {
             name,
             layout: Some(layout),
             closed: false,
+            window: None,
         });
         self.switch_desk(id);
         id
@@ -926,7 +942,7 @@ impl App {
             .desks
             .items
             .iter()
-            .find(|desk| desk.id != old && !desk.closed)
+            .find(|desk| desk.id != old && !desk.closed && desk.window.is_none())
             .map(|d| d.id);
         if let Some(target) = target {
             self.switch_desk(target);
