@@ -2,6 +2,7 @@ use super::*;
 use crate::app::{App, Tab, TabKind};
 use crate::editor::Editor;
 use crate::mouse_overlay::handle_context_menu_mouse;
+use crate::ui_chrome::{ACTIVITY_SETTINGS_INDEX, activity_overflow_button};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use std::path::PathBuf;
 
@@ -478,6 +479,171 @@ fn top_activity_bar_uses_rendered_columns_for_hover_and_clicks() {
     let settings = button(&app, ACTIVITY_SETTINGS_INDEX);
     send(&mut app, MouseEventKind::Down(MouseButton::Left), settings.x, settings.y);
     assert!(app.settings_editor_active);
+}
+
+#[test]
+fn top_activity_overflow_opens_hidden_views_and_dismisses_on_resize() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut app = App::test_new();
+    app.show_panel = false;
+    app.tabs.push(Tab::new_file(Editor::new()));
+    let mut terminal = Terminal::new(TestBackend::new(45, 24)).unwrap();
+    let mouse = |app: &mut App, kind, column, row| {
+        let event = MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+        if app.context_menu_active {
+            handle_context_menu_mouse(app, event);
+        } else {
+            handle_mouse(app, event);
+        }
+    };
+    let key = |app: &mut App, code| {
+        crate::input_keyboard::handle_keyboard_event(app, KeyEvent::new(code, KeyModifiers::NONE));
+    };
+    let open = |app: &mut App| {
+        let (button, _) = activity_overflow_button(app).unwrap();
+        mouse(app, MouseEventKind::Down(MouseButton::Left), button.x + 1, button.y);
+        mouse(app, MouseEventKind::Up(MouseButton::Left), button.x + 1, button.y);
+        assert!(app.activity_overflow_menu_open());
+    };
+
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    open(&mut app);
+    assert_eq!(app.context_menu_items.iter().map(|item| item.id).collect::<Vec<_>>(),
+        ["activity_bar_remote", "activity_bar_extensions", "activity_bar_settings"]);
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let menu = app.context_menu_inner.unwrap();
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), menu.x + 1, menu.y + 1);
+    assert_eq!(app.sidebar_view, crate::app::SidebarView::Extensions);
+    assert!(!app.context_menu_active);
+
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    open(&mut app);
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Enter);
+    assert!(app.settings_editor_active);
+    assert!(!app.context_menu_active);
+
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    open(&mut app);
+    key(&mut app, KeyCode::Esc);
+    assert!(!app.context_menu_active);
+    open(&mut app);
+
+    terminal.backend_mut().resize(100, 24);
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert!(activity_overflow_button(&app).is_none());
+    assert!(!app.context_menu_active);
+    assert!(app.context_menu_inner.is_none());
+}
+
+#[test]
+fn top_activity_bar_takes_priority_over_remote_pane_bounds() {
+    use crate::app::SidebarView;
+    use crate::ui_chrome::activity_item_regions;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut app = App::test_new();
+    app.tabs.push(Tab::new_file(Editor::new()));
+    app.sidebar_view = SidebarView::Remote;
+    app.sync_activity_bar_selection();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+
+    let bar = app.activity_bar_area.unwrap();
+    let sidebar = app.explorer_area.unwrap();
+    // Recreate the shared header bounds that let Remote intercept the bar.
+    app.explorer_area = Some(Rect::new(sidebar.x, bar.y, sidebar.width, sidebar.bottom() - bar.y));
+    let (explorer, _) = activity_item_regions(bar, app.activity_bar_position)[0];
+    let event = MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: explorer.x + 1,
+        row: explorer.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    handle_mouse(&mut app, event);
+    assert_eq!(app.hovered_activity, Some(0));
+    handle_mouse(&mut app, MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), ..event });
+    assert_eq!(app.sidebar_view, SidebarView::Explorer);
+}
+
+#[test]
+fn top_activity_bar_switches_views_with_direct_and_overflow_buttons() {
+    use crate::app::SidebarView;
+    use crate::app_sidebar::activity_menu_index;
+    use crate::ui_chrome::activity_item_regions;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let views = [SidebarView::Explorer, SidebarView::Search, SidebarView::SourceControl,
+        SidebarView::Remote, SidebarView::Extensions];
+    let mouse = |app: &mut App, kind, column, row| {
+        let event = MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+        if app.context_menu_active {
+            handle_context_menu_mouse(app, event);
+        } else {
+            handle_mouse(app, event);
+        }
+    };
+    let click = |app: &mut App, column, row| {
+        mouse(app, MouseEventKind::Down(MouseButton::Left), column, row);
+        mouse(app, MouseEventKind::Up(MouseButton::Left), column, row);
+    };
+    let select = |app: &mut App, terminal: &mut Terminal<TestBackend>, index| {
+        terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        let bar = app.activity_bar_area.unwrap();
+        if let Some((button, _)) = activity_item_regions(bar, app.activity_bar_position)
+            .into_iter().find(|&(_, item)| item == index)
+        {
+            mouse(app, MouseEventKind::Moved, button.x + 1, button.y);
+            assert_eq!(app.hovered_activity, Some(index));
+            click(app, button.x + 1, button.y);
+        } else {
+            let (button, _) = activity_overflow_button(app).unwrap();
+            click(app, button.x + button.width / 2, button.y);
+            assert!(app.activity_overflow_menu_open());
+            terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+            let menu = app.context_menu_inner.unwrap();
+            let item = app.context_menu_items.iter()
+                .position(|item| activity_menu_index(item.id) == Some(index)).unwrap();
+            let row = menu.y + (item - app.context_menu_scroll) as u16;
+            click(app, menu.x, row);
+            assert!(!app.context_menu_active);
+        }
+    };
+
+    for width in [27, 45, 100] {
+        for right in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut app = App::new(root.path().to_path_buf());
+            app.remote_targets.path = Some(root.path().join("remotes.toml"));
+            app.show_panel = false;
+            app.sidebar_right = right;
+            app.tabs.push(Tab::new_file(Editor::new()));
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            for (source, &view) in views.iter().enumerate() {
+                for dest in (0..=ACTIVITY_SETTINGS_INDEX).filter(|&dest| dest != source) {
+                    app.show_explorer = false;
+                    app.activate_activity_item(source);
+                    if view == SidebarView::Remote {
+                        app.focus_text_input(crate::text_input::TextInputId::RemoteFilter);
+                    }
+                    select(&mut app, &mut terminal, dest);
+                    if let Some(&expected) = views.get(dest) {
+                        assert_eq!(app.sidebar_view, expected, "from {view:?}, width {width}, right {right}");
+                        assert!(app.show_explorer);
+                        assert_eq!(app.global_search_active, expected == SidebarView::Search);
+                    } else {
+                        assert_eq!(app.tabs[app.active_tab].kind, TabKind::Settings);
+                        let next = (source + 1) % views.len();
+                        select(&mut app, &mut terminal, next);
+                        assert_eq!(app.sidebar_view, views[next]);
+                        app.close_tab(app.active_tab);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]

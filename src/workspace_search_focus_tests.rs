@@ -115,7 +115,8 @@ fn returning_to_explorer_reveals_the_open_search_match() {
 
         if use_activity_bar {
             let area = app.activity_bar_area.unwrap();
-            click(&mut app, area.x, area.y);
+            let (explorer, _) = crate::ui_chrome::activity_item_regions(area, app.activity_bar_position)[0];
+            click(&mut app, explorer.x, explorer.y);
         } else {
             app.execute_palette_command("show_explorer");
         }

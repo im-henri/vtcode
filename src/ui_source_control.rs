@@ -227,16 +227,7 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
         if area.width >= 6 { 3 } else { 1 }
     } else { 0 };
     let controls = Rect::new(area.x, area.y, area.width.saturating_sub(refresh_width), area.height);
-    let top_activity = crate::ui_chrome::sidebar_activity_has_header(app, area);
-    let navigation_width = if top_activity { 18 } else { 0 };
-    let button_space = Rect {
-        width: controls.width.saturating_sub(navigation_width).max(1).min(controls.width),
-        ..controls
-    };
-    let Some(mut button) = sc_actions_area(button_space) else { return; };
-    if top_activity {
-        button.x = controls.right() - button.width;
-    }
+    let Some(button) = sc_actions_area(controls) else { return; };
     let label = if button.width >= UnicodeWidthStr::width(SC_ACTIONS_LABEL) as u16 {
         SC_ACTIONS_LABEL
     } else if button.width >= 3 { " ⋮ " } else { "⋮" };
@@ -256,12 +247,7 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let closed = app.repositories.closed_roots().count();
     if closed == 0 { return; }
-    let (start, end) = if top_activity {
-        (controls.x.saturating_add(navigation_width), button.x)
-    } else {
-        (button.right().saturating_add(1), controls.right())
-    };
-    let available = end.saturating_sub(start);
+    let available = controls.right().saturating_sub(button.right().saturating_add(1));
     let full_label = format!(" Reopen ({closed}) ▾ ");
     let label = if full_label.width() <= usize::from(available) {
         full_label.as_str()
@@ -269,7 +255,7 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
         " Reopen ▾ "
     } else { return; }; // The Actions menu still exposes it on narrow sidebars.
     let width = label.width() as u16;
-    let reopen = Rect::new(end - width, area.y, width, 1);
+    let reopen = Rect::new(controls.right() - width, area.y, width, 1);
     let open = app.context_menu_active
         && app.context_menu_items.first().is_some_and(|item| item.id == "git_reopen_repository");
     f.render_widget(Paragraph::new(label).style(app.colors.ui.toolbar_layer_style(

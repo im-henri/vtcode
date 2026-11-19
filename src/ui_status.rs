@@ -1617,6 +1617,7 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
                 }
                 3 => ("Remote".into(), "remote"),
                 crate::ui_chrome::ACTIVITY_SETTINGS_INDEX => ("Settings".into(), "settings"),
+                crate::ui_chrome::ACTIVITY_OVERFLOW_INDEX => ("More Views".into(), ""),
                 _ => return,
             };
             hint_with_shortcut(app, &label, command)

@@ -568,35 +568,37 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
             (body[0], body[1])
         };
 
-        app.explorer_area = Some(sidebar_area);
-        let top_activity = show_activity_bar && app.activity_bar_position == ActivityBarPosition::Top;
+        let top_activity = show_activity_bar && app.activity_bar_position == ActivityBarPosition::Top
+            && sidebar_area.height > 1;
+        let mut sidebar_content = sidebar_area;
         if top_activity {
             app.activity_bar_area = ui_chrome::sidebar_activity_header(app, sidebar_area);
+            if app.activity_bar_area.is_some() {
+                sidebar_content.y += 1;
+                sidebar_content.height -= 1;
+            }
         }
+        app.explorer_area = Some(sidebar_content);
         match app.sidebar_view {
-            crate::app::SidebarView::Explorer => draw_static_chrome(f, app, sidebar_area, ChromeRegion::Explorer),
-            crate::app::SidebarView::Search => ui_dialogs::draw_search_panel(f, app, sidebar_area),
+            crate::app::SidebarView::Explorer => draw_static_chrome(f, app, sidebar_content, ChromeRegion::Explorer),
+            crate::app::SidebarView::Search => ui_dialogs::draw_search_panel(f, app, sidebar_content),
             crate::app::SidebarView::SourceControl => {
-                crate::ui_source_control::draw_source_control_sidebar(f, app, sidebar_area);
+                crate::ui_source_control::draw_source_control_sidebar(f, app, sidebar_content);
             }
             crate::app::SidebarView::Settings => {
-                ui_settings::draw_settings_sidebar(f, app, sidebar_area);
+                ui_settings::draw_settings_sidebar(f, app, sidebar_content);
             }
             crate::app::SidebarView::Extensions => {
-                ui_helpers::draw_extensions_sidebar(f, app, sidebar_area);
+                ui_helpers::draw_extensions_sidebar(f, app, sidebar_content);
             }
-            crate::app::SidebarView::Remote => crate::ui_remote_targets::draw_sidebar(f, app, sidebar_area),
+            crate::app::SidebarView::Remote => crate::ui_remote_targets::draw_sidebar(f, app, sidebar_content),
         }
         if top_activity {
-            app.activity_bar_area = app.activity_bar_area.and_then(|header| {
-                ui_chrome::sidebar_activity_title_area(app, sidebar_area, header)
-            });
             if let Some(activity_area) = app.activity_bar_area {
-                f.render_widget(ratatui::widgets::Clear, activity_area);
                 draw_static_chrome(f, app, activity_area, ChromeRegion::Activity);
             }
         }
-        crate::ui_loading::draw_sidebar(f, app, sidebar_area);
+        crate::ui_loading::draw_sidebar(f, app, sidebar_content);
         app.editor_gradient_area = Some(editor_area);
         ui_chrome::draw_editor_section_with_pending_diff(f, app, editor_area, pending_diff);
         app.editor_gradient_area = None;
@@ -712,6 +714,7 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
 }
 
 fn draw_overlays(f: &mut Frame, app: &mut App) {
+    app.dismiss_moved_activity_overflow();
     if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Search {
         crate::ui_search_controls::draw_tooltip(f, app, crate::ui_search_controls::SearchScope::Workspace);
     }
@@ -1266,6 +1269,7 @@ mod tests {
         assert_eq!(top.height, 1);
         assert_eq!(top.y, app.menu_bar_area.unwrap().bottom());
         assert_eq!(top_body.y, top.y);
+        assert_eq!(top.bottom(), sidebar.y);
         assert_eq!(top_body.width, 80);
         let editor_tabs = app.tab_bar_area.unwrap();
         assert_eq!(editor_tabs.y, top.y);
@@ -1282,7 +1286,7 @@ mod tests {
     }
 
     #[test]
-    fn top_activity_stays_in_the_sidebar_header_for_each_view_and_side() {
+    fn top_activity_has_its_own_sidebar_row_for_each_view_and_side() {
         use crate::app::SidebarView;
         for width in [42, 80, 140] {
             let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
@@ -1299,12 +1303,19 @@ mod tests {
                     let bar = app.activity_bar_area.expect("activity bar in the sidebar header");
                     let sidebar = app.explorer_area.unwrap();
                     let tabs = app.tab_bar_area.unwrap();
-                    assert_eq!(bar.y, sidebar.y);
+                    assert_eq!(bar.bottom(), sidebar.y);
                     assert_eq!(bar.y, tabs.y);
-                    assert_eq!(bar.intersection(sidebar), bar);
+                    assert!(bar.intersection(sidebar).is_empty());
                     assert!(bar.intersection(tabs).is_empty());
-                    assert_eq!(ui_chrome::activity_item_regions(bar, app.activity_bar_position).len(), 6,
-                        "all activity buttons should fit for {view:?}, width {width}, right {right}");
+                    assert!(bar.x >= sidebar.x && bar.right() <= sidebar.right());
+                    let overflow = ui_chrome::activity_overflow_button(&app);
+                    assert_eq!(overflow.is_some(), width == 42);
+                    if view == SidebarView::SourceControl {
+                        let actions = app.source_control_actions_area.unwrap();
+                        let refresh = app.source_control_refresh_area.unwrap();
+                        assert_eq!(actions.y, sidebar.y);
+                        assert_eq!(refresh.y, sidebar.y);
+                    }
                 }
             }
         }

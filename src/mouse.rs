@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use crate::app::{ActivePane, App, TerminalDock};
 use unicode_width::UnicodeWidthStr;
-use crate::ui_chrome::{ACTIVITY_SETTINGS_INDEX, activity_item_at};
+use crate::ui_chrome::{ACTIVITY_OVERFLOW_INDEX, activity_item_at};
 use crate::ui_chrome_tabs::TabBarHits;
 use crate::ui_diff_display::diff_divider_hit;
 #[cfg(test)]
@@ -121,6 +121,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     app.sync_text_input_sessions();
     let col = mouse.column;
     let row = mouse.row;
+    let over_activity_bar = app.activity_bar_area.is_some_and(|area| area.contains((col, row).into()));
     let prev_mouse_col = app.mouse_col;
     let prev_mouse_row = app.mouse_row;
     let was_over_performance = app.background.activity.details_open && app.performance_area
@@ -367,7 +368,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if app.handle_background_text_input_mouse(mouse.kind, col, row, mouse.modifiers) {
         return;
     }
-    if crate::ui_remote_targets::handle_mouse(app, mouse) { return; }
+    // Remote consumes mouse events across its entire pane, so give the
+    // Activity Bar priority where their hit areas overlap.
+    if !over_activity_bar && crate::ui_remote_targets::handle_mouse(app, mouse) { return; }
     if crate::ui_remote_targets::connection_mouse(app, mouse) { return; }
     if crate::ui_explorer_find::handle_mouse(app, mouse) { return; }
 
@@ -820,80 +823,13 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 app.menu_open = false;
             }
 
-            // Click on activity bar?
-            if let Some(ab_area) = app.activity_bar_area {
-                if col >= ab_area.x
-                    && col < ab_area.x + ab_area.width
-                    && row >= ab_area.y
-                    && row < ab_area.y + ab_area.height
-                {
-                    if let Some(icon_idx) = activity_item_at(app, col, row) {
-                        if icon_idx == ACTIVITY_SETTINGS_INDEX {
-                            app.execute_palette_command("settings");
-                            return;
-                        }
-                        app.activity_bar_selected = icon_idx;
-                        if icon_idx != 1 {
-                            app.global_search_active = false;
-                        }
-                        match icon_idx {
-                            0 => {
-                                // Explorer: toggle sidebar or switch to explorer view
-                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Explorer {
-                                    app.show_explorer = false;
-                                } else {
-                                    app.show_explorer_view();
-                                    return;
-                                }
-                            }
-                            1 => {
-                                // A visible Search sidebar may not own keyboard focus.
-                                // Refocus it before treating a repeated click as a toggle.
-                                if app.sidebar_is_visible()
-                                    && app.sidebar_view == crate::app::SidebarView::Search
-                                    && app.global_search_active
-                                    && app.active_pane == ActivePane::Explorer
-                                    && app.search_focus_field == 0
-                                {
-                                    app.show_explorer = false;
-                                    app.global_search_active = false;
-                                    app.active_pane = ActivePane::Editor;
-                                } else {
-                                    app.focus_global_search();
-                                }
-                            }
-                            2 => {
-                                // Source Control: toggle sidebar view
-                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::SourceControl {
-                                    app.show_explorer = false;
-                                } else {
-                                    app.show_explorer = true;
-                                    app.sidebar_view = crate::app::SidebarView::SourceControl;
-                                    app.refresh_source_control_async();
-                                    app.refresh_git_log_async();
-                                }
-                            }
-                            3 => {
-                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Remote {
-                                    app.show_explorer = false;
-                                } else { app.open_remote_sidebar(); }
-                            }
-                            4 => {
-                                // Extensions: toggle sidebar view
-                                if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Extensions {
-                                    app.show_explorer = false;
-                                } else {
-                                    app.open_extensions_sidebar();
-                                }
-                            }
-                            _ => {}
-                        }
-                        if app.show_explorer {
-                            app.reveal_sidebar();
-                        }
-                    }
-                    return;
+            if over_activity_bar {
+                match activity_item_at(app, col, row) {
+                    Some(ACTIVITY_OVERFLOW_INDEX) => app.open_activity_overflow(),
+                    Some(index) => app.activate_activity_item(index),
+                    None => {}
                 }
+                return;
             }
 
             // Click in the collapsible right-side terminal dock.

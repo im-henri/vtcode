@@ -247,10 +247,10 @@ sidebar fields or menus.
 This is off by default and can also be changed in **Settings → Workbench → Layout**
 with **Auto-hide Sidebar** (`sidebarAutoHide` in `settings.json`).
 
-The Activity Bar uses compact icons in the sidebar header by default, freeing
-six columns for the workbench while keeping the editor tabs directly below the
-menu. Hover an icon to see its name. Switch with **View → Move Activity Bar to
-Left** or use **Activity Bar Position** under **Settings → Workbench → Layout**
+The Activity Bar uses its own row above the sidebar contents by default. The
+editor tabs start alongside it directly below the menu. Hover an icon to see its
+name, or use the dropdown for icons that do not fit. Switch with **View → Move
+Activity Bar to Left** or use **Activity Bar Position** under **Settings → Workbench → Layout**
 (`"activityBarPosition": "top"` or `"activityBarPosition": "left"` in `settings.json`).
 Use **View → Sidebar** (`Ctrl+B`) to reopen a hidden sidebar.
 

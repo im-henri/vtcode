@@ -1,7 +1,21 @@
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use crate::app::{ActivePane, App, SidebarView};
+use crate::app::{ActivePane, App, ContextMenuItem, SidebarView};
+use crate::ui_chrome::{ACTIVITY_SETTINGS_INDEX, TOP_ACTIVITY_ICONS, activity_overflow_button};
+
+const ACTIVITY_MENU_ITEMS: [(&str, &str); 6] = [
+    ("Explorer", "activity_bar_explorer"),
+    ("Search", "activity_bar_search"),
+    ("Source Control", "activity_bar_source_control"),
+    ("Remote", "activity_bar_remote"),
+    ("Extensions", "activity_bar_extensions"),
+    ("Settings", "activity_bar_settings"),
+];
+
+pub(crate) fn activity_menu_index(id: &str) -> Option<usize> {
+    ACTIVITY_MENU_ITEMS.iter().position(|&(_, item_id)| item_id == id)
+}
 
 /// Hover visibility is transient; `show_explorer` remains the saved preference.
 #[derive(Default)]
@@ -44,6 +58,88 @@ impl App {
         }
     }
 
+    pub(crate) fn activate_activity_item(&mut self, index: usize) {
+        if index == ACTIVITY_SETTINGS_INDEX {
+            self.execute_palette_command("settings");
+            return;
+        }
+        let view = match index {
+            0 => SidebarView::Explorer,
+            1 => SidebarView::Search,
+            2 => SidebarView::SourceControl,
+            3 => SidebarView::Remote,
+            4 => SidebarView::Extensions,
+            _ => return,
+        };
+        self.activity_bar_selected = index;
+        if view != SidebarView::Search {
+            self.global_search_active = false;
+        }
+        let search_focused = self.global_search_active
+            && self.active_pane == ActivePane::Explorer && self.search_focus_field == 0;
+        if self.sidebar_is_visible() && self.sidebar_view == view
+            && (view != SidebarView::Search || search_focused)
+        {
+            self.show_explorer = false;
+            if view == SidebarView::Search {
+                self.global_search_active = false;
+                self.active_pane = ActivePane::Editor;
+            }
+            return;
+        }
+
+        match view {
+            SidebarView::Explorer => return self.show_explorer_view(),
+            SidebarView::Search => self.focus_global_search(),
+            SidebarView::SourceControl => {
+                self.show_explorer = true;
+                self.sidebar_view = view;
+                self.refresh_source_control_async();
+                self.refresh_git_log_async();
+            }
+            SidebarView::Remote => self.open_remote_sidebar(),
+            SidebarView::Extensions => self.open_extensions_sidebar(),
+            SidebarView::Settings => unreachable!(),
+        }
+        if self.show_explorer {
+            self.reveal_sidebar();
+        }
+    }
+
+    pub(crate) fn open_activity_overflow(&mut self) {
+        let Some((button, visible)) = activity_overflow_button(self) else { return; };
+        self.context_menu_items = ACTIVITY_MENU_ITEMS.iter().enumerate().skip(visible)
+            .map(|(index, &(label, id))| ContextMenuItem {
+                label: format!("{}  {label}", TOP_ACTIVITY_ICONS[index]),
+                shortcut: String::new(),
+                id,
+                separator_after: false,
+            })
+            .collect();
+        self.context_menu_pos = (button.x, button.bottom());
+        self.context_menu_inner = None;
+        self.context_menu_selected = 0;
+        self.context_menu_scroll = 0;
+        self.context_menu_active = true;
+        crate::mouse_overlay::capture_context_menu_button(self, button);
+    }
+
+    pub(crate) fn activity_overflow_menu_open(&self) -> bool {
+        self.context_menu_active && self.context_menu_items.first()
+            .is_some_and(|item| activity_menu_index(item.id).is_some())
+    }
+
+    pub(crate) fn dismiss_moved_activity_overflow(&mut self) {
+        if self.activity_overflow_menu_open() && activity_overflow_button(self).is_none_or(|(button, visible)| {
+            self.context_menu_pos != (button.x, button.bottom())
+                || self.context_menu_items[0].id != ACTIVITY_MENU_ITEMS[visible].1
+        }) {
+            self.context_menu_active = false;
+            self.context_menu_inner = None;
+            self.context_menu_button_drag = None;
+        }
+    }
+
     /// A reveal never changes keyboard focus. Freeze layout during gestures and
     /// popups, whose hit regions must remain stable until the interaction ends.
     pub(crate) fn update_sidebar_auto_hide(&mut self, mouse: MouseEvent) -> bool {
@@ -65,8 +161,7 @@ impl App {
             .sidebar_auto_hide
             .edge
             .is_some_and(|area| area.contains(position))
-            || (self.activity_bar_position == crate::settings::ActivityBarPosition::Left
-                && self.activity_bar_area.is_some_and(|area| area.contains(position)))
+            || self.activity_bar_area.is_some_and(|area| area.contains(position))
             || (visible
                 && self
                     .explorer_area

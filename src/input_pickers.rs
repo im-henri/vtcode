@@ -234,7 +234,9 @@ pub(crate) fn handle_context_menu_key(app: &mut App, code: KeyCode) -> bool {
             let id = item.id;
             if app.source_control_menu_command_disabled(id) { return false; }
             app.context_menu_active = false;
-            if id == "command_palette" {
+            if let Some(index) = crate::app_sidebar::activity_menu_index(id) {
+                app.activate_activity_item(index);
+            } else if id == "command_palette" {
                 app.open_palette();
             } else {
                 app.execute_palette_command(id);
