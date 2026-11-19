@@ -392,7 +392,7 @@ impl App {
         self.stop_inline_work();
     }
 
-    fn stop_inline_work(&mut self) {
+    pub(crate) fn stop_inline_work(&mut self) {
         self.clear_inline();
         self.vtcomplete_inline.requested = None;
         self.vtcomplete_inline.warmed = None;

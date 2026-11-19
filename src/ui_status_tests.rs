@@ -86,10 +86,22 @@ fn choose_gptcomplete_menu_item(app: &mut App, index: usize) {
     assert!(!gptcomplete_menu_open(app));
 }
 
+fn click_gptcomplete_menu_row(app: &mut App, y: u16) {
+    let x = app.context_menu_inner.unwrap().x + 1;
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    let mut pump = crate::app_event_loop::TerminalEventPump::from_receiver(receiver);
+    crate::app_event_loop::handle_mouse_input(
+        app,
+        &mut pump,
+        mouse(MouseEventKind::Down(MouseButton::Left), x, y),
+    );
+    assert!(!gptcomplete_menu_open(app));
+}
+
 #[test]
 fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
     let mut app = app_with_file();
-    assert!(row(&draw(&mut app, 100, 24), 23).contains("GPTComplete On"));
+    assert!(row(&draw(&mut app, 100, 24), 23).contains("GPTComplete ▾"));
     for (index, minutes, label) in [
         (0, 1, "Snooze for 1 Minute"),
         (1, 5, "Snooze for 5 Minutes"),
@@ -100,13 +112,7 @@ fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
         assert!(row(&terminal, inner.y + index as u16).contains(label));
         let started = Instant::now();
         if index == 0 {
-            let (_sender, receiver) = std::sync::mpsc::channel();
-            let mut pump = crate::app_event_loop::TerminalEventPump::from_receiver(receiver);
-            crate::app_event_loop::handle_mouse_input(
-                &mut app,
-                &mut pump,
-                mouse(MouseEventKind::Down(MouseButton::Left), inner.x + 1, inner.y),
-            );
+            click_gptcomplete_menu_row(&mut app, inner.y);
         } else {
             choose_gptcomplete_menu_item(&mut app, index);
         }
@@ -114,7 +120,7 @@ fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
         let deadline = app.inline_snooze_deadline().unwrap();
         assert!(deadline >= started + duration && deadline <= Instant::now() + duration);
         let terminal = open_gptcomplete_menu_from_bar(&mut app);
-        assert!(row(&terminal, 23).contains("GPTComplete Snoozed"));
+        assert!(row(&terminal, 23).contains("GPTComplete Paused"));
         assert_eq!(app.context_menu_items[0].label, "Resume GPTComplete");
         choose_gptcomplete_menu_item(&mut app, 0);
         assert_eq!(app.inline_availability(), Availability::Enabled);
@@ -134,6 +140,36 @@ fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
     assert_eq!(app.context_menu_items[0].label, "Turn On GPTComplete");
     choose_gptcomplete_menu_item(&mut app, 0);
     assert_eq!(app.inline_availability(), Availability::Enabled);
+}
+
+#[test]
+fn gptcomplete_menu_changes_eagerness_without_ending_a_snooze() {
+    let mut app = app_with_file();
+    let terminal = open_gptcomplete_menu_from_bar(&mut app);
+    let inner = app.context_menu_inner.unwrap();
+    assert!((inner.y..inner.bottom())
+        .any(|y| row(&terminal, y).contains("✓ Eagerness · Balanced")));
+    let cautious_row = (inner.y..inner.bottom())
+        .find(|&y| row(&terminal, y).contains("Eagerness · Cautious"))
+        .unwrap();
+    click_gptcomplete_menu_row(&mut app, cautious_row);
+    assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Cautious);
+
+    open_gptcomplete_menu_from_bar(&mut app);
+    choose_gptcomplete_menu_item(&mut app, 1);
+    let deadline = app.inline_snooze_deadline().unwrap();
+    for level in [InlineEagerness::Balanced, InlineEagerness::Eager, InlineEagerness::Always] {
+        let terminal = open_gptcomplete_menu_from_bar(&mut app);
+        let selected = format!("✓ Eagerness · {}", app.completion_preferences.inline_eagerness.label());
+        let inner = app.context_menu_inner.unwrap();
+        assert!((inner.y..inner.bottom()).any(|y| row(&terminal, y).contains(&selected)));
+        let choice = app.context_menu_items.iter()
+            .position(|item| item.id == level.menu_command()).unwrap();
+        choose_gptcomplete_menu_item(&mut app, choice);
+        assert_eq!(app.completion_preferences.inline_eagerness, level);
+        assert_eq!(app.inline_snooze_deadline(), Some(deadline));
+        assert_eq!(app.inline_availability(), Availability::Snoozed);
+    }
 }
 
 #[test]

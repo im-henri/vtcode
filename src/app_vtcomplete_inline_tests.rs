@@ -457,6 +457,13 @@ fn eagerness_is_a_saved_setting_that_lowers_the_confidence_needed() {
     // The choice survives saving and loading the settings.
     let saved = serde_json::to_string(&app.completion_preferences).unwrap();
     assert!(saved.contains("\"inlineEagerness\":\"always\""), "{saved}");
+
+    app.request_inline_prediction();
+    let cancel = app.vtcomplete_inline.cancel.clone().unwrap();
+    show(&mut app, ".right = right;");
+    app.execute_palette_command(InlineEagerness::Cautious.menu_command());
+    assert!(cancel.is_cancelled());
+    assert!(!app.inline_ghost_visible());
 }
 
 /// The real path with the language model on: a key typed inside a comment,

@@ -336,9 +336,10 @@ its next word, **Esc** hides it, and typing along it keeps the remainder.
 best guess at the caret, including when **Show Suggestions While Typing** is off.
 The word popup returns when no prediction is shown, after **Esc**, or with **Ctrl+Space**.
 
-Click **GPTComplete** in the status bar to snooze for **1, 5, or 10 minutes**,
-choose **Snooze Until Resumed**, or **Turn Off GPTComplete**. The workspace
-remembers untimed snoozes and Off across restarts. Snooze and Off also pause **Alt+I**.
+Click **GPTComplete** in the status bar to set **Eagerness**, snooze for **1, 5,
+or 10 minutes**, choose **Snooze Until Resumed**, or turn GPTComplete off. The
+workspace remembers eagerness, untimed snoozes, and Off across restarts. Snooze
+and Off also pause **Alt+I**.
 
 Two predictors work together. Both run on one background CPU thread, need no
 GPU and download nothing:

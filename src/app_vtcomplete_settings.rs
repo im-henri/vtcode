@@ -29,6 +29,15 @@ impl InlineEagerness {
             Self::Always => "Always",
         }
     }
+
+    pub(crate) fn menu_command(self) -> &'static str {
+        match self {
+            Self::Cautious => "gptcomplete_eagerness_cautious",
+            Self::Balanced => "gptcomplete_eagerness_balanced",
+            Self::Eager => "gptcomplete_eagerness_eager",
+            Self::Always => "gptcomplete_eagerness_always",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,12 +227,12 @@ impl App {
     }
 
     fn save_completion_preferences(&mut self, mut preferences: Preferences) {
-        let inline_changed =
-            preferences.inline_predictions != self.completion_preferences.inline_predictions;
+        let previous = self.completion_preferences;
+        let inline_changed = preferences.inline_predictions != previous.inline_predictions;
         if inline_changed {
             preferences.inline_snoozed = false;
         }
-        if preferences == self.completion_preferences {
+        if preferences == previous {
             return;
         }
         if self.settings_persistence_enabled
@@ -232,17 +241,23 @@ impl App {
             self.notify(format!("Could not save autocomplete settings ({error})"));
             return;
         }
-        let snooze_changed =
-            preferences.inline_snoozed != self.completion_preferences.inline_snoozed;
         self.completion_preferences = preferences;
-        if inline_changed || snooze_changed {
+        if inline_changed || preferences.inline_snoozed != previous.inline_snoozed {
             self.reset_inline_prediction_state();
+        } else if preferences.inline_eagerness != previous.inline_eagerness {
+            self.stop_inline_work();
         }
     }
 
     pub(crate) fn set_inline_predictions_enabled(&mut self, enabled: bool) {
         let mut preferences = self.completion_preferences;
         preferences.inline_predictions = enabled;
+        self.save_completion_preferences(preferences);
+    }
+
+    pub(crate) fn set_inline_eagerness(&mut self, level: InlineEagerness) {
+        let mut preferences = self.completion_preferences;
+        preferences.inline_eagerness = level;
         self.save_completion_preferences(preferences);
     }
 
@@ -298,9 +313,7 @@ impl App {
         else {
             return false;
         };
-        let mut preferences = self.completion_preferences;
-        preferences.inline_eagerness = level;
-        self.save_completion_preferences(preferences);
+        self.set_inline_eagerness(level);
         true
     }
 
@@ -334,17 +347,19 @@ mod tests {
     use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
 
     #[test]
-    fn untimed_snooze_and_off_are_saved_for_the_workspace() {
+    fn untimed_snooze_off_and_eagerness_are_saved_for_the_workspace() {
         use crate::app_vtcomplete_inline::Availability;
 
         let root = tempfile::tempdir().unwrap();
         let mut app = App::new_deferred(root.path().to_owned());
         app.settings_persistence_enabled = true;
         app.snooze_inline_until_resumed();
+        app.execute_palette_command(InlineEagerness::Eager.menu_command());
         assert_eq!(app.inline_availability(), Availability::Snoozed);
         let saved = Preferences::load(root.path());
         assert!(saved.inline_snoozed);
         assert!(saved.inline_predictions);
+        assert_eq!(saved.inline_eagerness, InlineEagerness::Eager);
         app.resume_inline_predictions();
         assert!(!Preferences::load(root.path()).inline_snoozed);
 
@@ -355,7 +370,9 @@ mod tests {
 
         app.set_inline_predictions_enabled(true);
         assert_eq!(app.inline_availability(), Availability::Enabled);
-        assert!(Preferences::load(root.path()).inline_predictions);
+        let saved = Preferences::load(root.path());
+        assert!(saved.inline_predictions);
+        assert_eq!(saved.inline_eagerness, InlineEagerness::Eager);
         std::fs::remove_file(settings_path(root.path())).unwrap();
     }
 

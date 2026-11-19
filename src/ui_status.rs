@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::{App, ContextMenuItem, TabKind},
     app_vtcomplete_inline::Availability,
+    app_vtcomplete_settings::InlineEagerness,
     editor::Editor,
     ui_performance::clip_middle,
 };
@@ -286,12 +287,12 @@ fn dismiss(app: &mut App) {
     app.chrome_hover = HoverState::default();
 }
 
-fn gptcomplete_status(app: &App) -> &'static str {
+fn gptcomplete_status_suffix(app: &App) -> Option<&'static str> {
     match app.inline_availability() {
-        Availability::Enabled if app.quick_suggestions => "On",
-        Availability::Enabled => "Manual",
-        Availability::Snoozed => "Snoozed",
-        Availability::Disabled => "Off",
+        Availability::Enabled if app.quick_suggestions => None,
+        Availability::Enabled => Some("Manual"),
+        Availability::Snoozed => Some("Paused"),
+        Availability::Disabled => Some("Off"),
     }
 }
 
@@ -308,14 +309,14 @@ fn open_gptcomplete_menu(app: &mut App) {
             ("Snooze for 1 Minute", "gptcomplete_snooze_1", false),
             ("Snooze for 5 Minutes", "gptcomplete_snooze_5", false),
             ("Snooze for 10 Minutes", "gptcomplete_snooze_10", false),
-            ("Snooze Until Resumed", "gptcomplete_snooze_until_resumed", true),
-            ("Turn Off GPTComplete", "gptcomplete_disable", false),
+            ("Snooze Until Resumed", "gptcomplete_snooze_until_resumed", false),
+            ("Turn Off GPTComplete", "gptcomplete_disable", true),
         ],
         Availability::Snoozed => &[
-            ("Resume GPTComplete", "gptcomplete_resume", true),
-            ("Turn Off GPTComplete", "gptcomplete_disable", false),
+            ("Resume GPTComplete", "gptcomplete_resume", false),
+            ("Turn Off GPTComplete", "gptcomplete_disable", true),
         ],
-        Availability::Disabled => &[("Turn On GPTComplete", "gptcomplete_enable", false)],
+        Availability::Disabled => &[("Turn On GPTComplete", "gptcomplete_enable", true)],
     };
     let y = app.status_bar_area.map_or_else(
         || app.viewport_area.bottom().saturating_sub(1),
@@ -326,6 +327,7 @@ fn open_gptcomplete_menu(app: &mut App) {
         .find(|&&(_, _, id)| id == GPTCOMPLETE_STATUS_ITEM)
         .map(|&(x, width, _)| Rect::new(x, y, width, 1));
     let x = button.map_or_else(|| app.viewport_area.right().saturating_sub(1), |area| area.x);
+    let current_eagerness = app.completion_preferences.inline_eagerness;
     app.context_menu_items = choices
         .iter()
         .map(|&(label, id, separator_after)| ContextMenuItem {
@@ -334,6 +336,15 @@ fn open_gptcomplete_menu(app: &mut App) {
             separator_after,
             shortcut: String::new(),
         })
+        .chain(InlineEagerness::ALL.into_iter().map(|level| {
+            let marker = if level == current_eagerness { '✓' } else { ' ' };
+            ContextMenuItem {
+                label: format!("{marker} Eagerness · {}", level.label()),
+                id: level.menu_command(),
+                separator_after: false,
+                shortcut: String::new(),
+            }
+        }))
         .collect();
     app.context_menu_pos = (x, y);
     app.context_menu_inner = None;
@@ -686,15 +697,12 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
         items.push(StatusItem::new(text, row.id, fg, 6, true));
     }
     if is_pinned(app, GPTCOMPLETE_STATUS_ITEM) {
+        let label = gptcomplete_status_suffix(app).map_or_else(
+            || "GPTComplete ▾".into(),
+            |status| format!("GPTComplete {status} ▾"),
+        );
         items.push(
-            StatusItem::new(
-                format!("GPTComplete {} ⌄", gptcomplete_status(app)),
-                GPTCOMPLETE_STATUS_ITEM,
-                fg,
-                4,
-                true,
-            )
-            .compact("GPTComplete"),
+            StatusItem::new(label, GPTCOMPLETE_STATUS_ITEM, fg, 4, true).compact("GPTComplete"),
         );
     }
 
@@ -951,7 +959,7 @@ fn all_detail_rows(app: &App) -> Vec<DetailRow> {
     let mut rows = file_detail_rows(app);
     rows.push(DetailRow::new(
         GPTCOMPLETE_STATUS_ITEM,
-        gptcomplete_status(app),
+        gptcomplete_status_suffix(app).unwrap_or("On"),
         Some(GPTCOMPLETE_STATUS_ITEM),
     ));
     if let Some(editor) = editor(app) {
@@ -1539,7 +1547,11 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             "Configure language servers · Click to open LSP settings · Right-click to customize".into()
         }
         HoverTarget::Status(GPTCOMPLETE_STATUS_ITEM) => {
-            format!("GPTComplete · {} · Click for options", gptcomplete_status(app))
+            format!(
+                "GPTComplete · {} · Eagerness {}",
+                gptcomplete_status_suffix(app).unwrap_or("On"),
+                app.completion_preferences.inline_eagerness.label(),
+            )
         }
         HoverTarget::Status("macro") => "Recording macro · Click to stop".into(),
         HoverTarget::Status("selection") => app.cached_sel_stats.clone().unwrap_or_default(),

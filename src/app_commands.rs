@@ -3,6 +3,7 @@ use crate::app::{
     TypeHierarchyMode,
 };
 use crate::app_theme::config_key_from_command_id;
+use crate::app_vtcomplete_settings::InlineEagerness;
 use crate::editor::Editor;
 use std::time::Duration;
 #[cfg(test)]
@@ -592,6 +593,14 @@ impl App {
             "gptcomplete_resume" => self.resume_inline_predictions(),
             "gptcomplete_disable" => self.set_inline_predictions_enabled(false),
             "gptcomplete_enable" => self.set_inline_predictions_enabled(true),
+            id if id.starts_with("gptcomplete_eagerness_") => {
+                if let Some(level) = InlineEagerness::ALL
+                    .into_iter()
+                    .find(|level| level.menu_command() == id)
+                {
+                    self.set_inline_eagerness(level);
+                }
+            }
             "explorer_find" => self.open_explorer_find(),
             "restart_language_servers" => {
                 self.refresh_language_servers(true);
