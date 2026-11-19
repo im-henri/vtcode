@@ -252,7 +252,7 @@ editor tabs start alongside it directly below the menu. Hover an icon to see its
 name, or use the dropdown for icons that do not fit. Switch with **View → Move
 Activity Bar to Left** or use **Activity Bar Position** under **Settings → Workbench → Layout**
 (`"activityBarPosition": "top"` or `"activityBarPosition": "left"` in `settings.json`).
-In Top mode, the arrow beside **New Desk** or the desk picker hides and reopens
+In Top mode, the panel icon before **New Desk** or the desk picker hides and reopens
 the sidebar. **View → Sidebar** (`Ctrl+B`) works in either layout.
 
 **File Associations** also updates file icons throughout the Explorer, editor tabs,

@@ -291,7 +291,8 @@ fn desk_controls_do_not_overlap_files_or_repeat_in_splits() {
     let controls = crate::ui_desks::controls(&app, area, 0);
     assert_eq!(controls.new_desk.width, 3);
     assert!(controls.desk_picker.is_empty());
-    assert_eq!(controls.sidebar_toggle.x, controls.new_desk.right());
+    assert_eq!(controls.sidebar_toggle.x, area.x);
+    assert_eq!(controls.new_desk.x, controls.sidebar_toggle.right());
     assert_eq!(controls.width, 7);
     app.new_desk("An exceptionally long desk name", true);
     app.desks.host = app.active_group;
@@ -303,8 +304,8 @@ fn desk_controls_do_not_overlap_files_or_repeat_in_splits() {
         assert!(controls.new_desk.is_empty());
         assert!(!controls.sidebar_toggle.is_empty());
         assert!(!picker.is_empty());
-        assert_eq!(picker.x, area.x);
-        assert_eq!(controls.sidebar_toggle.x, picker.right());
+        assert_eq!(controls.sidebar_toggle.x, area.x);
+        assert_eq!(picker.x, controls.sidebar_toggle.right());
         assert_eq!(prefix, picker.width + if width < 44 { 1 } else { 4 });
         assert!(prefix <= width);
         assert!(picker.right() <= area.right());
@@ -749,9 +750,10 @@ fn desk_creation_and_multiselect_use_the_drawn_hit_targets() {
         row: y,
         modifiers,
     };
+    let new_desk = crate::ui_desks::controls(&app, area, app.active_group).new_desk;
     assert!(crate::ui_desks::handle_mouse(
         &mut app,
-        click(1, 0, KeyModifiers::empty())
+        click(new_desk.x + 1, new_desk.y, KeyModifiers::empty())
     ));
     assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::New));
     let name = "Debugging the long running integration test suite on the remote host";

@@ -1120,8 +1120,10 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
             if app.split_active() {
                 let accent = app.colors.fg_accent_blue;
                 let buf = f.buffer_mut();
-                // Paint a colored underline effect on the first column of the tab bar
-                if let Some(cell) = buf.cell_mut((pane_layout[0].x, pane_layout[0].y)) {
+                // Keep a visible control when it occupies the first cell.
+                if let Some(cell) = buf.cell_mut((pane_layout[0].x, pane_layout[0].y))
+                    && cell.symbol() == " "
+                {
                     cell.set_fg(accent);
                     cell.set_symbol("▍");
                 }

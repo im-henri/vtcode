@@ -157,17 +157,17 @@ impl App {
         }
         let visible = self.sidebar_is_visible();
         let position = (mouse.column, mouse.row).into();
-        self.sidebar_auto_hide.revealed = self
-            .sidebar_auto_hide
-            .edge
+        // The leading toggle can sit on the reveal edge while the sidebar is
+        // hidden. Keep the button under the pointer until it is clicked.
+        self.sidebar_auto_hide.revealed = if crate::ui_desks::sidebar_toggle_area(self)
             .is_some_and(|area| area.contains(position))
-            || self.activity_bar_area.is_some_and(|area| area.contains(position))
-            || (visible
-                && self
-                    .explorer_area
-                    .is_some_and(|area| area.contains(position)))
-            || (visible && crate::ui_desks::sidebar_toggle_area(self)
-                .is_some_and(|area| area.contains(position)));
+        {
+            visible
+        } else {
+            self.sidebar_auto_hide.edge.is_some_and(|area| area.contains(position))
+                || self.activity_bar_area.is_some_and(|area| area.contains(position))
+                || (visible && self.explorer_area.is_some_and(|area| area.contains(position)))
+        };
         let changed = visible != self.sidebar_is_visible();
         if changed {
             self.reset_hover_states();

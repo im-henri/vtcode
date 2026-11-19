@@ -131,25 +131,26 @@ pub(crate) fn controls(app: &App, area: Rect, group: usize) -> Controls {
     if group != app.desks.host || area.is_empty() || app.detached_window_id().is_some() {
         return controls;
     }
-    let sidebar_width = if !app.zen_mode && app.activity_bar_position == crate::settings::ActivityBarPosition::Top {
+    let toggle_width = if !app.zen_mode && app.activity_bar_position == crate::settings::ActivityBarPosition::Top {
         if area.width >= 44 { 3 } else { 1 }
     } else { 0 };
-    // The compact arrow takes the place of the separator in narrow strips.
-    let separator_width = u16::from(sidebar_width != 1);
-    let available = area.width - sidebar_width;
+    controls.sidebar_toggle = Rect::new(area.x, area.y, toggle_width, 1);
+    // The compact toggle uses the separator's cell budget in narrow strips.
+    let separator_width = u16::from(toggle_width != 1);
+    let available = area.width - toggle_width;
+    let desk_x = area.x + toggle_width;
     if app.desk_count() <= 1 {
         if available >= 3 + separator_width {
-            controls.new_desk = Rect::new(area.x, area.y, 3, 1);
+            controls.new_desk = Rect::new(desk_x, area.y, 3, 1);
         }
     } else if area.width >= 4 && available >= 2 + separator_width {
         let name_width = app.current_desk_name().width().min(TAB_BAR_DESK_NAME_WIDTH) as u16;
         // Leave room for the separator and 16 cells of file tabs when space allows.
         let width = (name_width + 3).min(available.saturating_sub(16 + separator_width));
-        controls.desk_picker = Rect::new(area.x, area.y, if width < 4 { 2 } else { width }, 1);
+        controls.desk_picker = Rect::new(desk_x, area.y, if width < 4 { 2 } else { width }, 1);
     }
     let desk_width = controls.new_desk.width + controls.desk_picker.width;
-    controls.sidebar_toggle = Rect::new(area.x + desk_width, area.y, sidebar_width, 1);
-    let buttons_width = desk_width + sidebar_width;
+    let buttons_width = desk_width + toggle_width;
     controls.width = buttons_width + separator_width * u16::from(desk_width > 0);
     controls
 }
@@ -184,6 +185,17 @@ pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) 
             .toolbar_style(app.colors.ui.fg_tab_active, bg, hovered(r), false, false)
             .remove_modifier(Modifier::UNDERLINED)
     };
+    if !sidebar_toggle.is_empty() {
+        let icon = match (app.sidebar_is_visible(), app.sidebar_right) {
+            (false, _) => "◫",
+            (true, false) => "◧",
+            (true, true) => "◨",
+        };
+        f.render_widget(
+            Paragraph::new(icon).alignment(ratatui::layout::Alignment::Center).style(style(sidebar_toggle)),
+            sidebar_toggle,
+        );
+    }
     if !plus.is_empty() {
         f.render_widget(Paragraph::new(" + ").style(style(plus)), plus);
     }
@@ -197,13 +209,6 @@ pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) 
             )
         };
         f.render_widget(Paragraph::new(label).style(style(pick)), pick);
-    }
-    if !sidebar_toggle.is_empty() {
-        let arrow = if app.sidebar_is_visible() != app.sidebar_right { "←" } else { "→" };
-        f.render_widget(
-            Paragraph::new(arrow).alignment(ratatui::layout::Alignment::Center).style(style(sidebar_toggle)),
-            sidebar_toggle,
-        );
     }
     if width > plus.width + pick.width + sidebar_toggle.width {
         f.render_widget(

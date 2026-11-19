@@ -54,13 +54,13 @@ fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
     use crate::settings::ActivityBarPosition;
     use crate::ui_desks::{controls, sidebar_toggle_area};
 
-    for sidebar_right in [false, true] {
+    for (sidebar_right, width) in [(false, 38), (true, 38), (false, 100), (true, 100)] {
         let mut app = fixture();
         app.sidebar_right = sidebar_right;
         app.sidebar_view = SidebarView::Remote;
         app.sync_activity_bar_selection();
         app.active_pane = ActivePane::Explorer;
-        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
 
         for visible in [true, false, true] {
             terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
@@ -68,14 +68,21 @@ fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
             assert_eq!(app.sidebar_view, SidebarView::Remote);
             let button = sidebar_toggle_area(&app).unwrap();
             let tab_bar = app.tab_bar_area.unwrap();
-            assert_eq!(button.x, controls(&app, tab_bar, app.desks.host).new_desk.right());
+            let new_desk = controls(&app, tab_bar, app.desks.host).new_desk;
+            assert_eq!(button.right(), new_desk.x);
             let x = button.x + button.width / 2;
-            let glyph = if visible != sidebar_right { "←" } else { "→" };
-            assert_eq!(terminal.backend().buffer()[(x, button.y)].symbol(), glyph);
+            let icon = match (visible, sidebar_right) {
+                (false, _) => "◫",
+                (true, false) => "◧",
+                (true, true) => "◨",
+            };
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(x, button.y)].symbol(), icon);
+            assert_eq!(buffer[(new_desk.x + 1, button.y)].symbol(), "+");
 
             hover(&mut app, x, button.y);
             terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-            let tooltip: String = (0..100)
+            let tooltip: String = (0..width)
                 .map(|x| terminal.backend().buffer()[(x, button.bottom())].symbol())
                 .collect();
             assert!(tooltip.contains(if visible { "Hide Sidebar" } else { "Show Sidebar" }));
@@ -85,10 +92,32 @@ fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
             assert_eq!(app.tabs.len(), 1);
         }
 
+        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        let new_desk = controls(&app, app.tab_bar_area.unwrap(), app.desks.host).new_desk;
+        click(&mut app, new_desk.x + 1, new_desk.y);
+        assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::New));
+        app.desks.popup = Default::default();
         app.activity_bar_position = ActivityBarPosition::Left;
         terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
         assert!(sidebar_toggle_area(&app).is_none());
     }
+}
+
+#[test]
+fn top_sidebar_toggle_stays_visible_in_the_active_compact_split() {
+    let mut app = fixture();
+    app.tabs.push(Tab::new_file(Editor::test_with_text("second document\n")));
+    app.create_split_group_dir(1, crate::app::SplitDirection::Horizontal);
+    app.switch_group(0);
+    let mut terminal = Terminal::new(TestBackend::new(64, 24)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert!(app.split_active());
+    assert_eq!(app.desks.host, app.active_group);
+    let toggle = crate::ui_desks::sidebar_toggle_area(&app).unwrap();
+    assert_eq!(toggle.width, 1);
+    assert_eq!(terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(), "◧");
+    click(&mut app, toggle.x, toggle.y);
+    assert!(!app.show_explorer);
 }
 
 #[test]
@@ -99,6 +128,9 @@ fn top_sidebar_toggle_can_open_an_auto_hidden_sidebar() {
     assert!(!app.sidebar_is_visible());
 
     let button = crate::ui_desks::sidebar_toggle_area(&app).unwrap();
+    assert_eq!(button.x, app.sidebar_auto_hide.edge.unwrap().x);
+    hover(&mut app, button.x, button.y);
+    assert!(!app.sidebar_is_visible());
     click(&mut app, button.x, button.y);
     assert!(app.sidebar_is_visible());
     draw(&mut app);
@@ -211,7 +243,7 @@ fn top_activity_bar_follows_the_auto_hidden_sidebar() {
     let editor_y = app.tab_bar_area.unwrap().y;
 
     let edge = app.sidebar_auto_hide.edge.unwrap();
-    hover(&mut app, edge.x, edge.y);
+    hover(&mut app, edge.x, edge.y + 1);
     draw(&mut app);
     let activity = app.activity_bar_area.unwrap();
     assert_eq!(activity.y, editor_y);
