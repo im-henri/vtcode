@@ -166,7 +166,7 @@ impl App {
                 && restore.can_defer()
             {
                 match crate::fs_ops::open_document_source(&path, false) {
-                    Ok((_, metadata)) if metadata.len() >= crate::app::file_residency::MIN_DEFERRED_FILE_BYTES as u64 => {
+                    Ok((_, metadata)) if metadata.len() >= crate::app::file_residency::MIN_LAZY_RESTORE_BYTES => {
                         let _ = sender.send(crate::background::BackgroundResult::SessionFileDeferred {
                             workspace_generation, path, restore_id: restore.id, file_size: metadata.len(),
                             last_disk_modified: metadata.modified().ok(),
@@ -887,7 +887,7 @@ impl App {
         if tab_idx < self.tabs.len() && self.tab_mru_order.first() == Some(&tab_idx) { return; }
         self.tab_mru_order.retain(|&i| i != tab_idx && i < self.tabs.len());
         if tab_idx < self.tabs.len() { self.tab_mru_order.insert(0, tab_idx); }
-        self.trim_large_file_cache();
+        self.evict_inactive_large_files();
     }
 
     pub(crate) fn swap_tabs(&mut self, left: usize, right: usize) {

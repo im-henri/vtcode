@@ -3136,8 +3136,8 @@ impl App {
                     {
                         self.refresh_git_line_status_async();
                     }
-                    if applied && rope.len_bytes() >= file_residency::MIN_DEFERRED_FILE_BYTES {
-                        self.trim_large_file_cache();
+                    if applied && file_size >= file_residency::MIN_EVICTABLE_FILE_BYTES {
+                        self.evict_inactive_large_files();
                     }
                 }
                 crate::background::BackgroundResult::FileLoadFailed {
@@ -4242,8 +4242,8 @@ impl App {
                 self.blame_requested_path = None;
                 self.refresh_git_line_status_async();
             }
-            if loaded.rope.len_bytes() >= file_residency::MIN_DEFERRED_FILE_BYTES {
-                self.trim_large_file_cache();
+            if loaded.file_size >= file_residency::MIN_EVICTABLE_FILE_BYTES {
+                self.evict_inactive_large_files();
             }
         } else if crate::remote::workspace::is_view_key(path)
             && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))

@@ -319,7 +319,7 @@ impl App {
             Err(error) => self.notify_error(error),
         }
         if self.pending_lsp_workspace_edits.is_empty() {
-            self.trim_large_file_cache();
+            self.evict_inactive_large_files();
         } else {
             self.background.wake_handle().notify();
         }

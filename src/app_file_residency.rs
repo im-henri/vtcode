@@ -4,8 +4,10 @@ use std::path::Path;
 use crate::app::{App, Tab, TabKind};
 use crate::session::{RestoreLoad, SessionRestore};
 
-pub(crate) const MIN_DEFERRED_FILE_BYTES: usize = 4 * 1024 * 1024;
-const INACTIVE_FILE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+/// Hidden session tabs at this size can wait for their first visit.
+pub(crate) const MIN_LAZY_RESTORE_BYTES: u64 = 4 * 1024 * 1024;
+/// Only exceptional files can give up a buffer that was already opened.
+pub(crate) const MIN_EVICTABLE_FILE_BYTES: u64 = 500 * 1024 * 1024;
 
 impl crate::editor::Editor {
     pub(crate) fn has_deferred_file(&self) -> bool {
@@ -104,57 +106,27 @@ impl App {
         }
     }
 
-    pub(crate) fn trim_large_file_cache(&mut self) {
+    pub(crate) fn evict_inactive_large_files(&mut self) {
         if self.bg_global_replace_running || !self.pending_lsp_workspace_edits.is_empty() {
             return;
         }
         let mut candidates = Vec::new();
-        let mut bytes = 0usize;
-        for (group, tabs, active, mru) in std::iter::once((
-            self.active_group,
-            &self.tabs,
-            self.active_tab,
-            &self.tab_mru_order,
-        ))
-        .chain(self.groups.iter().enumerate().filter_map(|(group, pane)| {
-            (group != self.active_group).then_some((
-                group,
-                &pane.tabs,
-                pane.active_tab,
-                &pane.tab_mru_order,
-            ))
-        })) {
-            let start = candidates.len();
+        let focused_pane = std::iter::once((self.active_group, &self.tabs, self.active_tab));
+        let other_panes = self.groups.iter().enumerate().filter_map(|(group, pane)| {
+            (group != self.active_group).then_some((group, &pane.tabs, pane.active_tab))
+        });
+        for (group, tabs, active) in focused_pane.chain(other_panes) {
             for (index, tab) in tabs.iter().enumerate() {
-                if index != active
-                    && let Some(size) = self.cacheable_file_bytes(tab)
-                {
-                    bytes = bytes.saturating_add(size);
-                    candidates.push((group, index, size, usize::MAX));
-                }
-            }
-            if start != candidates.len() {
-                let mut ranks = vec![usize::MAX; tabs.len()];
-                for (rank, &index) in mru.iter().enumerate() {
-                    if let Some(entry) = ranks.get_mut(index) {
-                        *entry = rank;
-                    }
-                }
-                for (_, index, _, rank) in &mut candidates[start..] {
-                    *rank = ranks[*index];
+                if index != active && self.can_evict_inactive_file(tab) {
+                    candidates.push((group, index));
                 }
             }
         }
-        if bytes <= INACTIVE_FILE_CACHE_BYTES {
+        if candidates.is_empty() {
             return;
         }
-        // Prefer the tabs most recently used in the focused pane.
-        candidates.sort_unstable_by_key(|&(group, index, _, rank)| {
-            (group != self.active_group, rank, group, index)
-        });
-        let mut retired = Vec::new();
-        while bytes > INACTIVE_FILE_CACHE_BYTES {
-            let (group, index, size, _) = candidates.pop().unwrap();
+        let mut retired = Vec::with_capacity(candidates.len());
+        for (group, index) in candidates {
             let tab = if group == self.active_group {
                 &mut self.tabs[index]
             } else {
@@ -189,7 +161,6 @@ impl App {
             self.forget_editor_view_caches(view);
             self.pending_lsp_syncs.remove(&path);
             self.lsp_manager.did_close(&path);
-            bytes -= size;
         }
         self.desks.sync_stamp = None;
         let _ = self
@@ -204,13 +175,14 @@ impl App {
         crate::ui_editor::forget_word_snapshots(self, view);
     }
 
-    fn cacheable_file_bytes(&self, tab: &Tab) -> Option<usize> {
+    fn can_evict_inactive_file(&self, tab: &Tab) -> bool {
         let editor = &tab.editor;
-        let size = editor.rope.len_bytes();
-        let path = editor.file_path.as_deref()?;
+        let Some(path) = editor.file_path.as_deref() else {
+            return false;
+        };
         // A parked tab can reconstruct its contents from disk. Buffers
         // with local state that couldn't be reconstructed keep their Rope.
-        (size >= MIN_DEFERRED_FILE_BYTES
+        editor.file_size >= MIN_EVICTABLE_FILE_BYTES
             && tab.kind == TabKind::File
             && !crate::remote::workspace::is_view_key(path)
             && !editor.document_has_other_views()
@@ -235,8 +207,7 @@ impl App {
             && !self.deferred_file_saves.contains_key(path)
             && !self.pending_file_reloads.contains(path)
             && self.lsp_format_target_path.as_deref() != Some(path)
-            && !self.chat.rollback.file_busy(path))
-        .then_some(size)
+            && !self.chat.rollback.file_busy(path)
     }
 }
 
@@ -272,18 +243,23 @@ mod tests {
     fn session_defers_large_hidden_clean_files_until_selected() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        let active = write_file(root, "active.txt", MIN_DEFERRED_FILE_BYTES, "active text\n");
+        let active = write_file(
+            root,
+            "active.txt",
+            MIN_LAZY_RESTORE_BYTES as usize,
+            "active text\n",
+        );
         let hidden = write_file(
             root,
             "hidden.txt",
-            MIN_DEFERRED_FILE_BYTES,
+            MIN_LAZY_RESTORE_BYTES as usize,
             "old disk text\n",
         );
         let small = write_file(root, "small.txt", 10, "small text\n");
         let draft = write_file(
             root,
             "draft.txt",
-            MIN_DEFERRED_FILE_BYTES,
+            MIN_LAZY_RESTORE_BYTES as usize,
             "saved baseline\n",
         );
         let saved = |path: &Path| {
@@ -340,21 +316,63 @@ mod tests {
     }
 
     #[test]
-    fn opening_large_files_evicts_old_clean_text_and_keeps_edits_and_history() {
+    fn switching_between_open_files_reuses_the_loaded_buffers() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        // The total exceeds the former 64 MiB limit for inactive files.
+        let paths: Vec<_> = (0..10)
+            .map(|index| {
+                write_file(
+                    root,
+                    &format!("{index}.txt"),
+                    10 * 1024 * 1024,
+                    "saved text\n",
+                )
+            })
+            .collect();
+        let mut app = App::new(root.to_owned());
+        let mut buffers = Vec::new();
+        for path in &paths {
+            app.open_file(path);
+            wait_for_active_file(&mut app, path);
+            buffers.push(app.editor().unwrap().rope.clone());
+        }
+        let next = KeyEvent::new(KeyCode::PageDown, KeyModifiers::CONTROL);
+        for _ in 0..2 {
+            for (path, buffer) in paths.iter().zip(&buffers) {
+                assert!(!crate::input_keyboard::handle_keyboard_event(
+                    &mut app, next
+                ));
+                let editor = app.editor().unwrap();
+                assert_eq!(editor.file_path.as_ref(), Some(path));
+                assert!(!editor.bg_loading);
+                assert!(editor.rope.is_instance(buffer));
+            }
+        }
+        assert_eq!(app.tabs.len(), paths.len());
+    }
+
+    #[test]
+    fn only_clean_inactive_files_at_the_eviction_size_are_evicted() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
         let mut app = App::new(root.to_owned());
         let mut paths = Vec::new();
-        for index in 0..10 {
-            let path = write_file(
-                root,
-                &format!("{index}.txt"),
-                10 * 1024 * 1024,
-                "saved text\n",
-            );
+        for index in 0..5 {
+            let path = write_file(root, &format!("{index}.txt"), 128, "saved text\n");
             app.open_file(&path);
             wait_for_active_file(&mut app, &path);
             let editor = app.editor_mut().unwrap();
+            // The loader records the on-disk size. Simulate that metadata
+            // so threshold coverage needs no 500 MiB allocations.
+            editor.file_size = match index {
+                0..=2 => MIN_EVICTABLE_FILE_BYTES,
+                3 => MIN_EVICTABLE_FILE_BYTES - 1,
+                _ => editor.file_size,
+            };
+            editor.update_large_file_mode(crate::editor::LARGE_FILE_THRESHOLD);
             if index <= 1 {
                 editor.insert_char('!');
                 if index == 1 {
@@ -393,17 +411,6 @@ mod tests {
         );
         assert!(!app.tabs[3].editor.bg_loading);
         assert_eq!(app.tabs.len(), paths.len());
-        let cached: usize = app
-            .tabs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, tab)| {
-                (index != app.active_tab)
-                    .then(|| app.cacheable_file_bytes(tab))
-                    .flatten()
-            })
-            .sum();
-        assert!(cached <= INACTIVE_FILE_CACHE_BYTES);
 
         let identity = app.tabs[2].editor.save_identity;
         let version = app.tabs[2].editor.content_version;
@@ -426,7 +433,7 @@ mod tests {
             &hidden,
             format!(
                 "before\n{}",
-                "padding\n".repeat(MIN_DEFERRED_FILE_BYTES / 8)
+                "padding\n".repeat(MIN_LAZY_RESTORE_BYTES as usize / 8)
             ),
         )
         .unwrap();

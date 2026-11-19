@@ -1679,7 +1679,7 @@ impl App {
             return false;
         };
         self.bg_global_replace_running = false;
-        self.trim_large_file_cache();
+        self.evict_inactive_large_files();
         outcome.cancelled |= self
             .workspace_replace
             .cancel
