@@ -224,6 +224,15 @@ fn background_main_refreshes_its_own_sidebar_while_the_detached_editor_keeps_foc
 
 #[test]
 fn a_displayed_parked_workspace_processes_git_changes_without_a_focus_event() {
+    check_parked_workspace_git_changes(false);
+}
+
+#[test]
+fn a_displayed_headless_workspace_processes_git_changes_without_a_focus_event() {
+    check_parked_workspace_git_changes(true);
+}
+
+fn check_parked_workspace_git_changes(headless: bool) {
     let main_folder = tempfile::tempdir().unwrap();
     let detached_folder = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(main_folder.path()).unwrap();
@@ -238,7 +247,12 @@ fn a_displayed_parked_workspace_processes_git_changes_without_a_focus_event() {
     repo.commit(Some("HEAD"), &author, &author, "Initial", &tree, &[])
         .unwrap();
     let wake = UiWake::default();
-    let mut app = App::new_startup(main_folder.path().to_owned(), wake.clone());
+    let remote = headless.then(|| connect_headless(main_folder.path(), &wake));
+    let mut app = if let Some(remote) = &remote {
+        headless_app(remote, wake.clone())
+    } else {
+        App::new_startup(main_folder.path().to_owned(), wake.clone())
+    };
     app.show_explorer = true;
     app.explorer_width = 46;
     app.sidebar_view = SidebarView::SourceControl;
@@ -315,6 +329,24 @@ fn a_displayed_parked_workspace_processes_git_changes_without_a_focus_event() {
     assert_ne!(app.workspaces.active, main_workspace);
     assert_eq!(app.detached_window_id(), Some(1));
     assert_eq!(app.editor().unwrap().navigation_id, view);
+    if let Some(remote) = &remote {
+        assert!(remote.client.connected());
+        remote.disconnect();
+    }
+}
+
+fn connect_headless(root: &std::path::Path, wake: &UiWake) -> crate::remote::workspace::Workspace {
+    let client = crate::remote::tests::connection(root, Arc::default(), Arc::default());
+    client.set_wake(wake.clone());
+    crate::remote::workspace::Workspace::new(client)
+}
+
+fn headless_app(remote: &crate::remote::workspace::Workspace, wake: UiWake) -> App {
+    let mut app = App::new_startup(remote.view_root.clone(), wake);
+    app.remote_workspace = Some(remote.clone());
+    app.lsp_manager.remote_workspace = Some(remote.clone());
+    app.lsp_manager.configs.clear();
+    app
 }
 
 #[test]
@@ -406,12 +438,63 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         return;
     }
     for move_back in [false, true] {
-        check_frontend_lifetime(TEST, ENDPOINT, move_back);
+        let app = app_with_tabs(&["detachable-probe.txt", "detachable-probe.txt", "extra.txt"]);
+        check_frontend_lifetime(TEST, ENDPOINT, app, move_back);
     }
 }
 
-fn check_frontend_lifetime(test: &str, endpoint_var: &str, move_back: bool) {
-    let mut app = app_with_tabs(&["detachable-probe.txt", "detachable-probe.txt", "extra.txt"]);
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an unsandboxed private ConPTY and named pipe"
+)]
+fn detached_headless_tabs_save_on_the_original_connection() {
+    const ENDPOINT: &str = "VTCODE_TEST_DETACHED_HEADLESS_ENDPOINT";
+    const TEST: &str = "tab_windows::tests::detached_headless_tabs_save_on_the_original_connection";
+    if let Some(endpoint) = std::env::var_os(ENDPOINT) {
+        frontend::run(endpoint).unwrap();
+        return;
+    }
+    for move_back in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let filename = "detachable-probe.txt";
+        let disk_path = directory.path().join(filename);
+        std::fs::write(&disk_path, "sample text\n").unwrap();
+        let wake = UiWake::default();
+        let remote = connect_headless(directory.path(), &wake);
+        let mut app = headless_app(&remote, wake);
+        app.source_control_enabled = false;
+        let key = remote.target_key(filename).unwrap();
+        app.open_file(&key);
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.editor().is_some_and(|editor| !editor.bg_loading)
+        });
+        assert_eq!(app.editor().unwrap().rope.to_string(), "sample text\n");
+        app.duplicate_tab(0);
+        app.new_file();
+        app.active_tab = 0;
+
+        let app = check_frontend_lifetime(TEST, ENDPOINT, app, move_back);
+        assert!(
+            app.remote_workspace
+                .as_ref()
+                .unwrap()
+                .client
+                .same_connection(&remote.client)
+        );
+        assert!(matches!(
+            remote.client.call(crate::remote::Command::Ping).unwrap(),
+            crate::remote::Reply::Done
+        ));
+        assert_eq!(
+            std::fs::read_to_string(disk_path).unwrap(),
+            "ZLIVE-UPDATEsample text\n"
+        );
+        remote.disconnect();
+    }
+}
+
+fn check_frontend_lifetime(test: &str, endpoint_var: &str, mut app: App, move_back: bool) -> App {
     let view = app.tabs[0].editor.navigation_id;
     let main_view = app.tabs[1].editor.navigation_id;
     let extra = app.tabs[2].editor.navigation_id;
@@ -537,6 +620,13 @@ fn check_frontend_lifetime(test: &str, endpoint_var: &str, move_back: bool) {
         app.editor()
             .is_some_and(|editor| editor.rope.get_char(0) == Some('Z'))
     });
+    if app.remote_workspace.is_some() {
+        app.save_current_file();
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.pending_file_saves.is_empty() && app.editor().is_some_and(|editor| !editor.modified)
+        });
+        assert!(app.editor().is_some_and(|editor| !editor.modified));
+    }
     assert!(app.move_tab_to_window(extra, 1));
     app.close_tab(app.active_tab);
     windows.poll(&mut app);
@@ -572,6 +662,7 @@ fn check_frontend_lifetime(test: &str, endpoint_var: &str, move_back: bool) {
     });
     drop(writer);
     assert!(server.join().unwrap().is_ok());
+    app
 }
 
 fn spawn_frontend(
@@ -618,7 +709,10 @@ fn a_detached_frontend_exits_even_when_the_terminal_stops_draining_output() {
     let server = std::thread::spawn(move || {
         frontend::accept(
             listener,
-            move |notice| send.send(notice).map_err(|_| io::ErrorKind::BrokenPipe.into()),
+            move |notice| {
+                send.send(notice)
+                    .map_err(|_| io::ErrorKind::BrokenPipe.into())
+            },
             server_wake,
             Arc::new(transport::Opening::new().unwrap()),
         )
