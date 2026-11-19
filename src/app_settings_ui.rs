@@ -9,9 +9,11 @@ use crate::animation_config::{AnimationEffect, AnimationSettings};
 
 pub(crate) const SETTINGS_CATEGORIES: &[&str] = &[
     "Commonly Used", "Text Editor", "Workbench", "Features", "Files",
-    "Keyboard Shortcuts", "Agent Chat", "Animations", "Language Servers", "Source Control", "All",
+    "Keyboard Shortcuts", "Agent Chat", "Animations", "Language Servers", "Source Control",
+    "Autocomplete", "All",
 ];
 
+pub(crate) const SETTINGS_AUTOCOMPLETE_CATEGORY: usize = 10;
 pub(crate) const SETTINGS_ALL_CATEGORY: usize = SETTINGS_CATEGORIES.len() - 1;
 
 const ANIMATION_SECTIONS: &[(&str, &str, &[AnimationEffect])] = &[
@@ -45,7 +47,7 @@ impl App {
 
     pub(crate) fn settings_category_for_id(setting_id: &str) -> usize {
         if crate::app_vtcomplete_settings::field(setting_id).is_some() {
-            return 1;
+            return SETTINGS_AUTOCOMPLETE_CATEGORY;
         }
         if setting_id.starts_with("animation_") || setting_id.starts_with("heading_animation") {
             return 7;
@@ -61,8 +63,9 @@ impl App {
             "source_control_enabled" | "source_control_show_untracked" => 9,
             "lsp_servers" | "lsp_enabled" | "lsp_diagnostic_delay_ms" => 8,
             "acp_agents" => 6,
+            "heading_autocomplete" | "quick_suggestions" => SETTINGS_AUTOCOMPLETE_CATEGORY,
             "heading_editor" | "tab_size" | "use_tabs" | "word_wrap" | "word_wrap_column" | "whitespace" | "comment_whitespace" | "read_only"
-            | "quick_suggestions" | "hover_enabled" | "format_on_type" | "format_on_save" | "formatters"
+            | "hover_enabled" | "format_on_type" | "format_on_save" | "formatters"
             | "cursor_style" | "cursor_blinking" | "cursor_surrounding_lines" | "minimap" | "minimap_width" => 1,
             "heading_features" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens"
             | "inlay_hints" | "code_lens" | "semantic_highlighting" | "highlight_words_across_tabs" | "sticky_scroll" | "sticky_scroll_max"
@@ -438,7 +441,7 @@ impl App {
             "whitespace" => "Controls rendering of whitespace: None, Boundary (tabs, indentation, repeated and trailing spaces), Selection (only selected), Trailing, All.",
             "comment_whitespace" => "Render spaces as dots and tabs as arrows inside syntax-recognized comments. Defaults to All. Inherit uses Render Whitespace; other modes override it only inside comments.",
             "read_only" => "Prevent text edits in the active editor tab.",
-            "quick_suggestions" => "Show VTComplete and LSP suggestions while typing. Turn off to request suggestions with Ctrl+Space.",
+            "quick_suggestions" => "Show VTComplete, language-server, and GPT-based suggestions while typing. Ctrl+Space opens the suggestion list and Alt+I requests an inline prediction.",
             "hover_enabled" => "Show language information when the pointer rests over editor text.",
             "format_on_type" => "When Language Server is the chosen formatter, adjust text after supported trigger characters. New lines are never formatted by this setting. External tools run on Format Document or Format on Save.",
             "theme" => "Select the active color theme for the whole editor.",
@@ -768,7 +771,6 @@ impl App {
             ("Render Whitespace".into(), whitespace.name().to_string(), "whitespace".into()),
             ("Whitespace in Comments".into(), self.comment_whitespace_mode.map_or("Inherit", |mode| mode.name()).to_string(), "comment_whitespace".into()),
             ("Read Only".into(), on_off(read_only), "read_only".into()),
-            ("Show Suggestions While Typing".into(), on_off(self.quick_suggestions), "quick_suggestions".into()),
             ("Hover".into(), on_off(self.hover_enabled), "hover_enabled".into()),
             ("Format On Type".into(), on_off(self.on_type_formatting_enabled), "format_on_type".into()),
             // === Appearance ===
@@ -920,6 +922,10 @@ impl App {
                 )]);
             }
         }
+        items.extend([
+            ("── Autocomplete ──".into(), String::new(), "heading_autocomplete".into()),
+            ("Show Suggestions While Typing".into(), on_off(self.quick_suggestions), "quick_suggestions".into()),
+        ]);
         items.extend(self.completion_setting_items());
         // === Keyboard Shortcuts ===
         items.push(("── Keyboard Shortcuts ──".into(), String::new(), "heading_shortcuts".into()));
@@ -956,7 +962,8 @@ mod tests {
     #[test]
     fn categories_count() {
         let cats = App::settings_categories();
-        assert_eq!(cats.len(), 11);
+        assert_eq!(cats.len(), 12);
+        assert_eq!(cats[SETTINGS_AUTOCOMPLETE_CATEGORY], "Autocomplete");
     }
 
     #[test]
@@ -1149,7 +1156,6 @@ mod tests {
         assert_eq!(App::settings_category_for_id("word_wrap"), 1);
         assert_eq!(App::settings_category_for_id("whitespace"), 1);
         assert_eq!(App::settings_category_for_id("read_only"), 1);
-        assert_eq!(App::settings_category_for_id("quick_suggestions"), 1);
         assert_eq!(App::settings_category_for_id("hover_enabled"), 1);
         assert_eq!(App::settings_category_for_id("format_on_type"), 1);
     }

@@ -1,4 +1,9 @@
-use crate::{app::App, ui_settings::draw_settings_editor};
+use crate::{
+    app::App,
+    app_settings_navigation::{GPT_BASED_SECTION, VTCOMPLETE_SECTION},
+    app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY,
+    ui_settings::draw_settings_editor,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, style::Modifier};
 
@@ -71,29 +76,51 @@ fn capture(buffer: &Buffer, name: &str) {
 }
 
 #[test]
-fn vtcomplete_introduction_wraps_above_settings_and_stays_on_its_own_page() {
+fn autocomplete_subpages_show_their_own_controls_and_wrap_their_introductions() {
     for light in [false, true] {
         let mut app = app();
         if light {
             app.colors = crate::app_theme::EditorTheme::Light.colors();
         }
-        app.select_settings_page(1, Some("VTComplete"));
-        for (width, height) in [(110, 32), (46, 18)] {
-            let buffer = render(&mut app, width, height);
-            let content = app.settings_sidebar_area.unwrap();
-            let header = buffer.content[..content.y as usize * width as usize]
-                .chunks(width as usize)
-                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let header = header.split_whitespace().collect::<Vec<_>>().join(" ");
-            assert!(header.contains("Word suggestions use the active file as you type or press Ctrl+Space."));
-            assert!(content.height >= 3);
-            assert!(text(&buffer).contains("Minimum Prefix Characters"));
-            capture(&buffer, &format!("vtcomplete-{width}-light-{light}"));
+        for (section, intro, control, other_control, name) in [
+            (
+                VTCOMPLETE_SECTION,
+                "Word suggestions use the active file as you type or press Ctrl+Space.",
+                "Minimum Prefix Characters",
+                "Inline Predictions",
+                "vtcomplete",
+            ),
+            (
+                GPT_BASED_SECTION,
+                "The built-in language model runs locally and predicts text at the caret.",
+                "Inline Predictions",
+                "Minimum Prefix Characters",
+                "gpt-based",
+            ),
+        ] {
+            app.select_settings_page(SETTINGS_AUTOCOMPLETE_CATEGORY, Some(section));
+            for (width, height) in [(110, 32), (46, 18)] {
+                let buffer = render(&mut app, width, height);
+                let content = app.settings_sidebar_area.unwrap();
+                let rendered = text(&buffer);
+                let header = rendered
+                    .lines()
+                    .take(content.y as usize)
+                    .flat_map(str::split_whitespace)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                assert!(header.contains(section), "{header}");
+                assert!(header.contains(intro), "{header}");
+                assert!(content.height >= 3);
+                assert!(rendered.contains(control), "{rendered}");
+                assert!(!rendered.contains(other_control), "{rendered}");
+                capture(&buffer, &format!("{name}-{width}-light-{light}"));
+            }
         }
-        app.select_settings_page(1, Some("Suggestions"));
-        assert!(!text(&render(&mut app, 110, 32)).contains("Word suggestions use the active file"));
+        app.select_settings_page(SETTINGS_AUTOCOMPLETE_CATEGORY, Some("General"));
+        let rendered = text(&render(&mut app, 110, 32));
+        assert!(rendered.contains("Show Suggestions While Typing"));
+        assert!(!rendered.contains("Inline Predictions"));
     }
 }
 

@@ -322,8 +322,9 @@ unsaved edits, along with language keywords and snippets. It scans the buffer
 when suggestions are requested. **Tab** inserts a suggestion, **↑/↓** selects
 another, **Esc** dismisses the popup, and **Ctrl+Space** requests suggestions.
 
-Preferences live under **Settings → Text Editor → VTComplete**. The shared toggle
-for automatic VTComplete and LSP popups is under **Text Editor → Suggestions**.
+Under **Settings → Autocomplete**, use **VTComplete** for word suggestions and
+**GPT-Based** for inline predictions. **General → Show Suggestions While Typing**
+controls automatic suggestions for both, as well as language-server completion.
 
 ### Inline predictions
 
@@ -474,13 +475,13 @@ score alongside the evidence from the file.
 A small calibration model estimates how likely each token is to be right from
 both kinds of evidence. A prediction stops at the first uncertain token, so
 short answers are normal and no answer is common in code unlike anything
-nearby. How readily a prediction is shown is your choice under **Settings →
-Text Editor → VTComplete → Inline Prediction Eagerness**: *Cautious* shows one
+nearby. **Settings → Autocomplete → GPT-Based → Inline Prediction Eagerness**
+controls how readily predictions appear. *Cautious* shows one
 only when fairly sure, *Balanced* (default) is a middle path, and *Eager* and
 *Always* show a guess almost every time, so more of them are wrong. Alt+I is
 always at least *Eager*. Inside comments and strings only the language model
-predicts, to the end of the line. Turn predictions off with **Settings
-→ Text Editor → VTComplete → Inline Predictions**.
+predicts, to the end of the line. Turn predictions off with **Settings →
+Autocomplete → GPT-Based → Inline Predictions**.
 
 The prediction is the main suggestion. While one is being worked out, the
 word popup waits for it (up to a quarter of a second) instead of flashing up

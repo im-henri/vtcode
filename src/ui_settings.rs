@@ -8,6 +8,8 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::App;
+use crate::app_settings_navigation::{GPT_BASED_SECTION, VTCOMPLETE_SECTION};
+use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
 use crate::text_input::TextInputId;
 use crate::ui_pickers::truncate_to_width;
 use crate::ui_widgets::{DropdownMenu, InputField, PopupDialog};
@@ -36,6 +38,7 @@ fn vscode_setting_label(label: &str, setting_id: &str) -> String {
         6 => "Agent Chat",
         7 => "Animations",
         8 => "Language Servers",
+        SETTINGS_AUTOCOMPLETE_CATEGORY => "Autocomplete",
         _ => "Settings",
     };
     format!("{prefix}: {label}")
@@ -694,6 +697,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 7 => "Motion and visual effects in the editor",
                 8 => "Language intelligence and diagnostics",
                 9 => "Git integration and background activity",
+                SETTINGS_AUTOCOMPLETE_CATEGORY => "Word suggestions and inline predictions",
                 crate::app_settings_ui::SETTINGS_ALL_CATEGORY => "Every setting in one place",
                 _ => "",
             }
@@ -709,14 +713,12 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             Rect::new(settings_area.x, settings_area.y + 2, settings_area.width, 1));
     }
     let header_height = if spacious_header { 4 } else { 2 };
-    let mut introduction = if section == Some("VTComplete") {
-        App::wrap_setting_text_for_width(
-            "Word suggestions use the active file as you type or press Ctrl+Space.",
-            heading_area.width as usize,
-        )
-    } else {
-        Vec::new()
+    let introduction = match section {
+        Some(VTCOMPLETE_SECTION) => "Word suggestions use the active file as you type or press Ctrl+Space.",
+        Some(GPT_BASED_SECTION) => "The built-in language model runs locally and predicts text at the caret.",
+        _ => "",
     };
+    let mut introduction = App::wrap_setting_text_for_width(introduction, heading_area.width as usize);
     // Keep room for controls in very short panes.
     if introduction.len() > settings_area.height.saturating_sub(header_height + 3) as usize {
         introduction.clear();

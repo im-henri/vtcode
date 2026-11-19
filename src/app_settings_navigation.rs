@@ -1,6 +1,10 @@
 //! Settings pages and their shared mouse/keyboard navigation model.
 
 use crate::app::App;
+use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
+
+pub(crate) const VTCOMPLETE_SECTION: &str = "VTComplete";
+pub(crate) const GPT_BASED_SECTION: &str = "GPT-Based";
 
 impl App {
     pub(crate) fn settings_editor_has_focus(&self) -> bool {
@@ -30,8 +34,6 @@ impl App {
                 "Cursor",
                 "Whitespace",
                 "Minimap",
-                "Suggestions",
-                "VTComplete",
                 "Formatting",
             ],
             2 => &["Appearance", "Layout", "Editor Management"],
@@ -44,20 +46,23 @@ impl App {
                 "Navigation",
                 "Shared Frame Rate",
             ],
+            SETTINGS_AUTOCOMPLETE_CATEGORY => &["General", VTCOMPLETE_SECTION, GPT_BASED_SECTION],
             _ => &[],
         }
     }
 
     pub(crate) fn settings_section_for_id(id: &str) -> Option<&'static str> {
-        if crate::app_vtcomplete_settings::field(id).is_some() {
-            return Some("VTComplete");
+        if let Some(field) = crate::app_vtcomplete_settings::field(id) {
+            return Some(match field.0 {
+                "vtcomplete_inline_predictions" | "vtcomplete_inline_eagerness" => GPT_BASED_SECTION,
+                _ => VTCOMPLETE_SECTION,
+            });
         }
         match Self::settings_category_for_id(id) {
             1 => Some(match id {
                 "cursor_style" | "cursor_blinking" | "cursor_surrounding_lines" => "Cursor",
                 "whitespace" | "comment_whitespace" => "Whitespace",
                 "minimap" | "minimap_width" => "Minimap",
-                "quick_suggestions" | "hover_enabled" => "Suggestions",
                 "format_on_type" | "format_on_save" | "formatters" => "Formatting",
                 _ => "Editing",
             }),
@@ -81,6 +86,7 @@ impl App {
                 _ => "Saving",
             }),
             7 => Self::animation_setting_section(id),
+            SETTINGS_AUTOCOMPLETE_CATEGORY => Some("General"),
             _ => None,
         }
     }

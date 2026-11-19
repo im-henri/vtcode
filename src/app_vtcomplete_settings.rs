@@ -222,7 +222,7 @@ impl App {
         if self.settings_persistence_enabled
             && let Err(error) = preferences.save(&settings_path(&self.explorer.root))
         {
-            self.notify(format!("Could not save VTComplete settings: {error}"));
+            self.notify(format!("Could not save autocomplete settings ({error})"));
             return;
         }
         self.completion_preferences = preferences;
@@ -294,6 +294,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_settings_navigation::{GPT_BASED_SECTION, VTCOMPLETE_SECTION};
+    use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
 
     #[test]
     fn old_preferences_keep_completion_controls_and_ignore_index_settings() {
@@ -323,21 +325,56 @@ mod tests {
     }
 
     #[test]
-    fn settings_show_only_popup_and_inline_controls() {
+    fn autocomplete_pages_group_shared_popup_and_inline_controls() {
         let mut app = App::test_new();
-        app.select_settings_page(1, Some("VTComplete"));
         let items = app.settings_items();
-        let visible: Vec<_> = app
-            .settings_filtered_indices_with_items(1, &items)
+        let category = SETTINGS_AUTOCOMPLETE_CATEGORY;
+        for (section, expected) in [
+            ("General", &["quick_suggestions"][..]),
+            (
+                VTCOMPLETE_SECTION,
+                &[
+                    "vtcomplete_min_prefix",
+                    "vtcomplete_context_triggers",
+                    "vtcomplete_complete_calls",
+                    "vtcomplete_use_history",
+                ][..],
+            ),
+            (
+                GPT_BASED_SECTION,
+                &[
+                    "vtcomplete_inline_predictions",
+                    "vtcomplete_inline_eagerness",
+                ][..],
+            ),
+        ] {
+            app.select_settings_page(category, Some(section));
+            let visible: Vec<_> = app
+                .settings_filtered_indices_with_items(category, &items)
+                .into_iter()
+                .map(|index| items[index].2.as_str())
+                .collect();
+            assert_eq!(visible, expected, "{section}");
+        }
+        assert!(!app.set_completion_dropdown("vtcomplete_sources", "Entire workspace"));
+
+        app.select_settings_page(category, Some(VTCOMPLETE_SECTION));
+        app.settings_editor_search = "GPT-Based".into();
+        let matches: Vec<_> = app
+            .settings_filtered_indices_with_items(category, &items)
             .into_iter()
             .map(|index| items[index].2.as_str())
             .collect();
         assert_eq!(
-            visible,
-            FIELDS.iter().map(|field| field.0).collect::<Vec<_>>()
+            matches,
+            [
+                "quick_suggestions",
+                "vtcomplete_inline_predictions",
+                "vtcomplete_inline_eagerness"
+            ]
         );
-        assert!(!app.set_completion_dropdown("vtcomplete_sources", "Entire workspace"));
 
+        app.settings_editor_search.clear();
         app.begin_numeric_setting_edit("autocomplete_min_prefix", "1");
         app.settings_value_buffer = "129".into();
         assert!(!app.commit_numeric_setting_edit());
