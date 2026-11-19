@@ -192,9 +192,23 @@ fn detached_frame_keeps_tabs_and_the_interactive_status_bar() {
     );
     assert!(app.performance_view.pinned);
     terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-    assert!(app.performance_area.is_some_and(|area| area.bottom() <= status_area.y));
+    let dock = app.performance_area.unwrap();
+    assert!(dock.bottom() <= status_area.y);
     assert_eq!(app.status_bar_area, Some(status_area));
-    crate::ui_performance_details::dismiss(&mut app);
+    let close = (dock.y..dock.bottom())
+        .flat_map(|row| (dock.x..dock.right()).map(move |column| (column, row)))
+        .find(|&point| terminal.backend().buffer()[point].symbol() == "×")
+        .unwrap();
+    let mut main = Terminal::new(TestBackend::new(80, 22)).unwrap();
+    main.draw(|frame| crate::ui::draw_background_window(frame, &mut app, MAIN_WINDOW)).unwrap();
+    assert_eq!(app.performance_area, Some(dock));
+    crate::mouse::handle_mouse(&mut app, MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: close.0,
+        row: close.1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(!app.background.activity.details_open);
 
     for (show_status_bar, zen_mode) in [(false, false), (true, true)] {
         app.show_status_bar = show_status_bar;
@@ -284,6 +298,14 @@ fn background_frames_wait_only_for_damaged_windows_in_the_changed_workspace() {
     let mut main = Terminal::new(TestBackend::new(80, 24)).unwrap();
     windows.paint_main_background(&mut main, &mut app).unwrap();
     assert_eq!(windows.background_draw_wait(true, now), None);
+
+    app.highlight_words_across_tabs = true;
+    let mut detached = Terminal::new(TestBackend::new(90, 24)).unwrap();
+    detached.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    windows.invalidate_pending_workspace_redraw(&mut app);
+    assert!(windows.background_draw_ready(true));
+    windows.paint_main_background(&mut main, &mut app).unwrap();
+    assert!(!windows.background_draw_ready(true));
 }
 
 #[test]

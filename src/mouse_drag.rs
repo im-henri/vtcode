@@ -1520,6 +1520,7 @@ mod tests {
         let mut app = app_with_content("fn main() {}\n");
         assert!(app.detach_terminal_to_group(0, app.active_group));
         let terminal_tab_index = app.active_tab;
+        app.viewport_area = Rect::new(0, 0, 100, 34);
         app.workbench_body_area = Some(Rect::new(10, 2, 80, 30));
         app.dragging_tab = Some(terminal_tab_index);
         app.dragging_tab_source_group = Some(app.active_group);

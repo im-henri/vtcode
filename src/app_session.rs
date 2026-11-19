@@ -564,7 +564,6 @@ impl App {
         }
         if let Some(v) = s.highlight_words_across_tabs {
             self.highlight_words_across_tabs = v;
-            if !v { self.shared_word_highlight = None; }
         }
         if let Some(v) = s.error_lens {
             self.error_lens = v;

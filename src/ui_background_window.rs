@@ -69,7 +69,9 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, window: WindowId) {
         None
     };
     let diff_pending = comparison.as_ref().is_some_and(|view| view.pending);
-    super::draw_workbench(frame, app, diff_pending);
+    crate::ui_performance_details::preserve_foreground_layout(app, |app| {
+        super::draw_workbench(frame, app, diff_pending);
+    });
     app.rendering_background_window = false;
 
     if let Some(layout) = &mut projection {

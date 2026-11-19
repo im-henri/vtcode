@@ -49,6 +49,38 @@ fn draw(app: &mut App, terminal: &mut Terminal<TestBackend>) {
     terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
 }
 
+#[test]
+fn detached_editors_keep_their_own_find_queries_and_results() {
+    use crate::tab_windows::MAIN_WINDOW;
+
+    let mut app = app();
+    let detached = app.tabs[1].editor.navigation_id;
+    assert!(app.open_detached_window(1, detached));
+    let mut main = Terminal::new(TestBackend::new(110, 24)).unwrap();
+    let mut other = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    find(&mut app, "alpha");
+    draw(&mut app, &mut main);
+    assert_eq!(app.search_matches.len(), 2);
+
+    assert!(app.activate_window(1));
+    find(&mut app, "beta");
+    draw(&mut app, &mut other);
+    assert_eq!(app.search_matches.len(), 2);
+    key(&mut app, KeyCode::F(3), KeyModifiers::NONE);
+    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("beta"));
+
+    assert!(app.activate_window(MAIN_WINDOW));
+    draw(&mut app, &mut main);
+    assert!(app.search_active);
+    assert_eq!(app.search_query, "alpha");
+    assert_eq!(app.search_matches.len(), 2);
+    assert!(app.activate_window(1));
+    draw(&mut app, &mut other);
+    assert!(app.search_active);
+    assert_eq!(app.search_query, "beta");
+    assert_eq!(app.search_matches.len(), 2);
+}
+
 fn middle_mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
     crate::mouse::handle_mouse(
         app,

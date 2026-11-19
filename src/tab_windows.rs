@@ -327,6 +327,12 @@ impl Windows {
         }
     }
 
+    pub(crate) fn invalidate_pending_workspace_redraw(&mut self, app: &mut App) {
+        if std::mem::take(&mut app.tab_window_redraw_pending) {
+            self.invalidate_workspace(app.workspaces.active);
+        }
+    }
+
     fn invalidate_window(&mut self, id: WindowId) {
         if id == MAIN_WINDOW {
             self.main_dirty = !self.is_main();
@@ -819,9 +825,7 @@ impl Windows {
             }
             self.main_workspace = app.workspaces.active;
         }
-        if std::mem::take(&mut app.tab_window_document_changed) {
-            self.invalidate_workspace(app.workspaces.active);
-        }
+        self.invalidate_pending_workspace_redraw(app);
         let mut changed = app
             .tab_window_request
             .take()
@@ -864,7 +868,10 @@ impl Windows {
             }
             self.populated.clear();
             app.collect_populated_windows(&mut self.populated, &mut self.populated_desks);
-            for owner in &app.workspaces.parked {
+            for owner in &mut app.workspaces.parked {
+                if std::mem::take(&mut owner.app.tab_window_redraw_pending) {
+                    self.invalidate_workspace(owner.id);
+                }
                 if owner.app.has_detached_windows() {
                     owner
                         .app

@@ -405,7 +405,7 @@ pub(crate) struct App {
     pub dragging_tab: Option<usize>,
     pub dragging_tab_source_group: Option<usize>,
     pub(crate) tab_window_request: Option<crate::tab_windows::Request>,
-    pub(crate) tab_window_document_changed: bool,
+    pub(crate) tab_window_redraw_pending: bool,
     pub dragging_terminal_tab: Option<usize>,
     pub dragging_explorer_path: Option<PathBuf>,
     pub drag_start_pos: Option<(u16, u16)>,
@@ -1441,7 +1441,7 @@ impl App {
             dragging_tab: None,
             dragging_tab_source_group: None,
             tab_window_request: None,
-            tab_window_document_changed: false,
+            tab_window_redraw_pending: false,
             dragging_terminal_tab: None,
             dragging_explorer_path: None,
             drag_start_pos: None,
@@ -4818,7 +4818,7 @@ impl App {
             self.tabs.len(),
             self.groups.len(),
         ));
-        self.tab_window_document_changed |= shared_view_changed && self.has_detached_windows();
+        self.tab_window_redraw_pending |= shared_view_changed && self.has_detached_windows();
     }
 
     /// Execute rename symbol: replace all whole-word occurrences in current file

@@ -475,6 +475,7 @@ pub(crate) struct SharedWordHighlight {
     word: std::sync::Arc<str>,
     char_len: usize,
     selected: bool,
+    find_options: (bool, bool),
 }
 
 /// Resolve one query from the focused tab before any inactive-pane rendering.
@@ -482,11 +483,10 @@ pub(crate) struct SharedWordHighlight {
 /// it. Other tabs only match their rendered lines through RenderLineCache;
 /// neither hidden tabs nor whole documents are scanned for this feature.
 pub(crate) fn prepare_shared_word_highlight(app: &mut App) {
-    if !app.highlight_words_across_tabs {
-        app.shared_word_highlight = None;
-        return;
-    }
     let source = (|| {
+        if !app.highlight_words_across_tabs {
+            return None;
+        }
         let tab = app.tabs.get(app.active_tab)?;
         let editor = &tab.editor;
         if !matches!(
@@ -512,17 +512,26 @@ pub(crate) fn prepare_shared_word_highlight(app: &mut App) {
         }?;
         Some((word, selected))
     })();
-    let Some((word, selected)) = source else {
-        app.shared_word_highlight = None;
-        return;
-    };
-    if app.shared_word_highlight.as_ref().is_some_and(|current| {
-        std::sync::Arc::ptr_eq(&current.word, &word) && current.selected == selected
-    }) {
+    let find_options = (app.search_case_sensitive, app.search_whole_word);
+    if let Some((word, selected)) = source {
+        if app.shared_word_highlight.as_ref().is_some_and(|current| {
+            current.selected == selected && current.find_options == find_options
+                && (std::sync::Arc::ptr_eq(&current.word, &word) || current.word == word)
+        }) {
+            return;
+        }
+        let char_len = if word.is_ascii() { word.len() } else { word.chars().count() };
+        app.shared_word_highlight = Some(SharedWordHighlight { word, char_len, selected, find_options });
+    } else if app.shared_word_highlight.take().is_none() {
         return;
     }
-    let char_len = if word.is_ascii() { word.len() } else { word.chars().count() };
-    app.shared_word_highlight = Some(SharedWordHighlight { word, char_len, selected });
+    app.tab_window_redraw_pending |= app.has_detached_windows();
+}
+
+fn occurrence_find_options(app: &App) -> (bool, bool) {
+    app.shared_word_highlight.as_ref()
+        .filter(|_| app.highlight_words_across_tabs)
+        .map_or((app.search_case_sensitive, app.search_whole_word), |query| query.find_options)
 }
 
 /// Render a large document without ever materializing or scanning an entire
@@ -1625,6 +1634,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let mut selection_style = app.copy_animation_selection_style();
+    let (occurrence_case_sensitive, occurrence_whole_word) = occurrence_find_options(app);
     let crate::app::Tab { editor, file_search, .. } = &mut app.tabs[app.active_tab];
 
     if bounded_render_mode {
@@ -1875,8 +1885,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 &editor.rope,
                 word,
                 cursor_word_char_len,
-                app.search_case_sensitive,
-                app.search_whole_word,
+                occurrence_case_sensitive,
+                occurrence_whole_word,
             );
         }
         let first_line = wrapped_rows.first().map_or(0, |row| row.line_idx);
@@ -2781,8 +2791,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             &editor.rope,
             word,
             cursor_word_char_len,
-            app.search_case_sensitive,
-            app.search_whole_word,
+            occurrence_case_sensitive,
+            occurrence_whole_word,
         );
     }
     let mut trailing_selection_ranges: Vec<(usize, usize)> = Vec::with_capacity(8);

@@ -1276,8 +1276,11 @@ pub(crate) fn draw_editor_section_with_pending_diff(
         app.close_empty_groups();
     }
 
-    // Capture the real active editor before split rendering swaps tab storage.
-    crate::ui_editor::prepare_shared_word_highlight(app);
+    // A background window renders with its own tabs projected into the App.
+    // Only the foreground editor supplies the query shared by visible views.
+    if !app.rendering_background_window {
+        crate::ui_editor::prepare_shared_word_highlight(app);
+    }
 
     app.desks.host = app.split_tree.as_ref().and_then(|tree| tree.leaves().first().copied()).unwrap_or(app.active_group);
     let show_chrome = !app.zen_mode;

@@ -10,11 +10,7 @@ const WORD_BG: Color = Color::Rgb(20, 80, 50);
 const SELECTION_BG: Color = Color::Rgb(30, 90, 60);
 const TARGET: &str = "beta ALPHA alphabet alpha _alpha alpha_\n";
 
-fn fixture(
-    wrapped: bool,
-    selected: bool,
-    direction: SplitDirection,
-) -> (App, Terminal<TestBackend>) {
+fn app_with_words(wrapped: bool) -> App {
     let mut app = App::test_new();
     app.tabs = ["alpha beta\nalpha gamma\n\n", TARGET]
         .into_iter()
@@ -37,6 +33,15 @@ fn fixture(
     app.colors.ui.preserve_theme_colors = true;
     app.colors.bg_word_highlight = WORD_BG;
     app.colors.ui.bg_selection_highlight = SELECTION_BG;
+    app
+}
+
+fn fixture(
+    wrapped: bool,
+    selected: bool,
+    direction: SplitDirection,
+) -> (App, Terminal<TestBackend>) {
+    let mut app = app_with_words(wrapped);
     app.create_split_group_dir(1, direction);
     app.switch_group(0);
     if selected {
@@ -81,6 +86,65 @@ fn colored_cells(terminal: &Terminal<TestBackend>, area: Rect, color: Color) -> 
         .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
         .filter(|&(x, y)| terminal.backend().buffer()[(x, y)].bg == color)
         .count()
+}
+
+#[test]
+fn detached_highlights_follow_the_focused_window_and_its_find_options() {
+    use crate::tab_windows::MAIN_WINDOW;
+
+    for wrapped in [false, true] {
+        let mut app = app_with_words(wrapped);
+        app.highlight_words_across_tabs = true;
+        app.search_whole_word = true;
+        let source = app.tabs[0].editor.navigation_id;
+        let target = app.tabs[1].editor.navigation_id;
+        assert!(app.open_detached_window(1, target));
+        let (target_group, _) = app.tab_location(target).unwrap();
+        let mut main = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        let mut detached = Terminal::new(TestBackend::new(if wrapped { 30 } else { 85 }, 20)).unwrap();
+        let paint_detached = |app: &mut App, terminal: &mut Terminal<TestBackend>| {
+            terminal.draw(|frame| crate::ui::draw_background_window(frame, app, 1)).unwrap();
+            app.groups[target_group].code_area.unwrap()
+        };
+
+        draw(&mut app, &mut main);
+        assert!(std::mem::take(&mut app.tab_window_redraw_pending));
+        let area = paint_detached(&mut app, &mut detached);
+        assert_eq!(colored_cells(&detached, area, WORD_BG), 10);
+        assert_eq!(app.shared_word_highlight.as_ref().unwrap().word.as_ref(), "alpha");
+
+        app.editor_mut().unwrap().set_cursor(0, 2);
+        draw(&mut app, &mut main);
+        assert!(!app.tab_window_redraw_pending, "movement within a word reuses the query");
+        app.search_case_sensitive = true;
+        draw(&mut app, &mut main);
+        assert!(std::mem::take(&mut app.tab_window_redraw_pending));
+        let area = paint_detached(&mut app, &mut detached);
+        assert_eq!(colored_cells(&detached, area, WORD_BG), 5);
+
+        let editor = app.editor_mut().unwrap();
+        editor.set_cursor(0, 5);
+        editor.selection_anchor = Some((0, 0));
+        draw(&mut app, &mut main);
+        assert!(std::mem::take(&mut app.tab_window_redraw_pending));
+        let area = paint_detached(&mut app, &mut detached);
+        assert_eq!(colored_cells(&detached, area, SELECTION_BG), 5);
+
+        assert!(app.activate_window(1));
+        app.editor_mut().unwrap().set_cursor(0, 1);
+        draw(&mut app, &mut detached);
+        assert!(std::mem::take(&mut app.tab_window_redraw_pending));
+        main.draw(|frame| crate::ui::draw_background_window(frame, &mut app, MAIN_WINDOW)).unwrap();
+        let (source_group, _) = app.tab_location(source).unwrap();
+        let main_area = app.groups[source_group].code_area.unwrap();
+        assert_eq!(colored_cells(&main, main_area, WORD_BG), 4);
+
+        app.highlight_words_across_tabs = false;
+        draw(&mut app, &mut detached);
+        assert!(std::mem::take(&mut app.tab_window_redraw_pending));
+        main.draw(|frame| crate::ui::draw_background_window(frame, &mut app, MAIN_WINDOW)).unwrap();
+        assert_eq!(colored_cells(&main, main_area, WORD_BG), 0);
+    }
 }
 
 #[test]

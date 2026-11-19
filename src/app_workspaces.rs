@@ -683,6 +683,7 @@ impl App {
         self.palette.active = false;
         self.chord_pending = false;
         self.shortcut_chord_prefix = None;
+        self.tab_window_redraw_pending |= self.shared_word_highlight.take().is_some();
         self.workspace_visible = false;
         self.terminal_has_focus = false;
         self.wheel_scroll = None;

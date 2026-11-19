@@ -460,7 +460,7 @@ impl App {
             "indent_rainbow" => "Color indentation levels for easier nesting visibility.",
             "color_preview" => "Show inline color swatches for hex, rgb(), and rgba() color values.",
             "bracket_pair_colorization" => "Color matching bracket pairs by nesting depth.",
-            "highlight_words_across_tabs" => "Highlight the active editor's selected text or cursor word in other visible tabs and split panes. Uses Match Case and Whole Word from Find. Off by default.",
+            "highlight_words_across_tabs" => "Highlight the active editor's selected text or cursor word in visible tabs, split panes, and detached windows in this workspace. Uses Match Case and Whole Word from Find. Off by default.",
             "error_lens" => "Show extra messages at the end of lines containing TODO, FIXME, HACK, BUG, or NOTE markers, plus inline language-server diagnostics. Off by default.",
             "inlay_hints" => "Show type, parameter, and other inline hints supplied by the language server.",
             "code_lens" => "Show actionable reference and implementation information supplied by the language server.",

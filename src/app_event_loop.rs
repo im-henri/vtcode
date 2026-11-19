@@ -4024,9 +4024,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             app.rendering_animation_frame = !needs_redraw;
             if needs_redraw {
                 app.sync_duplicate_file_tabs();
-                if std::mem::take(&mut app.tab_window_document_changed) {
-                    windows.invalidate_workspace(app.workspaces.active);
-                }
+                windows.invalidate_pending_workspace_redraw(app);
                 app.ensure_active_tab_visible();
                 app.prepare_visible_merge_conflicts();
                 refresh_caches(app);
@@ -4110,6 +4108,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 windows.paint_active(app);
                 painting_elapsed = painting_started.elapsed();
             }
+            // Foreground rendering can publish a new word or selection query.
+            // Schedule peers before waiting, even when there is no further input.
+            windows.invalidate_pending_workspace_redraw(app);
             if draw_changed && windows.active() == active_window {
                 windows.focused_frame_drawn();
             }

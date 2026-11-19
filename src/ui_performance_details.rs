@@ -364,6 +364,32 @@ pub(crate) fn reserve_dock(app: &mut App, area: Rect) -> Rect {
     content
 }
 
+/// A pinned card may appear in a background window of a different size.
+/// Keep its geometry and scroll reconciliation out of the foreground controls.
+pub(crate) fn preserve_foreground_layout(app: &mut App, draw: impl FnOnce(&mut App)) {
+    if !app.background.activity.details_open || !app.performance_view.pinned {
+        draw(app);
+        return;
+    }
+    let area = app.performance_area;
+    let view = &mut app.performance_view;
+    let dock = view.dock_area;
+    let layout = std::mem::take(&mut view.layout);
+    let position = (view.selected, view.cursor, view.scroll);
+    let displayed_totals = view.displayed_totals;
+    let hover = view.hover.take();
+    let focused = std::mem::replace(&mut view.focused, false);
+    draw(app);
+    app.performance_area = area;
+    let view = &mut app.performance_view;
+    view.dock_area = dock;
+    view.layout = layout;
+    (view.selected, view.cursor, view.scroll) = position;
+    view.displayed_totals = displayed_totals;
+    view.hover = hover;
+    view.focused = focused;
+}
+
 fn resources_visible(app: &App) -> bool {
     app.background.activity.details_open
         && app.performance_view.section == Section::Overview
@@ -1549,7 +1575,7 @@ pub(crate) fn draw_docked(f: &mut Frame, app: &mut App) {
     }
     app.performance_area = None;
     app.performance_view.layout.clear();
-    if obscured(app) {
+    if !app.rendering_background_window && obscured(app) {
         release_focus(app);
     }
     if let Some(area) = app
