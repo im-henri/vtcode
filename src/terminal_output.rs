@@ -114,8 +114,14 @@ impl<B: Backend> Backend for CursorBackend<B> {
 }
 
 impl CursorBackend<AnsiBackend<Vec<u8>>> {
-    pub(crate) fn take_output(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.backend.writer)
+    pub(crate) fn reuse_output(&mut self, buffer: Vec<u8>) {
+        if self.backend.writer.is_empty() && buffer.capacity() > self.backend.writer.capacity() {
+            self.backend.writer = buffer;
+        }
+    }
+
+    pub(crate) fn take_output(&mut self) -> Option<Vec<u8>> {
+        (!self.backend.writer.is_empty()).then(|| std::mem::take(&mut self.backend.writer))
     }
 
     pub(crate) fn for_window() -> Self {

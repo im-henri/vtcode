@@ -1,6 +1,6 @@
 //! Detached windows own arrangements of editor groups in the same workbench.
 use crate::{
-    app::{ActivePane, App, EditorGroup, Tab},
+    app::{ActivePane, App, EditorGroup},
     app_desks::Desk,
     tab_windows::{MAIN_WINDOW, Request, WindowId},
 };
@@ -123,17 +123,21 @@ impl App {
         )
     }
 
-    pub(crate) fn window_tabs(&self, window: WindowId) -> impl Iterator<Item = &Tab> {
-        let desk = self.window_desk(window).map(|desk| desk.id);
-        self.tabs
-            .iter()
-            .filter(move |_| desk == Some(self.desks.active))
-            .chain(
-                self.groups
-                    .iter()
-                    .filter(move |group| desk == Some(group.desk))
-                    .flat_map(|group| &group.tabs),
-            )
+    pub(crate) fn collect_populated_windows(
+        &self,
+        windows: &mut rustc_hash::FxHashSet<WindowId>,
+        desks: &mut rustc_hash::FxHashSet<u64>,
+    ) {
+        desks.clear();
+        if !self.tabs.is_empty() {
+            desks.insert(self.desks.active);
+        }
+        desks.extend(self.groups.iter().enumerate().filter_map(|(index, group)| {
+            (index != self.active_group && !group.tabs.is_empty()).then_some(group.desk)
+        }));
+        windows.extend(self.desks.items.iter().filter_map(|desk| {
+            desk.window.filter(|_| desks.contains(&desk.id))
+        }));
     }
 
     pub(crate) fn window_name(&self, window: WindowId) -> String {

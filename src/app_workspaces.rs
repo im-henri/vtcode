@@ -710,14 +710,25 @@ impl App {
         self.background.wake_handle().notify();
     }
 
-    /// Rotate each producer independently across workspaces, within the UI's
-    /// existing shared budget. A noisy PTY cannot starve another workspace's
-    /// permission request, saves, or language server. Idle work has no tick.
+    #[cfg(test)]
     pub(crate) fn service_workspaces_until(
         &mut self,
         service: Service,
         deadline: Instant,
+        can_continue: impl FnMut() -> bool,
+    ) -> bool {
+        self.service_workspaces_with_redraws(service, deadline, can_continue, |_| {})
+    }
+
+    /// Rotate each producer independently across workspaces, within the UI's
+    /// existing shared budget. A noisy PTY cannot starve another workspace's
+    /// permission request, saves, or language server. Idle work has no tick.
+    pub(crate) fn service_workspaces_with_redraws(
+        &mut self,
+        service: Service,
+        deadline: Instant,
         mut can_continue: impl FnMut() -> bool,
+        mut workspace_changed: impl FnMut(u64),
     ) -> bool {
         if service == Service::Workers {
             // User preferences also govern hidden saves and services. Apply
@@ -784,11 +795,15 @@ impl App {
                     crate::extension_scheduler::dispatch(app);
                 }
             }
+            let displayed = changed && app.workspace_is_displayed();
+            if displayed {
+                workspace_changed(id);
+            }
             redraw |= if index == 0 {
                 changed
             } else {
                 unread != app.workspace_activity.unread
-                    || (changed && (registry.popup.open || app.workspace_is_displayed()))
+                    || displayed || (changed && registry.popup.open)
             };
             if visited + 1 < remaining && (Instant::now() >= deadline || !can_continue()) {
                 break;

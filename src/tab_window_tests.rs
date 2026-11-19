@@ -98,6 +98,56 @@ fn screen_text(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[test]
+fn background_frames_wait_only_for_damaged_windows_in_the_changed_workspace() {
+    let mut app = app_with_tabs(&["main.txt", "detached.txt"]);
+    let view = app.tabs[1].editor.navigation_id;
+    assert!(app.open_detached_window(1, view));
+    assert!(app.activate_window(1));
+    app.terminal_has_focus = true;
+    let mut windows = Windows::new(&app);
+    windows.id = 1;
+    let now = Instant::now();
+    windows.invalidate_workspace(windows.main_workspace + 1);
+    assert_eq!(windows.background_draw_wait(true, now), None);
+    windows.invalidate_workspace(windows.main_workspace);
+    assert_eq!(
+        windows.background_draw_wait(true, now),
+        Some(Duration::ZERO)
+    );
+    windows.pace_background_draws(now);
+    assert!(
+        windows
+            .background_draw_wait(true, now)
+            .is_some_and(|delay| !delay.is_zero())
+    );
+    assert_eq!(windows.background_draw_wait(false, now), None);
+    let mut main = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    windows.paint_main_background(&mut main, &mut app).unwrap();
+    assert_eq!(windows.background_draw_wait(true, now), None);
+}
+
+#[test]
+fn a_window_waiting_for_its_first_focused_frame_cannot_block_another_windows_input() {
+    let mut windows = Windows::new(&App::test_new());
+    let (input, queue) = mpsc::channel();
+    let mut main = TerminalEventPump::from_receiver(queue);
+    windows.select_window(1);
+    let key = Event::Key(KeyEvent::from(KeyCode::Char('x')));
+    windows.defer_input_until_focused_frame(key.clone());
+    input.send(Ok(Event::FocusGained)).unwrap();
+    assert_eq!(
+        windows.next_event(&mut main).unwrap(),
+        Some((MAIN_WINDOW, Event::FocusGained))
+    );
+    windows.select_window(MAIN_WINDOW);
+    windows.focused_frame_drawn();
+    assert!(windows.next_event(&mut main).unwrap().is_none());
+    windows.select_window(1);
+    windows.focused_frame_drawn();
+    assert_eq!(windows.next_event(&mut main).unwrap(), Some((1, key)));
+}
+
+#[test]
 fn background_main_refreshes_its_own_sidebar_while_the_detached_editor_keeps_focus() {
     for sidebar in [SidebarView::Explorer, SidebarView::SourceControl] {
         let folder = tempfile::tempdir().unwrap();
@@ -355,8 +405,16 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         frontend::run(endpoint).unwrap();
         return;
     }
-    let mut app = app_with_tabs(&["detachable-probe.txt", "detachable-probe.txt"]);
+    for move_back in [false, true] {
+        check_frontend_lifetime(TEST, ENDPOINT, move_back);
+    }
+}
+
+fn check_frontend_lifetime(test: &str, endpoint_var: &str, move_back: bool) {
+    let mut app = app_with_tabs(&["detachable-probe.txt", "detachable-probe.txt", "extra.txt"]);
     let view = app.tabs[0].editor.navigation_id;
+    let main_view = app.tabs[1].editor.navigation_id;
+    let extra = app.tabs[2].editor.navigation_id;
     let wake = app.background.wake_handle();
     let mut windows = Windows::new(&app);
     windows.windows.insert(
@@ -366,32 +424,13 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
             source_window: MAIN_WINDOW,
             source_view: view,
             surface: None,
+            launch: None,
         },
     );
     let listener = transport::Listener::bind().unwrap();
-    let endpoint = listener.endpoint();
-    let pair = portable_pty::native_pty_system()
-        .openpty(portable_pty::PtySize {
-            cols: 100,
-            rows: 28,
-            pixel_height: 0,
-            pixel_width: 0,
-        })
-        .unwrap();
-    let mut command = portable_pty::CommandBuilder::new(std::env::current_exe().unwrap());
-    command.args([
-        "--exact",
-        TEST,
-        "--include-ignored",
-        "--nocapture",
-        "--test-threads=1",
-    ]);
-    command.env(ENDPOINT, endpoint);
-    command.env("TERM_PROGRAM", "vtcode");
-    let mut child = PtyChild(pair.slave.spawn_command(command).unwrap());
-    drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().unwrap();
-    let mut writer = pair.master.take_writer().unwrap();
+    let (mut child, master) = spawn_frontend(test, endpoint_var, listener.endpoint());
+    let mut reader = master.try_clone_reader().unwrap();
+    let mut writer = master.take_writer().unwrap();
     let output_wake = wake.clone();
     let (output_tx, output_rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -414,7 +453,12 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
             send_wake.notify();
             Ok(())
         };
-        let result = frontend::accept(listener, notify.clone(), server_wake);
+        let result = frontend::accept(
+            listener,
+            notify.clone(),
+            server_wake,
+            Arc::new(transport::Opening::new().unwrap()),
+        );
         if let Err(error) = &result {
             let _ = notify(frontend::Notice::Closed(Err(io::Error::other(
                 error.to_string(),
@@ -460,6 +504,7 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         screen_contains("sample text")
     });
     assert!(windows.is_main());
+    app.active_tab = app.tab_location(main_view).unwrap().1;
     app.terminal_has_focus = true;
     for ch in "LIVE-UPDATE".chars() {
         app.editor_mut().unwrap().insert_char(ch);
@@ -492,8 +537,29 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         app.editor()
             .is_some_and(|editor| editor.rope.get_char(0) == Some('Z'))
     });
-    assert!(windows.close(&mut app, 1));
-    assert_eq!(app.tab_window(view), Some(MAIN_WINDOW));
+    assert!(app.move_tab_to_window(extra, 1));
+    app.close_tab(app.active_tab);
+    windows.poll(&mut app);
+    assert!(windows.windows.contains_key(&1));
+    assert_eq!(app.tab_window(view), Some(1));
+    assert!(child.0.try_wait().unwrap().is_none());
+
+    if move_back {
+        assert!(windows.request(
+            &mut app,
+            Request::Move {
+                view,
+                window: MAIN_WINDOW
+            }
+        ));
+        assert_eq!(app.tab_window(view), Some(MAIN_WINDOW));
+    } else {
+        app.close_tab(app.active_tab);
+        assert_eq!(app.tab_window(view), None);
+    }
+    assert!(windows.poll(&mut app));
+    assert!(windows.windows.is_empty());
+    assert!(windows.is_main());
     assert_eq!(
         app.editor().unwrap().rope.to_string(),
         "ZLIVE-UPDATEsample text\n"
@@ -506,6 +572,142 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
     });
     drop(writer);
     assert!(server.join().unwrap().is_ok());
+}
+
+fn spawn_frontend(
+    test: &str,
+    endpoint_var: &str,
+    endpoint: OsString,
+) -> (PtyChild, Box<dyn portable_pty::MasterPty + Send>) {
+    let pair = portable_pty::native_pty_system()
+        .openpty(portable_pty::PtySize {
+            cols: 100,
+            rows: 28,
+            pixel_height: 0,
+            pixel_width: 0,
+        })
+        .unwrap();
+    let mut command = portable_pty::CommandBuilder::new(std::env::current_exe().unwrap());
+    command.args([
+        "--exact",
+        test,
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1",
+    ]);
+    command.env(endpoint_var, endpoint);
+    command.env("TERM_PROGRAM", "vtcode");
+    let child = PtyChild(pair.slave.spawn_command(command).unwrap());
+    (child, pair.master)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_detached_frontend_exits_even_when_the_terminal_stops_draining_output() {
+    const ENDPOINT: &str = "VTCODE_TEST_STALLED_WINDOW_ENDPOINT";
+    const TEST: &str = "tab_windows::tests::a_detached_frontend_exits_even_when_the_terminal_stops_draining_output";
+    if let Some(endpoint) = std::env::var_os(ENDPOINT) {
+        frontend::run(endpoint).unwrap();
+        return;
+    }
+    let listener = transport::Listener::bind().unwrap();
+    let (mut child, _unread_pty) = spawn_frontend(TEST, ENDPOINT, listener.endpoint());
+    let (send, receive) = mpsc::channel();
+    let wake = UiWake::default();
+    let server_wake = wake.clone();
+    let server = std::thread::spawn(move || {
+        frontend::accept(
+            listener,
+            move |notice| send.send(notice).map_err(|_| io::ErrorKind::BrokenPipe.into()),
+            server_wake,
+            Arc::new(transport::Opening::new().unwrap()),
+        )
+    });
+    let frontend::Notice::Ready(peer) = receive.recv_timeout(Duration::from_secs(5)).unwrap()
+    else {
+        panic!("detached terminal did not start");
+    };
+    for _ in 0..8 {
+        let generation = wake.generation();
+        if !peer.output.ready.swap(false, Ordering::AcqRel) {
+            wake.wait_for_change(generation, Some(Duration::from_millis(250)));
+            if !peer.output.ready.swap(false, Ordering::AcqRel) {
+                break;
+            }
+        }
+        peer.output
+            .frames
+            .try_send(vec![b'x'; 1024 * 1024])
+            .unwrap();
+    }
+    assert!(!peer.output.ready.load(Ordering::Acquire));
+    drop(peer);
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let status = loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the backpressured detached terminal lingered"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success());
+    assert!(server.join().unwrap().is_ok());
+}
+
+#[test]
+#[cfg_attr(windows, ignore = "requires an unsandboxed private named pipe")]
+fn closing_a_source_tab_cancels_a_launch_even_during_a_partial_handshake() {
+    let mut app = app_with_tabs(&["pending.txt"]);
+    let view = app.tabs[0].editor.navigation_id;
+    let mut windows = Windows::new(&app);
+    let listener = transport::Listener::bind().unwrap();
+    let endpoint = listener.endpoint();
+    let opening = Arc::new(transport::Opening::new().unwrap());
+    windows.windows.insert(
+        1,
+        Window {
+            workspace: app.workspaces.active,
+            source_window: MAIN_WINDOW,
+            source_view: view,
+            surface: None,
+            launch: Some(frontend::Launch(opening.clone())),
+        },
+    );
+    let (accepted, handshake_started) = mpsc::channel();
+    let (done, result) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut reader = listener.accept(&opening).unwrap();
+        accepted.send(()).unwrap();
+        done.send(transport::read_handshake(
+            &mut reader,
+            &opening,
+            &mut Vec::new(),
+        ))
+        .unwrap();
+    });
+    let mut peer = transport::connect(&endpoint).unwrap();
+    peer.write_all(&[16, 0]).unwrap();
+    handshake_started
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap();
+    app.close_tab(0);
+    assert!(windows.poll(&mut app));
+    assert!(windows.windows.is_empty());
+    assert_eq!(
+        result
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::ConnectionAborted
+    );
+    worker.join().unwrap();
+    drop(peer);
+    // A launcher that starts after the owner retires it exits successfully.
+    frontend::run(endpoint).unwrap();
 }
 
 #[test]
@@ -521,6 +723,7 @@ fn failed_start_keeps_the_dirty_tab_in_its_original_window() {
             source_window: MAIN_WINDOW,
             source_view: view,
             surface: None,
+            launch: None,
         },
     );
     windows

@@ -2,11 +2,68 @@
 use std::{
     ffi::{OsStr, OsString},
     io::{self, Read, Write},
-    time::Duration,
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
 };
 
 pub(super) const OPEN_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PACKET: usize = 32 * 1024 * 1024;
+
+pub(super) struct Opening {
+    deadline: Instant,
+    cancelled: AtomicBool,
+    signal: platform::Signal,
+}
+
+impl Opening {
+    pub(super) fn new() -> io::Result<Self> {
+        Self::with_timeout(OPEN_TIMEOUT)
+    }
+
+    pub(super) fn with_timeout(timeout: Duration) -> io::Result<Self> {
+        Ok(Self {
+            deadline: Instant::now() + timeout,
+            cancelled: AtomicBool::new(false),
+            signal: platform::Signal::new()?,
+        })
+    }
+
+    pub(super) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.signal.wake();
+    }
+
+    pub(super) fn remaining(&self) -> io::Result<Duration> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "detached terminal launch was cancelled",
+            ));
+        }
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the detached terminal did not complete its handshake",
+                )
+            })
+    }
+}
+
+pub(super) fn read_handshake(
+    stream: &mut Stream,
+    opening: &Opening,
+    bytes: &mut Vec<u8>,
+) -> io::Result<()> {
+    struct Handshake<'a>(&'a mut Stream, &'a Opening);
+    impl Read for Handshake<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            platform::read_opening(self.0, self.1, bytes)
+        }
+    }
+    read_packet(&mut Handshake(stream, opening), bytes)
+}
 
 pub(super) fn read_packet(reader: &mut impl Read, bytes: &mut Vec<u8>) -> io::Result<()> {
     let mut length = [0; 4];
@@ -38,15 +95,72 @@ mod platform {
     use super::*;
     use std::{
         fs::{self, Permissions},
-        os::unix::{
-            fs::{FileTypeExt, MetadataExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
+        os::{
+            fd::{AsRawFd, RawFd},
+            unix::{
+                fs::{FileTypeExt, MetadataExt, PermissionsExt},
+                net::{UnixListener, UnixStream},
+            },
         },
         path::Path,
-        time::Instant,
     };
 
     pub(crate) type Stream = UnixStream;
+
+    pub(super) struct Signal {
+        receiver: UnixStream,
+        sender: UnixStream,
+    }
+
+    impl Signal {
+        pub(super) fn new() -> io::Result<Self> {
+            let (receiver, sender) = UnixStream::pair()?;
+            Ok(Self { receiver, sender })
+        }
+
+        pub(super) fn wake(&self) {
+            disconnect(&self.sender);
+        }
+    }
+
+    fn wait_readable(fd: RawFd, opening: &Opening) -> io::Result<()> {
+        let mut fds = [
+            libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: opening.signal.receiver.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        loop {
+            let millis = opening.remaining()?.as_millis().clamp(1, i32::MAX as u128) as i32;
+            // SAFETY: both descriptors stay owned during the wait.
+            let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, millis) };
+            if result > 0 {
+                opening.remaining()?;
+                return Ok(());
+            }
+            if result < 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(error);
+                }
+            }
+        }
+    }
+
+    pub(super) fn read_opening(
+        stream: &mut Stream,
+        opening: &Opening,
+        bytes: &mut [u8],
+    ) -> io::Result<usize> {
+        wait_readable(stream.as_raw_fd(), opening)?;
+        stream.read(bytes)
+    }
     pub(crate) struct Listener {
         socket: UnixListener,
         directory: tempfile::TempDir,
@@ -67,22 +181,21 @@ mod platform {
             self.directory.path().join("window").into_os_string()
         }
 
-        pub(crate) fn accept(self) -> io::Result<Stream> {
-            let deadline = Instant::now() + OPEN_TIMEOUT;
+        pub(crate) fn accept(self, opening: &Opening) -> io::Result<Stream> {
             loop {
+                wait_readable(self.socket.as_raw_fd(), opening)?;
                 match self.socket.accept() {
                     Ok((stream, _)) => {
                         stream.set_nonblocking(false)?;
                         return Ok(stream);
                     }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        if Instant::now() >= deadline {
-                            return Err(io::Error::new(
-                                io::ErrorKind::TimedOut,
-                                "the detached terminal did not connect",
-                            ));
-                        }
-                        std::thread::sleep(Duration::from_millis(15));
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        continue;
                     }
                     Err(error) => return Err(error),
                 }
@@ -118,6 +231,26 @@ mod platform {
     pub(crate) fn disconnect(stream: &Stream) {
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
+
+    pub(crate) fn peer_disconnected(stream: &Stream) -> bool {
+        #[cfg(target_os = "linux")]
+        let events = libc::POLLRDHUP;
+        #[cfg(not(target_os = "linux"))]
+        let events = 0;
+        let mut fd = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events,
+            revents: 0,
+        };
+        // With pending frame bytes, wait for hangup rather than readability.
+        (unsafe { libc::poll(&mut fd, 1, 0) }) > 0
+            && fd.revents & (events | libc::POLLHUP | libc::POLLERR) != 0
+    }
+
+    pub(crate) fn exit_frontend() -> ! {
+        // Only the dedicated frontend calls this after its owner has gone.
+        unsafe { libc::_exit(0) }
+    }
 }
 
 #[cfg(windows)]
@@ -135,7 +268,9 @@ mod platform {
     };
     use windows_sys::Win32::{
         Foundation::{
-            ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
+            ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_NO_DATA, ERROR_PIPE_CONNECTED,
+            ERROR_PIPE_NOT_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_FAILED,
+            WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
         Security::{
             Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -149,13 +284,76 @@ mod platform {
             IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
             Pipes::{
                 ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
-                PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
+                PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT, PeekNamedPipe,
             },
-            Threading::{CreateEventW, ResetEvent, WaitForSingleObject},
+            Threading::{
+                CreateEventW, GetCurrentProcess, ResetEvent, SetEvent, TerminateProcess,
+                WaitForMultipleObjects,
+            },
         },
     };
 
     const PREFIX: &str = r"\\.\pipe\vtcode-tab-";
+
+    pub(super) struct Signal(OwnedHandle);
+
+    impl Signal {
+        pub(super) fn new() -> io::Result<Self> {
+            Ok(Self(new_event()?))
+        }
+
+        pub(super) fn wake(&self) {
+            unsafe {
+                SetEvent(self.0.as_raw_handle());
+            }
+        }
+    }
+
+    fn new_event() -> io::Result<OwnedHandle> {
+        let event = unsafe { CreateEventW(null(), 1, 0, null()) };
+        if event.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: CreateEventW returned a new owned handle.
+        Ok(unsafe { OwnedHandle::from_raw_handle(event) })
+    }
+
+    fn wait_opening_io(
+        handle: HANDLE,
+        operation: &OVERLAPPED,
+        opening: &Opening,
+    ) -> io::Result<()> {
+        let wait = (|| loop {
+            let remaining = opening.remaining()?;
+            let handles = [opening.signal.0.as_raw_handle(), operation.hEvent];
+            // SAFETY: both event handles remain valid throughout the wait.
+            let result = unsafe {
+                WaitForMultipleObjects(
+                    2,
+                    handles.as_ptr(),
+                    0,
+                    remaining.as_millis().min(u128::from(u32::MAX - 1)) as u32 + 1,
+                )
+            };
+            match result {
+                WAIT_TIMEOUT => continue,
+                WAIT_FAILED => break Err(io::Error::last_os_error()),
+                WAIT_OBJECT_0 => break opening.remaining().map(|_| ()),
+                result if result == WAIT_OBJECT_0 + 1 => break opening.remaining().map(|_| ()),
+                _ => break Err(io::Error::other("unexpected detached terminal wait result")),
+            }
+        })();
+        if wait.is_err() {
+            // SAFETY: join the cancelled operation before its buffer or
+            // OVERLAPPED can leave scope.
+            let mut count = 0;
+            unsafe {
+                CancelIoEx(handle, operation);
+                GetOverlappedResult(handle, operation, &mut count, 1);
+            }
+        }
+        wait
+    }
 
     pub(crate) struct Stream {
         file: File,
@@ -164,14 +362,9 @@ mod platform {
 
     impl Stream {
         fn new(file: File) -> io::Result<Self> {
-            // SAFETY: a successful call returns the owned event for our I/O.
-            let event = unsafe { CreateEventW(null(), 1, 0, null()) };
-            if event.is_null() {
-                return Err(io::Error::last_os_error());
-            }
             Ok(Self {
                 file,
-                event: unsafe { OwnedHandle::from_raw_handle(event) },
+                event: new_event()?,
             })
         }
 
@@ -192,6 +385,7 @@ mod platform {
 
         fn transfer(
             &mut self,
+            opening: Option<&Opening>,
             start: impl FnOnce(&File, *mut u32, *mut OVERLAPPED) -> i32,
         ) -> io::Result<usize> {
             let mut op = self.operation();
@@ -200,6 +394,9 @@ mod platform {
                 let error = io::Error::last_os_error();
                 if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
                     return Err(error);
+                }
+                if let Some(opening) = opening {
+                    wait_opening_io(self.file.as_raw_handle(), &op, opening)?;
                 }
                 // SAFETY: wait until the OS has released op and the borrowed buffer.
                 if unsafe { GetOverlappedResult(self.file.as_raw_handle(), &op, &mut count, 1) }
@@ -210,18 +407,35 @@ mod platform {
             }
             Ok(count as usize)
         }
-    }
 
-    impl Read for Stream {
-        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        fn read_with_opening(
+            &mut self,
+            bytes: &mut [u8],
+            opening: Option<&Opening>,
+        ) -> io::Result<usize> {
             let len = bytes.len().min(u32::MAX as usize) as u32;
             if len == 0 {
                 return Ok(0);
             }
-            self.transfer(|file, count, op| unsafe {
+            self.transfer(opening, |file, count, op| unsafe {
                 ReadFile(file.as_raw_handle(), bytes.as_mut_ptr(), len, count, op)
             })
         }
+    }
+
+    impl Read for Stream {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            self.read_with_opening(bytes, None)
+        }
+    }
+
+    pub(super) fn read_opening(
+        stream: &mut Stream,
+        opening: &Opening,
+        bytes: &mut [u8],
+    ) -> io::Result<usize> {
+        opening.remaining()?;
+        stream.read_with_opening(bytes, Some(opening))
     }
 
     impl Write for Stream {
@@ -230,7 +444,7 @@ mod platform {
             if len == 0 {
                 return Ok(0);
             }
-            self.transfer(|file, count, op| unsafe {
+            self.transfer(None, |file, count, op| unsafe {
                 WriteFile(file.as_raw_handle(), bytes.as_ptr(), len, count, op)
             })
         }
@@ -297,7 +511,8 @@ mod platform {
             self.name.clone()
         }
 
-        pub(crate) fn accept(self) -> io::Result<Stream> {
+        pub(crate) fn accept(self, opening: &Opening) -> io::Result<Stream> {
+            opening.remaining()?;
             let mut op = self.stream.operation();
             let handle = self.stream.file.as_raw_handle();
             // SAFETY: any pending connect is completed or cancelled and joined
@@ -308,17 +523,8 @@ mod platform {
                     match error.raw_os_error().map(|code| code as u32) {
                         Some(ERROR_PIPE_CONNECTED) => {}
                         Some(ERROR_IO_PENDING) => {
+                            wait_opening_io(handle, &op, opening)?;
                             let mut ignored = 0;
-                            if WaitForSingleObject(op.hEvent, OPEN_TIMEOUT.as_millis() as u32)
-                                != WAIT_OBJECT_0
-                            {
-                                CancelIoEx(handle, &op);
-                                GetOverlappedResult(handle, &op, &mut ignored, 1);
-                                return Err(io::Error::new(
-                                    io::ErrorKind::TimedOut,
-                                    "the detached terminal did not connect",
-                                ));
-                            }
                             if GetOverlappedResult(handle, &op, &mut ignored, 0) == 0 {
                                 return Err(io::Error::last_os_error());
                             }
@@ -357,6 +563,37 @@ mod platform {
             DisconnectNamedPipe(stream.file.as_raw_handle());
         }
     }
+
+    pub(crate) fn peer_disconnected(stream: &Stream) -> bool {
+        // The overlapped client handle can peek without consuming frame bytes.
+        let result = unsafe {
+            PeekNamedPipe(
+                stream.file.as_raw_handle(),
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+            )
+        };
+        result == 0
+            && matches!(
+                io::Error::last_os_error()
+                    .raw_os_error()
+                    .map(|code| code as u32),
+                Some(ERROR_BROKEN_PIPE | ERROR_NO_DATA | ERROR_PIPE_NOT_CONNECTED)
+            )
+    }
+
+    pub(crate) fn exit_frontend() -> ! {
+        // Only the dedicated frontend calls this after its owner has gone.
+        unsafe {
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+        std::process::exit(0)
+    }
 }
 
-pub(super) use platform::{Listener, Stream, connect, disconnect};
+pub(super) use platform::{
+    Listener, Stream, connect, disconnect, exit_frontend, peer_disconnected,
+};

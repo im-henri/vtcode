@@ -1,13 +1,15 @@
 //! Owns terminal connections and routes their input into one workbench.
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     ffi::OsString,
     io,
+    ops::Bound::{Excluded, Unbounded},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -15,6 +17,7 @@ use crossterm::{
     terminal::SetTitle,
 };
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport, layout::Rect};
+use rustc_hash::FxHashSet;
 
 use crate::{
     app::App,
@@ -59,6 +62,8 @@ type WindowTerminal = Terminal<CursorBackend<AnsiBackend<Vec<u8>>>>;
 struct Surface {
     terminal: WindowTerminal,
     desired_area: Rect,
+    resized: bool,
+    input_closed: bool,
     _connection: frontend::Connection,
     output: frontend::Output,
     events: TerminalEventPump,
@@ -91,6 +96,7 @@ impl Surface {
     fn resize(&mut self, width: u16, height: u16) {
         if let Ok(area) = screen_area((width, height)) {
             self.desired_area = area;
+            self.resized = true;
             self.dirty = true;
         }
     }
@@ -100,16 +106,22 @@ impl Surface {
             self.dirty = true;
             return Ok(());
         }
+        if let Ok(buffer) = self.output.buffers.try_recv() {
+            self.terminal.backend_mut().reuse_output(buffer);
+        }
+        let resized = std::mem::take(&mut self.resized);
         if self.terminal.get_frame().area() != self.desired_area {
             self.terminal.resize(self.desired_area)?;
+        } else if resized {
+            // The host can reflow through other sizes before settling here.
+            self.terminal.clear()?;
         }
         if self.title != title {
             queue_ansi(self.terminal.backend_mut(), SetTitle(&title))?;
             self.title = title;
         }
         self.terminal.draw(draw)?;
-        let bytes = self.terminal.backend_mut().take_output();
-        if !bytes.is_empty() {
+        if let Some(bytes) = self.terminal.backend_mut().take_output() {
             self.output.ready.store(false, Ordering::Release);
             self.output
                 .frames
@@ -122,7 +134,7 @@ impl Surface {
 
     fn host(&self) -> Option<desktop::Host> {
         let value = self.host.load(Ordering::Acquire);
-        (value != 0 && desktop::valid_host(value)).then_some(value)
+        (value != 0).then_some(value)
     }
 }
 
@@ -131,6 +143,7 @@ struct Window {
     source_window: WindowId,
     source_view: u64,
     surface: Option<Surface>,
+    launch: Option<frontend::Launch>,
 }
 
 struct DesktopDrag {
@@ -148,8 +161,15 @@ pub(crate) struct Windows {
     main_size: Option<(u16, u16)>,
     main_host: Option<desktop::Host>,
     windows: BTreeMap<WindowId, Window>,
+    populated: FxHashSet<WindowId>,
+    populated_desks: FxHashSet<u64>,
+    retired: Vec<WindowId>,
+    last_input_window: WindowId,
+    focused_frame_needed: bool,
+    deferred_input: BTreeMap<WindowId, VecDeque<Event>>,
     next_window: WindowId,
     last_background_window: WindowId,
+    next_background_paint: Instant,
     notices: mpsc::Sender<(WindowId, frontend::Notice)>,
     incoming: mpsc::Receiver<(WindowId, frontend::Notice)>,
     wake: UiWake,
@@ -198,8 +218,15 @@ impl Windows {
             main_size: None,
             main_host: None,
             windows: BTreeMap::new(),
+            populated: FxHashSet::default(),
+            populated_desks: FxHashSet::default(),
+            retired: Vec::new(),
+            last_input_window: MAIN_WINDOW,
+            focused_frame_needed: false,
+            deferred_input: BTreeMap::new(),
             next_window: 1,
             last_background_window: MAIN_WINDOW,
+            next_background_paint: Instant::now(),
             notices,
             incoming,
             #[cfg(target_os = "linux")]
@@ -240,6 +267,17 @@ impl Windows {
             .is_none_or(Surface::ready)
     }
 
+    pub(crate) fn input_waits_for_frame(&self) -> bool {
+        self.focused_frame_needed
+    }
+
+    pub(crate) fn has_foreground_input(&mut self, main: &mut TerminalEventPump) -> bool {
+        !self.focused_frame_needed
+            && (self.deferred_input.contains_key(&self.id)
+                || self.active_pump(main).has_pending_event())
+    }
+
+    #[cfg(test)]
     pub(crate) fn invalidate_background(&mut self) {
         self.main_dirty |= !self.is_main();
         for (&id, window) in &mut self.windows {
@@ -248,6 +286,26 @@ impl Windows {
             {
                 surface.dirty = true;
             }
+        }
+    }
+
+    pub(crate) fn invalidate_workspace(&mut self, workspace: u64) {
+        self.main_dirty |= !self.is_main() && self.main_workspace == workspace;
+        for (&id, window) in &mut self.windows {
+            if id != self.id
+                && window.workspace == workspace
+                && let Some(surface) = &mut window.surface
+            {
+                surface.dirty = true;
+            }
+        }
+    }
+
+    fn invalidate_window(&mut self, id: WindowId) {
+        if id == MAIN_WINDOW {
+            self.main_dirty = !self.is_main();
+        } else if let Some(surface) = self.surface_mut(id) {
+            surface.dirty = true;
         }
     }
 
@@ -260,6 +318,16 @@ impl Windows {
                         .as_ref()
                         .is_some_and(|surface| surface.background_ready(focused))
             })
+    }
+
+    pub(crate) fn background_draw_wait(&self, focused: bool, now: Instant) -> Option<Duration> {
+        self.background_draw_ready(focused)
+            .then(|| self.next_background_paint.saturating_duration_since(now))
+    }
+
+    pub(crate) fn pace_background_draws(&mut self, finished: Instant) {
+        // Coalesce bursts while leaving the focused editor's frame rate free.
+        self.next_background_paint = finished + Duration::from_millis(24);
     }
 
     pub(crate) fn note_main_resize(&mut self, width: u16, height: u16) {
@@ -373,28 +441,87 @@ impl Windows {
         &mut self,
         main: &mut TerminalEventPump,
     ) -> io::Result<Option<(WindowId, Event)>> {
-        if let Some(event) = main.try_recv()? {
-            return Ok(Some((MAIN_WINDOW, event)));
+        if !self.focused_frame_needed
+            && let Some(events) = self.deferred_input.get_mut(&self.id)
+        {
+            let event = events.pop_front();
+            if events.is_empty() {
+                self.deferred_input.remove(&self.id);
+            }
+            if let Some(event) = event {
+                return Ok(Some((self.id, event)));
+            }
         }
-        for (&id, window) in &mut self.windows {
+        let blocked = self.focused_frame_needed.then_some(self.id);
+        let read_detached = |(&id, window): (&WindowId, &mut Window)| {
             let Some(surface) = &mut window.surface else {
-                continue;
+                return None;
             };
+            if Some(id) == blocked || surface.input_closed {
+                return None;
+            }
             match surface.events.try_recv() {
                 Ok(Some(event @ Event::Resize(width, height))) if id != self.id => {
                     surface.resize(width, height);
-                    return Ok(Some((id, event)));
+                    Some((id, event))
                 }
-                Ok(Some(event)) => return Ok(Some((id, event))),
-                Ok(None) => {}
-                Err(_) => {
-                    // The transport may close between the reader's last packet
-                    // and its close notice. Wake an idle workbench for cleanup.
+                Ok(event) => event.map(|event| (id, event)),
+                Err(error) => {
+                    // Report a disconnected queue once, even if the reader's
+                    // final notice hasn't reached the UI yet.
+                    surface.input_closed = true;
+                    let _ = self
+                        .notices
+                        .send((id, frontend::Notice::Closed(Err(error))));
                     self.wake.notify();
+                    None
                 }
             }
+        };
+        let mut event = self
+            .windows
+            .range_mut((Excluded(self.last_input_window), Unbounded))
+            .find_map(read_detached);
+        if event.is_none() && blocked != Some(MAIN_WINDOW) {
+            event = main.try_recv()?.map(|event| (MAIN_WINDOW, event));
         }
-        Ok(None)
+        if event.is_none() {
+            event = self
+                .windows
+                .range_mut(..=self.last_input_window)
+                .find_map(read_detached);
+        }
+        if let Some((source, _)) = &event {
+            self.last_input_window = *source;
+        }
+        Ok(event)
+    }
+
+    pub(crate) fn defer_input_until_focused_frame(&mut self, event: Event) {
+        self.deferred_input
+            .entry(self.id)
+            .or_default()
+            .push_back(event);
+    }
+
+    pub(crate) fn focused_frame_drawn(&mut self) {
+        self.focused_frame_needed = false;
+    }
+
+    fn select_window(&mut self, source: WindowId) {
+        let previous = std::mem::replace(&mut self.id, source);
+        if previous != source {
+            if let Some(events) = self.deferred_input.get_mut(&previous) {
+                // Only text and keys stay meaningful if focus moves again
+                // before this window has a layout for its mouse coordinates.
+                events.retain(|event| matches!(event, Event::Key(_) | Event::Paste(_)));
+                if events.is_empty() {
+                    self.deferred_input.remove(&previous);
+                }
+            }
+            self.focused_frame_needed = true;
+            self.invalidate_window(previous);
+        }
     }
 
     pub(crate) fn accept_focus(&mut self, app: &mut App, source: WindowId, event: &Event) -> bool {
@@ -420,15 +547,20 @@ impl Windows {
             }
         }
         if source == self.id {
+            if claims_focus && !app.terminal_has_focus {
+                app.terminal_has_focus = true;
+                app.forward_terminal_focus(true);
+                app.idle_quiescent = false;
+            }
             return true;
         }
         if !claims_focus || transfer_blocked(app) {
             return false;
         }
-        self.activate(app, source)
+        self.activate(app, source, true)
     }
 
-    fn activate(&mut self, app: &mut App, source: WindowId) -> bool {
+    fn activate(&mut self, app: &mut App, source: WindowId, focused: bool) -> bool {
         let owner = if source == MAIN_WINDOW {
             self.main_workspace
         } else if let Some(window) = self
@@ -452,12 +584,14 @@ impl Windows {
             self.sync_main_observation(app);
             return false;
         }
-        self.id = source;
+        self.select_window(source);
+        if self.is_main() {
+            self.main_workspace = app.workspaces.active;
+        }
         self.sync_main_observation(app);
-        self.invalidate_background();
-        app.terminal_has_focus = true;
-        app.forward_terminal_focus(true);
-        app.idle_quiescent = false;
+        app.terminal_has_focus = focused;
+        app.forward_terminal_focus(focused);
+        app.idle_quiescent = !focused;
         true
     }
 
@@ -496,16 +630,33 @@ impl Windows {
         let Some(window) = self.windows.remove(&id) else {
             return false;
         };
-        if let Some(owner) = workspace_mut(app, window.workspace) {
-            owner.return_detached_tabs(id);
+        let workspace_id = window.workspace;
+        let attached = window.surface.is_some();
+        self.deferred_input.remove(&id);
+        // Close the pipe or the pending launch before any tab/layout cleanup.
+        drop(window);
+        if attached {
+            if let Some(owner) = workspace_mut(app, workspace_id) {
+                if owner.detached_window_id() == Some(id) && owner.paste_receiving() {
+                    owner.terminal_paste_status(crossterm::event::PasteStatus::Failed {
+                        bytes: 0,
+                        reason: crossterm::event::PasteFailure::Interrupted,
+                    });
+                }
+                owner.return_detached_tabs(id);
+            }
+            self.invalidate_workspace(workspace_id);
         }
         if id == self.id {
-            self.activate(app, MAIN_WINDOW);
+            self.activate(app, MAIN_WINDOW, false);
         }
         true
     }
 
-    fn attach(&mut self, app: &mut App, id: WindowId, ready: frontend::Ready) -> io::Result<()> {
+    fn attach(&mut self, app: &mut App, id: WindowId, ready: frontend::Ready) -> io::Result<bool> {
+        if !self.windows.contains_key(&id) {
+            return Ok(false);
+        }
         let initial_host = ready.host.load(Ordering::Acquire);
         if initial_host != 0
             && (self.main_host == Some(initial_host)
@@ -523,9 +674,7 @@ impl Windows {
                     .host
                     .compare_exchange(initial_host, 0, Ordering::AcqRel, Ordering::Acquire);
         }
-        let Some(window) = self.windows.get_mut(&id) else {
-            return Ok(());
-        };
+        let window = self.windows.get_mut(&id).unwrap();
         let area = screen_area(ready.size)?;
         let terminal = Terminal::with_options(
             CursorBackend::for_window(),
@@ -551,6 +700,8 @@ impl Windows {
         window.surface = Some(Surface {
             terminal,
             desired_area: area,
+            resized: false,
+            input_closed: false,
             _connection: ready.connection,
             output: ready.output,
             events: TerminalEventPump::from_receiver(ready.inputs),
@@ -558,7 +709,10 @@ impl Windows {
             dirty: true,
             title: String::new(),
         });
-        Ok(())
+        window.launch = None;
+        let workspace_id = window.workspace;
+        self.invalidate_workspace(workspace_id);
+        Ok(true)
     }
 
     fn request(&mut self, app: &mut App, request: Request) -> bool {
@@ -592,7 +746,7 @@ impl Windows {
                     Ok(())
                 };
                 match frontend::start(self.wake.clone(), notify, point) {
-                    Ok(()) => {
+                    Ok(launch) => {
                         self.windows.insert(
                             id,
                             Window {
@@ -600,6 +754,7 @@ impl Windows {
                                 source_window,
                                 source_view: view,
                                 surface: None,
+                                launch: Some(launch),
                             },
                         );
                     }
@@ -611,12 +766,13 @@ impl Windows {
             }
             Request::Move { view, window } => {
                 if app.move_tab_to_window(view, window) {
+                    let workspace = app.workspaces.active;
                     if window == MAIN_WINDOW {
-                        self.main_workspace = app.workspaces.active;
-                        self.activate(app, MAIN_WINDOW);
+                        self.main_workspace = workspace;
+                        self.activate(app, MAIN_WINDOW, self.is_main() && app.terminal_has_focus);
                     }
                     self.focus(window);
-                    self.invalidate_background();
+                    self.invalidate_workspace(workspace);
                     true
                 } else {
                     false
@@ -627,10 +783,13 @@ impl Windows {
 
     pub(crate) fn poll(&mut self, app: &mut App) -> bool {
         if self.is_main() {
+            if self.main_workspace != app.workspaces.active {
+                self.deferred_input.remove(&MAIN_WINDOW);
+            }
             self.main_workspace = app.workspaces.active;
         }
         if std::mem::take(&mut app.tab_window_document_changed) {
-            self.invalidate_background();
+            self.invalidate_workspace(app.workspaces.active);
         }
         let mut changed = app
             .tab_window_request
@@ -638,13 +797,14 @@ impl Windows {
             .is_some_and(|request| self.request(app, request));
         while let Ok((id, notice)) = self.incoming.try_recv() {
             match notice {
-                frontend::Notice::Ready(ready) => {
-                    if let Err(error) = self.attach(app, id, ready) {
+                frontend::Notice::Ready(ready) => match self.attach(app, id, ready) {
+                    Ok(attached) => changed |= attached,
+                    Err(error) => {
                         self.close(app, id);
                         app.notify_warn(format!("Could not detach tab: {error}"));
+                        changed = true;
                     }
-                    changed = true;
-                }
+                },
                 frontend::Notice::Closed(result) => {
                     let pending = self
                         .windows
@@ -669,23 +829,37 @@ impl Windows {
                 app.exit_confirm_active = false;
                 changed |= self.close(app, self.id);
             }
-            let retired: Vec<_> = self
-                .windows
-                .iter()
-                .filter_map(|(&id, window)| {
-                    let owner = workspace(app, window.workspace);
-                    (owner.is_none_or(|owner| {
-                        window.surface.is_some() && owner.window_tabs(id).next().is_none()
-                    }))
-                    .then_some(id)
-                })
-                .collect();
-            for id in retired {
+            self.populated.clear();
+            app.collect_populated_windows(&mut self.populated, &mut self.populated_desks);
+            for owner in &app.workspaces.parked {
+                if owner.app.has_detached_windows() {
+                    owner
+                        .app
+                        .collect_populated_windows(&mut self.populated, &mut self.populated_desks);
+                }
+            }
+            let mut retired = std::mem::take(&mut self.retired);
+            retired.extend(self.windows.iter().filter_map(|(&id, window)| {
+                let still_open = if window.surface.is_some() {
+                    self.populated.contains(&id)
+                } else {
+                    workspace(app, window.workspace).is_some_and(|owner| {
+                        owner.tab_window(window.source_view) == Some(window.source_window)
+                    })
+                };
+                (!still_open).then_some(id)
+            }));
+            for id in retired.drain(..) {
                 changed |= self.close(app, id);
             }
+            self.retired = retired;
         }
 
-        let actual = app.detached_window_id().unwrap_or(MAIN_WINDOW);
+        let actual = if self.windows.is_empty() {
+            MAIN_WINDOW
+        } else {
+            app.detached_window_id().unwrap_or(MAIN_WINDOW)
+        };
         if actual != self.id {
             // Opening or navigating to a view can select its desk directly.
             // Route the resulting frame to the terminal that owns that desk.
@@ -694,14 +868,16 @@ impl Windows {
                     window.workspace == app.workspaces.active && window.surface.is_some()
                 })
             {
-                self.id = actual;
+                self.select_window(actual);
+                if self.is_main() {
+                    self.main_workspace = app.workspaces.active;
+                }
                 self.focus(actual);
                 changed = true;
             }
         }
         if changed {
             self.sync_main_observation(app);
-            self.invalidate_background();
         }
         changed
     }

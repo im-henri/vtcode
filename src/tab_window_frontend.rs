@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
+    time::Duration,
 };
 
 use crossterm::event::Event;
@@ -36,44 +37,87 @@ fn send(stream: &mut Stream, input: &Input) -> io::Result<()> {
 }
 
 pub(super) fn run(endpoint: OsString) -> io::Result<()> {
-    let mut input_stream = transport::connect(&endpoint)?;
+    let mut input_stream = match transport::connect(&endpoint) {
+        Ok(stream) => stream,
+        // The source tab or workbench may close before the terminal is started.
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     let mut stream = input_stream.try_clone()?;
-    let mut stdout = io::stdout();
-    let screen = crate::TerminalScreen::enter(&mut stdout)?;
     let wake = UiWake::default();
-    let mut events = TerminalEventPump::start(wake.clone())?;
-    send(
-        &mut input_stream,
-        &Input::Hello {
-            size: crossterm::terminal::size()?,
-            host: desktop::foreground_host(),
-        },
-    )?;
-    let (frames, incoming) = mpsc::sync_channel::<Vec<u8>>(1);
+    let (frames, incoming) = mpsc::sync_channel(1);
+    let (recycle, buffers) = mpsc::sync_channel::<Vec<u8>>(1);
+    let (_finished, finishing) = mpsc::channel::<()>();
     let frame_wake = wake.clone();
-    std::thread::Builder::new()
+    let receiving = std::thread::Builder::new()
         .name("window-frames".into())
         .spawn(move || {
-            loop {
-                let mut bytes = Vec::new();
-                if transport::read_packet(&mut stream, &mut bytes).is_err()
-                    || frames.send(bytes).is_err()
-                {
+            'receive: loop {
+                let mut bytes = buffers.try_recv().unwrap_or_default();
+                if transport::read_packet(&mut stream, &mut bytes).is_err() {
                     break;
+                }
+                loop {
+                    match frames.try_send(bytes) {
+                        Ok(()) => break,
+                        Err(mpsc::TrySendError::Full(frame)) => {
+                            if transport::peer_disconnected(&stream) {
+                                break 'receive;
+                            }
+                            bytes = frame;
+                            // A full terminal is the only case that needs a
+                            // timed check. The consumer wakes us when it drains.
+                            std::thread::park_timeout(Duration::from_millis(25));
+                        }
+                        Err(mpsc::TrySendError::Disconnected(_)) => return,
+                    }
                 }
                 frame_wake.notify();
             }
             drop(frames);
             frame_wake.notify();
+            // A terminal with flow control paused can block even the screen
+            // cleanup escape sequences. Once the owner has closed, this
+            // dedicated process must leave even if its host stops reading.
+            if finishing.recv_timeout(Duration::from_secs(1))
+                == Err(mpsc::RecvTimeoutError::Timeout)
+            {
+                transport::exit_frontend();
+            }
         })?;
 
+    let mut stdout = io::stdout();
+    let screen = crate::TerminalScreen::enter(&mut stdout)?;
+    let mut events = TerminalEventPump::start(wake.clone())?;
+    let mut size = crossterm::terminal::size()?;
+    if send(
+        &mut input_stream,
+        &Input::Hello {
+            size,
+            host: desktop::foreground_host(),
+        },
+    )
+    .is_err()
+    {
+        return Ok(());
+    }
     let mut host = None;
     loop {
         let generation = wake.generation();
         match incoming.try_recv() {
-            Ok(bytes) => {
+            Ok(mut bytes) => {
+                receiving.thread().unpark();
                 stdout.write_all(&bytes)?;
                 stdout.flush()?;
+                bytes.clear();
+                let _ = recycle.try_send(bytes);
             }
             Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {}
@@ -97,17 +141,23 @@ pub(super) fn run(endpoint: OsString) -> io::Result<()> {
         host = changed_host.or(host);
         // Reconcile sizes when a terminal was hidden during a resize.
         if event == Event::FocusGained
-            && let Ok((width, height)) = crossterm::terminal::size()
-            && send(
+            && let Ok(new_size) = crossterm::terminal::size()
+            && new_size != size
+        {
+            size = new_size;
+            if send(
                 &mut input_stream,
                 &Input::Event {
-                    event: Event::Resize(width, height),
+                    event: Event::Resize(size.0, size.1),
                     host: changed_host,
                 },
             )
             .is_err()
-        {
-            break;
+            {
+                break;
+            }
+        } else if let Event::Resize(width, height) = event {
+            size = (width, height);
         }
         if send(
             &mut input_stream,
@@ -128,6 +178,7 @@ pub(super) fn run(endpoint: OsString) -> io::Result<()> {
 pub(super) struct Output {
     pub(super) ready: Arc<AtomicBool>,
     pub(super) frames: SyncSender<Vec<u8>>,
+    pub(super) buffers: Receiver<Vec<u8>>,
 }
 
 /// Dropping the owner immediately releases blocked readers and writers.
@@ -152,26 +203,38 @@ pub(super) enum Notice {
     Closed(io::Result<()>),
 }
 
+pub(super) struct Launch(pub(super) Arc<transport::Opening>);
+
+impl Drop for Launch {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 fn serve(
     notify: impl Fn(Notice) -> io::Result<()> + Clone + Send + 'static,
     wake: UiWake,
     point: Option<ScreenPoint>,
+    opening: Arc<transport::Opening>,
 ) -> io::Result<()> {
     let listener = transport::Listener::bind()?;
+    opening.remaining()?;
     launch(&listener.endpoint(), point)?;
-    accept(listener, notify, wake)
+    accept(listener, notify, wake, opening)
 }
 
 pub(super) fn accept(
     listener: transport::Listener,
     notify: impl Fn(Notice) -> io::Result<()> + Clone + Send + 'static,
     wake: UiWake,
+    opening: Arc<transport::Opening>,
 ) -> io::Result<()> {
-    let mut reader = listener.accept()?;
+    let mut reader = listener.accept(&opening)?;
     let connection = Connection(reader.try_clone()?);
     let mut writer = reader.try_clone()?;
     let mut bytes = Vec::new();
-    transport::read_packet(&mut reader, &mut bytes)?;
+    transport::read_handshake(&mut reader, &opening, &mut bytes)?;
+    drop(opening);
     let Input::Hello { size, host } = serde_json::from_slice(&bytes)? else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -179,21 +242,25 @@ pub(super) fn accept(
         ));
     };
     let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+    let (recycle, buffers) = mpsc::sync_channel(1);
     let ready = Arc::new(AtomicBool::new(true));
     let output = Output {
         ready: ready.clone(),
         frames: tx,
+        buffers,
     };
     let writer_notice = notify.clone();
     let output_wake = wake.clone();
     std::thread::Builder::new()
         .name("window-output".into())
         .spawn(move || {
-            for frame in rx {
+            for mut frame in rx {
                 if let Err(error) = transport::write_packet(&mut writer, &frame) {
                     let _ = writer_notice(Notice::Closed(Err(error)));
                     return;
                 }
+                frame.clear();
+                let _ = recycle.try_send(frame);
                 ready.store(true, Ordering::Release);
                 output_wake.notify();
             }
@@ -229,14 +296,16 @@ pub(super) fn start(
     wake: UiWake,
     notify: impl Fn(Notice) -> io::Result<()> + Clone + Send + 'static,
     point: Option<ScreenPoint>,
-) -> io::Result<()> {
+) -> io::Result<Launch> {
+    let opening = Arc::new(transport::Opening::new()?);
+    let lifetime = Launch(opening.clone());
     std::thread::Builder::new()
         .name("detached-terminal".into())
         .spawn(move || {
-            let result = serve(notify.clone(), wake, point);
+            let result = serve(notify.clone(), wake, point, opening);
             let _ = notify(Notice::Closed(result));
         })?;
-    Ok(())
+    Ok(lifetime)
 }
 
 #[cfg(windows)]
