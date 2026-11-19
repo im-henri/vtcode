@@ -287,14 +287,10 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                             t.pinned = !t.pinned;
                         }
                     }
-                    "tab_split_right" => {
-                        app.create_split_group_dir(tab, crate::app::SplitDirection::Horizontal);
-                        app.notify("Split Right");
-                    }
-                    "tab_split_down" => {
-                        app.create_split_group_dir(tab, crate::app::SplitDirection::Vertical);
-                        app.notify("Split Down");
-                    }
+                    "tab_split_right" => app.split_editor_tab(tab, crate::app::TabDropZone::Right),
+                    "tab_split_down" => app.split_editor_tab(tab, crate::app::TabDropZone::Bottom),
+                    "tab_split_left" => app.split_editor_tab(tab, crate::app::TabDropZone::Left),
+                    "tab_split_up" => app.split_editor_tab(tab, crate::app::TabDropZone::Top),
                     "tab_close_split" => {
                         app.close_all_splits();
                         app.notify("Split closed");

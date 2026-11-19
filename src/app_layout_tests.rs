@@ -127,6 +127,151 @@ mod tests {
         assert_eq!(app.groups.len(), groups_before);
     }
 
+    #[test]
+    fn split_editor_commands_open_a_second_view_of_the_only_tab() {
+        for (command, direction, leaves) in [
+            ("split_editor", SplitDirection::Horizontal, [0, 1]),
+            ("split_editor_down", SplitDirection::Vertical, [0, 1]),
+            ("split_editor_left", SplitDirection::Horizontal, [1, 0]),
+            ("split_editor_up", SplitDirection::Vertical, [1, 0]),
+        ] {
+            let mut app = App::test_new();
+            app.tabs.push(make_tab());
+            let original = app.tabs[0].editor.navigation_id;
+            app.tabs[0].preview = true;
+            app.terminal_panel_focused = true;
+            assert!(!app.is_menu_cmd_disabled(command));
+
+            app.execute_palette_command(command);
+
+            let tree = app.split_tree.as_ref().unwrap();
+            assert!(matches!(tree, SplitNode::Split { direction: actual, .. } if *actual == direction));
+            assert_eq!(tree.leaves(), leaves);
+            assert_eq!(app.active_group, 1);
+            assert!(!app.terminal_panel_focused);
+            let source = &app.groups[0].tabs[0];
+            let split = &app.tabs[0];
+            assert_eq!(source.editor.navigation_id, original);
+            assert_ne!(split.editor.navigation_id, original);
+            assert!(source.editor.shares_document(&split.editor));
+            assert!(!source.preview && !split.preview);
+        }
+    }
+
+    #[test]
+    fn split_editor_views_share_edits_undo_and_save_with_independent_viewports() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("shared.txt");
+        let lines = "first\nsecond\n";
+        let original = lines.repeat(2048);
+        std::fs::write(&path, &original).unwrap();
+        let mut editor = Editor::new();
+        editor.open_file(&path).unwrap();
+        editor.cursor_line = 2;
+        editor.cursor_col = 2;
+        editor.scroll_offset = 1;
+        let mut app = App::new(root.path().to_owned());
+        app.tabs.push(Tab::new_file(editor));
+
+        for key in ['k', '\\'] {
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL),
+            );
+        }
+        let source = &app.groups[0].tabs[0].editor;
+        let split = app.editor().unwrap();
+        assert!(source.rope.is_instance(&split.rope));
+        assert_eq!((split.cursor_line, split.cursor_col, split.scroll_offset), (2, 2, 1));
+
+        let split = app.editor_mut().unwrap();
+        split.set_cursor(0, 0);
+        split.paste_plain_with_text("one ");
+        app.sync_duplicate_file_tabs();
+        let source = &app.groups[0].tabs[0].editor;
+        assert!(source.rope.is_instance(&app.editor().unwrap().rope));
+        assert_eq!((source.cursor_line, source.cursor_col, source.scroll_offset), (2, 2, 1));
+        assert!(source.modified);
+
+        app.switch_group(0);
+        let source = app.editor_mut().unwrap();
+        source.set_cursor(1, 0);
+        source.paste_plain_with_text("two ");
+        app.switch_group(1);
+        assert_eq!(app.editor().unwrap().rope.line(1), "two second\n");
+        app.editor_mut().unwrap().undo();
+        app.switch_group(0);
+        assert_eq!(app.editor().unwrap().rope.line(1), "second\n");
+        app.editor_mut().unwrap().redo();
+        app.save_current_file();
+
+        app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+            app.pending_file_saves.is_empty() && !app.editor().unwrap().modified
+        });
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("one first\ntwo second\n{}", &original[lines.len()..])
+        );
+        assert!(!app.groups[1].tabs[0].editor.modified);
+
+        let source = app.editor_mut().unwrap();
+        source.set_cursor(1, 4);
+        source.paste_plain_with_text("unsaved ");
+        app.close_tab(0);
+        assert!(!app.confirm_close_active);
+        assert!(!app.split_active());
+        assert!(app.editor().unwrap().modified);
+        assert_eq!(app.editor().unwrap().rope.line(1), "two unsaved second\n");
+        app.close_tab(0);
+        assert!(app.confirm_close_active);
+    }
+
+    #[test]
+    fn split_editor_session_recovers_one_document_with_two_view_positions() {
+        for on_disk in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut app = App::new(root.path().to_owned());
+            let mut editor = Editor::test_with_text("first\nsecond\n");
+            if on_disk {
+                let path = root.path().join("shared.txt");
+                std::fs::write(&path, "first\nsecond\n").unwrap();
+                editor.open_file(&path).unwrap();
+            }
+            app.tabs.push(Tab::new_file(editor));
+            app.execute_palette_command("split_editor_down");
+            let split = app.editor_mut().unwrap();
+            split.set_cursor(1, 0);
+            split.paste_plain_with_text("edited ");
+            app.sync_duplicate_file_tabs();
+            crate::session::save_session(root.path(), &app.build_session()).unwrap();
+            let saved = crate::session::load_session(root.path()).unwrap();
+            let source = &saved.groups[0].tabs[0];
+            assert!(source.unsaved_file.is_some());
+            assert_eq!(source.unsaved_file, saved.tabs[0].unsaved_file);
+            assert!(source.undo_history_file.is_some());
+            assert_eq!(source.undo_history_file, saved.tabs[0].undo_history_file);
+
+            let mut restored = App::new(root.path().to_owned());
+            restored.restore_session(&saved);
+            restored.wait_for_background(std::time::Duration::from_secs(10), |app| {
+                !app.editor().unwrap().bg_loading && !app.groups[0].tabs[0].editor.bg_loading
+            });
+            let source = &restored.groups[0].tabs[0].editor;
+            let split = restored.editor().unwrap();
+            assert!(source.shares_document(split));
+            assert!(source.rope.is_instance(&split.rope));
+            assert_eq!(split.rope.line(1), "edited second\n");
+            assert_eq!((source.cursor_line, source.cursor_col), (0, 0));
+            assert_eq!((split.cursor_line, split.cursor_col), (1, 7));
+            restored.switch_group(0);
+            restored.editor_mut().unwrap().undo();
+            restored.switch_group(1);
+            assert_eq!(restored.editor().unwrap().rope.line(1), "second\n");
+        }
+    }
+
     // --- close_empty_groups tests ---
 
     #[test]

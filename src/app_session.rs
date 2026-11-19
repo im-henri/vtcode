@@ -1510,6 +1510,9 @@ impl App {
                 active_tab: saved_active_tab(&g.tabs, g.active_tab),
             })
             .collect();
+        let save_desks = self.desks.items.len() > 1 || !self.desks.membership.is_empty()
+            || self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+                .any(|tab| tab.kind == TabKind::File && tab.editor.document_has_other_views());
         // Serialize theme name
         let theme_str = self.committed_theme_key().to_string();
         let sidebar_str = match self.sidebar_view {
@@ -1527,7 +1530,7 @@ impl App {
                 .chain(self.groups.iter().flat_map(|group| &group.tabs))
                 .filter_map(|tab| Some((tab.editor.file_path.as_ref()?.to_string_lossy().into_owned(), tab.editor.remote_checkpoint.clone()?)))
                 .collect())),
-            desks: (self.desks.items.len()>1 || !self.desks.membership.is_empty()).then(||self.save_desks()),
+            desks: save_desks.then(|| self.save_desks()),
             tabs,
             active_tab: saved_active_tab(&self.tabs, self.active_tab),
             explorer_width: self.explorer_width,
@@ -1626,7 +1629,7 @@ impl App {
             std::path::PathBuf,
             Vec<crate::session::SessionRestore>,
         > = rustc_hash::FxHashMap::default();
-        let mut untitled_restore_jobs = Vec::new();
+        let mut untitled_restores = rustc_hash::FxHashMap::default();
         let mut restore_tab = |saved_tab: &crate::session::SavedTab| -> Tab {
             let restore = crate::session::SessionRestore::new(
                 saved_tab.clone(),
@@ -1656,7 +1659,7 @@ impl App {
             if let Some(path) = &saved_tab.file_path {
                 restore_jobs.entry(path.clone()).or_default().push(restore);
             } else {
-                untitled_restore_jobs.push(restore);
+                untitled_restores.insert(restore.id, restore);
             }
 
             Tab {
@@ -1820,6 +1823,18 @@ impl App {
         }
         drop(restore_tab);
         if let Some(desks) = &session.desks { self.restore_desks(desks); }
+        // Untitled split views have no path to group their recovery reads by.
+        // Use the document handles restored from the session instead.
+        let mut untitled_jobs: rustc_hash::FxHashMap<u64, Vec<_>> = Default::default();
+        if !untitled_restores.is_empty() {
+            for tab in self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)) {
+                if let Some(restore) = tab.editor.pending_session_restore.as_ref()
+                    .and_then(|pending| untitled_restores.remove(&pending.id))
+                {
+                    untitled_jobs.entry(tab.editor.save_identity).or_default().push(restore);
+                }
+            }
+        }
         let active_restore = self.editor().and_then(|editor| editor.pending_session_restore.as_ref())
             .map(|restore| restore.id);
         let mut visible_restores = rustc_hash::FxHashSet::default();
@@ -1839,15 +1854,15 @@ impl App {
         };
         enum RestoreJob {
             File(std::path::PathBuf, Vec<crate::session::SessionRestore>),
-            Untitled(crate::session::SessionRestore),
+            Untitled(Vec<crate::session::SessionRestore>),
         }
         // Active buffer first (including untitled recovery), then visible split
         // panes, then hidden tabs/desks. Recovery disk reads never occupy the
         // CPU pool needed for highlighting and immediate editor feedback.
         let mut jobs: Vec<_> = restore_jobs.into_iter().map(|(path, restores)| {
             (restores.iter().map(&priority).min().unwrap_or(2), RestoreJob::File(path, restores))
-        }).chain(untitled_restore_jobs.into_iter().map(|restore| {
-            (priority(&restore), RestoreJob::Untitled(restore))
+        }).chain(untitled_jobs.into_values().map(|restores| {
+            (restores.iter().map(&priority).min().unwrap_or(2), RestoreJob::Untitled(restores))
         })).collect();
         jobs.sort_by_key(|(priority, _)| *priority);
         for (priority, job) in jobs {
@@ -1855,13 +1870,14 @@ impl App {
                 RestoreJob::File(path, restores) => {
                     self.queue_background_session_file_load(path, restores, priority < 2);
                 }
-                RestoreJob::Untitled(mut restore) => {
+                RestoreJob::Untitled(mut restores) => {
                     let project_root = self.explorer.root.clone();
                     let activity_path = project_root.clone();
                     let sender = self.background.sender.clone();
                     self.background.read_for_file("session-recovery", &activity_path, priority < 2, move || {
-                        crate::session::hydrate_saved_tab(&project_root, &mut restore.tab);
-                        let _ = sender.send(crate::background::BackgroundResult::SessionUntitledLoaded { restore });
+                        crate::session::hydrate_saved_tabs(&project_root,
+                            restores.iter_mut().map(|restore| &mut restore.tab));
+                        let _ = sender.send(crate::background::BackgroundResult::SessionUntitledLoaded { restores });
                     });
                 }
             }

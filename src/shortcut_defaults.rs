@@ -178,7 +178,7 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
     ("next_change", "Go to Next Change", "Alt+F5"),
     ("prev_change", "Go to Previous Change", "Alt+Shift+F5"),
     ("markdown_preview", "Markdown: Toggle Preview", "Alt+V"),
-    ("split_editor", "View: Split Editor Right", "Ctrl+\\"),
+    ("split_editor", "View: Split Editor Right", "Ctrl+K, Ctrl+\\"),
     ("show_explorer", "View: Focus Explorer", "Ctrl+Shift+E"),
     ("quit", "File: Quit", "Ctrl+Q"),
     ("desk_switch", "Desks: Switch Desk", "Ctrl+K, D"),

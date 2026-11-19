@@ -434,7 +434,7 @@ fn assignment_dialog_supports_themes_narrow_layouts_and_mouse_cancellation() {
 }
 
 #[test]
-fn unchanged_recording_preserves_shared_defaults_and_keyboard_focus_moves_both_ways() {
+fn unchanged_recording_preserves_defaults_and_keyboard_focus_moves_both_ways() {
     let mut app = fixture();
     let target = edit(&mut app, "goto_bracket");
     key(&mut app, KeyCode::Char('\\'), KeyModifiers::CONTROL);
@@ -447,7 +447,7 @@ fn unchanged_recording_preserves_shared_defaults_and_keyboard_focus_moves_both_w
     assert!(app.settings_global.keybindings.is_none());
     assert_eq!(
         app.keybindings[index(&app, "split_editor")].display(),
-        "Ctrl+\\"
+        "Ctrl+K, Ctrl+\\"
     );
 }
 

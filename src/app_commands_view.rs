@@ -1,4 +1,4 @@
-use crate::app::{App, PaletteCommand, TabKind};
+use crate::app::{App, PaletteCommand, TabDropZone, TabKind};
 
 impl App {
     /// Dispatch view / layout / display-toggle commands.
@@ -622,30 +622,10 @@ impl App {
                     self.switch_group(panes[next]);
                 }
             }
-            "split_editor" => {
-                if !self.tabs.is_empty() {
-                    self.create_split_group(self.active_tab);
-                    self.notify("Split editor opened");
-                }
-            }
-            "split_editor_right" => {
-                if !self.tabs.is_empty() {
-                    self.create_split_group_dir(
-                        self.active_tab,
-                        crate::app::SplitDirection::Horizontal,
-                    );
-                    self.notify("Split editor right");
-                }
-            }
-            "split_editor_down" => {
-                if !self.tabs.is_empty() {
-                    self.create_split_group_dir(
-                        self.active_tab,
-                        crate::app::SplitDirection::Vertical,
-                    );
-                    self.notify("Split editor down");
-                }
-            }
+            "split_editor" | "split_editor_right" => self.split_editor_tab(self.active_tab, TabDropZone::Right),
+            "split_editor_down" => self.split_editor_tab(self.active_tab, TabDropZone::Bottom),
+            "split_editor_left" => self.split_editor_tab(self.active_tab, TabDropZone::Left),
+            "split_editor_up" => self.split_editor_tab(self.active_tab, TabDropZone::Top),
             "close_split" => {
                 self.close_all_splits();
                 self.notify("Split editor closed");

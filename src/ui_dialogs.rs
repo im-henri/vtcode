@@ -492,7 +492,7 @@ pub(crate) fn draw_shortcuts(f: &mut Frame, app: &App) {
         header("── View ──"),
         Line::from(vec![Span::styled("Ctrl+B          ", key), Span::styled("Toggle Explorer", desc)]),
         Line::from(vec![Span::styled("Ctrl+`          ", key), Span::styled("Toggle Right Terminal", desc)]),
-        Line::from(vec![Span::styled("Ctrl+\\          ", key), Span::styled("Split Editor", desc)]),
+        Line::from(vec![Span::styled("Ctrl+K, Ctrl+\\  ", key), Span::styled("Split Editor Right", desc)]),
         Line::from(vec![Span::styled("Ctrl+K Z        ", key), Span::styled("Zen Mode", desc)]),
         Line::from(vec![Span::styled("Ctrl++/-        ", key), Span::styled("Zoom In/Out (minimap)", desc)]),
         Line::from(vec![Span::styled("Ctrl+?          ", key), Span::styled("Show This Help", desc)]),

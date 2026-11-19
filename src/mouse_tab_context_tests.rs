@@ -304,23 +304,36 @@ fn tab_menu_commands_remain_clickable_over_the_find_input() {
 fn tab_menu_split_direction_matches_the_command_for_mouse_and_keyboard() {
     use crate::app::{SplitDirection, SplitNode};
 
-    for (label, command, direction, previous_direction) in [
+    for (label, command, direction, leaves) in [
         (
             "Split Right",
             "tab_split_right",
             SplitDirection::Horizontal,
-            false,
+            [0, 1],
         ),
         (
             "Split Down",
             "tab_split_down",
             SplitDirection::Vertical,
-            true,
+            [0, 1],
+        ),
+        (
+            "Split Left",
+            "tab_split_left",
+            SplitDirection::Horizontal,
+            [1, 0],
+        ),
+        (
+            "Split Up",
+            "tab_split_up",
+            SplitDirection::Vertical,
+            [1, 0],
         ),
     ] {
         for keyboard in [false, true] {
             let mut app = app_with_tab_menu((0, 0));
-            app.split_vertical = previous_direction;
+            let original = app.tabs[0].editor.navigation_id;
+            let source_selection = app.tabs[1].editor.navigation_id;
             if keyboard {
                 app.tab_context_selected = App::tab_context_items()
                     .iter()
@@ -337,12 +350,17 @@ fn tab_menu_split_direction_matches_the_command_for_mouse_and_keyboard() {
             }
             let Some(SplitNode::Split {
                 direction: actual, ..
-            }) = app.split_tree
+            }) = &app.split_tree
             else {
                 panic!("{label} must create a split");
             };
-            assert_eq!(actual, direction, "{label}, keyboard={keyboard}");
+            assert_eq!(*actual, direction, "{label}, keyboard={keyboard}");
+            assert_eq!(app.split_tree.as_ref().unwrap().leaves(), leaves);
             assert_eq!(app.tabs[app.active_tab].editor.file_name(), "target.rs");
+            let source = &app.groups[0];
+            assert_eq!(source.tabs[source.active_tab].editor.navigation_id, source_selection);
+            assert_eq!(source.tabs[0].editor.navigation_id, original);
+            assert!(source.tabs[0].editor.shares_document(app.editor().unwrap()));
         }
     }
 }

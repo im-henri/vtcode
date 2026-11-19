@@ -833,6 +833,7 @@ impl SavedTab {
 }
 
 /// Resolve a tab's unsaved buffer and undo/redo data. Call only from a worker.
+#[cfg(test)]
 pub(crate) fn hydrate_saved_tab(project_root: &Path, tab: &mut SavedTab) {
     hydrate_saved_tabs(project_root, std::iter::once(tab));
 }

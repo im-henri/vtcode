@@ -1,4 +1,4 @@
-use crate::app::{App, EditorGroup, SplitDirection, SplitNode, TabDropZone};
+use crate::app::{ActivePane, App, EditorGroup, SplitDirection, SplitNode, Tab, TabDropZone, TabKind};
 
 impl App {
     /// Validate pane hit maps against the currently visible tab, including
@@ -144,47 +144,86 @@ impl App {
         );
     }
 
+    pub(crate) fn can_split_editor_tab(&self, index: usize) -> bool {
+        self.tabs.get(index).is_some_and(|tab| match tab.kind {
+            TabKind::File => !tab.editor.bg_loading,
+            _ => self.tabs.len() > 1,
+        })
+    }
+
+    /// Split commands open another view of a text document. Workbench tabs
+    /// such as terminals and diffs retain their single-view move behavior.
+    pub(crate) fn split_editor_tab(&mut self, index: usize, zone: TabDropZone) {
+        if !self.can_split_editor_tab(index) {
+            return;
+        }
+        if self.tabs[index].kind == TabKind::File {
+            self.cancel_remote_location();
+            if let Some(editor) = self.editor_mut() {
+                editor.break_undo_group();
+                editor.publish_document();
+            }
+            let source = &mut self.tabs[index];
+            source.editor.refresh_document();
+            source.preview = false;
+            let mut tab = self.clone_desk_tab(&self.tabs[index]);
+            tab.pinned = false;
+            self.clear_transient_editor_state();
+            self.save_split_source();
+            self.insert_split_group(tab, zone);
+            self.active_pane = ActivePane::Editor;
+            self.terminal_panel_focused = false;
+            self.ensure_active_tab_visible();
+        } else {
+            self.create_split_group_at(index, zone);
+        }
+        self.notify("Split editor opened");
+    }
+
     /// Move a tab into a new pane on the requested side of the active group.
     pub(crate) fn create_split_group_at(&mut self, tab_idx: usize, zone: TabDropZone) {
         // Moving the only tab within its own pane cannot create a split.
         if tab_idx >= self.tabs.len() || self.tabs.len() < 2 {
             return;
         }
+        self.save_split_source();
+        let source = &mut self.groups[self.active_group];
+        let mut tab = source.tabs.remove(tab_idx);
+        self.desks.membership.remove(&tab.editor.navigation_id);
+        tab.preview = false;
+        crate::tab_collection::removed(&mut source.tab_mru_order, tab_idx);
+        source.active_tab = source.active_tab
+            .saturating_sub(usize::from(tab_idx < source.active_tab))
+            .min(source.tabs.len() - 1);
+        self.insert_split_group(tab, zone);
+    }
+
+    fn save_split_source(&mut self) {
+        if self.groups.is_empty() {
+            self.groups.push(EditorGroup::new());
+            self.active_group = 0;
+            self.split_tree = Some(SplitNode::Leaf(0));
+        }
+        self.save_active_group();
+    }
+
+    fn insert_split_group(&mut self, tab: Tab, zone: TabDropZone) {
         let direction = match zone {
             TabDropZone::Left | TabDropZone::Right => SplitDirection::Horizontal,
             TabDropZone::Top | TabDropZone::Bottom => SplitDirection::Vertical,
         };
         let before = matches!(zone, TabDropZone::Left | TabDropZone::Top);
-        let was_empty = self.groups.is_empty();
-        if was_empty {
-            // First split: save current state as group 0
-            self.groups.push(EditorGroup::new());
-            self.active_group = 0;
-        }
-        self.save_active_group();
-        // Take the tab out of the current group
-        let mut tab = self.groups[self.active_group].tabs.remove(tab_idx);
-        self.desks.membership.remove(&tab.editor.navigation_id);
-        tab.preview = false;
-        let source = &mut self.groups[self.active_group];
-        crate::tab_collection::removed(&mut source.tab_mru_order, tab_idx);
-        source.active_tab = source
-            .active_tab
-            .saturating_sub(usize::from(tab_idx < source.active_tab))
-            .min(source.tabs.len().saturating_sub(1));
-        // Create new group with this tab
+        let view = tab.editor.navigation_id;
         let mut new_group = EditorGroup::new();
         new_group.desk = self.desks.active;
         new_group.tabs.push(tab);
         new_group.tab_mru_order.push(0);
         self.groups.push(new_group);
         let new_idx = self.groups.len() - 1;
-        self.navigation.move_editor(self.groups[new_idx].tabs[0].editor.navigation_id, new_idx);
+        self.navigation.move_editor(view, new_idx);
 
         // Build/update split tree
-        if was_empty {
-            self.split_tree = Some(SplitNode::Leaf(0));
-        } else if self.split_tree.is_none() && self.desks.items.len() > 1 {
+        if self.split_tree.is_none() && self.desks.items.len() > 1 {
             self.split_tree = Some(SplitNode::Leaf(self.active_group));
         } else if self.split_tree.is_none() {
             // Restore a tree for sessions that only stored a flat layout.

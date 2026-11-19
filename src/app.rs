@@ -2905,21 +2905,30 @@ impl App {
                         has_visual_changes |= has_entries;
                     }
                 }
-                crate::background::BackgroundResult::SessionUntitledLoaded { restore } => {
-                    self.preserve_unreadable_session_recovery(std::slice::from_ref(&restore));
+                crate::background::BackgroundResult::SessionUntitledLoaded { restores } => {
+                    self.preserve_unreadable_session_recovery(&restores);
+                    let mut restores: rustc_hash::FxHashMap<_, _> =
+                        restores.into_iter().map(|restore| (restore.id, restore)).collect();
                     let threshold = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
                     for tab in self.tabs.iter_mut().chain(
                         self.groups.iter_mut().flat_map(|group| &mut group.tabs),
                     ) {
-                        if tab.editor.bg_loading
-                            && tab.editor.file_path.is_none()
-                            && tab.editor.pending_session_restore.as_ref()
-                                .is_some_and(|pending| pending.id == restore.id)
+                        let editor = &mut tab.editor;
+                        if editor.file_path.is_none()
+                            && let Some(restore) = editor.pending_session_restore.as_ref()
+                                .and_then(|pending| restores.remove(&pending.id))
                         {
-                            tab.editor.bg_loading = false;
-                            tab.editor.read_only = self.default_read_only;
-                            tab.editor.pending_session_restore = Some(restore.clone());
-                            tab.editor.apply_pending_session_restore(threshold);
+                            crate::editor_document::edit!(editor, {
+                                if editor.bg_loading {
+                                    editor.bg_loading = false;
+                                    editor.read_only = self.default_read_only;
+                                } else {
+                                    // A sibling view already installed the document and history.
+                                    editor.document.restore_view_only = true;
+                                }
+                                editor.pending_session_restore = Some(restore);
+                                editor.apply_pending_session_restore(threshold);
+                            });
                             has_visual_changes = true;
                         }
                     }

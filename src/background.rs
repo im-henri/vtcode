@@ -565,7 +565,7 @@ pub enum BackgroundResult {
         entries: Vec<FragmentHighlightEntry>,
     },
     /// Recovery content for an untitled editor, matched by its restore ID.
-    SessionUntitledLoaded { restore: crate::session::SessionRestore },
+    SessionUntitledLoaded { restores: Vec<crate::session::SessionRestore> },
     SessionFileDeferred {
         workspace_generation: u64,
         path: PathBuf,
