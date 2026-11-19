@@ -165,7 +165,9 @@ impl App {
             || (visible
                 && self
                     .explorer_area
-                    .is_some_and(|area| area.contains(position)));
+                    .is_some_and(|area| area.contains(position)))
+            || (visible && crate::ui_desks::sidebar_toggle_area(self)
+                .is_some_and(|area| area.contains(position)));
         let changed = visible != self.sidebar_is_visible();
         if changed {
             self.reset_hover_states();

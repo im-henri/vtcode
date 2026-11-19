@@ -65,7 +65,7 @@ impl Strip {
         let mut strip = Self {
             items: Vec::new(),
             width: 0,
-            prefix: crate::ui_desks::controls(app, area, group).2,
+            prefix: crate::ui_desks::controls(app, area, group).width,
         };
         let Some((tabs, active, _, _)) = group_state(app, group) else {
             return strip;

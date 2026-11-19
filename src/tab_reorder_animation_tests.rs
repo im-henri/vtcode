@@ -367,7 +367,7 @@ fn clipped_unicode_labels_and_named_groups_keep_fixed_controls_and_pins_intact()
     super::super::scroll_strip_by(&mut app, area, 0, 9);
     let start = Instant::now();
     draw(&mut app, &mut terminal, area, start);
-    let prefix = crate::ui_desks::controls(&app, area, 0).2;
+    let prefix = crate::ui_desks::controls(&app, area, 0).width;
     let controls: Vec<_> = (area.x..area.x + prefix)
         .map(|x| terminal.backend().buffer()[(x, area.y)].clone())
         .collect();

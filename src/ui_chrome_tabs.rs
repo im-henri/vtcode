@@ -112,7 +112,7 @@ impl TabBarHits {
         } else {
             return hits;
         };
-        let (_, _, prefix) = crate::ui_desks::controls(app, area, group);
+        let prefix = crate::ui_desks::controls(app, area, group).width;
         let mut used = usize::from(prefix);
         let cells = |start: usize, width: usize| {
             Rect::new(
@@ -275,7 +275,7 @@ fn tab_label_name<'a>(
     duplicates: Option<&TabNameDuplicates>,
 ) -> std::borrow::Cow<'a, str> {
     let name = tab_display_name_with_duplicates(app, index, tab, duplicates);
-    let available = usize::from(area.width.saturating_sub(crate::ui_desks::controls(app, area, group).2));
+    let available = usize::from(area.width.saturating_sub(crate::ui_desks::controls(app, area, group).width));
     // Leave at least a third for neighbours on normal panes, and account for
     // both scroll arrows. Tiny panes still clip safely by terminal cells.
     let room = available.saturating_sub(4);
@@ -718,7 +718,7 @@ pub(crate) fn draw_tab_bar_for_group(
         }
     }
     if group == app.active_group {
-        let (_, _, prefix) = crate::ui_desks::controls(app, area, group);
+        let prefix = crate::ui_desks::controls(app, area, group).width;
         let end = hits.tabs.last().map_or(usize::from(prefix), |(_, r, _)| {
             usize::from(r.right().saturating_sub(area.x))
         });
@@ -789,7 +789,7 @@ fn draw_tab_bar_at(f: &mut Frame, app: &App, area: Rect, now: std::time::Instant
         return;
     }
     crate::ui_desks::draw_controls(f, app, area, app.active_group);
-    let (_, _, prefix) = crate::ui_desks::controls(app, area, app.active_group);
+    let prefix = crate::ui_desks::controls(app, area, app.active_group).width;
     let bar = area;
     let area = Rect::new(
         area.x.saturating_add(prefix),
@@ -1921,16 +1921,19 @@ mod tests {
         app.tabs.push(Tab::new_file(editor));
         app.active_tab = 0;
 
+        let area = Rect::new(0, 0, 40, 1);
         let mut terminal = Terminal::new(TestBackend::new(40, 1)).expect("terminal");
         terminal
-            .draw(|frame| draw_tab_bar(frame, &app, Rect::new(0, 0, 40, 1)))
+            .draw(|frame| draw_tab_bar(frame, &app, area))
             .expect("draw tab bar");
 
+        let tab = TabBarHits::new(&app, area).tabs[0].1;
         let buffer = terminal.backend().buffer();
         let expected_icon_color = ratatui::style::Color::Rgb(241, 80, 47);
-        assert_eq!(buffer.cell((5, 0)).unwrap().symbol(), "G");
-        assert_eq!(buffer.cell((5, 0)).unwrap().fg, expected_icon_color);
-        assert_eq!(buffer.cell((8, 0)).unwrap().fg, app.colors.ui.fg_tab_active);
+        let icon = &buffer[(tab.x + 1, tab.y)];
+        assert_eq!(icon.symbol(), "G");
+        assert_eq!(icon.fg, expected_icon_color);
+        assert_eq!(buffer[(tab.x + 4, tab.y)].fg, app.colors.ui.fg_tab_active);
     }
 
     #[test]

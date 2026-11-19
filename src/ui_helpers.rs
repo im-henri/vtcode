@@ -570,7 +570,9 @@ mod tests {
             .expect("draw split editor");
 
         let expected_icon_color = ratatui::style::Color::Rgb(241, 80, 47);
-        let icon_cell = terminal.backend().buffer().cell((5, 0)).unwrap();
+        let tab_bar = app.groups[0].tab_bar_area.unwrap();
+        let tab = crate::ui_chrome_tabs::TabBarHits::for_group(&app, tab_bar, 0).tabs[0].1;
+        let icon_cell = &terminal.backend().buffer()[(tab.x + 1, tab.y)];
         assert_eq!(icon_cell.symbol(), "G");
         assert_eq!(icon_cell.fg, expected_icon_color);
     }

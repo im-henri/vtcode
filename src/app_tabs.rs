@@ -1874,7 +1874,7 @@ impl App {
     /// Compute the maximum meaningful tab scroll offset for the current tab bar.
     /// Returns the highest offset where the last tab is still visible.
     pub(crate) fn max_tab_scroll_offset(&self) -> usize {
-        let area_width = self.tab_bar_area.map_or(0, |a| usize::from(a.width.saturating_sub(crate::ui_desks::controls(self,a,self.active_group).2)));
+        let area_width = self.tab_bar_area.map_or(0, |a| usize::from(a.width.saturating_sub(crate::ui_desks::controls(self,a,self.active_group).width)));
         self.compute_max_tab_scroll(&self.tabs, area_width)
     }
 

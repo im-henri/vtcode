@@ -118,18 +118,46 @@ fn host_area(app: &App) -> Option<Rect> {
         .min_by_key(|r| (r.y, r.x))
 }
 
-pub(crate) fn controls(app: &App, area: Rect, group: usize) -> (Rect, Rect, u16) {
-    if group != app.desks.host || area.width < 4 || area.height == 0 || app.detached_window_id().is_some() {
-        return (Rect::default(), Rect::default(), 0);
+#[derive(Default)]
+pub(crate) struct Controls {
+    pub(crate) new_desk: Rect,
+    pub(crate) desk_picker: Rect,
+    pub(crate) sidebar_toggle: Rect,
+    pub(crate) width: u16,
+}
+
+pub(crate) fn controls(app: &App, area: Rect, group: usize) -> Controls {
+    let mut controls = Controls::default();
+    if group != app.desks.host || area.is_empty() || app.detached_window_id().is_some() {
+        return controls;
     }
+    let sidebar_width = if !app.zen_mode && app.activity_bar_position == crate::settings::ActivityBarPosition::Top {
+        if area.width >= 44 { 3 } else { 1 }
+    } else { 0 };
+    // The compact arrow takes the place of the separator in narrow strips.
+    let separator_width = u16::from(sidebar_width != 1);
+    let available = area.width - sidebar_width;
     if app.desk_count() <= 1 {
-        return (Rect::new(area.x, area.y, 3, 1), Rect::default(), 4);
+        if available >= 3 + separator_width {
+            controls.new_desk = Rect::new(area.x, area.y, 3, 1);
+        }
+    } else if area.width >= 4 && available >= 2 + separator_width {
+        let name_width = app.current_desk_name().width().min(TAB_BAR_DESK_NAME_WIDTH) as u16;
+        // Leave room for the separator and 16 cells of file tabs when space allows.
+        let width = (name_width + 3).min(available.saturating_sub(16 + separator_width));
+        controls.desk_picker = Rect::new(area.x, area.y, if width < 4 { 2 } else { width }, 1);
     }
-    let name_width = app.current_desk_name().width().min(TAB_BAR_DESK_NAME_WIDTH) as u16;
-    // Leave room for the separator and 16 cells of file tabs when space allows.
-    let width = (name_width + 3).min(area.width.saturating_sub(17));
-    let width = if width < 4 { 2 } else { width };
-    (Rect::default(), Rect::new(area.x, area.y, width, 1), width + 1)
+    let desk_width = controls.new_desk.width + controls.desk_picker.width;
+    controls.sidebar_toggle = Rect::new(area.x + desk_width, area.y, sidebar_width, 1);
+    let buttons_width = desk_width + sidebar_width;
+    controls.width = buttons_width + separator_width * u16::from(desk_width > 0);
+    controls
+}
+
+pub(crate) fn sidebar_toggle_area(app: &App) -> Option<Rect> {
+    if app.change_dir_active || !app.show_tab_bar { return None; }
+    let area = controls(app, host_area(app)?, app.desks.host).sidebar_toggle;
+    (!area.is_empty()).then_some(area)
 }
 
 pub(crate) fn group_color(app: &App, color: u8) -> Color {
@@ -147,7 +175,7 @@ pub(crate) fn group_color(app: &App, color: u8) -> Color {
 }
 
 pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) {
-    let (plus, pick, width) = controls(app, area, group);
+    let Controls { new_desk: plus, desk_picker: pick, sidebar_toggle, width } = controls(app, area, group);
     let bg = app.colors.bg_tabbar;
     let hovered = |r: Rect| r.contains((app.mouse_col, app.mouse_row).into());
     let style = |r| {
@@ -170,7 +198,14 @@ pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) 
         };
         f.render_widget(Paragraph::new(label).style(style(pick)), pick);
     }
-    if width > 0 {
+    if !sidebar_toggle.is_empty() {
+        let arrow = if app.sidebar_is_visible() != app.sidebar_right { "←" } else { "→" };
+        f.render_widget(
+            Paragraph::new(arrow).alignment(ratatui::layout::Alignment::Center).style(style(sidebar_toggle)),
+            sidebar_toggle,
+        );
+    }
+    if width > plus.width + pick.width + sidebar_toggle.width {
         f.render_widget(
             Paragraph::new("│").style(Style::default().fg(app.colors.fg_dim).bg(bg)),
             Rect::new(area.x + width - 1, area.y, 1, 1),
@@ -566,7 +601,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     let Some(area) = host_area(app) else {
         return false;
     };
-    let (plus, pick, _) = controls(app, area, app.desks.host);
+    let Controls { new_desk: plus, desk_picker: pick, .. } = controls(app, area, app.desks.host);
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && (plus.contains(pos) || pick.contains(pos))
     {
@@ -1000,6 +1035,7 @@ pub(crate) fn command(app: &mut App, id: &str) -> bool {
 fn draw_control_hint(f: &mut Frame, app: &App) {
     if crate::ui_modal::active(app).is_some()
         || app.palette.active
+        || app.menu_open
         || app.tab_context_active
         || app.desks.group_drag.is_some()
     {
@@ -1008,19 +1044,21 @@ fn draw_control_hint(f: &mut Frame, app: &App) {
     let Some(area) = host_area(app) else {
         return;
     };
-    let (plus, pick, _) = controls(app, area, app.desks.host);
+    let Controls { new_desk: plus, desk_picker: pick, sidebar_toggle, .. } = controls(app, area, app.desks.host);
     let pos = (app.mouse_col, app.mouse_row).into();
-    let label = if plus.contains(pos) {
-        "New Desk"
+    let (button, label) = if plus.contains(pos) {
+        (plus, "New Desk")
     } else if pick.contains(pos) {
-        "Switch Desk"
+        (pick, "Switch Desk")
+    } else if sidebar_toggle.contains(pos) {
+        (sidebar_toggle, if app.sidebar_is_visible() { "Hide Sidebar" } else { "Show Sidebar" })
     } else {
         return;
     };
     let screen = f.area();
     let width = (label.width() as u16 + 2).min(screen.width);
     let rect = Rect::new(
-        area.x.min(screen.right().saturating_sub(width)),
+        button.x.min(screen.right().saturating_sub(width)),
         area.bottom().min(screen.bottom().saturating_sub(1)),
         width,
         1,

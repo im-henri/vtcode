@@ -288,25 +288,30 @@ fn background_edit_to_hidden_view_is_published_without_focus_change() {
 fn desk_controls_do_not_overlap_files_or_repeat_in_splits() {
     let mut app = app();
     let area = ratatui::layout::Rect::new(2, 3, 80, 1);
-    let (plus, picker, width) = crate::ui_desks::controls(&app, area, 0);
-    assert_eq!(plus.width, 3);
-    assert!(picker.is_empty());
-    assert_eq!(width, 4);
+    let controls = crate::ui_desks::controls(&app, area, 0);
+    assert_eq!(controls.new_desk.width, 3);
+    assert!(controls.desk_picker.is_empty());
+    assert_eq!(controls.sidebar_toggle.x, controls.new_desk.right());
+    assert_eq!(controls.width, 7);
     app.new_desk("An exceptionally long desk name", true);
     app.desks.host = app.active_group;
     for width in [4, 8, 16, 32, 40, 80] {
         let area = ratatui::layout::Rect::new(2, 3, width, 1);
-        let (plus, picker, prefix) = crate::ui_desks::controls(&app, area, app.active_group);
-        assert!(plus.is_empty());
+        let controls = crate::ui_desks::controls(&app, area, app.active_group);
+        let picker = controls.desk_picker;
+        let prefix = controls.width;
+        assert!(controls.new_desk.is_empty());
+        assert!(!controls.sidebar_toggle.is_empty());
         assert!(!picker.is_empty());
         assert_eq!(picker.x, area.x);
-        assert_eq!(prefix, picker.width + 1);
+        assert_eq!(controls.sidebar_toggle.x, picker.right());
+        assert_eq!(prefix, picker.width + if width < 44 { 1 } else { 4 });
         assert!(prefix <= width);
         assert!(picker.right() <= area.right());
         let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, area);
         assert!(hits.tabs.iter().all(|(_, r, _)| r.x >= area.x + prefix));
     }
-    assert_eq!(crate::ui_desks::controls(&app, area, usize::MAX).2, 0);
+    assert_eq!(crate::ui_desks::controls(&app, area, usize::MAX).width, 0);
 }
 
 #[test]
@@ -544,7 +549,7 @@ fn render_desk_controls_and_group_popups() {
         let first_row = (0..width)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
-        let (_, _, prefix) = crate::ui_desks::controls(&app, area, app.active_group);
+        let prefix = crate::ui_desks::controls(&app, area, app.active_group).width;
         let controls = (0..prefix)
             .map(|x| buffer[(x, 0)].symbol())
             .collect::<String>();
@@ -785,7 +790,7 @@ fn desk_creation_and_multiselect_use_the_drawn_hit_targets() {
 
     app.desks.host = app.active_group;
     app.tab_bar_area = Some(area);
-    let (_, picker, _) = crate::ui_desks::controls(&app, area, app.active_group);
+    let picker = crate::ui_desks::controls(&app, area, app.active_group).desk_picker;
     terminal
         .draw(|f| crate::ui_chrome_tabs::draw_tab_bar(f, &app, area))
         .unwrap();

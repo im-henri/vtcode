@@ -356,11 +356,9 @@ fn keyboard_and_mouse_tab_switches_flush_edits_before_the_next_frame() {
                 );
             }
             _ => {
-                assert!(crate::mouse::handle_tab_click(
-                    &mut app,
-                    6,
-                    ratatui::layout::Rect::new(0, 0, 150, 1)
-                ));
+                let area = ratatui::layout::Rect::new(0, 0, 150, 1);
+                let tab = crate::ui_chrome_tabs::TabBarHits::new(&app, area).tabs[0].1;
+                assert!(crate::mouse::handle_tab_click(&mut app, tab.x + 1, area));
             }
         }
         assert_eq!(app.active_tab, 0, "switch={switch}");

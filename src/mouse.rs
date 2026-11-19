@@ -81,6 +81,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if mouse.kind == MouseEventKind::Moved {
         app.mouse_hover_changed |= crate::ui_minimap_resize::hover_changed(app, previous)
             || crate::ui_commit_details::scrollbar_hover_changed(app, previous)
+            || crate::ui_desks::sidebar_toggle_area(app).is_some_and(|area| {
+                area.contains(previous) != area.contains((app.mouse_col, app.mouse_row).into())
+            })
             || diff_divider_hit(app, previous.x, previous.y)
                 != diff_divider_hit(app, app.mouse_col, app.mouse_row);
     }
@@ -829,6 +832,12 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     Some(index) => app.activate_activity_item(index),
                     None => {}
                 }
+                return;
+            }
+
+            if crate::ui_desks::sidebar_toggle_area(app).is_some_and(|area| area.contains((col, row).into())) {
+                crate::ui_panels::capture_pointer(app, MouseButton::Left);
+                app.toggle_explorer();
                 return;
             }
 

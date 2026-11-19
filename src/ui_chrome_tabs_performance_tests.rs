@@ -34,7 +34,7 @@ fn fixture(count: usize, duplicate: bool) -> App {
 fn scene(app: &App, width: u16, indexed: bool) -> ratatui::buffer::Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width + 4, 3)).unwrap();
     let full_area = Rect::new(2, 1, width, 1);
-    let prefix=crate::ui_desks::controls(app,full_area,app.active_group).2;
+    let prefix=crate::ui_desks::controls(app,full_area,app.active_group).width;
     let area=Rect::new(full_area.x+prefix,full_area.y,full_area.width-prefix,1);
     let duplicates = indexed
         .then(|| TabNameDuplicates::for_viewport(app, width))
@@ -151,7 +151,7 @@ fn tab_hits_follow_renames_reorders_dirty_state_and_unicode_without_stale_geomet
             _ => { app.tabs.remove(0); }
         }
         let hits = TabBarHits::new(&app, area);
-        let mut x = area.x+crate::ui_desks::controls(&app,area,app.active_group).2;
+        let mut x = area.x+crate::ui_desks::controls(&app,area,app.active_group).width;
         for &(index, rect, _) in &hits.tabs {
             assert_eq!(rect.x, x);
             let width = tab_render_width(&app, index, &app.tabs[index]);

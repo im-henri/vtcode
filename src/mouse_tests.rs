@@ -1112,14 +1112,16 @@ fn moving_from_tab_into_editor_clears_path_tooltip() {
     let mut app = App::new(PathBuf::from("."));
     app.tabs = vec![make_tab("src/main.rs")];
     app.active_tab = 0;
-    app.tab_bar_area = Some(Rect::new(0, 0, 80, 1));
+    let bar = Rect::new(0, 0, 80, 1);
+    app.tab_bar_area = Some(bar);
     app.code_area = Some(Rect::new(0, 1, 80, 20));
+    let tab = TabBarHits::new(&app, bar).tabs[0].1;
 
     handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Moved,
-            column: 6,
+            column: tab.x + 1,
             row: 0,
             modifiers: KeyModifiers::NONE,
         },

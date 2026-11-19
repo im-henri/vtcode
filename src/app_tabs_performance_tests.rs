@@ -98,7 +98,7 @@ fn cell_reveal_keeps_unicode_tabs_visible_in_narrow_bars() {
                 app.tab_strip_scroll = None;
                 app.ensure_active_tab_visible();
                 let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, area);
-                if width > crate::ui_desks::controls(&app, area, app.active_group).2 {
+                if width > crate::ui_desks::controls(&app, area, app.active_group).width {
                     assert!(hits.tabs.iter().any(|(index, _, _)| *index == active),
                         "width={width} offset={offset} active={active}");
                 }

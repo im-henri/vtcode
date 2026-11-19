@@ -50,6 +50,67 @@ fn click(app: &mut App, column: u16, row: u16) {
 }
 
 #[test]
+fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
+    use crate::settings::ActivityBarPosition;
+    use crate::ui_desks::{controls, sidebar_toggle_area};
+
+    for sidebar_right in [false, true] {
+        let mut app = fixture();
+        app.sidebar_right = sidebar_right;
+        app.sidebar_view = SidebarView::Remote;
+        app.sync_activity_bar_selection();
+        app.active_pane = ActivePane::Explorer;
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+
+        for visible in [true, false, true] {
+            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            assert_eq!(app.explorer_area.is_some(), visible);
+            assert_eq!(app.sidebar_view, SidebarView::Remote);
+            let button = sidebar_toggle_area(&app).unwrap();
+            let tab_bar = app.tab_bar_area.unwrap();
+            assert_eq!(button.x, controls(&app, tab_bar, app.desks.host).new_desk.right());
+            let x = button.x + button.width / 2;
+            let glyph = if visible != sidebar_right { "←" } else { "→" };
+            assert_eq!(terminal.backend().buffer()[(x, button.y)].symbol(), glyph);
+
+            hover(&mut app, x, button.y);
+            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            let tooltip: String = (0..100)
+                .map(|x| terminal.backend().buffer()[(x, button.bottom())].symbol())
+                .collect();
+            assert!(tooltip.contains(if visible { "Hide Sidebar" } else { "Show Sidebar" }));
+            click(&mut app, x, button.y);
+            assert_eq!(app.sidebar_is_visible(), !visible);
+            assert!(app.desks.popup.mode.is_none());
+            assert_eq!(app.tabs.len(), 1);
+        }
+
+        app.activity_bar_position = ActivityBarPosition::Left;
+        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        assert!(sidebar_toggle_area(&app).is_none());
+    }
+}
+
+#[test]
+fn top_sidebar_toggle_can_open_an_auto_hidden_sidebar() {
+    let mut app = fixture();
+    app.set_sidebar_auto_hide(true);
+    draw(&mut app);
+    assert!(!app.sidebar_is_visible());
+
+    let button = crate::ui_desks::sidebar_toggle_area(&app).unwrap();
+    click(&mut app, button.x, button.y);
+    assert!(app.sidebar_is_visible());
+    draw(&mut app);
+
+    let button = crate::ui_desks::sidebar_toggle_area(&app).unwrap();
+    hover(&mut app, button.x, button.y);
+    assert!(app.sidebar_is_visible());
+    click(&mut app, button.x, button.y);
+    assert!(!app.show_explorer);
+}
+
+#[test]
 fn sidebar_auto_hide_is_off_by_default_and_disabled_hover_preserves_layout() {
     let mut app = fixture();
     assert!(!app.sidebar_auto_hide.enabled);
