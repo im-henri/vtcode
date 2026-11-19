@@ -613,7 +613,7 @@ impl App {
         let syntax = Syntax::for_language(editor.language_name());
         let language = crate::vtcomplete_inline::language_id(editor.language_name());
         let rope = editor.rope.clone();
-        let options = Options::preset(self.completion_preferences.inline_eagerness as usize);
+        let options = self.completion_preferences.inline_eagerness.options();
         // An unoptimized test build needs far longer for the language model.
         #[cfg(test)]
         let options = Options {

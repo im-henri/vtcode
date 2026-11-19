@@ -7,6 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
+use crate::vtcomplete_inline::Options;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,13 +22,22 @@ pub(crate) enum InlineEagerness {
 impl InlineEagerness {
     pub(crate) const ALL: [Self; 4] = [Self::Cautious, Self::Balanced, Self::Eager, Self::Always];
 
-    pub(crate) fn label(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Cautious => "Cautious",
             Self::Balanced => "Balanced",
             Self::Eager => "Eager",
             Self::Always => "Always",
         }
+    }
+
+    pub(crate) fn options(self) -> Options {
+        Options::preset(self as usize)
+    }
+
+    pub(crate) fn display_label(self) -> String {
+        let percent = (self.options().first * 100.0).round() as u32;
+        format!("{} ({percent}% to start)", self.label())
     }
 
     pub(crate) fn menu_command(self) -> &'static str {
@@ -179,7 +189,7 @@ pub(crate) const FIELDS: &[(&str, &str, &str, &str)] = &[
         "vtcomplete_inline_eagerness",
         "Inline Prediction Eagerness",
         "dropdown",
-        "Choose how readily predictions appear. Balanced is the default. Alt+I is always at least Eager.",
+        "Percentages show the minimum estimated confidence to start an automatic suggestion. Lower values allow more guesses. Later text has separate thresholds. Alt+I skips the starting threshold.",
     ),
 ];
 
@@ -198,15 +208,19 @@ fn display(preferences: Preferences, id: &str) -> String {
         "vtcomplete_complete_calls" => on_off(preferences.complete_calls),
         "vtcomplete_use_history" => on_off(preferences.use_history),
         "vtcomplete_inline_predictions" => on_off(preferences.inline_predictions),
-        "vtcomplete_inline_eagerness" => preferences.inline_eagerness.label().into(),
+        "vtcomplete_inline_eagerness" => preferences.inline_eagerness.display_label(),
         _ => String::new(),
     }
 }
 
 impl App {
-    pub(crate) fn completion_dropdown_options(&self, id: &str) -> Option<&'static [&'static str]> {
-        (canonical_id(id) == "vtcomplete_inline_eagerness")
-            .then_some(&["Cautious", "Balanced", "Eager", "Always"])
+    pub(crate) fn completion_dropdown_options(&self, id: &str) -> Option<Vec<String>> {
+        (canonical_id(id) == "vtcomplete_inline_eagerness").then(|| {
+            InlineEagerness::ALL
+                .into_iter()
+                .map(InlineEagerness::display_label)
+                .collect()
+        })
     }
 
     pub(crate) fn completion_setting_items(&self) -> Vec<(String, String, String)> {
@@ -309,7 +323,7 @@ impl App {
         }
         let Some(level) = InlineEagerness::ALL
             .into_iter()
-            .find(|level| level.label() == value)
+            .find(|level| level.label() == value || level.display_label() == value)
         else {
             return false;
         };

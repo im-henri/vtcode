@@ -573,11 +573,7 @@ impl App {
 
     pub(crate) fn setting_dropdown_options(&self, id: &str) -> Option<Vec<String>> {
         if let Some(options) = self.completion_dropdown_options(id) {
-            return Some(
-                options.iter()
-                    .map(|value| (*value).to_owned())
-                    .collect(),
-            );
+            return Some(options);
         }
         match id {
             "theme" => Some(self.loaded_themes.iter().map(|t| t.name.clone()).collect()),

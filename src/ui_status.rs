@@ -339,7 +339,7 @@ fn open_gptcomplete_menu(app: &mut App) {
         .chain(InlineEagerness::ALL.into_iter().map(|level| {
             let marker = if level == current_eagerness { '✓' } else { ' ' };
             ContextMenuItem {
-                label: format!("{marker} Eagerness · {}", level.label()),
+                label: format!("{marker} Eagerness · {}", level.display_label()),
                 id: level.menu_command(),
                 separator_after: false,
                 shortcut: String::new(),
@@ -1550,7 +1550,7 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             format!(
                 "GPTComplete · {} · Eagerness {}",
                 gptcomplete_status_suffix(app).unwrap_or("On"),
-                app.completion_preferences.inline_eagerness.label(),
+                app.completion_preferences.inline_eagerness.display_label(),
             )
         }
         HoverTarget::Status("macro") => "Recording macro · Click to stop".into(),

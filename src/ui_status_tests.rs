@@ -148,9 +148,9 @@ fn gptcomplete_menu_changes_eagerness_without_ending_a_snooze() {
     let terminal = open_gptcomplete_menu_from_bar(&mut app);
     let inner = app.context_menu_inner.unwrap();
     assert!((inner.y..inner.bottom())
-        .any(|y| row(&terminal, y).contains("✓ Eagerness · Balanced")));
+        .any(|y| row(&terminal, y).contains("✓ Eagerness · Balanced (30% to start)")));
     let cautious_row = (inner.y..inner.bottom())
-        .find(|&y| row(&terminal, y).contains("Eagerness · Cautious"))
+        .find(|&y| row(&terminal, y).contains("Eagerness · Cautious (60% to start)"))
         .unwrap();
     click_gptcomplete_menu_row(&mut app, cautious_row);
     assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Cautious);
@@ -160,7 +160,10 @@ fn gptcomplete_menu_changes_eagerness_without_ending_a_snooze() {
     let deadline = app.inline_snooze_deadline().unwrap();
     for level in [InlineEagerness::Balanced, InlineEagerness::Eager, InlineEagerness::Always] {
         let terminal = open_gptcomplete_menu_from_bar(&mut app);
-        let selected = format!("✓ Eagerness · {}", app.completion_preferences.inline_eagerness.label());
+        let selected = format!(
+            "✓ Eagerness · {}",
+            app.completion_preferences.inline_eagerness.display_label(),
+        );
         let inner = app.context_menu_inner.unwrap();
         assert!((inner.y..inner.bottom()).any(|y| row(&terminal, y).contains(&selected)));
         let choice = app.context_menu_items.iter()

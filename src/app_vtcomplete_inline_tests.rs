@@ -432,17 +432,29 @@ fn snoozing_cancels_inline_work_and_keeps_the_word_popup_available() {
 fn eagerness_is_a_saved_setting_that_lowers_the_confidence_needed() {
     use crate::app_vtcomplete_settings::InlineEagerness;
     let mut app = app_with(SETTERS);
+    let setting = "vtcomplete_inline_eagerness";
+    let labels = [
+        "Cautious (60% to start)",
+        "Balanced (30% to start)",
+        "Eager (25% to start)",
+        "Always (10% to start)",
+    ];
     assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Balanced);
-    for (label, level) in [("Cautious", 0), ("Balanced", 1), ("Eager", 2), ("Always", 3)] {
-        app.apply_settings_dropdown_value("vtcomplete_inline_eagerness", label);
-        let chosen = app.completion_preferences.inline_eagerness;
-        assert_eq!(chosen.label(), label);
-        assert_eq!(InlineEagerness::ALL[level], chosen);
+    assert_eq!(app.setting_dropdown_options(setting).unwrap(), labels);
+    for (index, level) in InlineEagerness::ALL.into_iter().enumerate() {
+        let current = app.completion_setting_items().into_iter()
+            .find_map(|(_, value, id)| (id == setting).then_some(value))
+            .unwrap();
+        app.open_settings_dropdown(setting, &current);
+        assert_eq!(app.settings_dropdown_options[app.settings_dropdown_selected], current);
+        app.select_settings_dropdown_option(index);
+        assert_eq!(app.completion_preferences.inline_eagerness, level);
     }
-    app.apply_settings_dropdown_value("vtcomplete_inline_eagerness", "Reckless");
+    assert!(app.set_completion_dropdown(setting, "Always"));
+    app.apply_settings_dropdown_value(setting, "Reckless");
     assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Always, "an unknown choice changes nothing");
     // Each step is more willing to show a guess than the one before.
-    let levels: Vec<Options> = (0..4).map(Options::preset).collect();
+    let levels = InlineEagerness::ALL.map(InlineEagerness::options);
     for pair in levels.windows(2) {
         assert!(pair[1].first < pair[0].first && pair[1].floor < pair[0].floor);
         assert!(pair[1].next < pair[0].next && pair[1].block < pair[0].block);

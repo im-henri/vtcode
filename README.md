@@ -479,11 +479,12 @@ A small calibration model estimates how likely each token is to be right from
 both kinds of evidence. A prediction stops at the first uncertain token, so
 short answers are normal and no answer is common in code unlike anything
 nearby. **Settings → Autocomplete → GPTComplete → Inline Prediction Eagerness**
-controls how readily predictions appear. *Cautious* shows one
-only when fairly sure, *Balanced* (default) is a middle path, and *Eager* and
-*Always* show a guess almost every time, so more of them are wrong. Alt+I is
-always at least *Eager*. Inside comments and strings only the language model
-predicts, to the end of the line. Turn predictions off with **Settings →
+and the status bar menu show each preset's minimum estimated confidence to
+start an automatic suggestion. Lower thresholds allow more guesses. Each
+preset also sets minimum confidence for later tokens, line breaks, and the
+whole suggestion. **Balanced** is the default. **Alt+I** skips the starting
+threshold to ask for the best available guess. Inside comments and strings only
+the language model predicts, to the end of the line. Turn predictions off with **Settings →
 Autocomplete → GPTComplete → Inline Predictions**.
 
 The prediction is the main suggestion. While one is being worked out, the
