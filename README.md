@@ -242,14 +242,17 @@ references in Rust, JavaScript, TypeScript, shell scripts, and CMake work the sa
 way, without requiring a language server.
 
 **View → Auto-hide Sidebar** hides the sidebar until you move the pointer to
-its edge or the Activity Bar. It stays open while you use sidebar fields or menus.
+its edge or the vertical Activity Bar in Left mode. It stays open while you use
+sidebar fields or menus.
 This is off by default and can also be changed in **Settings → Workbench → Layout**
 with **Auto-hide Sidebar** (`sidebarAutoHide` in `settings.json`).
 
-The Activity Bar uses one row below the menu by default, freeing six columns
-for the workbench. Switch it with **View → Move Activity Bar to Left** or use
-**Activity Bar Position** under **Settings → Workbench → Layout**
+The Activity Bar uses compact icons in the sidebar header by default, freeing
+six columns for the workbench while keeping the editor tabs directly below the
+menu. Hover an icon to see its name. Switch with **View → Move Activity Bar to
+Left** or use **Activity Bar Position** under **Settings → Workbench → Layout**
 (`"activityBarPosition": "top"` or `"activityBarPosition": "left"` in `settings.json`).
+Use **View → Sidebar** (`Ctrl+B`) to reopen a hidden sidebar.
 
 **File Associations** also updates file icons throughout the Explorer, editor tabs,
 breadcrumbs, Quick Open, and Source Control. Explicit associations override built-in

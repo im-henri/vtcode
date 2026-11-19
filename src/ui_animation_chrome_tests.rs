@@ -94,6 +94,7 @@ fn cached_chrome_preserves_cells_and_targets_across_semantic_changes() {
         assert_eq!(app.animation_frame_cache.chrome.valid, 0);
         let code = app.code_area;
         let sidebar = app.explorer_area;
+        let activity = app.activity_bar_area;
         let visible_height = app.explorer.visible_height;
         let replays = app.animation_frame_cache.chrome.replays;
         assert_eq!(
@@ -106,9 +107,11 @@ fn cached_chrome_preserves_cells_and_targets_across_semantic_changes() {
             expected,
             "warm step={step}"
         );
-        assert!(app.animation_frame_cache.chrome.replays > replays);
+        assert_eq!(app.animation_frame_cache.chrome.replays > replays, step != 7,
+            "only visible chrome can be replayed");
         assert_eq!(app.code_area, code);
         assert_eq!(app.explorer_area, sidebar);
+        assert_eq!(app.activity_bar_area, activity);
         assert_eq!(app.explorer.visible_height, visible_height);
         REFERENCE.set(true);
         assert_eq!(

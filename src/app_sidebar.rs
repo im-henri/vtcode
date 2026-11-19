@@ -65,11 +65,8 @@ impl App {
             .sidebar_auto_hide
             .edge
             .is_some_and(|area| area.contains(position))
-            || self
-                .activity_bar_area
-                .is_some_and(|area| area.contains(position)
-                    && (self.activity_bar_position == crate::settings::ActivityBarPosition::Left
-                        || crate::ui_chrome::activity_item_at(self, mouse.column, mouse.row).is_some()))
+            || (self.activity_bar_position == crate::settings::ActivityBarPosition::Left
+                && self.activity_bar_area.is_some_and(|area| area.contains(position)))
             || (visible
                 && self
                     .explorer_area

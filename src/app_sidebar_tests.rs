@@ -124,6 +124,7 @@ fn sidebar_hover_reveals_every_view_and_restores_editor_space_without_taking_foc
 #[test]
 fn activity_bar_reveals_sidebar_and_menu_and_status_edges_do_not() {
     let mut app = fixture();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.set_sidebar_auto_hide(true);
     draw(&mut app);
     let activity = app.activity_bar_area.unwrap();
@@ -138,6 +139,31 @@ fn activity_bar_reveals_sidebar_and_menu_and_status_edges_do_not() {
         assert!(!app.sidebar_is_visible());
     }
     assert_eq!(app.active_pane, ActivePane::Editor);
+}
+
+#[test]
+fn top_activity_bar_follows_the_auto_hidden_sidebar() {
+    let mut app = fixture();
+    app.set_sidebar_auto_hide(true);
+    draw(&mut app);
+    assert!(app.activity_bar_area.is_none());
+    let editor_y = app.tab_bar_area.unwrap().y;
+
+    let edge = app.sidebar_auto_hide.edge.unwrap();
+    hover(&mut app, edge.x, edge.y);
+    draw(&mut app);
+    let activity = app.activity_bar_area.unwrap();
+    assert_eq!(activity.y, editor_y);
+    hover(&mut app, activity.x + 2, activity.y);
+    draw(&mut app);
+    assert!(app.explorer_area.is_some());
+
+    let editor = app.code_area.unwrap();
+    hover(&mut app, editor.x + 5, editor.y);
+    draw(&mut app);
+    assert!(app.explorer_area.is_none());
+    assert!(app.activity_bar_area.is_none());
+    assert_eq!(app.tab_bar_area.unwrap().y, editor_y);
 }
 
 #[test]

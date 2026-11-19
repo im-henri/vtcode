@@ -166,11 +166,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         " + "
     };
-    let header_buttons = [
-        (install, Action::Install),
-        (" ↻ ", Action::Refresh),
-        (" ⟳ ", Action::ReloadAll),
-    ];
+    let header_buttons = if inner.width < 15 && crate::ui_chrome::sidebar_activity_has_header(app, area) {
+        [("+", Action::Install), ("↻", Action::Refresh), ("⟳", Action::ReloadAll)]
+    } else {
+        [(install, Action::Install), (" ↻ ", Action::Refresh), (" ⟳ ", Action::ReloadAll)]
+    };
     let button_width: u16 = header_buttons
         .iter()
         .map(|(label, _)| label.width() as u16)

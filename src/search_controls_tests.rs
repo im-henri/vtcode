@@ -129,6 +129,13 @@ fn label_position(terminal: &Terminal<TestBackend>, area: Rect, label: &str) -> 
         .unwrap_or_else(|| panic!("visible control {label}"))
 }
 
+fn search_activity_position(app: &App) -> (u16, u16) {
+    let (button, _) = crate::ui_chrome::activity_item_regions(
+        app.activity_bar_area.unwrap(), app.activity_bar_position,
+    ).into_iter().find(|(_, index)| *index == 1).unwrap();
+    (button.x, button.y)
+}
+
 fn click_label(
     app: &mut App,
     terminal: &mut Terminal<TestBackend>,
@@ -770,6 +777,9 @@ fn clicking_search_activity_focuses_query_from_editor() {
     ] {
         let (_workspace, mut app, mut terminal) = fixture();
         app.show_explorer = visible;
+        if !visible {
+            app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
+        }
         app.sidebar_view = view;
         app.global_search_active = visible && view == SidebarView::Search;
         app.active_pane = ActivePane::Editor;
@@ -781,7 +791,7 @@ fn clicking_search_activity_focuses_query_from_editor() {
         app.global_search_field_cursors[0] = 4;
         app.search_focus_field = 3;
         draw(&mut app, &mut terminal);
-        let search = label_position(&terminal, app.activity_bar_area.unwrap(), "Search");
+        let search = search_activity_position(&app);
         mouse(&mut app, MouseEventKind::Down(MouseButton::Left), search);
         assert!(app.show_explorer);
         assert_eq!(app.sidebar_view, SidebarView::Search);
@@ -879,7 +889,7 @@ fn clicking_search_activity_refocuses_other_fields_then_toggles_focused_query() 
     let (_workspace, mut app, mut terminal) = fixture();
     app.search_focus_field = 3;
     draw(&mut app, &mut terminal);
-    let search = label_position(&terminal, app.activity_bar_area.unwrap(), "Search");
+    let search = search_activity_position(&app);
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), search);
     assert!(app.show_explorer);
     assert_eq!(app.search_focus_field, 0);

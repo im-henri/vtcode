@@ -564,6 +564,8 @@ fn visible_explorer_selection<'a>(
     }).collect())
 }
 
+const EXPLORER_HEADER_ACTIONS_WIDTH: u16 = 6;
+
 pub(crate) fn draw_explorer(f: &mut Frame, app: &mut App, area: Rect) {
     draw_explorer_impl(f, app, area, true);
 }
@@ -589,7 +591,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     } else if app.remote_workspace.is_some() && app.remote_explorer_error.is_some() {
         " Explorer · error"
     } else { " Explorer" };
-    let controls_width = if app.has_open_folder() { 6 } else { 0 };
+    let controls_width = if app.has_open_folder() { EXPLORER_HEADER_ACTIONS_WIDTH } else { 0 };
     let header_label = crate::ui_pickers::truncate_to_width(header_label, area.width.saturating_sub(controls_width) as usize);
     let header_label = header_label.as_str();
     let collapse_btn = if app.has_open_folder() { " ⤒ " } else { "" };
@@ -1672,24 +1674,43 @@ pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &mut App) {
     app.menu_dropdown_inner = Some(inner);
 }
 
-const TOP_ACTIVITY_LABELS: [&str; 6] = ["Explorer", "Search", "Source Control", "Remote", "Extensions", "Settings"];
-const COMPACT_ACTIVITY_LABELS: [&str; 6] = ["Expl", "Find", "Git", "Rem", "Exts", "Set"];
+// Single-cell text glyphs also used elsewhere in the workbench.
+const TOP_ACTIVITY_ICONS: [&str; 6] = ["▤", "⌕", "⑂", "↗", "▦", "⚙"];
 
-fn top_activity_button_width(index: usize, label: &str) -> u16 {
-    // Reserve room for padding and optional badges so the buttons stay put as counts change.
-    label.len() as u16 + 2 + if matches!(index, 2 | 4) { 4 } else { 0 }
+pub(crate) fn sidebar_activity_header(app: &App, sidebar: Rect) -> Option<Rect> {
+    let header = explorer_section_area(app, Rect { height: sidebar.height.min(1), ..sidebar });
+    (!header.is_empty()).then_some(header)
 }
 
-fn top_activity_width(labels: &[&str]) -> u16 {
-    labels.iter().enumerate().map(|(index, label)| top_activity_button_width(index, label)).sum()
+pub(crate) fn sidebar_activity_has_header(app: &App, area: Rect) -> bool {
+    app.activity_bar_position == crate::settings::ActivityBarPosition::Top
+        && app.activity_bar_area.is_some_and(|header| !header.intersection(area).is_empty() && header.y == area.y)
 }
 
-fn top_activity_labels(width: u16) -> &'static [&'static str; 6] {
-    if width >= top_activity_width(&TOP_ACTIVITY_LABELS) {
-        &TOP_ACTIVITY_LABELS
-    } else {
-        &COMPACT_ACTIVITY_LABELS
-    }
+fn sidebar_header_action_start(header: Rect, actions: impl IntoIterator<Item = Rect>) -> u16 {
+    actions.into_iter()
+        .filter(|action| !action.intersection(header).is_empty())
+        .map(|action| action.x)
+        .min().unwrap_or(header.right())
+}
+
+pub(crate) fn sidebar_activity_title_area(app: &App, sidebar: Rect, mut header: Rect) -> Option<Rect> {
+    use crate::app::SidebarView;
+    let actions_start = match app.sidebar_view {
+        SidebarView::Explorer if app.has_open_folder() => sidebar.right().saturating_sub(EXPLORER_HEADER_ACTIONS_WIDTH),
+        SidebarView::Search => sidebar_header_action_start(header,
+            app.search_control_regions.iter()
+                .filter(|button| button.scope == crate::ui_search_controls::SearchScope::Workspace)
+                .map(|button| button.area)),
+        SidebarView::SourceControl => sidebar_header_action_start(header,
+            [app.source_control_actions_area, app.source_control_refresh_area, app.repositories.reopen_button]
+                .into_iter().flatten()),
+        SidebarView::Extensions => sidebar_header_action_start(header, app.ext_sidebar.actions.iter().map(|(_, area)| *area)),
+        SidebarView::Remote => sidebar_header_action_start(header, app.remote_targets.hits.iter().map(|(area, _)| *area)),
+        SidebarView::Explorer | SidebarView::Settings => header.right(),
+    };
+    header.width = actions_start.min(header.right()).saturating_sub(header.x);
+    (!header.is_empty()).then_some(header)
 }
 
 pub(crate) fn activity_item_regions(
@@ -1698,21 +1719,12 @@ pub(crate) fn activity_item_regions(
 ) -> Vec<(Rect, usize)> {
     if area.is_empty() { return Vec::new(); }
     if position == crate::settings::ActivityBarPosition::Top {
-        let labels = top_activity_labels(area.width);
-        let width_limit = if area.width < top_activity_width(labels) {
-            (area.width / labels.len() as u16).max(1)
-        } else {
-            area.width
-        };
-        let visible = usize::from(area.width - 1).min(ACTIVITY_SETTINGS_INDEX);
-        let mut x = area.x;
-        return (0..visible).chain(std::iter::once(ACTIVITY_SETTINGS_INDEX))
-            .map(|index| {
-                let width = top_activity_button_width(index, labels[index]).min(width_limit);
-                let item = Rect::new(x, area.y, width, 1);
-                x += width;
-                (item, index)
-            })
+        let count = area.width.min(TOP_ACTIVITY_ICONS.len() as u16);
+        let width = (area.width / count).min(3);
+        return (0..usize::from(count - 1))
+            .chain(std::iter::once(ACTIVITY_SETTINGS_INDEX))
+            .enumerate()
+            .map(|(slot, index)| (Rect::new(area.x + slot as u16 * width, area.y, width, 1), index))
             .collect();
     }
     let height = (area.height / (ACTIVITY_SETTINGS_INDEX as u16 + 1)).clamp(1, 3);
@@ -1771,27 +1783,17 @@ impl ActivityBadge {
 fn draw_top_activity_button(
     f: &mut Frame,
     area: Rect,
-    label: &str,
+    icon: &str,
     style: Style,
     badge: Option<(ActivityBadge, Style)>,
 ) {
-    let padding = u16::from(area.width >= 3);
-    let available = area.width - 2 * padding;
-    let badge = badge.filter(|_| available >= 2).map(|(badge, style)| {
-        let text = badge.text(available.saturating_sub(2).clamp(1, 3));
-        (text, style)
-    });
-    let gap = u16::from(badge.is_some() && available >= 3);
-    let label_width = available - gap - badge.as_ref().map_or(0, |(text, _)| text.len() as u16);
-    let label = &label[..label.len().min(usize::from(label_width))];
-
+    let padding = (area.width - 1) / 2;
     let mut spans = vec![
         Span::raw(crate::helpers::spaces(usize::from(padding))),
-        Span::styled(label, style),
+        Span::styled(icon, style),
     ];
-    if let Some((text, badge_style)) = badge {
-        spans.push(Span::raw(crate::helpers::spaces(usize::from(gap))));
-        spans.push(Span::styled(text, badge_style));
+    if area.width > 1 && let Some((badge, badge_style)) = badge {
+        spans.push(Span::styled(badge.text(1), badge_style));
     }
     f.render_widget(Paragraph::new(Line::from(spans)).style(Style::default().bg(style.bg.unwrap_or_default())), area);
 }
@@ -1799,22 +1801,30 @@ fn draw_top_activity_button(
 pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
     let bg = app.colors.bg_activitybar;
     let position = app.activity_bar_position;
-    let top_labels = (position == crate::settings::ActivityBarPosition::Top)
-        .then(|| top_activity_labels(area.width));
+    let top = position == crate::settings::ActivityBarPosition::Top;
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
     for (item_area, index) in activity_item_regions(area, position) {
         let active = if index == ACTIVITY_SETTINGS_INDEX { app.settings_editor_active || app.settings_active }
             else { app.sidebar_is_visible() && app.activity_bar_selected == index };
         let hovered = app.hovered_activity == Some(index)
             && item_area.contains((app.mouse_col, app.mouse_row).into());
-        let cell_bg = if active { app.colors.ui.bg_activity_active.over(bg).unwrap_or(bg) } else { bg };
+        let fill = if active && top {
+            app.colors.ui.bg_activity_active.or(app.colors.ui.toolbar_active)
+        } else if active {
+            app.colors.ui.bg_activity_active
+        } else if top && hovered {
+            app.colors.ui.toolbar_hover
+        } else {
+            Default::default()
+        };
+        let cell_bg = fill.over(bg).unwrap_or(bg);
         let fg = app.colors.ui.readable_foreground(if active || hovered { app.colors.ui.fg_activity }
             else { app.colors.ui.fg_activity_inactive }, cell_bg, 4.5);
         let style = Style::default().fg(fg).bg(cell_bg);
         let badge = ActivityBadge::for_item(app, index);
-        if let Some(labels) = top_labels {
-            let label_style = if active { style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED) } else { style };
-            draw_top_activity_button(f, item_area, labels[index], label_style,
+        if top {
+            let icon_style = if active && cell_bg == bg { style.add_modifier(Modifier::UNDERLINED) } else { style };
+            draw_top_activity_button(f, item_area, TOP_ACTIVITY_ICONS[index], icon_style,
                 badge.map(|badge| (badge, ActivityBadge::style(app))));
             continue;
         }
@@ -2437,29 +2447,34 @@ mod tests {
     }
 
     #[test]
-    fn top_activity_bar_shows_all_actions_and_keeps_badges_inline() {
+    fn top_activity_bar_uses_compact_icons_and_keeps_badges_inline() {
         use crate::app::SourceControlRepositoryState as State;
         let mut app = App::test_new();
-        for (width, labels) in [(80, TOP_ACTIVITY_LABELS), (42, COMPACT_ACTIVITY_LABELS)] {
+        let selected = Color::Rgb(52, 58, 68);
+        app.colors.ui.bg_activity_active = crate::theme_workbench::ColorLayer::opaque(selected);
+        for width in [6, 12, 18, 42, 80] {
             let area = Rect::new(0, 0, width, 1);
             let buttons = activity_item_regions(area, app.activity_bar_position);
-            assert_eq!(buttons.len(), labels.len());
+            assert_eq!(buttons.len(), TOP_ACTIVITY_ICONS.len());
+            assert!(buttons.last().unwrap().0.right() <= width.min(18));
             let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
             for (state, badge) in [(State::Loading, "?"), (State::Failed, "!"), (State::Available, "")] {
                 app.source_control_repository_state = state;
                 terminal.draw(|frame| draw_activity_bar(frame, &app, area)).unwrap();
                 let buffer = terminal.backend().buffer();
                 for &(button, index) in &buttons {
+                    let icon = TOP_ACTIVITY_ICONS[index];
+                    assert_eq!(icon.width(), 1);
+                    let icon_x = button.x + (button.width - 1) / 2;
+                    assert_eq!(buffer[(icon_x, button.y)].symbol(), icon);
                     let text: String = (button.x..button.right())
                         .map(|x| buffer[(x, button.y)].symbol()).collect();
-                    let expected = if index == 2 && !badge.is_empty() {
-                        format!("{} {badge}", labels[index])
-                    } else {
-                        labels[index].to_owned()
-                    };
-                    assert_eq!(text.trim(), expected);
+                    let suffix = if index == 2 && button.width > 1 { badge } else { "" };
+                    assert_eq!(text.trim(), format!("{icon}{suffix}"));
+                    if index == 0 {
+                        assert_eq!(buffer[(icon_x, button.y)].bg, selected);
+                    }
                 }
-                assert!(buffer[(buttons[0].0.x + 1, 0)].modifier.contains(Modifier::UNDERLINED));
             }
         }
     }

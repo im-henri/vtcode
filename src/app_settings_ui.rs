@@ -458,7 +458,7 @@ impl App {
             "sidebar_pos" => "Choose whether the sidebar is on the left or right side.",
             "zen" => "Toggle zen mode to reduce UI chrome.",
             "activity_bar" => "Show the Activity Bar for Explorer, Search, Source Control, Remote, Extensions, and Settings.",
-            "activity_bar_position" => "Place the Activity Bar across the top or along the left edge. Defaults to Top.",
+            "activity_bar_position" => "Place the Activity Bar in the sidebar header or along the left edge. Defaults to Top.",
             "indent_rainbow" => "Color indentation levels for easier nesting visibility.",
             "color_preview" => "Show inline color swatches for hex, rgb(), and rgba() color values.",
             "bracket_pair_colorization" => "Color matching bracket pairs by nesting depth.",

@@ -452,28 +452,31 @@ fn activity_item_hit_test_rejects_rows_outside_the_bar() {
 #[test]
 fn top_activity_bar_uses_rendered_columns_for_hover_and_clicks() {
     let mut app = App::test_new();
+    app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
     terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-    let bar = app.activity_bar_area.unwrap();
-    let button = |index| crate::ui_chrome::activity_item_regions(bar, crate::settings::ActivityBarPosition::Top)[index];
+    let button = |app: &App, target| crate::ui_chrome::activity_item_regions(
+        app.activity_bar_area.unwrap(), app.activity_bar_position,
+    ).into_iter().find(|(_, index)| *index == target).unwrap().0;
     let send = |app: &mut App, kind, column, row| handle_mouse(app, MouseEvent {
         kind, column, row, modifiers: KeyModifiers::NONE,
     });
-    let (search, _) = button(1usize);
-    send(&mut app, MouseEventKind::Moved, search.x + 1, search.y);
+    let search = button(&app, 1);
+    send(&mut app, MouseEventKind::Moved, search.x, search.y);
     assert_eq!(app.hovered_activity, Some(1));
-    send(&mut app, MouseEventKind::Down(MouseButton::Left), search.x + 1, search.y);
+    send(&mut app, MouseEventKind::Down(MouseButton::Left), search.x, search.y);
     assert_eq!(app.sidebar_view, crate::app::SidebarView::Search);
     assert!(app.global_search_active);
 
-    let blank = bar.right() - 1;
-    send(&mut app, MouseEventKind::Moved, blank, bar.y);
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let tab_strip = app.tab_bar_area.unwrap();
+    send(&mut app, MouseEventKind::Moved, tab_strip.x, tab_strip.y);
     assert_eq!(app.hovered_activity, None);
-    send(&mut app, MouseEventKind::Down(MouseButton::Left), blank, bar.y);
-    assert!(app.global_search_active);
+    let bar = app.activity_bar_area.unwrap();
+    assert!(app.search_control_regions.iter().all(|control| control.area.intersection(bar).is_empty()));
 
-    let (settings, _) = button(ACTIVITY_SETTINGS_INDEX);
-    send(&mut app, MouseEventKind::Down(MouseButton::Left), settings.x + 1, settings.y);
+    let settings = button(&app, ACTIVITY_SETTINGS_INDEX);
+    send(&mut app, MouseEventKind::Down(MouseButton::Left), settings.x, settings.y);
     assert!(app.settings_editor_active);
 }
 

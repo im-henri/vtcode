@@ -1605,11 +1605,16 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
                 2 => (
                     format!(
                         "Source Control · {} changes",
-                        app.source_control_files.len()
+                        app.source_control_change_count()
                     ),
                     "source_control",
                 ),
-                4 => ("Extensions".into(), "extensions"),
+                4 => {
+                    let errors = app.extension_manager.error_count();
+                    let label = if errors > 0 { format!("Extensions · {errors} errors") }
+                        else { "Extensions".into() };
+                    (label, "extensions")
+                }
                 3 => ("Remote".into(), "remote"),
                 crate::ui_chrome::ACTIVITY_SETTINGS_INDEX => ("Settings".into(), "settings"),
                 _ => return,
