@@ -69,7 +69,7 @@ impl Default for Preferences {
             context_triggers: true,
             complete_calls: true,
             use_history: true,
-            inline_predictions: true,
+            inline_predictions: false,
             inline_snoozed: false,
             inline_eagerness: InlineEagerness::Balanced,
         }
@@ -367,6 +367,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::new_deferred(root.path().to_owned());
         app.settings_persistence_enabled = true;
+        assert!(!Preferences::load(root.path()).inline_predictions);
+        app.set_inline_predictions_enabled(true);
         app.snooze_inline_until_resumed();
         app.execute_palette_command(InlineEagerness::Eager.menu_command());
         assert_eq!(app.inline_availability(), Availability::Snoozed);
@@ -387,6 +389,9 @@ mod tests {
         let saved = Preferences::load(root.path());
         assert!(saved.inline_predictions);
         assert_eq!(saved.inline_eagerness, InlineEagerness::Eager);
+        assert!(app.reset_completion_setting("vtcomplete_inline_predictions"));
+        assert_eq!(app.inline_availability(), Availability::Disabled);
+        assert!(!Preferences::load(root.path()).inline_predictions);
         std::fs::remove_file(settings_path(root.path())).unwrap();
     }
 
@@ -399,7 +404,7 @@ mod tests {
             r#"{
             "enabled": true, "projectWide": true, "paused": false, "speed": "fast",
             "maxFiles": 20000, "maxMemoryMb": 48, "minPrefixChars": 3,
-            "inlinePredictions": false, "inlineEagerness": "eager"
+            "inlineEagerness": "eager"
         }"#,
         )
         .unwrap();

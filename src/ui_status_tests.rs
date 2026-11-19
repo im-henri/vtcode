@@ -101,6 +101,10 @@ fn click_gptcomplete_menu_row(app: &mut App, y: u16) {
 #[test]
 fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
     let mut app = app_with_file();
+    let terminal = open_gptcomplete_menu_from_bar(&mut app);
+    assert!(row(&terminal, 23).contains("GPTComplete Off"));
+    assert_eq!(app.context_menu_items[0].label, "Turn On GPTComplete");
+    choose_gptcomplete_menu_item(&mut app, 0);
     assert!(row(&draw(&mut app, 100, 24), 23).contains("GPTComplete ▾"));
     for (index, minutes, label) in [
         (0, 1, "Snooze for 1 Minute"),
@@ -145,6 +149,7 @@ fn gptcomplete_status_button_snoozes_resumes_and_turns_predictions_off() {
 #[test]
 fn gptcomplete_menu_changes_eagerness_without_ending_a_snooze() {
     let mut app = app_with_file();
+    app.set_inline_predictions_enabled(true);
     let terminal = open_gptcomplete_menu_from_bar(&mut app);
     let inner = app.context_menu_inner.unwrap();
     assert!((inner.y..inner.bottom())

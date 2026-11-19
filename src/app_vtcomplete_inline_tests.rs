@@ -2,6 +2,12 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn app_with(text: &str) -> App {
+    let mut app = app_with_default_preferences(text);
+    app.set_inline_predictions_enabled(true);
+    app
+}
+
+fn app_with_default_preferences(text: &str) -> App {
     let mut app = App::test_new();
     let mut tab = crate::app::Tab::new_file(crate::editor::Editor::test_with_text(text));
     tab.editor.language_override = Some("Rust".into());
@@ -155,13 +161,11 @@ fn navigation_keys_do_not_request_predictions() {
 }
 
 #[test]
-fn the_setting_turns_predictions_off() {
-    let mut app = app_with(SETTERS);
-    let mut settings = app.completion_preferences;
-    assert!(settings.inline_predictions);
-    settings.inline_predictions = false;
-    app.completion_preferences = settings;
+fn predictions_are_off_by_default() {
+    let mut app = app_with_default_preferences(SETTERS);
+    assert_eq!(app.inline_availability(), Availability::Disabled);
     press(&mut app, KeyCode::Char('.'), KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('i'), KeyModifiers::ALT);
     assert_eq!(app.vtcomplete_inline.submissions, 0);
     assert!(!app.inline_ghost_visible());
 }

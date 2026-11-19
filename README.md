@@ -343,6 +343,10 @@ controls automatic suggestions for both, as well as language-server completion.
 
 ## GPTComplete
 
+GPTComplete is off by default. To enable it for your workspace, click
+**GPTComplete Off** in the status bar and choose **Turn On GPTComplete**, or use
+**Settings → Autocomplete → GPTComplete → Inline Predictions**.
+
 While you type, GPTComplete predicts the next several tokens — often the
 rest of the line, sometimes the following lines of a block — and shows them
 dimmed after the caret. **Tab** inserts the prediction, **Ctrl+Right** inserts
@@ -353,8 +357,8 @@ The word popup returns when no prediction is shown, after **Esc**, or with **Ctr
 
 Click **GPTComplete** in the status bar to set **Eagerness**, snooze for **1, 5,
 or 10 minutes**, choose **Snooze Until Resumed**, or turn GPTComplete off. The
-workspace remembers eagerness, untimed snoozes, and Off across restarts. Snooze
-and Off also pause **Alt+I**.
+workspace remembers whether GPTComplete is on, its eagerness, and untimed snoozes
+across restarts. Snoozing or turning GPTComplete off also pauses **Alt+I**.
 
 Two predictors work together. Both run on one background CPU thread, need no
 GPU and download nothing:

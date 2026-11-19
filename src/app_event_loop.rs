@@ -2146,6 +2146,7 @@ mod tests {
         use crate::app_vtcomplete_inline::Availability;
 
         let mut app = crate::app::App::test_new();
+        app.set_inline_predictions_enabled(true);
         app.workspace_watcher_active = true;
         app.idle_quiescent = true;
         app.snooze_inline_predictions(Duration::from_secs(60));
