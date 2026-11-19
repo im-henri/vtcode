@@ -1086,6 +1086,31 @@ fn commit_inspector_context_buttons_expand_both_ends_and_every_common_line() {
         }
         assert_eq!(app.editor().unwrap().rope.to_string(), target);
 
+        let header = app.commit_details.review.visible[0].header;
+        click(&mut app, header.x + 1, header.y);
+        assert!(app.commit_details.review.collapsed.contains(&0));
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let header = app.commit_details.review.visible[0].header;
+        click(&mut app, header.x + 1, header.y);
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert_eq!(app.diff_render_cache.visible_target_lines, compact);
+        let reopened_gaps: Vec<_> = app
+            .commit_details
+            .review
+            .context_buttons
+            .iter()
+            .filter(|button| button.expansion == ContextExpansion::All)
+            .map(|button| &button.gap)
+            .collect();
+        assert_eq!(reopened_gaps, [leading, middle, trailing]);
+
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            middle,
+            ContextExpansion::FromStart,
+        );
         let changes = current_layout(&app).diff_changes;
         click(&mut app, changes.x, changes.y);
         assert_eq!(app.diff_render_cache.visible_target_lines, compact);
@@ -1145,6 +1170,29 @@ fn commit_inspector_context_expansions_follow_the_clicked_file_after_it_reloads(
     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
     assert!(app.diff_render_cache.visible_target_lines.contains(&12));
     assert!(!app.diff_render_cache.visible_target_lines.contains(&45));
+
+    app.commit_details.review.scroll = 0;
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    press_context_button(
+        &mut app,
+        &mut terminal,
+        0,
+        &(0..22),
+        ContextExpansion::FromEnd,
+    );
+    app.commit_details.focus = Focus::Files;
+    handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.commit_details.selected_file(), Some(1));
+    handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert_eq!(app.commit_details.review.expanded_context_for(0), &[12..22]);
+    assert!(app.commit_details.review.expanded_context_for(1).is_empty());
+    handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    assert!(app.commit_details.review.context_buttons.iter().any(|button| {
+        button.file == 1 && button.gap == (0..22) && button.expansion == ContextExpansion::All
+    }));
+    assert!(app.activate_commit_review_file(1));
+    assert_eq!(app.diff_render_cache.visible_target_lines, compact);
 }
 
 #[test]

@@ -294,8 +294,14 @@ impl Review {
 
     pub fn toggle(&mut self, file: usize) {
         if !self.collapsed.remove(&file) {
-            self.collapsed.insert(file);
+            self.collapse(file);
         }
+    }
+
+    pub fn collapse(&mut self, file: usize) {
+        self.collapsed.insert(file);
+        self.expanded_context.remove(&file);
+        self.context_buttons.retain(|button| button.file != file);
     }
 
     pub fn clear_geometry(&mut self) {

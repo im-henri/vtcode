@@ -753,7 +753,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Left | KeyCode::Right if focus == Focus::Files => {
             if let Some(file) = app.commit_details.selected_file() {
                 if key.code == KeyCode::Left {
-                    app.commit_details.review.collapsed.insert(file);
+                    app.commit_details.review.collapse(file);
                 } else {
                     app.commit_details.review.collapsed.remove(&file);
                 }
