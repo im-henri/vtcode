@@ -112,7 +112,8 @@ pub(crate) fn hash_parts(kind: u8, parts: &[&str]) -> u64 {
     value.max(1)
 }
 
-pub(crate) fn initials(word: &str) -> String {
+#[cfg(test)]
+fn initials(word: &str) -> String {
     initial_chars(word).collect()
 }
 

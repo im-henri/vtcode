@@ -69,7 +69,6 @@ fn ten_workspaces_retain_coverage_without_scheduling_passive_work_while_hidden()
         hidden.global_search_query = "background".into();
         hidden.schedule_global_search();
         hidden.last_edit_time = Instant::now();
-        assert!(!hidden.poll_completion_index());
         assert!(!hidden.poll_git_watcher_refresh(Instant::now() + Duration::from_secs(5)));
         assert!(!hidden.poll_pending_global_search(Instant::now() + Duration::from_secs(5)));
         assert_eq!(hidden.explorer_refresh_generation, generation);

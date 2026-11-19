@@ -571,7 +571,6 @@ fn editor_batch_target(app: &App) -> Option<(usize, usize, u64)> {
         || app.context_menu_active
         || app.explorer_context_active
         || app.status_details.open
-        || app.completion_index_ui.open
         || crate::ui_performance_details::captures_keyboard(app)
         || app.lsp_code_action_active
         || app.call_hierarchy_active
@@ -609,10 +608,6 @@ fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
         return;
     }
     let _foreground = app.vtcomplete_worker.activity().enter();
-    if app.completion_index_ui.open {
-        crate::ui_vtcomplete_index::handle_paste(app, value.as_ref());
-        return;
-    }
     if !app.accept_terminal_paste() { return; }
     let text = value.as_ref();
     if app.paste_shortcut_text(text) { return; }
@@ -825,7 +820,7 @@ pub(crate) fn handle_mouse_input(
             selection_budget -= 1;
         }
         app.mouse_hover_changed = true;
-        if app.completion_index_ui.open || app.text_input_context_menu.is_some() {
+        if app.text_input_context_menu.is_some() {
             mouse::handle_mouse(app, mouse);
             break;
         } else if mouse::handle_navigation_mouse(app, mouse) {
@@ -940,7 +935,6 @@ fn editor_selection_drag_state(
         || app.hunk_peek.is_some() || app.hunk_popup_active
         || app.side_notice.visible() || app.inline_blame_hover.is_some()
         || app.background.activity.details_open || app.file_deletion.is_some()
-        || app.completion_index_ui.open
         || app.terminal_mouse_capture.is_some() || app.terminal_selection_drag.is_some()
         || app.extension_pointer_capture.is_some() || app.explorer_scrollbar_drag.is_some()
         || app.explorer_context_active
@@ -3056,9 +3050,6 @@ fn next_event_wait(
         }
     }
     if let Some(wait) = app.background_workspace_wait() { include(wait); }
-    if let Some(wait) = app.completion_index_next_wait() {
-        include(wait);
-    }
     if let Some(wait) = app.inline_hold_wait() {
         include(wait);
     }
@@ -3793,8 +3784,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // an unrelated event or cosmetic timer wakes us again.
         if (input_redraw && needs_redraw) || event_pump.has_pending_event() {
             app.vtcomplete_worker.activity().note_input();
-        } else {
-            needs_redraw |= app.poll_completion_index();
         }
         #[cfg(windows)]
         if let Some(input) = &mut event_pump.windows_mouse {

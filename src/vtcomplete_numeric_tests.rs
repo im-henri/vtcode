@@ -14,14 +14,13 @@ fn complete(before: &str, prefix: &str, after: &str, explicit: bool) -> Completi
             .chars()
             .count()
             + prefix.chars().count(),
-        active: true,
     };
     compute_contextual_invoked(
         &active,
         prefix,
         "Unknown language",
         &Default::default(),
-        &mut TokenCache::default(),
+        &mut CompletionCache::default(),
         explicit,
         || false,
     )

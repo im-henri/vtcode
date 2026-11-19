@@ -1565,7 +1565,7 @@ impl App {
         self.tab_context_active = false;
         self.goto_line_active = false;
         self.dismiss_vtcomplete();
-        self.completion_index_ui = Default::default();
+        self.completion_history = None;
         self.lsp_completion_active = false;
         self.lsp_signature_active = false;
         self.lsp_code_action_active = false;

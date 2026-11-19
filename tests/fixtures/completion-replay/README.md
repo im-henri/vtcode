@@ -40,7 +40,12 @@ core specificity correction was developed from one of its misses, so the final
 results remain development evidence. Numeric admission recall is omitted for
 the same tracing reason as the earlier mechanism inventory.
 
-## Recorded source fixtures
+## Historical workspace-index replays
+
+The following records describe the retired workspace index. Use the revisions
+that produced the benchmark reports to rerun those experiments.
+
+### Recorded source fixtures
 
 These are unmodified source snapshots from VTCode commit
 `8bcdb5f78b6311c3217db3ab41e5adfa6bb34961`, retained so later production edits do
@@ -94,7 +99,7 @@ choice accuracy, reciprocal rank, unwanted automatic popups, cold/warm worker
 compute time and estimated index memory separately. Worker byte accounting is
 explicitly partial; it is not a process RSS measurement.
 
-## Source-derived copy/rename replay
+### Source-derived copy/rename replay
 
 `vtcomplete_learning_rename_replay_tests.rs` defines the fixed
 `source-copy-single-rename-v3` development protocol. It selects contiguous windows
@@ -175,7 +180,7 @@ are isolated per program and paired language run. Warm case manifests use a
 separate path/state from the unchanged cold manifest. Fresh primary validation
 uses the warm native cohorts; cold/native/Unknown replications are secondary.
 
-## Frozen final validation
+### Frozen final validation
 
 `final-validation/fixtures.json` records exact copied bytes, SHA-256, licenses,
 and provenance for the two new sources. The installed ACP Python SDK 0.12.1
@@ -193,7 +198,7 @@ is weighted toward the independent Rust program. Neither paired language runs
 nor cold states add primary observations. Fresh negative-popup coverage is zero.
 
 Reproduce from the copied fixtures using
-[`benchmark_completion_learning_validation.ps1`](../../../scripts/benchmark_completion_learning_validation.ps1)
+`scripts/benchmark_completion_learning_validation.ps1`
 and a newly built optimized test binary; choose a new output directory.
 The verifier checks exact event sets, visible-buffer hashes, source membership,
 and recomputed metrics.

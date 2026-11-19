@@ -1,10 +1,6 @@
-//! Bounded occurrence cache. Identifiers are parameters, punctuation is literal.
-//! No syntax names, extensions, paths, or repository relationships enter this model.
+//! Bounded pattern matching within the active buffer.
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 const WORD: u32 = 1 << 31;
 const MAX_TOKENS: usize = 2048;
@@ -24,18 +20,8 @@ pub(crate) enum Mode {
     Full,
     LiteralOnly,
     NoRightContext,
-    NoDeduplicate,
-    NoStatistical,
-    RawWorkspacePrior,
-    Disabled,
-    NoExtension,
     NoLiteralBackoff,
-    FixedChannelOrder,
-    MixtureScale192,
     Phase1,
-    UniformConcentration,
-    UnconditionalFilePrior,
-    NoActiveFileOccurrences,
 }
 #[cfg(test)]
 thread_local! {
@@ -52,34 +38,16 @@ pub(crate) fn with_mode<T>(mode: Mode, action: impl FnOnce() -> T) -> T {
     let _reset = Reset(MODE.with(|current| current.replace(mode)));
     action()
 }
-#[cfg(test)]
-pub(crate) fn raw_workspace_prior() -> bool {
-    MODE.with(|mode| mode.get() == Mode::RawWorkspacePrior)
-}
-pub(crate) fn likelihood_scale() -> f64 {
-    #[cfg(test)]
-    if MODE.with(|mode| matches!(mode.get(), Mode::MixtureScale192 | Mode::Phase1)) {
-        return 192.;
-    }
-    32.
-}
-pub(crate) fn file_prior_without_context() -> bool {
-    #[cfg(test)]
-    if MODE.with(|mode| matches!(mode.get(), Mode::UnconditionalFilePrior | Mode::Phase1)) {
-        return true;
-    }
-    false
-}
 fn specificity_order() -> bool {
     #[cfg(test)]
-    if MODE.with(|mode| matches!(mode.get(), Mode::FixedChannelOrder | Mode::Phase1)) {
+    if MODE.with(|mode| mode.get() == Mode::Phase1) {
         return false;
     }
     true
 }
 fn full_window_mode() -> bool {
     #[cfg(test)]
-    if MODE.with(|mode| matches!(mode.get(), Mode::NoExtension | Mode::Phase1)) {
+    if MODE.with(|mode| mode.get() == Mode::Phase1) {
         return false;
     }
     true
@@ -91,17 +59,9 @@ fn literal_backoff_mode() -> bool {
     }
     true
 }
-fn grounded_active_file() -> bool {
-    #[cfg(test)]
-    if MODE.with(|mode| mode.get() == Mode::NoActiveFileOccurrences) {
-        return false;
-    }
-    true
-}
-
 fn target_concentration(length: usize) -> f64 {
     #[cfg(test)]
-    if MODE.with(|mode| matches!(mode.get(), Mode::UniformConcentration | Mode::Phase1)) {
+    if MODE.with(|mode| mode.get() == Mode::Phase1) {
         return 2.;
     }
     // A long, bijectively verified context supplies substantially more
@@ -111,234 +71,32 @@ fn target_concentration(length: usize) -> f64 {
     if length >= 16 { 0.5 } else { 2. }
 }
 
-/// A type cache is the noninformative workspace base: a known spelling gets
-/// one vote, irrespective of how many generated copies contain it. Repetition
-/// remains useful in the local and retrieved conditional distributions.
-pub(crate) fn workspace_count(frequency: u32) -> f64 {
-    #[cfg(test)]
-    if raw_workspace_prior() {
-        return f64::from(frequency.min(16)) + 1.;
-    }
+pub(crate) fn candidate_weight(frequency: u32) -> f64 {
     f64::from(frequency.min(1)) + 1.
 }
 
-#[derive(Clone, Default, Serialize)]
-pub(crate) struct Data {
+#[derive(Default)]
+struct Data {
     words: Vec<String>,
     tokens: Vec<u32>,
 }
 
-// Validate cache collection limits while decoding, before an untrusted array
-// can grow an allocation that would later be rejected by Data::valid.
-impl<'de> Deserialize<'de> for Data {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct CachedData {
-            #[serde(deserialize_with = "deserialize_example_words")]
-            words: Vec<String>,
-            #[serde(deserialize_with = "deserialize_example_tokens")]
-            tokens: Vec<u32>,
-        }
-        let data = CachedData::deserialize(deserializer)?;
-        Ok(Self {
-            words: data.words,
-            tokens: data.tokens,
-        })
-    }
-}
-
-struct CachedWord(String);
-impl<'de> Deserialize<'de> for CachedWord {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct WordVisitor;
-        impl serde::de::Visitor<'_> for WordVisitor {
-            type Value = CachedWord;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(
-                    formatter,
-                    "an identifier of at most {MAX_WORD_BYTES} UTF-8 bytes"
-                )
-            }
-            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
-                if value.len() > MAX_WORD_BYTES {
-                    return Err(E::custom(
-                        "completion example identifier exceeds 160 UTF-8 bytes",
-                    ));
-                }
-                Ok(CachedWord(value.to_owned()))
-            }
-            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
-                if value.len() > MAX_WORD_BYTES {
-                    return Err(E::custom(
-                        "completion example identifier exceeds 160 UTF-8 bytes",
-                    ));
-                }
-                Ok(CachedWord(value))
-            }
-        }
-        deserializer.deserialize_str(WordVisitor)
-    }
-}
-
-fn deserialize_example_sequence<'de, D, T, const LIMIT: usize>(
-    deserializer: D,
-    message: &'static str,
-) -> Result<Vec<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    struct SequenceVisitor<T, const LIMIT: usize> {
-        message: &'static str,
-        marker: std::marker::PhantomData<T>,
-    }
-    impl<'de, T: Deserialize<'de>, const LIMIT: usize> serde::de::Visitor<'de>
-        for SequenceVisitor<T, LIMIT>
-    {
-        type Value = Vec<T>;
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(formatter, "a sequence of at most {LIMIT} elements")
-        }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut sequence: A,
-        ) -> Result<Vec<T>, A::Error> {
-            use serde::de::Error;
-            let hint = sequence.size_hint().unwrap_or(0);
-            if hint > LIMIT {
-                return Err(A::Error::custom(self.message));
-            }
-            let mut values = Vec::with_capacity(hint);
-            while values.len() < LIMIT {
-                let Some(value) = sequence.next_element()? else {
-                    return Ok(values);
-                };
-                values.push(value);
-            }
-            if sequence.next_element::<T>()?.is_some() {
-                return Err(A::Error::custom(self.message));
-            }
-            Ok(values)
-        }
-    }
-    deserializer.deserialize_seq(SequenceVisitor::<T, LIMIT> {
-        message,
-        marker: std::marker::PhantomData,
-    })
-}
-
-fn deserialize_example_words<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<String>, D::Error> {
-    deserialize_example_sequence::<D, CachedWord, MAX_WORDS>(
-        deserializer,
-        "completion examples words exceed 1024 entries",
-    )
-    .map(|words| words.into_iter().map(|word| word.0).collect())
-}
-
-fn deserialize_example_tokens<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<u32>, D::Error> {
-    deserialize_example_sequence::<D, u32, MAX_TOKENS>(
-        deserializer,
-        "completion examples tokens exceed 2048 entries",
-    )
-}
-
-#[cfg(test)]
-#[path = "completion_examples_cache_tests.rs"]
-mod cache_tests;
-
 impl Data {
-    pub(crate) fn tokens(&self) -> usize {
-        self.tokens.len()
-    }
-
-    /// Release richer sequence evidence under workspace memory pressure while
-    /// retaining a literal/parameterized seed for this file. No source reread.
-    pub(crate) fn compact(&mut self) {
-        let keep = (self.tokens.len() / 4).max(8).min(self.tokens.len());
-        self.truncate_to(keep);
-    }
-
-    pub(crate) fn truncate_to(&mut self, keep: usize) {
-        if self.tokens.len() <= keep {
-            return;
-        }
-        self.tokens.truncate(keep);
-        // A prefix keeps its existing token IDs. Release the unused suffix of
-        // the dictionary directly, without cloning or renumbering spellings.
-        let words = self
-            .tokens
-            .iter()
-            .filter(|token| **token & WORD != 0)
-            .map(|token| (*token & !WORD) as usize + 1)
-            .max()
-            .unwrap_or(0);
-        self.words.truncate(words);
-        self.tokens.shrink_to_fit();
-        self.words.shrink_to_fit();
-    }
-
-    pub(crate) fn memory(&self) -> usize {
-        64 + self.tokens.capacity() * 4
-            + self.words.capacity() * 24
-            + self.words.iter().map(|s| s.capacity() + 16).sum::<usize>()
-    }
-    pub(crate) fn valid(&self) -> bool {
-        self.tokens.len() <= MAX_TOKENS
-            && self.words.len() <= MAX_WORDS
-            && self.words.iter().all(|w| w.len() <= MAX_WORD_BYTES)
-            && self.tokens.iter().all(|&t| {
-                if t & WORD != 0 {
-                    (t & !WORD) < self.words.len() as u32
-                } else {
-                    char::from_u32(t).is_some()
-                }
-            })
-    }
     fn word(&self, t: u32) -> Option<&str> {
         (t & WORD != 0).then(|| self.words[(t & !WORD) as usize].as_str())
     }
 }
 
-pub(crate) struct Builder {
-    limit: usize,
+#[derive(Default)]
+struct Builder {
     data: Data,
     ids: FxHashMap<String, u32>,
     pending: String,
     oversized: bool,
 }
-impl Default for Builder {
-    fn default() -> Self {
-        Self::bounded(MAX_TOKENS)
-    }
-}
 impl Builder {
-    pub(crate) fn bounded(limit: usize) -> Self {
-        Self {
-            limit: limit.min(MAX_TOKENS),
-            data: Data::default(),
-            ids: FxHashMap::default(),
-            pending: String::new(),
-            oversized: false,
-        }
-    }
-    #[cfg(test)]
-    fn working_memory(&self) -> usize {
-        self.data.memory()
-            + self.ids.capacity() * 64
-            + self
-                .ids
-                .keys()
-                .map(|word| word.capacity() + 16)
-                .sum::<usize>()
-            + self.pending.capacity()
-            + 128
-    }
-    pub(crate) fn feed(&mut self, text: &str) {
-        if self.data.tokens.len() >= self.limit {
+    fn feed(&mut self, text: &str) {
+        if self.data.tokens.len() >= MAX_TOKENS {
             return;
         }
         for ch in text.chars() {
@@ -350,17 +108,17 @@ impl Builder {
                 }
             } else {
                 self.flush();
-                if self.data.tokens.len() < self.limit && (!ch.is_whitespace() || ch == '\n') {
+                if self.data.tokens.len() < MAX_TOKENS && (!ch.is_whitespace() || ch == '\n') {
                     self.data.tokens.push(ch as u32);
                 }
             }
-            if self.data.tokens.len() >= self.limit {
+            if self.data.tokens.len() >= MAX_TOKENS {
                 break;
             }
         }
     }
     fn flush(&mut self) {
-        if !self.pending.is_empty() && !self.oversized && self.data.tokens.len() < self.limit {
+        if !self.pending.is_empty() && !self.oversized && self.data.tokens.len() < MAX_TOKENS {
             let id = if let Some(&id) = self.ids.get(&self.pending) {
                 Some(id)
             } else if self.data.words.len() < MAX_WORDS {
@@ -376,13 +134,13 @@ impl Builder {
             } else {
                 self.data.tokens.push(0);
             } // a barrier, never join separated text
-        } else if self.oversized && self.data.tokens.len() < self.limit {
+        } else if self.oversized && self.data.tokens.len() < MAX_TOKENS {
             self.data.tokens.push(0);
         }
         self.pending.clear();
         self.oversized = false;
     }
-    pub(crate) fn finish(mut self) -> Data {
+    fn finish(mut self) -> Data {
         self.flush();
         self.data
     }
@@ -449,226 +207,11 @@ fn signature(data: &Data, start: usize, end: usize, parameter: bool) -> u64 {
     hash.finish()
 }
 
-type Key = (u8, u64);
-fn keys(data: &Data, mut emit: impl FnMut(Key, u64, u16)) {
-    for at in 0..data.tokens.len() {
-        let Some(_) = data.word(data.tokens[at]) else {
-            continue;
-        };
-        let begin = at.saturating_sub(32);
-        // A retrieval representative must preserve literal anchors and suffix
-        // words. Renamed copies may differ in compatibility with this query;
-        // canonical confidence deduplication happens after verification instead.
-        let fingerprint = signature(data, begin, (at + RIGHT + 1).min(data.tokens.len()), false);
-        for n in LENGTHS.into_iter().filter(|&n| n <= at) {
-            emit(
-                (n as u8, signature(data, at - n, at, false)),
-                fingerprint,
-                at as u16,
-            );
-            if n >= 4 {
-                emit(
-                    (n as u8 | 128, signature(data, at - n, at, true)),
-                    fingerprint,
-                    at as u16,
-                );
-            }
-        }
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct Index {
-    files: BTreeMap<u64, Arc<Data>>,
-    postings: BTreeMap<Key, Vec<Location>>,
-    bytes: usize,
-}
-
-// One contiguous, sorted posting list per retrieval key. The previous three
-// nested hash tables allocated two extra tables for almost every occurrence.
-#[derive(Clone, Copy)]
-struct Location {
-    fingerprint: u64,
-    file: u64,
-    at: u16,
-}
-
-fn posting_keys(data: &Data) -> Vec<(Key, u64, u16)> {
-    let mut result = Vec::with_capacity(data.tokens.len() * 9);
-    keys(data, |key, fingerprint, at| {
-        result.push((key, fingerprint, at))
-    });
-    // Keep the last occurrence of the same literal window in each file,
-    // exactly as the previous map did. Local repeat weight is verified later.
-    result.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then_with(|| b.2.cmp(&a.2)));
-    result.dedup_by_key(|entry| (entry.0, entry.1));
-    result
-}
-
-impl Index {
-    pub(crate) fn memory(&self) -> usize {
-        // Conservative tree-node charges, including minimum node occupancy
-        // and root slack. Unlike HashMap::capacity, these cannot hide allocated
-        // buckets behind tombstones during repeated file replacement.
-        self.bytes
-            + self.files.len() * 48
-            + usize::from(!self.files.is_empty()) * 256
-            + self.postings.len() * 128
-            + usize::from(!self.postings.is_empty()) * 512
-    }
-    #[cfg(test)]
-    pub(crate) fn retained_memory(&self) -> usize {
-        self.memory() + self.files.values().map(|data| data.memory()).sum::<usize>()
-    }
-    pub(crate) fn additional_memory(&self, data: &Data) -> usize {
-        let entries = posting_keys(data);
-        let mut new_keys = 0;
-        let mut growth = 0;
-        for batch in entries.chunk_by(|a, b| a.0 == b.0) {
-            let existing = self.postings.get(&batch[0].0);
-            new_keys += usize::from(existing.is_none());
-            let (len, capacity) = existing.map_or((0, 0), |list| (list.len(), list.capacity()));
-            growth +=
-                (len + batch.len()).saturating_sub(capacity) * std::mem::size_of::<Location>();
-        }
-        growth
-            + new_keys * 128
-            + usize::from(self.postings.is_empty() && new_keys > 0) * 512
-            + 48
-            + usize::from(self.files.is_empty()) * 256
-    }
-    pub(crate) fn insert(&mut self, file: u64, data: Arc<Data>) {
-        self.remove(file);
-        let entries = posting_keys(&data);
-        for batch in entries.chunk_by(|a, b| a.0 == b.0) {
-            let list = self.postings.entry(batch[0].0).or_default();
-            let previous = list.capacity();
-            list.reserve_exact(batch.len());
-            self.bytes += (list.capacity() - previous) * std::mem::size_of::<Location>();
-            for &(_, fingerprint, at) in batch {
-                let position =
-                    list.binary_search_by_key(&(fingerprint, file), |p| (p.fingerprint, p.file));
-                match position {
-                    Ok(position) => list[position].at = at,
-                    Err(position) => list.insert(
-                        position,
-                        Location {
-                            fingerprint,
-                            file,
-                            at,
-                        },
-                    ),
-                }
-            }
-        }
-        self.files.insert(file, data);
-    }
-    pub(crate) fn remove(&mut self, file: u64) -> usize {
-        let before = self.memory();
-        if let Some(data) = self.files.remove(&file) {
-            let entries = posting_keys(&data);
-            for batch in entries.chunk_by(|a, b| a.0 == b.0) {
-                let key = batch[0].0;
-                if let Some(list) = self.postings.get_mut(&key) {
-                    let previous = list.capacity();
-                    list.retain(|location| location.file != file);
-                    if list.is_empty() {
-                        self.postings.remove(&key);
-                        self.bytes -= previous * std::mem::size_of::<Location>();
-                    } else {
-                        if list.len().saturating_mul(2) < list.capacity() {
-                            list.shrink_to_fit();
-                        }
-                        self.bytes -=
-                            (previous - list.capacity()) * std::mem::size_of::<Location>();
-                    }
-                }
-            }
-        }
-        before - self.memory()
-    }
-    pub(crate) fn query(&self, query: &Query, active_file: u64, evidence: &mut Evidence) {
-        if !query.enabled {
-            return;
-        }
-        let extend = query.full_window;
-        for &n in LENGTHS.iter().rev() {
-            if n > query.left.tokens.len() {
-                continue;
-            }
-            for parameter in [false, true] {
-                if parameter && (!query.parameter || n < 4) {
-                    continue;
-                }
-                let pool = usize::from(!parameter);
-                if n < evidence.pools[pool].length && !extend {
-                    continue;
-                }
-                if !evidence.charge_hash(n) {
-                    return;
-                }
-                let key = (
-                    n as u8 | if parameter { 128 } else { 0 },
-                    signature(
-                        &query.left,
-                        query.left.tokens.len() - n,
-                        query.left.tokens.len(),
-                        parameter,
-                    ),
-                );
-                let Some(locations) = self.postings.get(&key) else {
-                    continue;
-                };
-                let mut position = 0;
-                while position < locations.len() {
-                    evidence.lookups += 1;
-                    if evidence.exhausted() {
-                        return;
-                    }
-                    let end = position
-                        + locations[position..]
-                            .partition_point(|p| p.fingerprint == locations[position].fingerprint);
-                    let group = &locations[position..end];
-                    for &Location { file, at, .. } in
-                        group.iter().filter(|p| p.file != active_file).chain(
-                            group
-                                .iter()
-                                .filter(|p| p.file == active_file && grounded_active_file()),
-                        )
-                    {
-                        if let Some(data) = self.files.get(&file) {
-                            evidence.observe(
-                                query,
-                                data,
-                                at as usize,
-                                n,
-                                parameter,
-                                pool,
-                                file,
-                                file == active_file,
-                            );
-                        }
-                        if evidence.exhausted() {
-                            return;
-                        }
-                        if query.deduplicate {
-                            break;
-                        }
-                    }
-                    position = end;
-                }
-            }
-        }
-    }
-}
-
 pub(crate) struct Query {
     left: Data,
     right: Data,
     pub(crate) parameter: bool,
     pub(crate) suffix: bool,
-    pub(crate) deduplicate: bool,
-    enabled: bool,
     full_window: bool,
 }
 impl Query {
@@ -694,8 +237,6 @@ impl Query {
             right,
             parameter: true,
             suffix: true,
-            deduplicate: true,
-            enabled: true,
             full_window: full_window_mode(),
         };
         #[cfg(test)]
@@ -703,8 +244,6 @@ impl Query {
             let mut query = query;
             query.parameter = mode.get() != Mode::LiteralOnly;
             query.suffix = mode.get() != Mode::NoRightContext;
-            query.deduplicate = mode.get() != Mode::NoDeduplicate;
-            query.enabled = mode.get() != Mode::Disabled;
             query
         });
         query
@@ -723,12 +262,11 @@ pub(crate) struct Evidence {
     // Within each origin the longer verified context updates the shorter one;
     // less local origins supply the backoff estimate. Keep both literal and
     // renamed contexts so a more specific relationship can refine an exact seed.
-    pools: [Pool; 6], // retrieved parameter/literal, file parameter/literal, recent parameter/literal
+    pools: [Pool; 4], // file parameter/literal, recent parameter/literal
     // Retain one shorter compatible prior only when the longest context has
     // no suffix-compatible target. Negative long witnesses still downweight it.
-    backoff: [Pool; 6],
-    seen: FxHashSet<(usize, usize, u64)>,
-    retrieved_weights: FxHashMap<(usize, usize, u64), u8>,
+    backoff: [Pool; 4],
+    seen: FxHashSet<(usize, usize, (u64, usize))>,
     comparisons: usize,
     occurrences: usize,
     hash_tokens: usize,
@@ -754,8 +292,6 @@ impl Evidence {
         let shorter = self.backoff[pool].length;
         self.seen
             .retain(|&(p, length, _)| p != pool || length == longest || length == shorter);
-        self.retrieved_weights
-            .retain(|&(p, length, _), _| p != pool || length == longest || length == shorter);
     }
     fn exhausted(&mut self) -> bool {
         self.limited |= self.comparisons >= MAX_COMPARISONS
@@ -771,38 +307,6 @@ impl Evidence {
         }
         self.hash_tokens += tokens;
         true
-    }
-    fn local_repeat_weight(&mut self, data: &Data, at: usize, n: usize, right: usize) -> u8 {
-        let target = data.tokens[at];
-        let call = data.tokens.get(at + 1) == Some(&('(' as u32));
-        let suffix = &data.tokens[at + 1..(at + 1 + right).min(data.tokens.len())];
-        for prior in (at.saturating_sub(32).max(n)..at).rev() {
-            self.comparisons += 1;
-            if self.exhausted() {
-                return 1;
-            }
-            if data.tokens[prior] != target
-                || (data.tokens.get(prior + 1) == Some(&('(' as u32))) != call
-            {
-                continue;
-            }
-            let prior_suffix = &data.tokens[prior + 1..(prior + 1 + right).min(data.tokens.len())];
-            if prior_suffix.len() != suffix.len() {
-                continue;
-            }
-            let cost = n + suffix.len();
-            if cost > MAX_COMPARISONS.saturating_sub(self.comparisons) {
-                self.limited = true;
-                return 1;
-            }
-            self.comparisons += cost;
-            // Only repeated occurrences of the exact same context count as
-            // local repetition. A preceding declaration/binding is not a use.
-            if data.tokens[prior - n..prior] == data.tokens[at - n..at] && prior_suffix == suffix {
-                return 2;
-            }
-        }
-        1
     }
     pub(crate) fn candidates(&self) -> impl Iterator<Item = &str> {
         (0..self.pools.len())
@@ -825,11 +329,7 @@ impl Evidence {
     }
     /// Dirichlet backoff: no evidence is an exact identity. Contradictions stay
     /// in each denominator instead of inflating the surviving candidate mass.
-    pub(crate) fn probability(&self, word: &str, workspace: f64) -> f64 {
-        #[cfg(test)]
-        if MODE.with(|mode| mode.get() == Mode::NoStatistical) {
-            return workspace;
-        }
+    pub(crate) fn probability(&self, word: &str, prior: f64) -> f64 {
         let update_pool = |p, pool: &Pool| {
             let alpha = target_concentration(pool.length);
             (pool.counts.get(word).copied().unwrap_or(0.) + alpha * p) / (pool.total + alpha)
@@ -845,7 +345,7 @@ impl Evidence {
         if specificity_order() {
             return (0..self.pools.len())
                 .step_by(2)
-                .fold(workspace, |prior, slot| {
+                .fold(prior, |prior, slot| {
                     if self.pools[slot].length > self.pools[slot + 1].length {
                         update(update(prior, slot + 1), slot)
                     } else {
@@ -853,7 +353,7 @@ impl Evidence {
                     }
                 });
         }
-        (0..self.pools.len()).fold(workspace, update)
+        (0..self.pools.len()).fold(prior, update)
     }
     pub(crate) fn call_probability(&self, word: &str) -> Option<f64> {
         let mut supported = false;
@@ -865,7 +365,8 @@ impl Evidence {
         });
         supported.then_some(probability)
     }
-    pub(crate) fn callable(&self, word: &str) -> Option<bool> {
+    #[cfg(test)]
+    fn callable(&self, word: &str) -> Option<bool> {
         let probability = self.call_probability(word)?;
         // Parameter and literal channels can describe the same occurrence.
         // Count their maximum within each origin rather than inventing two
@@ -882,14 +383,11 @@ impl Evidence {
         Some(calls >= 2. && probability >= 2. / 3.)
     }
     pub(crate) fn collect(&mut self, query: &Query, text: &str, recent: bool) {
-        if !query.enabled {
-            return;
-        }
         let extend = query.full_window;
         let data = parse(text);
         self.local_sources += 1;
         let source = self.local_sources;
-        let base = if recent { 4 } else { 2 };
+        let base = if recent { 2 } else { 0 };
         // Prefer long occurrences first; a short context must not consume the
         // work allowance before an available relational example is considered.
         for &n in LENGTHS.iter().rev() {
@@ -935,7 +433,7 @@ impl Evidence {
                     }
                     if signature(&data, at - n, at, parameter) == query_signature {
                         let pool = base + usize::from(!parameter);
-                        self.observe(query, &data, at, n, parameter, pool, source, false);
+                        self.observe(query, &data, at, n, parameter, pool, source);
                     }
                 }
             }
@@ -1016,7 +514,6 @@ impl Evidence {
         parameter: bool,
         pool: usize,
         source: u64,
-        grounded_only: bool,
     ) {
         if parameter {
             let width = if query.full_window {
@@ -1241,9 +738,6 @@ impl Evidence {
         // The active file may have an older published snapshot. It can refine
         // a relationship between already visible names, but must not invent
         // confidence for an absent stale token at the caret.
-        if grounded_only && !left.words.iter().any(|known| known == word) {
-            return;
-        }
         let mut compatible = true;
         if query.suffix {
             if data.tokens.len().saturating_sub(at + 1) < query.right.tokens.len() {
@@ -1295,32 +789,8 @@ impl Evidence {
         if n < self.pools[pool].length && !compatible {
             return;
         }
-        let retrieved = pool < 2 && query.deduplicate;
         let call = data.tokens.get(at + 1) == Some(&('(' as u32));
-        let known_right = if query.suffix {
-            query.right.tokens.len()
-        } else {
-            0
-        };
-        let fp = if retrieved {
-            let end = (at + known_right + 1).min(data.tokens.len());
-            if !self.charge_hash(end - (at - n)) {
-                return;
-            }
-            let mut h = FxHasher::default();
-            // Unused source history and an unseen suffix are not independent
-            // evidence. Fingerprint exactly the context this query verified.
-            signature(data, at - n, end, parameter).hash(&mut h);
-            word.hash(&mut h);
-            parameter.hash(&mut h);
-            call.hash(&mut h);
-            compatible.hash(&mut h);
-            h.finish()
-        } else {
-            let mut hash = FxHasher::default();
-            (source, at, pool).hash(&mut hash);
-            hash.finish()
-        };
+        let occurrence = (source, at);
         if n > self.pools[pool].length {
             let previous = std::mem::take(&mut self.pools[pool]);
             if extend && !previous.counts.is_empty() && previous.length > self.backoff[pool].length
@@ -1341,31 +811,19 @@ impl Evidence {
             };
             self.retain_depths(pool);
         }
-        let weight = if retrieved {
-            let observed = self.local_repeat_weight(data, at, n, known_right);
-            let previous = self.retrieved_weights.entry((pool, n, fp)).or_default();
-            if observed <= *previous {
-                return;
-            }
-            let delta = observed - *previous;
-            *previous = observed;
-            f64::from(delta)
-        } else {
-            if !self.seen.insert((pool, n, fp)) {
-                return;
-            }
-            1.
-        };
+        if !self.seen.insert((pool, n, occurrence)) {
+            return;
+        }
         let p = if shorter {
             &mut self.backoff[pool]
         } else {
             &mut self.pools[pool]
         };
-        p.total += weight;
+        p.total += 1.;
         if compatible {
-            *p.counts.entry(word.to_owned()).or_default() += weight;
+            *p.counts.entry(word.to_owned()).or_default() += 1.;
             if call {
-                *p.calls.entry(word.to_owned()).or_default() += weight;
+                *p.calls.entry(word.to_owned()).or_default() += 1.;
             }
         }
     }
@@ -1407,7 +865,6 @@ mod tests {
         b.feed("register(cha");
         b.feed("nnel, handler)");
         let d = b.finish();
-        assert!(d.valid());
         assert!(d.words.iter().any(|w| w == "channel"));
         assert!(parse(&"word ".repeat(10000)).tokens.len() <= MAX_TOKENS);
     }

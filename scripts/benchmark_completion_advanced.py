@@ -125,10 +125,11 @@ def main():
                    'temporaryDirectory': str(temp_root),
                    'inventorySha256': digest(args.inventory.read_bytes())},
         'productionFiles': {str(path).replace('\\', '/'): digest(path.read_bytes()) for path in [
-            ROOT / 'src' / name for name in ('app_vtcomplete.rs', 'vtcomplete_worker.rs',
+            ROOT / 'src' / name for name in ('app_vtcomplete.rs', 'app_vtcomplete_settings.rs',
+            'vtcomplete_worker.rs',
             'vtcomplete_scoring.rs', 'completion_examples.rs', 'completion_edit_history.rs',
             'completion_numbers.rs', 'completion_replacement.rs', 'completion_patterns.rs',
-            'completion_transformations.rs', 'completion_index.rs', 'completion_context.rs',
+            'completion_transformations.rs', 'completion_context.rs',
             'completion_source.rs', 'editor.rs')]},
         'regressions': {},
     }
@@ -136,7 +137,6 @@ def main():
     workloads = [
         ('native', 'benchmark_vtcode_editing_replay', {
             'VTCODE_CAPACITY_SOURCE': str(args.source.resolve()), 'VTCODE_VTCODE_REPLAY_REPORT': None}),
-        ('learning', 'learning_replay_quality', {'VTCODE_LEARNING_REPORT': None}),
         ('transformations', 'benchmark_transformations_replay', {
             'VTCODE_TRANSFORM_INPUT': str(args.inventory.resolve()),
             'VTCODE_TRANSFORM_SPLIT': 'holdout', 'VTCODE_TRANSFORM_REPORT': None}),
@@ -178,11 +178,20 @@ def main():
                 result['scope'] = 'Fixed designed mechanism probes; not held-out or population accuracy evidence.'
                 result['candidateRecallOmitted'] = 'Numeric predictions enter after lexical admission tracing.'
         else:
-            result = compare(before, after)
+            # Older native replays used an index. Compare the same events
+            # while recording the different completion sources.
+            scope_fields = {'indexScope', 'seedFilesPerSession'}
+            result = compare(*(
+                {key: value for key, value in run.items() if key not in scope_fields}
+                for run in (before, after)
+            ))
+            result['sourceScopes'] = {
+                'baseline': before.get('indexScope', 'active file'),
+                'candidate': after.get('indexScope', 'active file'),
+            }
         latency = {}
         for engine in binaries:
-            fields = ('workerWarmP95Us', 'coldP95Us') if name in ('transformations', 'mechanisms') else (
-                ('workerWarmP95Us', 'coldP95Us') if name == 'native' else ())
+            fields = ('workerWarmP95Us', 'coldP95Us')
             latency[engine] = {field: {'runs': [v[field] for v in runs[engine][name]],
                                      'median': statistics.median(v[field] for v in runs[engine][name])}
                                for field in fields}

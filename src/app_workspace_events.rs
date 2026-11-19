@@ -14,7 +14,6 @@ impl App {
             self.workspace_observation.pending.merge(changes, structure_changed, rescan, git_metadata_changed);
             return false;
         }
-        self.completion_index_files_changed(&changes, rescan);
         if rescan || (structure_changed && changes.iter().any(|change| change.path.file_name().is_some_and(|name| name == ".git"))) {
             self.repositories.rescan = true;
         }

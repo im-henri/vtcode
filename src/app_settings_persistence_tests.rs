@@ -227,6 +227,7 @@ fn untracked_preference_survives_file_folder_and_stale_session_startup() {
                 global: saved(&app, SettingsScope::Global),
                 workspace: saved(&app, SettingsScope::Workspace),
                 session: restore.then_some(session),
+                completion_preferences: Default::default(),
                 incomplete_session_recovery: None,
             }.into_app(Default::default());
             assert_untracked_preference(&mut restarted, show);
@@ -301,6 +302,7 @@ fn untracked_preference_in_remote_mode_is_saved_on_client_without_network_reques
         target: crate::startup::Target { root: remote.view_root.clone(), file: None, line: None, column: None },
         global: saved(&app, SettingsScope::Global),
         workspace: Settings::default(), session: None,
+        completion_preferences: Default::default(),
         incomplete_session_recovery: None,
     }.into_app_with_remote(Default::default(), Some(remote));
     assert_untracked_preference(&mut restarted, false);

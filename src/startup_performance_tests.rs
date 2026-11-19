@@ -87,6 +87,7 @@ fn prepared(root: &Path, theme: &str) -> crate::startup::Prepared {
         global: crate::settings::Settings { theme: Some(theme.into()), tab_size: Some(8), ..Default::default() },
         workspace: crate::settings::Settings { tab_size: Some(2), ..Default::default() },
         session: None,
+        completion_preferences: Default::default(),
         incomplete_session_recovery: None,
     }
 }

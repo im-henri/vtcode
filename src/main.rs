@@ -31,9 +31,8 @@ mod app_chat_terminals;
 mod app_vtcomplete;
 mod app_vtcomplete_inline;
 mod vtcomplete_inline;
-mod app_vtcomplete_index;
 mod app_vtcomplete_settings;
-mod completion_index;
+mod completion_examples;
 mod search_history;
 mod completion_activity;
 mod completion_context;
@@ -41,7 +40,6 @@ mod completion_source;
 mod completion_history;
 #[path = "vtcomplete_identifier.rs"]
 mod completion_match;
-mod ui_vtcomplete_index;
 mod app_commands;
 mod app_commands_editor;
 mod app_shortcuts;

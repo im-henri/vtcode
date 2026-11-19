@@ -368,13 +368,6 @@ fn no_folder_settings_cannot_select_an_invisible_folder_scope() {
         );
         assert_eq!(app.settings_scope, crate::settings::SettingsScope::Global);
     }
-    assert_eq!(
-        app.completion_dropdown_options("vtcomplete_sources")
-            .unwrap(),
-        &["Files you open"]
-    );
-    assert!(!app.set_completion_dropdown("vtcomplete_sources", "Entire workspace"));
-    assert!(!app.completion_index.settings().project_wide);
 }
 
 #[test]
@@ -445,16 +438,10 @@ fn no_path_is_not_the_current_directory_and_dot_is_explicit() {
 }
 
 #[test]
-fn no_folder_schedules_no_project_services_even_when_git_and_indexing_are_enabled() {
+fn no_folder_schedules_no_project_services_even_when_git_is_enabled() {
     let mut app = empty();
     app.settings_persistence_enabled = true;
     assert!(app.source_control_enabled);
-    app.completion_index
-        .configure(crate::completion_index::IndexSettings {
-            enabled: true,
-            project_wide: true,
-            ..Default::default()
-        });
     // Theme discovery is global and independent of the folder-service probe.
     app.workspace_observation.assets_started = true;
     app.start_workspace_services();
@@ -462,9 +449,6 @@ fn no_folder_schedules_no_project_services_even_when_git_and_indexing_are_enable
     app.refresh_source_control_async();
     app.refresh_git_branch_async();
     app.start_workspace_watcher();
-    for _ in 0..20 {
-        assert!(!app.poll_completion_index());
-    }
     assert_eq!(app.background.activity.job_count(), 0);
     assert!(!app.bg_explorer_refresh_running);
     assert!(!app.bg_git_status_running);
@@ -634,9 +618,14 @@ fn loose_file_opening_and_completion_do_not_attach_or_scan_a_folder() {
     settle(&mut app, |app| {
         app.editor().is_some_and(|editor| !editor.bg_loading)
     });
-    app.poll_completion_index();
-    assert!(app.completion_index.buffer_only());
-    assert!(!app.completion_index.settings().project_wide);
+    {
+        let editor = app.editor_mut().unwrap();
+        editor.rope.insert(editor.rope.len_chars(), "\nwindowOnly");
+        editor.set_cursor(1, 10);
+    }
+    app.update_vtcomplete_explicit();
+    settle(&mut app, |app| app.vtcomplete_cancel_token.is_none());
+    assert!(app.vtcomplete_suggestions.iter().any(|word| word == "windowOnlyIdentifier"));
     assert!(!app.has_open_folder());
     assert!(!app.workspace_watcher_active);
     assert_eq!(app.open_folder_count(), 0);

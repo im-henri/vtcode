@@ -796,6 +796,8 @@ impl App {
 
         self.settings_global = crate::settings::load_from_file(&self.settings_global_path);
         self.settings_workspace = crate::settings::load_from_file(&self.settings_workspace_path);
+        self.completion_preferences =
+            crate::app_vtcomplete_settings::Preferences::load(&self.explorer.root);
         self.settings_global.validate();
         self.settings_workspace.validate();
         self.apply_effective_settings();

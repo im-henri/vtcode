@@ -72,6 +72,7 @@ pub(crate) struct Prepared {
     pub target: Target,
     pub global: Settings,
     pub workspace: Settings,
+    pub completion_preferences: crate::app_vtcomplete_settings::Preferences,
     pub session: Option<crate::session::Session>,
     pub incomplete_session_recovery: Option<crate::session::RecoveryLease>,
 }
@@ -122,12 +123,14 @@ impl Prepared {
         global.validate();
         let _ = crate::highlight::Highlighter::startup_theme_set();
         let workspace = crate::settings::load_from_file(&crate::settings::project_settings_path(&root));
+        let completion_preferences = crate::app_vtcomplete_settings::Preferences::load(&root);
         let (session, incomplete_session_recovery) =
             crate::session::load_session_with_recovery_status(&root);
         Self {
             target: Target { root, file: None, line: None, column: None },
             global,
             workspace,
+            completion_preferences,
             session,
             incomplete_session_recovery,
         }
@@ -170,6 +173,8 @@ impl Prepared {
         };
         global.validate();
         workspace.validate();
+        let completion_preferences =
+            crate::app_vtcomplete_settings::Preferences::load(&target.root);
         let (session, incomplete_session_recovery) =
             crate::session::load_session_with_recovery_status(&target.root);
         // Initialize only the shared startup palette, on this worker. Other
@@ -191,6 +196,7 @@ impl Prepared {
             target,
             global,
             workspace,
+            completion_preferences,
             session,
             incomplete_session_recovery,
         }
@@ -248,6 +254,7 @@ impl Prepared {
         }
         app.settings_global = self.global;
         app.settings_workspace = self.workspace;
+        app.completion_preferences = self.completion_preferences;
         app.apply_effective_settings();
         if let Some(session) = &self.session {
             // An explicit file takes focus after restoring any earlier drafts.

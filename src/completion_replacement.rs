@@ -104,7 +104,6 @@ mod tests {
             document_id: 1,
             cursor_line: 0,
             cursor_col: left.chars().count(),
-            active: true,
         };
         let mut result = CompletionResult {
             suggestions: words.iter().map(|s| s.to_string()).collect(),
@@ -157,7 +156,6 @@ mod tests {
             document_id: 1,
             cursor_line: 0,
             cursor_col: 6,
-            active: true,
         };
         let mut result = CompletionResult {
             suggestions: vec!["400".into(), "4_99".into()],

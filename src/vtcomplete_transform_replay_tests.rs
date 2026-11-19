@@ -21,24 +21,13 @@ fn active_text(text: &str, path: &Path) -> VtCompleteSnapshot {
         cursor_line: line,
         rope,
         document_id: 1,
-        active: true,
     }
 }
 
 #[test]
-fn active_file_relationship_beats_unrelated_generated_workspace_clones() {
+fn active_file_relationship_completes_a_consistent_rename() {
     let root = tempfile::tempdir().unwrap();
-    let generated = "bind(item, decode_cache_index);\nbind(item, decode_cache_state);\n".repeat(80);
-    let (index, _) = crate::completion_index::CompletionIndex::build_for_benchmark(
-        root.path().to_owned(),
-        (0..64).map(|i| {
-            (
-                root.path().join(format!("copy{i}.custom")),
-                generated.as_str(),
-            )
-        }),
-    );
-    assert_eq!(index.status().indexed_files, 64);
+    let options = PopupOptions::default();
     let active = active_text(
         "let user_id = decode_user_id(payload);\nlet task_id = decode_task_id(payload);\nlet entry_id = decode_entry_id(payload);\nlet object_id = decode_object_id(payload);\nlet cache_id = decode",
         &root.path().join("active.unmapped"),
@@ -47,8 +36,8 @@ fn active_file_relationship_beats_unrelated_generated_workspace_clones() {
         &active,
         "decode",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         false,
         || false,
     )
@@ -84,8 +73,8 @@ fn unrelated_candidate_work_cannot_starve_a_verified_current_buffer_counter() {
             &active,
             &prefix,
             "Unknown",
-            &crate::completion_index::CompletionIndex::default(),
-            &mut TokenCache::default(),
+            &PopupOptions::default(),
+            &mut CompletionCache::default(),
             false,
             || false,
         )
@@ -101,14 +90,14 @@ fn unrelated_candidate_work_cannot_starve_a_verified_current_buffer_counter() {
 #[test]
 fn two_pairs_rank_known_names_but_novel_programs_need_an_independent_witness() {
     let pairs = "let user_id = decode_user_id(payload);\nlet task_id = decode_task_id(payload);\n";
-    let index = crate::completion_index::CompletionIndex::default();
-    let mut cache = TokenCache::default();
-    let request = |text: &str, cache: &mut TokenCache| {
+    let options = PopupOptions::default();
+    let mut cache = CompletionCache::default();
+    let request = |text: &str, cache: &mut CompletionCache| {
         compute_contextual_invoked(
             &active_text(text, Path::new("active.custom")),
             "decode",
             "Unknown",
-            &index,
+            &options,
             cache,
             false,
             || false,
@@ -155,7 +144,7 @@ fn benchmark_transformations_replay() {
         .filter(|case| case["split"] == split)
         .collect();
     assert!(!cases.is_empty());
-    let index = crate::completion_index::CompletionIndex::default();
+    let options = PopupOptions::default();
     let background = crate::background::BackgroundWorkers::new();
     let worker = VtCompleteWorker::default();
     let mut rows = Vec::new();
@@ -194,22 +183,21 @@ fn benchmark_transformations_replay() {
             cursor_line: line,
             rope,
             document_id: i as u64 + 1,
-            active: true,
         };
-        learning_replay_tests::begin_trace(expected);
+        recall::begin_trace(expected);
         let started = Instant::now();
         let result = compute_contextual_invoked(
             &active,
             prefix,
             "Unknown",
-            &index,
-            &mut TokenCache::default(),
+            &options,
+            &mut CompletionCache::default(),
             false,
             || false,
         )
         .unwrap();
         cold_ns.push(started.elapsed().as_nanos());
-        let recalled = learning_replay_tests::candidate_recalled();
+        let recalled = recall::candidate_recalled();
         let rank = expected.and_then(|answer| {
             result
                 .suggestions
@@ -236,7 +224,7 @@ fn benchmark_transformations_replay() {
                 VtCompleteRequest {
                     active: active.clone(),
                     edit_baseline: None,
-                    index: index.clone(),
+                    options: PopupOptions::default(),
                     explicit: false,
                     language: "Unknown".into(),
                     generation,

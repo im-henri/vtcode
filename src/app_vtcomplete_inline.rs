@@ -3,128 +3,17 @@
 //! Typing asks the shared completion worker for a continuation of the caret
 //! line. The answer is painted after the caret without touching the buffer;
 //! Tab inserts it as one undoable edit.
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-
-use rustc_hash::FxHashMap;
 
 use crate::app::{ActivePane, App, TabKind};
 use crate::background::{
     BackgroundResult, BackgroundResultSender, BackgroundTaskSender, CancellationToken,
 };
-use crate::vtcomplete_inline::retrieval::Retriever;
 use crate::vtcomplete_inline::{Caret, Engine, MAX_DOCUMENT_BYTES, Options, Syntax};
 
-/// Other open files consulted for patterns, nearest tabs first.
-const MAX_REFERENCE_TABS: usize = 8;
-/// Tabs inspected on each side of the active one while collecting references.
-const MAX_REFERENCE_SCAN: usize = 32;
 const MAX_BELOW_BYTES: usize = 256 * 1024;
-/// Workspace files the library indexes, and the largest one it reads.
-const LIBRARY_FILES: usize = 4000;
-const LIBRARY_FILE_BYTES: u64 = 256 * 1024;
-/// Retrieved files the predictor learns from at once.
-const RETRIEVED: usize = 4;
-/// Text around the caret that describes what the code is about.
-const QUERY_BEFORE: usize = 3000;
-const QUERY_BELOW: usize = 1000;
 /// Longest the word popup waits for a pending prediction.
 const INLINE_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
-
-/// Languages whose files the library indexes, by extension.
-fn language_of_extension(extension: &str) -> Option<&'static str> {
-    Some(match extension.to_ascii_lowercase().as_str() {
-        "rs" => "Rust",
-        "py" => "Python",
-        "c" | "h" => "C",
-        "cpp" | "cc" | "cxx" | "hpp" | "hh" => "C++",
-        "js" | "jsx" | "mjs" | "cjs" => "JavaScript",
-        "ts" | "tsx" => "TypeScript",
-        "go" => "Go",
-        "java" => "Java",
-        "kt" | "kts" => "Kotlin",
-        "cs" => "C#",
-        "rb" => "Ruby",
-        "php" => "PHP",
-        "swift" => "Swift",
-        "ex" | "exs" => "Elixir",
-        "scala" => "Scala",
-        "lua" => "Lua",
-        "sh" | "bash" | "zsh" => "Shell Script",
-        "dart" => "Dart",
-        _ => return None,
-    })
-}
-
-/// The identifiers of every source file in a workspace, for finding the
-/// files that matter for the code at the caret.
-struct Index {
-    retriever: Retriever,
-    /// File by number, with the language its syntax is lexed as.
-    files: Vec<(PathBuf, &'static str)>,
-    lookup: FxHashMap<PathBuf, u64>,
-    /// Tells apart the numbers of two successive libraries.
-    generation: u64,
-}
-
-impl Index {
-    /// Read the source files under `root`, honoring ignore files, on the
-    /// calling thread (a background thread, at low priority).
-    fn build(root: &Path, generation: u64) -> Self {
-        let mut index = Self {
-            retriever: Retriever::default(),
-            files: Vec::new(),
-            lookup: FxHashMap::default(),
-            generation,
-        };
-        let walk = ignore::WalkBuilder::new(root).require_git(false).build();
-        for entry in walk.flatten() {
-            if index.files.len() >= LIBRARY_FILES {
-                break;
-            }
-            let path = entry.path();
-            let Some(language) = path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .and_then(language_of_extension)
-            else {
-                continue;
-            };
-            if !entry.file_type().is_some_and(|kind| kind.is_file())
-                || entry
-                    .metadata()
-                    .is_ok_and(|meta| meta.len() > LIBRARY_FILE_BYTES || meta.len() < 64)
-            {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(path) else {
-                continue;
-            };
-            let number = index.files.len() as u64;
-            index.retriever.add(number, &text);
-            index.files.push((path.to_owned(), language));
-            index.lookup.insert(path.to_owned(), number);
-            if number % 16 == 15 {
-                // The scan is a courtesy: leave the processor to the editor.
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-        }
-        index
-    }
-
-    /// The engine's key for file `number`: tab numbers stay small.
-    fn key(&self, number: u64) -> u64 {
-        1 << 63 | (self.generation & 0x7F_FFFF) << 32 | number
-    }
-}
-
-#[derive(Default)]
-struct Library {
-    root: Option<PathBuf>,
-    building: bool,
-    index: Option<Arc<Index>>,
-    generation: u64,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Target {
@@ -144,17 +33,8 @@ pub(crate) struct Ghost {
     retype: Option<(usize, String)>,
 }
 
-struct Reference {
-    document: u64,
-    rope: ropey::Rope,
-    syntax: Syntax,
-}
-
 struct Job {
     target: Target,
-    /// The active file, which is never retrieved for itself.
-    path: Option<PathBuf>,
-    library: Option<Arc<Mutex<Library>>>,
     rope: ropey::Rope,
     syntax: Syntax,
     language: u8,
@@ -165,7 +45,6 @@ struct Job {
     warm: bool,
     /// How confident a prediction must be, from the user's eagerness setting.
     options: Options,
-    references: Vec<Reference>,
     generation: u64,
     #[cfg(test)]
     with_language_model: bool,
@@ -174,19 +53,11 @@ struct Job {
     activity: crate::completion_activity::Activity,
 }
 
-struct Model {
-    engine: Engine,
-    /// Snapshots already lexed into the engine, by document.
-    references: Vec<(u64, ropey::Rope)>,
-    /// Engine keys of the retrieved workspace files currently learned from.
-    retrieved: Vec<u64>,
-}
-
 #[derive(Default)]
 struct Queue {
     pending: Option<Job>,
     running: bool,
-    model: Option<Box<Model>>,
+    engine: Option<Box<Engine>>,
     /// How the answer of this generation spells the typed start of its word.
     retype: Option<(u64, String)>,
     /// The prediction made ahead for the text after accepting the latest one.
@@ -241,7 +112,6 @@ pub(crate) struct State {
     holding: Option<std::time::Instant>,
     /// Whether the word popup was on screen in the latest frame.
     pub(crate) popup_drawn: bool,
-    library: Arc<Mutex<Library>>,
     #[cfg(test)]
     pub(crate) submissions: usize,
     /// Tests run without the language model unless they ask for it here: it
@@ -299,150 +169,50 @@ fn split(rope: &ropey::Rope, cursor: (usize, usize)) -> Option<(String, String, 
     Some((before, rest, below, first as u64))
 }
 
-/// The text that describes what the code at the caret is about.
-fn query_text(before: &str, below: &str) -> String {
-    let mut from = before.len().saturating_sub(QUERY_BEFORE);
-    while !before.is_char_boundary(from) {
-        from += 1;
+/// None when cancelled; otherwise the text to show, if any, with the
+/// respelling of the typed start of its first word.
+fn predict(engine: &mut Engine, job: &Job) -> Option<Option<(String, Option<String>)>> {
+    let cancelled = || job.cancel.is_cancelled();
+    let (before, rest, below, window) = split(&job.rope, job.target.cursor)?;
+    if cancelled() {
+        return None;
     }
-    let mut to = below.len().min(QUERY_BELOW);
-    while !below.is_char_boundary(to) {
-        to -= 1;
+    #[cfg(test)]
+    if job.with_language_model {
+        engine.set_network(crate::vtcomplete_inline::model::embedded());
     }
-    format!("{}{}", &before[from..], &below[..to])
-}
-
-/// Make the engine learn from the workspace files most like the caret's
-/// surroundings, replacing the ones retrieved last time. Returns the engine
-/// keys now in use.
-fn learn_retrieved(
-    engine: &mut Engine,
-    previous: &[u64],
-    index: &Index,
-    active: Option<&Path>,
-    context: &str,
-) -> Vec<u64> {
-    let exclude = active
-        .and_then(|path| index.lookup.get(path))
-        .copied()
-        .unwrap_or(u64::MAX);
-    let wanted = index.retriever.query(context, exclude, RETRIEVED);
-    let keys: Vec<u64> = wanted.iter().map(|&number| index.key(number)).collect();
-    for old in previous.iter().filter(|old| !keys.contains(old)) {
-        engine.remove_reference(*old);
+    let key = job.target.document ^ window.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let caret = Caret {
+        key,
+        before: &before,
+        rest: &rest,
+        below: &below,
+        syntax: job.syntax,
+        language: job.language,
+    };
+    if job.warm {
+        engine.warm(caret, &cancelled);
+        return None;
     }
-    let mut used = Vec::with_capacity(keys.len());
-    for (&number, &key) in wanted.iter().zip(&keys) {
-        if engine.has_reference(key) {
-            engine.touch_reference(key);
-            used.push(key);
-        } else if let Some((path, language)) = index.files.get(number as usize)
-            && let Ok(text) = std::fs::read_to_string(path)
-        {
-            engine.set_reference(key, &text, Syntax::for_language(language));
-            used.push(key);
-        }
+    let prediction = engine.predict(
+        caret,
+        if job.explicit {
+            Options::requested(job.options)
+        } else {
+            job.options
+        },
+        &cancelled,
+    );
+    if cancelled() {
+        return None;
     }
-    used
-}
-
-impl Model {
-    fn retrieve(&mut self, job: &Job, before: &str, below: &str) {
-        let index = job
-            .library
-            .as_ref()
-            .and_then(|library| library.lock().unwrap_or_else(|e| e.into_inner()).index.clone());
-        let Some(index) = index else {
-            for old in self.retrieved.drain(..) {
-                self.engine.remove_reference(old);
-            }
-            return;
-        };
-        let context = query_text(before, below);
-        self.retrieved = learn_retrieved(
-            &mut self.engine,
-            &self.retrieved,
-            &index,
-            job.path.as_deref(),
-            &context,
-        );
-    }
-
-    /// None when cancelled; otherwise the text to show, if any, with the
-    /// respelling of the typed start of its first word.
-    fn predict(&mut self, job: &Job) -> Option<Option<(String, Option<String>)>> {
-        let cancelled = || job.cancel.is_cancelled();
-        // The active document is never its own reference.
-        self.engine.remove_reference(job.target.document);
-        self.references
-            .retain(|(document, _)| *document != job.target.document);
-        for reference in &job.references {
-            if cancelled() {
-                return None;
-            }
-            let known = self.references.iter().any(|(document, rope)| {
-                *document == reference.document && rope.is_instance(&reference.rope)
-            }) && self.engine.has_reference(reference.document);
-            if known {
-                self.engine.touch_reference(reference.document);
-                continue;
-            }
-            self.references
-                .retain(|(document, _)| *document != reference.document);
-            if reference.rope.len_bytes() > MAX_DOCUMENT_BYTES {
-                self.engine.remove_reference(reference.document);
-                continue;
-            }
-            let text = reference.rope.to_string();
-            self.engine
-                .set_reference(reference.document, &text, reference.syntax);
-            self.references
-                .push((reference.document, reference.rope.clone()));
-        }
-        self.references
-            .retain(|(document, _)| self.engine.has_reference(*document));
-        let (before, rest, below, window) = split(&job.rope, job.target.cursor)?;
-        if cancelled() {
-            return None;
-        }
-        self.retrieve(job, &before, &below);
-        #[cfg(test)]
-        if job.with_language_model {
-            self.engine.set_network(crate::vtcomplete_inline::model::embedded());
-        }
-        let key = job.target.document ^ window.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        let caret = Caret {
-            key,
-            before: &before,
-            rest: &rest,
-            below: &below,
-            syntax: job.syntax,
-            language: job.language,
-        };
-        if job.warm {
-            self.engine.warm(caret, &cancelled);
-            return None;
-        }
-        let prediction = self.engine.predict(
-            caret,
-            if job.explicit {
-                Options::requested(job.options)
-            } else {
-                job.options
-            },
-            &cancelled,
-        );
-        if cancelled() {
-            return None;
-        }
-        Some(prediction.and_then(|prediction| {
-            // Completing the word being typed counts as a suggestion too, so
-            // the ghost text appears while typing instead of leaving it all to
-            // the popup; a single character is not worth showing.
-            let useful = job.explicit || prediction.text.chars().count() >= 2;
-            useful.then_some((prediction.text, prediction.retype))
-        }))
-    }
+    Some(prediction.and_then(|prediction| {
+        // Completing the word being typed counts as a suggestion too, so
+        // the ghost text appears while typing instead of leaving it all to
+        // the popup; a single character is not worth showing.
+        let useful = job.explicit || prediction.text.chars().count() >= 2;
+        useful.then_some((prediction.text, prediction.retype))
+    }))
 }
 
 fn run(queue: Arc<Mutex<Queue>>) {
@@ -451,25 +221,19 @@ fn run(queue: Arc<Mutex<Queue>>) {
         Box::new(crate::worker_priority::CompletionPriority::new())
     });
     let _priority = crate::worker_priority::CompletionPriority::new();
-    let mut model = queue
+    let mut engine = queue
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .model
+        .engine
         .take()
-        .unwrap_or_else(|| {
-            Box::new(Model {
-                engine: Engine::new(),
-                references: Vec::new(),
-                retrieved: Vec::new(),
-            })
-        });
+        .unwrap_or_else(|| Box::new(Engine::new()));
     loop {
         let job = {
             let mut queue = queue.lock().unwrap_or_else(|error| error.into_inner());
             match queue.pending.take() {
                 Some(job) => job,
                 None => {
-                    queue.model = Some(model);
+                    queue.engine = Some(engine);
                     queue.running = false;
                     return;
                 }
@@ -478,7 +242,7 @@ fn run(queue: Arc<Mutex<Queue>>) {
         if !job.activity.wait(|| job.cancel.is_cancelled()) {
             continue;
         }
-        if let Some(answer) = model.predict(&job)
+        if let Some(answer) = predict(&mut engine, &job)
             && !job.cancel.is_cancelled()
         {
             let (text, retype) = answer.unzip();
@@ -495,7 +259,7 @@ fn run(queue: Arc<Mutex<Queue>>) {
             // the next request.
             let mut job = job;
             job.warm = true;
-            let _ = model.predict(&job);
+            let _ = predict(&mut engine, &job);
             // Then the prediction that follows accepting this one, so that
             // Tab after Tab never waits.
             if let Some(shown) = text.filter(|_| !respelled && !job.cancel.is_cancelled())
@@ -505,7 +269,7 @@ fn run(queue: Arc<Mutex<Queue>>) {
                 job.explicit = false;
                 job.rope = rope;
                 job.target.cursor = cursor;
-                if let Some(Some((next, None))) = model.predict(&job)
+                if let Some(Some((next, None))) = predict(&mut engine, &job)
                     && !job.cancel.is_cancelled()
                 {
                     queue.lock().unwrap_or_else(|error| error.into_inner()).speculation = Some(Speculation {
@@ -600,7 +364,6 @@ impl App {
             || self.lsp_references_active
             || self.clipboard_cycle_active
             || self.chord_pending
-            || self.completion_index_ui.open
             || self.paste_in_progress()
             || self.should_render_diff_for_active_editor()
             || self
@@ -632,8 +395,7 @@ impl App {
     }
 
     fn inline_enabled(&self) -> bool {
-        let settings = self.completion_index.settings();
-        settings.inline_predictions && self.quick_suggestions
+        self.completion_preferences.inline_predictions && self.quick_suggestions
     }
 
     pub(crate) fn begin_inline_key(&mut self) {
@@ -716,54 +478,6 @@ impl App {
         self.vtcomplete_inline.cancel();
     }
 
-    /// The workspace library, started on first use when the user has chosen
-    /// to learn from the entire workspace. A scan never happens otherwise.
-    fn ensure_library(&mut self) -> Option<Arc<Mutex<Library>>> {
-        let settings = self.completion_index.settings();
-        let root = (settings.enabled
-            && settings.project_wide
-            && !settings.paused
-            && self.remote_workspace.is_none()
-            && self.has_open_folder())
-        .then(|| self.explorer.root.clone());
-        let mut library = self
-            .vtcomplete_inline
-            .library
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let Some(root) = root else {
-            library.root = None;
-            library.index = None;
-            return None;
-        };
-        if library.root.as_ref() != Some(&root) {
-            library.root = Some(root.clone());
-            library.index = None;
-            library.generation += 1;
-        }
-        if library.index.is_none() && !library.building {
-            library.building = true;
-            let generation = library.generation;
-            let shared = Arc::clone(&self.vtcomplete_inline.library);
-            let started = std::thread::Builder::new()
-                .name("vtcomplete-library".into())
-                .spawn(move || {
-                    let _priority = crate::worker_priority::CompletionPriority::new();
-                    let index = Index::build(&root, generation);
-                    let mut library = shared.lock().unwrap_or_else(|error| error.into_inner());
-                    library.building = false;
-                    if library.root.as_ref() == Some(&root) && library.generation == generation {
-                        library.index = Some(Arc::new(index));
-                    }
-                });
-            if started.is_err() {
-                library.building = false;
-            }
-        }
-        drop(library);
-        Some(Arc::clone(&self.vtcomplete_inline.library))
-    }
-
     fn submit_inline(&mut self, target: Target, explicit: bool) {
         self.vtcomplete_inline.suppressed = None;
         self.vtcomplete_inline.requested = Some(target.clone());
@@ -817,14 +531,7 @@ impl App {
         let syntax = Syntax::for_language(editor.language_name());
         let language = crate::vtcomplete_inline::language_id(editor.language_name());
         let rope = editor.rope.clone();
-        let path = editor.file_path.clone();
-        let library = self.ensure_library();
-        let options = Options::preset(
-            crate::completion_index::InlineEagerness::ALL
-                .iter()
-                .position(|&level| level == self.completion_index.settings().inline_eagerness)
-                .unwrap_or(1),
-        );
+        let options = Options::preset(self.completion_preferences.inline_eagerness as usize);
         // An unoptimized test build needs far longer for the language model.
         #[cfg(test)]
         let options = Options {
@@ -835,50 +542,16 @@ impl App {
             },
             ..options
         };
-        // Nearby tabs of the same window group supply further patterns. The
-        // scan is bounded however many tabs are open.
-        let mut references = Vec::new();
-        for distance in 1..=MAX_REFERENCE_SCAN {
-            for index in [
-                self.active_tab.checked_sub(distance),
-                self.active_tab.checked_add(distance),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                let Some(tab) = self.tabs.get(index) else {
-                    continue;
-                };
-                let other = &tab.editor;
-                if tab.kind != TabKind::File
-                    || other.large_file_mode
-                    || other.bg_loading
-                    || other.navigation_id == target.document
-                    || other.rope.len_bytes() > MAX_DOCUMENT_BYTES
-                    || references.len() >= MAX_REFERENCE_TABS
-                {
-                    continue;
-                }
-                references.push(Reference {
-                    document: other.navigation_id,
-                    rope: other.rope.clone(),
-                    syntax: Syntax::for_language(other.language_name()),
-                });
-            }
-        }
         let cancel = CancellationToken::new();
         let generation = self.vtcomplete_inline.generation;
         let job = Job {
             target,
-            path,
-            library,
             rope,
             syntax,
             language,
             explicit,
             warm,
             options,
-            references,
             generation,
             #[cfg(test)]
             with_language_model: self.vtcomplete_inline.with_language_model,

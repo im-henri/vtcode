@@ -299,8 +299,6 @@ impl App {
             }
             Ok(count)
         });
-        self.completion_index_sync.buffers_changed |=
-            result.as_ref().is_ok_and(|count| *count != 0);
         self.lsp_manager
             .reply_workspace_edit(pending.reply, &result);
         match result {

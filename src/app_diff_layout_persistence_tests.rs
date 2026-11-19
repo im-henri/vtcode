@@ -70,6 +70,7 @@ fn diff_layout_survives_restart_folder_file_and_session_startup() {
                 global: saved(&app, SettingsScope::Global),
                 workspace: saved(&app, SettingsScope::Workspace),
                 session: restore.then(|| session.clone()),
+                completion_preferences: Default::default(),
                 incomplete_session_recovery: None,
             }.into_app(Default::default());
             let expected = if side_by_side { DiffMode::SideBySide } else { DiffMode::Inline };

@@ -274,7 +274,6 @@ impl App {
     }
 
     pub(crate) fn report_formatting_result(&mut self, result: Result<usize, String>, save: Option<PathBuf>) {
-        self.completion_index_sync.buffers_changed |= result.as_ref().is_ok_and(|count| *count != 0);
         if let Some(path) = save.as_deref() {
             if let Err(error) = self.save_open_file_by_path(path) {
                 self.show_formatting_error(format!("Could not save {}: {error}", path.display()));

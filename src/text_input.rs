@@ -59,7 +59,6 @@ pub(crate) enum TextInputId {
     DeskPopup,
     WorkspaceFilter,
     WorkspaceName,
-    CompletionNumber,
     OutputFind,
 }
 
@@ -707,7 +706,6 @@ impl App {
             }
             TextInputId::WorkspaceFilter => self.workspaces.popup.search.input_state(),
             TextInputId::WorkspaceName => self.workspaces.popup.sets.input_state(),
-            TextInputId::CompletionNumber => crate::ui_vtcomplete_index::input_state(self),
             TextInputId::OutputFind => self.logs.find_input_state(),
             TextInputId::TerminalFind(id) => {
                 let index = self.terminal_find_index(id).expect("live terminal Find field");
@@ -993,7 +991,6 @@ impl App {
             return kind.input();
         }
         if let Some(id) = crate::ui_workspaces::focused_input(self)
-            .or_else(|| crate::ui_vtcomplete_index::focused_input(self))
             .or_else(|| crate::ui_desks::focused_input(self)) {
             return Some(id);
         }
@@ -1100,7 +1097,6 @@ impl App {
             .filter(|id| !match id {
                 TextInputId::DeskPopup => crate::ui_desks::focused_input(self).is_some(),
                 TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => self.workspaces.popup.open,
-                TextInputId::CompletionNumber => crate::ui_vtcomplete_index::focused_input(self).is_some(),
                 TextInputId::OutputFind => self.show_panel && self.panel_tab == 2,
                 TextInputId::TerminalFind(id) => self.terminal_find_index(*id).is_some_and(|index| self.terminals[index].find.open),
                 TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => self.change_dir_active,
@@ -1192,7 +1188,7 @@ impl App {
         match id {
             TextInputId::TerminalFind(id) => self.terminal_find_edited(id),
             TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
-            | TextInputId::CompletionNumber | TextInputId::OutputFind => {},
+            | TextInputId::OutputFind => {},
             TextInputId::GitOperationTarget => crate::ui_modal::field_changed(self),
             TextInputId::Chat => self.refresh_chat_file_completion(),
             TextInputId::AgentSetting(_) => {
@@ -1288,7 +1284,6 @@ impl App {
             TextInputId::DeskPopup => return crate::ui_desks::edit_input(self, code, modifiers, paste),
             TextInputId::WorkspaceFilter => return crate::ui_workspaces::edit_filter(self, code, modifiers, paste),
             TextInputId::WorkspaceName => return crate::ui_workspace_sets::edit_input(self, code, modifiers, paste),
-            TextInputId::CompletionNumber => return crate::ui_vtcomplete_index::edit_input(self, code, modifiers, paste),
             TextInputId::OutputFind => return self.logs.edit_find_input(code, modifiers, paste),
             _ => {}
         }
@@ -1359,8 +1354,7 @@ impl App {
     fn text_input_is_overlay(&self, id: TextInputId) -> bool {
         match id {
             TextInputId::TerminalFind(_) => true,
-            TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
-            | TextInputId::CompletionNumber => true,
+            TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => true,
             TextInputId::AgentSetting(_) | TextInputId::LspSetting(_) | TextInputId::FormatterSetting(_) | TextInputId::RemoteTarget(_) | TextInputId::FileAssociation(_) | TextInputId::Exclusion(_) | TextInputId::ScopeBubbleLanguage => true,
             TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => true,
             TextInputId::SearchFind
@@ -1729,7 +1723,7 @@ mod tests {
         app.active_pane = crate::app::ActivePane::Editor;
         match id {
             TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
-            | TextInputId::CompletionNumber | TextInputId::OutputFind | TextInputId::TerminalFind(_) => {
+            | TextInputId::OutputFind | TextInputId::TerminalFind(_) => {
                 unreachable!("these controls have dedicated popup fixtures")
             }
             TextInputId::AgentSetting(_) => {
@@ -1949,7 +1943,6 @@ mod tests {
             match id {
                 TextInputId::DeskPopup => crate::ui_desks::draw(frame, app),
                 TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => crate::ui_workspaces::draw(frame, app),
-                TextInputId::CompletionNumber => crate::ui_vtcomplete_index::draw(frame, app),
                 TextInputId::OutputFind => crate::ui_logs::draw_content(frame, app, area),
                 TextInputId::TerminalFind(id) => {
                     let index = app.terminal_find_index(id).unwrap();

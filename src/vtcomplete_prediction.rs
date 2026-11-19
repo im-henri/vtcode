@@ -239,7 +239,6 @@ mod tests {
             cursor_line: 1,
             cursor_col: 9,
             document_id: 1,
-            active: true,
         };
         cache.analyze(&snapshot, "re", &|| false).unwrap();
         assert!(

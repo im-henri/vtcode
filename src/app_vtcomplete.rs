@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{App, TabKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CompletionKind {
@@ -36,53 +36,12 @@ impl CompletionKind {
         }
     }
 }
-#[cfg(test)]
-use crate::app::fuzzy_match_score;
-
 #[derive(Clone, Copy)]
 struct VtCompleteCandidate {
     proximity: usize,
     fuzzy_score: i64,
     prefix_match: bool,
     keyword: bool,
-}
-
-#[cfg(test)]
-fn add_vtcomplete_candidate(
-    word_scores: &mut rustc_hash::FxHashMap<String, VtCompleteCandidate>,
-    candidate: &str,
-    prefix: &str,
-    prefix_lower: &str,
-    proximity: usize,
-    keyword: bool,
-) {
-    if candidate.len() < 2 || candidate == prefix || candidate.eq_ignore_ascii_case(prefix) {
-        return;
-    }
-
-    // Scores depend on the word and the query, which stay fixed throughout
-    // this request. Repeated occurrences can only improve proximity/priority.
-    if let Some(entry) = word_scores.get_mut(candidate) {
-        entry.proximity = entry.proximity.min(proximity);
-        entry.keyword |= keyword;
-        return;
-    }
-
-    let candidate_lower = candidate.to_lowercase();
-    let prefix_match = candidate.starts_with(prefix) || candidate_lower.starts_with(prefix_lower);
-    let Some(fuzzy_score) = fuzzy_match_score(&candidate_lower, prefix_lower) else {
-        return;
-    };
-
-    word_scores.insert(
-        candidate.to_string(),
-        VtCompleteCandidate {
-            proximity,
-            fuzzy_score,
-            prefix_match,
-            keyword,
-        },
-    );
 }
 
 pub(crate) fn language_keywords(lang: &str) -> &'static [&'static str] {
@@ -630,8 +589,6 @@ pub(crate) fn language_keywords(lang: &str) -> &'static [&'static str] {
 
 #[path = "vtcomplete_worker.rs"]
 mod worker;
-#[cfg(test)]
-use worker::{VtCompleteSnapshot, compute_vtcomplete_suggestions};
 pub(crate) use worker::{VtCompleteWorkOutcome, VtCompleteWorker};
 
 /// Queued typing only needs suggestions for the last still-current caret.
@@ -704,7 +661,7 @@ impl App {
     }
 
     fn refresh_vtcomplete(&mut self) {
-        if self.editor().is_none() {
+        if self.tabs.get(self.active_tab).is_none_or(|tab| tab.kind != TabKind::File) {
             self.dismiss_vtcomplete();
             return;
         }
@@ -799,7 +756,7 @@ impl App {
             self.dismiss_vtcomplete();
             return;
         }
-        let settings = self.completion_index.settings();
+        let settings = self.completion_preferences;
         if !self.vtcomplete_explicit
             && !worker::automatic_trigger(editor, &settings)
         {
@@ -811,15 +768,12 @@ impl App {
         let active_group = self.active_group;
         let active_tab = self.active_tab;
         let generation = self.vtcomplete_generation;
-        // The shared project index supplies other files. Typing never clones
-        // or traverses every open tab, even in a window with thousands of tabs.
         let active = worker::VtCompleteSnapshot {
             source: crate::completion_source::Source::new(editor.file_path.as_deref(), &language),
             rope: editor.rope.clone(),
             document_id: editor.navigation_id,
             cursor_line: editor.cursor_line,
             cursor_col: editor.cursor_col,
-            active: true,
         };
         let edit_baseline = settings.use_history
             .then(|| editor.undo_stack.back().and_then(|state| {
@@ -828,6 +782,9 @@ impl App {
                     .then(|| state.rope.clone())
             }))
             .flatten();
+        self.completion_history
+            .take_if(|(document, _)| *document != active.document_id || !settings.use_history);
+        let history = self.completion_history.as_ref().map(|(_, history)| history.clone());
         #[cfg(test)]
         { self.vtcomplete_input_batch.submissions += 1; }
         let token = crate::background::CancellationToken::new();
@@ -835,7 +792,7 @@ impl App {
             worker::VtCompleteRequest {
                 active,
                 edit_baseline,
-                index: self.completion_index.clone(),
+                options: worker::PopupOptions { preferences: settings, history },
                 explicit: self.vtcomplete_explicit,
                 language,
                 generation,
@@ -878,7 +835,8 @@ impl App {
             detail.kind == CompletionKind::Value
                 && matches!(detail.annotation, "number" | "number sequence")
         });
-        if let Some(editor) = self.editor() {
+        if self.completion_preferences.use_history && let Some(editor) = self.editor() {
+            let document = editor.navigation_id;
             let context = self
                 .vtcomplete_details
                 .get(&word)
@@ -897,7 +855,10 @@ impl App {
                     context
                 });
             let prefix = worker::popup_prefix(editor).unwrap_or_default();
-            self.completion_index.record_choice(
+            self.completion_history.take_if(|(id, _)| *id != document);
+            let (_, history) = self.completion_history
+                .get_or_insert_with(|| (document, Default::default()));
+            std::sync::Arc::make_mut(history).record(
                 word.strip_suffix("()").unwrap_or(&word),
                 &prefix,
                 context,
@@ -927,6 +888,14 @@ impl App {
         self.dismiss_vtcomplete();
     }
 }
+
+#[cfg(test)]
+#[path = "app_vtcomplete_remote_tests.rs"]
+mod remote_tests;
+
+#[cfg(test)]
+#[path = "vtcomplete_responsiveness_bench.rs"]
+mod responsiveness_bench;
 
 #[cfg(test)]
 mod tests {
@@ -1001,67 +970,6 @@ mod tests {
     // --- language_keywords tests ---
 
     #[test]
-    fn vtcomplete_repeated_words_preserve_priority_and_distinct_casing() {
-        let mut scores = rustc_hash::FxHashMap::default();
-        for (word, proximity, keyword) in [
-            ("print_line", 1000, false),
-            ("print_line", 2, false),
-            ("print_line", 100, true),
-            ("Print_Line", 5, false),
-        ] {
-            super::add_vtcomplete_candidate(&mut scores, word, "pri", "pri", proximity, keyword);
-        }
-        assert_eq!(scores.len(), 2);
-        let repeated = scores.get("print_line").unwrap();
-        assert_eq!(repeated.proximity, 2);
-        assert!(repeated.keyword);
-        assert!(repeated.prefix_match);
-        assert_eq!(
-            repeated.fuzzy_score,
-            crate::app::fuzzy_match_score("print_line", "pri").unwrap()
-        );
-        let other_case = scores.get("Print_Line").unwrap();
-        assert_eq!(other_case.proximity, 5);
-        assert!(!other_case.keyword);
-    }
-
-    #[test]
-    #[ignore = "manual performance measurement; run with --release --ignored --nocapture"]
-    fn benchmark_vtcomplete_repeated_words() {
-        use std::hint::black_box;
-        use std::time::Instant;
-
-        let rope = ropey::Rope::from_str(
-            &"print_line print_value print_result unrelated\n".repeat(10_000),
-        );
-        let cancel = crate::background::CancellationToken::new();
-        let mut samples = Vec::new();
-        for _ in 0..7 {
-            let snapshots = vec![super::VtCompleteSnapshot {
-                source: Default::default(),
-                rope: rope.clone(),
-                document_id: 1,
-                cursor_line: 0,
-                cursor_col: 0,
-                active: true,
-            }];
-            let started = Instant::now();
-            let suggestions = super::compute_vtcomplete_suggestions(
-                black_box(snapshots),
-                "pri",
-                "Plain Text",
-                &cancel,
-            )
-            .unwrap();
-            samples.push(started.elapsed());
-            assert_eq!(suggestions.len(), 3);
-            black_box(suggestions);
-        }
-        samples.sort();
-        eprintln!("vtcomplete lines=10000 median={:?}", samples[3]);
-    }
-
-    #[test]
     fn language_keywords_rust() {
         let kw = super::language_keywords("Rust");
         assert!(kw.contains(&"fn"));
@@ -1129,6 +1037,44 @@ print_line
                 .iter()
                 .any(|suggestion| suggestion == "pair_right")
         );
+    }
+
+    #[test]
+    fn popup_sources_follow_the_active_buffer_and_its_unsaved_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::new_deferred(directory.path().to_owned());
+        let file = directory.path().join("first.txt");
+        std::fs::write(&file, "completionSavedOnly").unwrap();
+        std::fs::write(directory.path().join("unopened.txt"), "completionUnopened").unwrap();
+
+        for (path, word) in [
+            (file, "completionLiveFirst"),
+            (directory.path().join("second.txt"), "completionLiveSecond"),
+        ] {
+            let text = format!("{word}{}completion", "\n".repeat(180));
+            let mut editor = Editor::test_with_text(&text);
+            editor.file_path = Some(path);
+            editor.set_cursor(180, "completion".len());
+            app.tabs.push(Tab::new_file(editor));
+        }
+
+        for (tab, explicit, expected) in [
+            (0, false, "completionLiveFirst"),
+            (1, true, "completionLiveSecond"),
+            (0, true, "completionLiveFirst"),
+        ] {
+            app.active_tab = tab;
+            app.dismiss_vtcomplete();
+            if explicit {
+                app.update_vtcomplete_explicit();
+            } else {
+                app.update_vtcomplete();
+            }
+            app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+                app.vtcomplete_cancel_token.is_none()
+            });
+            assert_eq!(app.vtcomplete_suggestions, [expected]);
+        }
     }
 
     #[test]

@@ -87,13 +87,13 @@ fn vtcomplete_introduction_wraps_above_settings_and_stays_on_its_own_page() {
                 .collect::<Vec<_>>()
                 .join(" ");
             let header = header.split_whitespace().collect::<Vec<_>>().join(" ");
-            assert!(header.contains("VTCode's custom autocomplete engine. No language server required."));
+            assert!(header.contains("Word suggestions use the active file as you type or press Ctrl+Space."));
             assert!(content.height >= 3);
             assert!(text(&buffer).contains("Minimum Prefix Characters"));
             capture(&buffer, &format!("vtcomplete-{width}-light-{light}"));
         }
         app.select_settings_page(1, Some("Suggestions"));
-        assert!(!text(&render(&mut app, 110, 32)).contains("custom autocomplete engine"));
+        assert!(!text(&render(&mut app, 110, 32)).contains("Word suggestions use the active file"));
     }
 }
 

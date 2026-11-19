@@ -174,7 +174,6 @@ fn active(source: &str) -> VtCompleteSnapshot {
         cursor_line,
         cursor_col,
         document_id: 91,
-        active: true,
     }
 }
 
@@ -186,13 +185,13 @@ fn prediction_quality_corpus() {
     let cases = cases();
     for case in &cases {
         let active = active(&case.source);
-        let index = crate::completion_index::CompletionIndex::default();
+        let options = PopupOptions::default();
         let result = compute_contextual_invoked(
             &active,
             case.prefix,
             case.language,
-            &index,
-            &mut TokenCache::default(),
+            &options,
+            &mut CompletionCache::default(),
             true,
             || false,
         )
@@ -229,8 +228,8 @@ fn learned_identifier_precedes_a_partial_snippet_while_the_snippet_stays_availab
         &active,
         "te",
         "Rust",
-        &crate::completion_index::CompletionIndex::default(),
-        &mut TokenCache::default(),
+        &PopupOptions::default(),
+        &mut CompletionCache::default(),
         false,
         || false,
     )
@@ -255,13 +254,13 @@ fn learned_identifier_precedes_a_partial_snippet_while_the_snippet_stays_availab
 #[test]
 fn automatic_suggestions_are_selective_but_manual_completion_can_broaden_the_list() {
     let active = active("logger.printLine()\nlogger.printLine()\ngrandPaRade\nlogger.pr");
-    let index = crate::completion_index::CompletionIndex::default();
+    let options = PopupOptions::default();
     let automatic = compute_contextual_invoked(
         &active,
         "pr",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         false,
         || false,
     )
@@ -270,8 +269,8 @@ fn automatic_suggestions_are_selective_but_manual_completion_can_broaden_the_lis
         &active,
         "pr",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         true,
         || false,
     )
@@ -292,8 +291,8 @@ fn automatic_suggestions_are_selective_but_manual_completion_can_broaden_the_lis
         &active,
         "pritnS",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         false,
         || false,
     )
@@ -308,9 +307,9 @@ fn automatic_suggestions_are_selective_but_manual_completion_can_broaden_the_lis
 fn typing_reuses_the_structural_prefix_and_invalidates_edits_above_it() {
     let source = "let reader = Reader();\nreader.readPacket()\nreader.readPacket()\nreader.r";
     let mut active = active(source);
-    let mut cache = TokenCache::default();
-    let index = crate::completion_index::CompletionIndex::default();
-    compute_contextual(&active, "r", "Unknown", &index, &mut cache, || false).unwrap();
+    let mut cache = CompletionCache::default();
+    let options = PopupOptions::default();
+    compute_contextual(&active, "r", "Unknown", &options, &mut cache, || false).unwrap();
     let initial = cache.prediction.parsed_bytes;
     for ch in ['e', 'a', 'd'] {
         active.rope.insert_char(active.rope.len_chars(), ch);
@@ -321,7 +320,7 @@ fn typing_reuses_the_structural_prefix_and_invalidates_edits_above_it() {
             .chars()
             .skip(7)
             .collect();
-        compute_contextual(&active, &prefix, "Unknown", &index, &mut cache, || false).unwrap();
+        compute_contextual(&active, &prefix, "Unknown", &options, &mut cache, || false).unwrap();
     }
     assert_eq!(cache.prediction.builds, 1);
     assert!(
@@ -330,13 +329,13 @@ fn typing_reuses_the_structural_prefix_and_invalidates_edits_above_it() {
     );
     active.rope.insert(0, "let other = Reader();\n");
     active.cursor_line += 1;
-    compute_contextual(&active, "read", "Unknown", &index, &mut cache, || false).unwrap();
+    compute_contextual(&active, "read", "Unknown", &options, &mut cache, || false).unwrap();
     assert_eq!(cache.prediction.builds, 2);
 }
 
 #[test]
 fn multiline_strings_are_quiet_and_fake_calls_cannot_change_code_insertion() {
-    let index = crate::completion_index::CompletionIndex::default();
+    let options = PopupOptions::default();
     for source in [
         "text = '''multiline\nprintStatus\npri",
         "text = `multiline\nprintStatus\npri",
@@ -345,8 +344,8 @@ fn multiline_strings_are_quiet_and_fake_calls_cannot_change_code_insertion() {
             &active(source),
             "pri",
             "Unknown",
-            &index,
-            &mut TokenCache::default(),
+            &options,
+            &mut CompletionCache::default(),
             false,
             || false,
         )
@@ -362,8 +361,8 @@ fn multiline_strings_are_quiet_and_fake_calls_cannot_change_code_insertion() {
         &active(source),
         "act",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         || false,
     )
     .unwrap();
@@ -378,8 +377,8 @@ fn multiline_strings_are_quiet_and_fake_calls_cannot_change_code_insertion() {
             &active(&source),
             "act",
             "Unknown",
-            &index,
-            &mut TokenCache::default(),
+            &options,
+            &mut CompletionCache::default(),
             || false,
         )
         .unwrap();
@@ -397,8 +396,8 @@ fn multiline_strings_are_quiet_and_fake_calls_cannot_change_code_insertion() {
         &before_prose,
         "act",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         || false,
     )
     .unwrap();

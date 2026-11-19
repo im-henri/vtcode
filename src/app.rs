@@ -296,9 +296,8 @@ pub(crate) struct App {
     pub(crate) vtcomplete_explicit: bool,
     pub(crate) vtcomplete_navigated: bool,
     pub(crate) vtcomplete_inline: crate::app_vtcomplete_inline::State,
-    pub(crate) completion_index: crate::completion_index::CompletionIndex,
-    pub(crate) completion_index_sync: crate::app_vtcomplete_index::State,
-    pub(crate) completion_index_ui: crate::ui_vtcomplete_index::State,
+    pub(crate) completion_preferences: crate::app_vtcomplete_settings::Preferences,
+    pub(crate) completion_history: Option<(u64, std::sync::Arc<crate::completion_history::History>)>,
     pub(crate) vtcomplete_generation: u64,
     pub(crate) vtcomplete_cancel_token: Option<crate::background::CancellationToken>,
     pub(crate) vtcomplete_worker: crate::app_vtcomplete::VtCompleteWorker,
@@ -1346,9 +1345,8 @@ impl App {
             vtcomplete_explicit: false,
             vtcomplete_navigated: false,
             vtcomplete_inline: Default::default(),
-            completion_index: Default::default(),
-            completion_index_sync: Default::default(),
-            completion_index_ui: Default::default(),
+            completion_preferences: Default::default(),
+            completion_history: None,
             vtcomplete_generation: 0,
             vtcomplete_cancel_token: None,
             vtcomplete_worker: crate::app_vtcomplete::VtCompleteWorker::default(),
@@ -2014,9 +2012,6 @@ impl App {
                 }
                 result => result,
             };
-            if !matches!(result, crate::background::BackgroundResult::FileWatcherState { .. }) {
-                self.completion_index_sync.buffers_changed = true;
-            }
             let result = match result {
                 crate::background::BackgroundResult::SourceControlRead { cancel, result } => {
                     if !self.source_control_enabled || cancel.is_cancelled() { continue; }

@@ -25,14 +25,13 @@ fn novel_predictions_work_without_an_index_and_do_not_depend_on_a_language_or_ex
             cursor_col: 2,
             rope,
             document_id: 1,
-            active: true,
         };
         let result = compute_contextual_invoked(
             &active,
             "my",
             language,
-            &crate::completion_index::CompletionIndex::default(),
-            &mut TokenCache::default(),
+            &PopupOptions::default(),
+            &mut CompletionCache::default(),
             false,
             || false,
         )
@@ -54,15 +53,14 @@ fn generation_checks_the_visible_suffix_and_keeps_snippet_and_manual_completion_
         document_id: 1,
         cursor_line: 2,
         cursor_col: 2,
-        active: true,
     };
-    let index = crate::completion_index::CompletionIndex::default();
+    let options = PopupOptions::default();
     let result = compute_contextual_invoked(
         &active,
         "sl",
         "Unknown",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         false,
         || false,
     )
@@ -79,8 +77,8 @@ fn generation_checks_the_visible_suffix_and_keeps_snippet_and_manual_completion_
         &active,
         "fn",
         "Rust",
-        &index,
-        &mut TokenCache::default(),
+        &options,
+        &mut CompletionCache::default(),
         false,
         || false,
     )
@@ -94,7 +92,7 @@ fn generation_checks_the_visible_suffix_and_keeps_snippet_and_manual_completion_
     active.cursor_col = 1;
     for explicit in [false, true] {
         let early = compute_contextual_invoked(
-            &active, "s", "Unknown", &index, &mut TokenCache::default(), explicit, || false,
+            &active, "s", "Unknown", &options, &mut CompletionCache::default(), explicit, || false,
         ).unwrap();
         assert_eq!(early.suggestions.first().map(String::as_str), Some("slot3"));
         assert_eq!(early.details[0].annotation, "sequence");
@@ -104,18 +102,18 @@ fn generation_checks_the_visible_suffix_and_keeps_snippet_and_manual_completion_
 #[test]
 fn two_nonunit_identifier_items_predict_the_third_and_respect_prefix_settings() {
     let mut active = active_text_for_early_sequence("slot10 = a\nslot20 = b\ns");
-    let index = crate::completion_index::CompletionIndex::default();
-    let result = compute_contextual_invoked(&active, "s", "Unknown", &index,
-        &mut TokenCache::default(), false, || false).unwrap();
+    let options = PopupOptions::default();
+    let result = compute_contextual_invoked(&active, "s", "Unknown", &options,
+        &mut CompletionCache::default(), false, || false).unwrap();
     assert_eq!(result.suggestions.first().map(String::as_str), Some("slot30"));
     active.rope = ropey::Rope::from_str("slot10 = a\nslot20 = b\nslot35 = c\ns");
     active.cursor_line = 3;
-    let result = compute_contextual_invoked(&active, "s", "Unknown", &index,
-        &mut TokenCache::default(), false, || false).unwrap();
+    let result = compute_contextual_invoked(&active, "s", "Unknown", &options,
+        &mut CompletionCache::default(), false, || false).unwrap();
     assert!(!result.suggestions.iter().any(|word| word == "slot50"));
     let mut editor = crate::editor::Editor::test_with_text("s");
     editor.cursor_col = 1;
-    let mut settings = index.settings();
+    let mut settings = options.preferences;
     settings.min_prefix_chars = 2;
     settings.context_triggers = false;
     assert!(!automatic_trigger(&editor, &settings));
@@ -126,7 +124,7 @@ fn active_text_for_early_sequence(text: &str) -> VtCompleteSnapshot {
     let cursor_line = rope.len_lines() - 1;
     VtCompleteSnapshot {
         source: Default::default(), cursor_line, cursor_col: rope.line(cursor_line).len_chars(),
-        rope, document_id: 1, active: true,
+        rope, document_id: 1,
     }
 }
 
@@ -362,7 +360,7 @@ fn benchmark_generated_identifier_replay() {
     assert!(matches!(split.as_str(), "development" | "holdout"));
     let roots = roots(&split);
     let probes = probes(&roots);
-    let index = crate::completion_index::CompletionIndex::default();
+    let options = PopupOptions::default();
     let background = crate::background::BackgroundWorkers::new();
     let worker = VtCompleteWorker::default();
     let mut rows = Vec::new();
@@ -391,22 +389,21 @@ fn benchmark_generated_identifier_replay() {
             document_id: i as u64 + 1,
             cursor_line: line,
             cursor_col: col,
-            active: true,
         };
-        learning_replay_tests::begin_trace(probe.expected.as_deref());
+        recall::begin_trace(probe.expected.as_deref());
         let started = Instant::now();
         let result = compute_contextual_invoked(
             &active,
             &probe.prefix,
             "Unknown",
-            &index,
-            &mut TokenCache::default(),
+            &options,
+            &mut CompletionCache::default(),
             false,
             || false,
         )
         .unwrap();
         cold_ns.push(started.elapsed().as_nanos());
-        let recalled = learning_replay_tests::candidate_recalled();
+        let recalled = recall::candidate_recalled();
         let rank = probe
             .expected
             .as_ref()
@@ -433,7 +430,7 @@ fn benchmark_generated_identifier_replay() {
                 VtCompleteRequest {
                     active: active.clone(),
                     edit_baseline: None,
-                    index: index.clone(),
+                    options: PopupOptions::default(),
                     explicit: false,
                     language: "Unknown".into(),
                     generation,

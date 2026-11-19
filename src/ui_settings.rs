@@ -711,7 +711,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
     let header_height = if spacious_header { 4 } else { 2 };
     let mut introduction = if section == Some("VTComplete") {
         App::wrap_setting_text_for_width(
-            "VTCode's custom autocomplete engine. No language server required.",
+            "Word suggestions use the active file as you type or press Ctrl+Space.",
             heading_area.width as usize,
         )
     } else {

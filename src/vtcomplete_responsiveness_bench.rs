@@ -1,6 +1,14 @@
 //! Opt-in UI replay using real source, actual completion workers and a single
 //! CPU on Windows. TestBackend measures application painting, not a terminal.
-use super::*;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+
+use crate::{
+    app::{App, Tab},
+    editor::Editor,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -52,12 +60,12 @@ fn benchmark_vtcomplete_foreground_responsiveness() {
     let names = [
         "app_vtcomplete.rs",
         "vtcomplete_worker.rs",
-        "completion_index.rs",
+        "app_vtcomplete_settings.rs",
         "completion_context.rs",
         "completion_examples.rs",
         "vtcomplete_scoring.rs",
         "completion_patterns.rs",
-        "completion_storage.rs",
+        "completion_edit_history.rs",
     ];
     let texts: Vec<_> = names
         .iter()
@@ -75,6 +83,7 @@ fn benchmark_vtcomplete_foreground_responsiveness() {
         app.sticky_scroll = false;
         app.cursor_blinking = false;
         app.quick_suggestions = optional_work;
+        app.completion_preferences.inline_predictions = false;
         for effect in crate::animation_config::AnimationEffect::ALL {
             app.animation_settings.set(effect, false);
         }
@@ -91,25 +100,6 @@ fn benchmark_vtcomplete_foreground_responsiveness() {
             app.tabs.push(Tab::new_file(editor));
         }
         app.active_tab = 0;
-        app.last_edit_time = Instant::now() - Duration::from_secs(1);
-        if optional_work {
-            app.completion_index = crate::completion_index::CompletionIndex::new_for_test(
-                root.clone(),
-                temporary.path().join("cache"),
-            );
-            app.poll_completion_index();
-            // Queue 128 real-source snapshots, well beyond the visible tab set.
-            for n in 0..128 {
-                let text = &texts[n % texts.len()];
-                if !app.completion_index.observe_buffer(
-                    root.join(format!("queued{n}.rs")),
-                    ropey::Rope::from_str(text),
-                    true,
-                ) {
-                    break;
-                }
-            }
-        }
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
         terminal
             .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -174,8 +164,6 @@ fn benchmark_vtcomplete_foreground_responsiveness() {
             if optional_work {
                 app.update_vtcomplete_explicit();
             }
-            // Production polling must defer its optional inventory work too.
-            app.poll_completion_index();
             let frame = Instant::now();
             terminal
                 .draw(|frame| crate::ui::draw(frame, &mut app))
@@ -195,7 +183,6 @@ fn benchmark_vtcomplete_foreground_responsiveness() {
                 resumed,
                 "the latest completion must finish after input settles"
             );
-            app.completion_index.cancel();
         }
         let cases: Vec<_> = ["cursor", "scroll", "open-existing-file", "tab", "typing"]
             .into_iter()
@@ -207,20 +194,9 @@ fn benchmark_vtcomplete_foreground_responsiveness() {
             .collect();
         rows.push(serde_json::json!({"optionalCompletionWork":optional_work,"resumedAfterInput":resumed,"cases":cases}));
     }
-    let mut inventory = inventory_app(10_000);
-    let mut inventory_ms = Vec::new();
-    loop {
-        let now = Instant::now();
-        inventory.poll_completion_index();
-        inventory_ms.push(now.elapsed().as_secs_f64() * 1000.);
-        if inventory.completion_index_next_wait().is_none() {
-            break;
-        }
-    }
     let report = serde_json::json!({"platform":std::env::consts::OS,"singleCpu":cfg!(windows),
         "sourceFiles":names,"sourceBytes":texts.iter().map(String::len).sum::<usize>(),"runs":rows,
-        "tenThousandTabInventory":summary(&mut inventory_ms),"inventoryVisitLimit":INVENTORY_PER_TURN,
-        "description":"Current implementation, completion disabled versus queued completion/index work; real sources, actual input dispatch and TestBackend paint, 300 operations per run. Opening revisits an existing file. Setup, disk loading and terminal/compositor time excluded; 10,000-tab inventory is a separate isolated service measurement."});
+        "description":"Foreground dispatch and TestBackend paint with active-file word suggestions enabled and disabled. Each run performs 300 operations using open buffers."});
     eprintln!("{}", serde_json::to_string_pretty(&report).unwrap());
     if let Some(path) = std::env::var_os("VTCODE_RESPONSIVENESS_REPORT") {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();

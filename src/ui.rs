@@ -1079,7 +1079,6 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     crate::ui_quick_picker::draw_active(f, app);
     crate::ui_desks::draw(f, app);
     crate::ui_workspaces::draw(f, app);
-    crate::ui_vtcomplete_index::draw(f, app);
     crate::ui_modal::draw_active(f, app);
     crate::app_shortcuts::draw_editor(f, app);
     app.draw_text_input_context_menu(f);

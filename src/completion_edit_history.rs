@@ -475,7 +475,6 @@ mod tests {
             document_id: 7,
             cursor_line: 0,
             cursor_col: cursor,
-            active: true,
         }
     }
 
@@ -603,15 +602,16 @@ mod tests {
     #[test]
     fn worker_ranks_temporal_transformations_and_history_setting_removes_them() {
         let (history, text) = trained();
-        let mut cache = super::super::TokenCache::default();
-        cache.edit_history = history;
-        let index = crate::completion_index::CompletionIndex::default();
+        let mut cache = super::super::CompletionCache::default();
+        let mut options = super::super::PopupOptions::default();
         let active = snapshot(&text, text.len());
+        cache.use_document(active.document_id);
+        cache.edit_history = history;
         let result = super::super::compute_contextual_invoked(
             &active,
             "de",
             "Unknown",
-            &index,
+            &options,
             &mut cache,
             false,
             || false,
@@ -622,14 +622,12 @@ mod tests {
             Some("decode_customer")
         );
         assert_eq!(result.details[0].annotation, "edit");
-        let mut settings = index.settings();
-        settings.use_history = false;
-        index.configure(settings);
+        options.preferences.use_history = false;
         let result = super::super::compute_contextual_invoked(
             &active,
             "de",
             "Unknown",
-            &index,
+            &options,
             &mut cache,
             false,
             || false,

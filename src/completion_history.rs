@@ -1,11 +1,10 @@
-//! Bounded project-local preferences, separate from lexical relevance.
+//! Recent accepted completions in the current editor buffer.
 use crate::completion_context::{Context, hash_parts};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const MAX_CHOICES: usize = 512;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 struct Choice {
     context: u64,
     prefix: String,
@@ -15,7 +14,7 @@ struct Choice {
     used: u64,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default)]
 pub(crate) struct History {
     clock: u64,
     choices: Vec<Choice>,
@@ -52,23 +51,6 @@ fn context_key(context: Context) -> u64 {
 }
 
 impl History {
-    pub(crate) fn bounded(mut self) -> Self {
-        self.choices.retain(|choice| {
-            choice.word.len() <= 160 && choice.prefix.len() <= 64 && choice.count > 0
-        });
-        self.choices
-            .sort_unstable_by_key(|choice| std::cmp::Reverse(choice.used));
-        self.choices.truncate(MAX_CHOICES);
-        self.clock = self.clock.max(
-            self.choices
-                .iter()
-                .map(|choice| choice.used)
-                .max()
-                .unwrap_or(0),
-        );
-        self
-    }
-
     pub(crate) fn record(&mut self, word: &str, prefix: &str, context: Context, manual: bool) {
         if word.len() > 160 || prefix.len() > 64 {
             return;
@@ -135,11 +117,6 @@ impl History {
                 + recency
                 + i64::from(choice.manual == explicit) * 10
                 + i64::from(choice.prefix == prefix) * 12;
-            let score = if choice.context == key {
-                score
-            } else {
-                score / 2
-            };
             let value = result.entry(choice.word.clone()).or_default();
             *value = (*value).max(score);
         }
@@ -199,12 +176,7 @@ mod tests {
             ..c
         };
         assert!(history.scores("sp", header, true).is_empty());
-        let restored: History =
-            serde_json::from_slice(&serde_json::to_vec(&history).unwrap()).unwrap();
-        assert_eq!(
-            restored.scores("sp", c, true),
-            history.scores("sp", c, true)
-        );
+
     }
 
     #[test]
@@ -222,12 +194,7 @@ mod tests {
             history.record("readPacket", "rp", receiver("reader"), true);
         }
         assert!(history.scores("rp", receiver("reader"), true)["readPacket"] <= 94);
-        let restored: History =
-            serde_json::from_slice(&serde_json::to_vec(&history).unwrap()).unwrap();
-        assert_eq!(
-            restored.bounded().scores("rp", receiver("reader"), true),
-            history.scores("rp", receiver("reader"), true)
-        );
+
     }
 
     #[test]

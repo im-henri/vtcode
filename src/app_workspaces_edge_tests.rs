@@ -19,6 +19,7 @@ fn ready_open(app: &mut App, root: &Path) {
                 global: Default::default(),
                 workspace: Default::default(),
                 session: None,
+                completion_preferences: Default::default(),
                 incomplete_session_recovery: None,
             },
             remote: None,

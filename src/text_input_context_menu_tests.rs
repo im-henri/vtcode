@@ -8,7 +8,6 @@ pub(super) const EXTRA_FIELDS: &[TextInputId] = &[
     TextInputId::DeskPopup,
     TextInputId::WorkspaceFilter,
     TextInputId::WorkspaceName,
-    TextInputId::CompletionNumber,
     TextInputId::OutputFind,
 ];
 
@@ -41,17 +40,6 @@ pub(super) fn field_app(id: TextInputId) -> App {
             crate::ui_workspaces::open(&mut app);
             app.workspaces.popup.sets.mode = Some(crate::ui_workspace_sets::Mode::Save(None));
             app.workspaces.popup.sets.focus_input();
-        }
-        TextInputId::CompletionNumber => {
-            crate::ui_vtcomplete_index::open(&mut app);
-            crate::ui_vtcomplete_index::handle_key(
-                &mut app,
-                KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
-            );
-            crate::ui_vtcomplete_index::handle_key(
-                &mut app,
-                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            );
         }
         TextInputId::OutputFind => {
             app.show_output();
@@ -322,7 +310,6 @@ fn menu_paste_honors_numeric_filters_and_multiline_fields() {
         (TextInputId::GotoLine, "67:8"),
         (TextInputId::SettingsValue, "678"),
         (TextInputId::AgentSetting(2), "678"),
-        (TextInputId::CompletionNumber, "678"),
         (TextInputId::SourceControlCommit, "a6\n7:8\n"),
     ] {
         let mut app = field_app(id);

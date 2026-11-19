@@ -157,10 +157,10 @@ fn navigation_keys_do_not_request_predictions() {
 #[test]
 fn the_setting_turns_predictions_off() {
     let mut app = app_with(SETTERS);
-    let mut settings = app.completion_index.settings();
+    let mut settings = app.completion_preferences;
     assert!(settings.inline_predictions);
     settings.inline_predictions = false;
-    app.completion_index.configure(settings);
+    app.completion_preferences = settings;
     press(&mut app, KeyCode::Char('.'), KeyModifiers::NONE);
     assert_eq!(app.vtcomplete_inline.submissions, 0);
     assert!(!app.inline_ghost_visible());
@@ -370,9 +370,9 @@ fn the_predict_here_shortcut_asks_at_the_caret_without_typing() {
     assert_eq!(app.vtcomplete_inline.submissions, 1);
     assert!(text(&app).ends_with("        self"), "the shortcut must not type");
     // It works with automatic predictions turned off, and through the palette.
-    let mut settings = app.completion_index.settings();
+    let mut settings = app.completion_preferences;
     settings.inline_predictions = false;
-    app.completion_index.configure(settings);
+    app.completion_preferences = settings;
     app.execute_palette_command("vtcomplete_inline_request");
     assert_eq!(app.vtcomplete_inline.submissions, 2);
     // Where predictions cannot be shown it does nothing.
@@ -381,96 +381,35 @@ fn the_predict_here_shortcut_asks_at_the_caret_without_typing() {
     assert_eq!(app.vtcomplete_inline.submissions, 2);
 }
 
-fn write(directory: &Path, name: &str, text: &str) -> PathBuf {
-    let path = directory.join(name);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, text).unwrap();
-    path
-}
-
 #[test]
-fn the_library_indexes_source_files_and_honors_ignore_files() {
-    let project = tempfile::tempdir().unwrap();
-    let dir = project.path();
-    let filler = "// padding so the file is not tiny\n".repeat(4);
-    write(dir, ".gitignore", "generated/\n");
-    write(dir, "src/net.rs", &format!("{filler}fn open_channel(peer_address: Address) {{}}"));
-    write(dir, "src/view.py", &format!("{filler}def draw_border(frame, widget_area): pass"));
-    write(dir, "notes.txt", &format!("{filler}open_channel peer_address"));
-    write(dir, "generated/out.rs", &format!("{filler}fn open_channel(peer_address: Address) {{}}"));
-    let index = Index::build(dir, 1);
-    let mut names: Vec<String> = index
-        .files
-        .iter()
-        .map(|(path, language)| format!("{}:{language}", path.file_name().unwrap().to_string_lossy()))
-        .collect();
-    names.sort();
-    assert_eq!(names, ["net.rs:Rust", "view.py:Python"]);
-    assert_eq!(index.retriever.len(), 2);
-    assert_ne!(index.key(0), index.key(1));
-    assert!(index.key(0) > u64::from(u32::MAX), "retrieved keys never collide with tab numbers");
-    assert_ne!(Index::build(dir, 2).key(0), index.key(0));
-    assert_eq!(language_of_extension("RS"), Some("Rust"));
-    assert_eq!(language_of_extension("txt"), None);
-}
-
-#[test]
-fn retrieved_files_are_learned_from_replaced_and_never_include_the_active_file() {
-    let project = tempfile::tempdir().unwrap();
-    let dir = project.path();
-    let net = "fn open_channel(peer_address: Address) { connect(peer_address); }\n".repeat(3);
-    let net_path = write(dir, "src/net.rs", &net);
-    write(dir, "src/view.rs", &"fn draw_border(frame: Frame, widget_area: Rect) { paint(frame); }\n".repeat(3));
-    for filler in 0..6 {
-        write(dir, &format!("src/other{filler}.rs"), &format!("fn helper_{filler}(value: u32) -> u32 {{ value + {filler} }}\n").repeat(3));
-    }
-    let index = Index::build(dir, 1);
-    let mut engine = Engine::new();
-    engine.set_network(None);
-    let query = "let peer = peer_address;\nopen_channel(";
-    let used = learn_retrieved(&mut engine, &[], &index, None, query);
-    assert_eq!(used.len(), 1, "only the file sharing distinctive names is retrieved");
-    assert!(engine.has_reference(used[0]));
-    // The active file is never its own reference.
-    let used_active = learn_retrieved(&mut engine, &used, &index, Some(&net_path), query);
-    assert!(used_active.is_empty());
-    assert!(!engine.has_reference(used[0]), "the stale reference is released");
-    // Another request about another subject replaces the first.
-    let used = learn_retrieved(&mut engine, &used_active, &index, None, "draw_border(frame, widget_area");
-    assert_eq!(used.len(), 1);
-    assert!(engine.has_reference(used[0]));
-}
-
-#[test]
-fn the_workspace_is_scanned_only_when_the_user_chose_to_learn_from_it() {
-    let mut app = app_with(SETTERS);
-    assert!(app.ensure_library().is_none(), "no scan by default");
-    let mut settings = app.completion_index.settings();
-    settings.project_wide = true;
-    app.completion_index.configure(settings.clone());
-    // Without an open folder there is still nothing to scan.
-    if !app.has_open_folder() {
-        assert!(app.ensure_library().is_none());
-    }
-    settings.project_wide = false;
-    app.completion_index.configure(settings);
-    assert!(app.ensure_library().is_none());
-    assert!(app.vtcomplete_inline.library.lock().unwrap().index.is_none());
+fn inline_patterns_use_the_active_file() {
+    let mut app = app_with("let peer = lookup();\nlet delta = Channel::open(config);\ndelta.");
+    let other_text = "let alpha = Channel::open(config);\nalpha.connect(peer);\n\
+                      let beta = Channel::open(config);\nbeta.connect(peer);\n\
+                      let gamma = Channel::open(config);\ngamma.connect(peer);\n";
+    let mut other = crate::editor::Editor::test_with_text(other_text);
+    other.language_override = Some("Rust".into());
+    app.tabs.push(crate::app::Tab::new_file(other));
+    app.request_inline_prediction();
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        app.vtcomplete_inline.cancel.is_none()
+    });
+    assert!(app.inline_ghost_text().is_none());
 }
 
 #[test]
 fn eagerness_is_a_saved_setting_that_lowers_the_confidence_needed() {
-    use crate::completion_index::InlineEagerness;
+    use crate::app_vtcomplete_settings::InlineEagerness;
     let mut app = app_with(SETTERS);
-    assert_eq!(app.completion_index.settings().inline_eagerness, InlineEagerness::Balanced);
+    assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Balanced);
     for (label, level) in [("Cautious", 0), ("Balanced", 1), ("Eager", 2), ("Always", 3)] {
         app.apply_settings_dropdown_value("vtcomplete_inline_eagerness", label);
-        let chosen = app.completion_index.settings().inline_eagerness;
+        let chosen = app.completion_preferences.inline_eagerness;
         assert_eq!(chosen.label(), label);
         assert_eq!(InlineEagerness::ALL[level], chosen);
     }
     app.apply_settings_dropdown_value("vtcomplete_inline_eagerness", "Reckless");
-    assert_eq!(app.completion_index.settings().inline_eagerness, InlineEagerness::Always, "an unknown choice changes nothing");
+    assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Always, "an unknown choice changes nothing");
     // Each step is more willing to show a guess than the one before.
     let levels: Vec<Options> = (0..4).map(Options::preset).collect();
     for pair in levels.windows(2) {
@@ -485,7 +424,7 @@ fn eagerness_is_a_saved_setting_that_lowers_the_confidence_needed() {
         assert!(asked.next <= level.next.min(0.35) && asked.block <= level.block);
     }
     // The choice survives saving and loading the settings.
-    let saved = serde_json::to_string(&app.completion_index.settings()).unwrap();
+    let saved = serde_json::to_string(&app.completion_preferences).unwrap();
     assert!(saved.contains("\"inlineEagerness\":\"always\""), "{saved}");
 }
 

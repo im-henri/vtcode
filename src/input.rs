@@ -1715,9 +1715,7 @@ mod tests {
             ),
         ] {
             let mut app = App::test_new();
-            let mut preferences = app.completion_index.settings();
-            preferences.context_triggers = enabled;
-            app.completion_index.configure(preferences);
+            app.completion_preferences.context_triggers = enabled;
             let mut editor = Editor::test_with_text(text);
             editor.language_override = Some("Rust".into());
             editor.cursor_line = text.lines().count() - 1;

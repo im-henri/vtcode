@@ -60,9 +60,6 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(MouseButton::Left)) {
         app.editor_selection_drag = None;
     }
-    if crate::ui_vtcomplete_index::handle_mouse(app, mouse) {
-        return;
-    }
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_)) {
         app.copy_animation.clear();
     }

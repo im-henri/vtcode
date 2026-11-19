@@ -98,7 +98,7 @@ Keep `settings.json` and `.vtcode/` beside the executable when updating.
 
 Running `vtcode` without a path opens an empty editor with no folder attached.
 It does not load the launch directory's settings or session, scan its Git
-repository, or start its file watcher and project index. Use `vtcode .` to open
+repository, or start its file watcher. Use `vtcode .` to open
 the current directory explicitly, or choose **Open folder…** in the empty window.
 Loose files and tools can remain open while folders are added; their window state
 is stored separately from folder sessions.
@@ -116,7 +116,7 @@ its unsaved documents, undo history, desks, splits, searches, Git state, termina
 and agent conversations while another folder is selected. User settings are
 shared, and each folder keeps its own Folder settings overrides.
 
-Inactive folders defer completion indexing, Git refreshes, searches, and editor UI
+Inactive folders defer Git refreshes, searches, and editor UI
 work. Switching back reuses cached state and processes pending changes. Terminals, agents, pending
 saves, and background extension tasks keep running locally and over headless SSH.
 
@@ -317,11 +317,13 @@ pasted text across editor tabs without needing a remote desktop clipboard.
 
 ## VTComplete
 
-VTComplete is the built-in completion engine, separate from LSP suggestions.
-It learns identifiers and calling patterns from your code without a language
-server. Its popup is labeled **VTComplete**; language-server results are labeled
-**LSP suggestions**. **Tab** inserts a suggestion, **↑/↓** selects another, and
-**Esc** dismisses the popup. **Ctrl+Space** requests suggestions explicitly.
+VTComplete provides word suggestions from the active editor buffer, including
+unsaved edits, along with language keywords and snippets. It scans the buffer
+when suggestions are requested. **Tab** inserts a suggestion, **↑/↓** selects
+another, **Esc** dismisses the popup, and **Ctrl+Space** requests suggestions.
+
+Preferences live under **Settings → Text Editor → VTComplete**. The shared toggle
+for automatic VTComplete and LSP popups is under **Text Editor → Suggestions**.
 
 ### Inline predictions
 
@@ -338,12 +340,12 @@ word popup returns when no prediction is shown, after **Esc**, or with
 Two predictors work together. Both run on one background CPU thread, need no
 GPU and download nothing:
 
-- **Patterns in your files.** The predictor finds earlier places whose
+- **Patterns in the active file.** The predictor finds earlier places whose
   surrounding tokens match the caret, including places that differ only by
   consistently renamed identifiers (`self.left = left;` teaches
   `self.right = right;`, and `left_margin` → `right_margin` also turns
   `set_left_edge` into `set_right_edge`), and lets them vote on each next
-  token. It reads the active file and nearby open tabs.
+  token.
 - **A small language model.** A transformer of about 24 million weights
   (24 MB, one byte per weight) is built into the editor. It was trained on
   about 550 open-source projects in some forty languages and on prose. It
@@ -451,16 +453,6 @@ GPU and download nothing:
   from 73.6% to 73.8% and did not do better in the editor, so the model is
   unchanged.
 
-- **Retrieval from the whole workspace.** With **Learn from Files** set to
-  **Entire workspace**, the editor indexes which identifiers each source file
-  uses (ignore files are honored, up to 4,000 files of at most 256 KB, on a
-  low-priority background thread). On every request it weights the names around
-  the caret by how rare they are in the workspace and lets the pattern
-  predictor learn from the four files that share the most, even if they were
-  never opened. On held-out projects this raised characters saved by about
-  1.6 points on average and by much more (16% to 25%) where related code
-  lives in other files. Nothing is scanned unless you choose that setting.
-
 A word you are typing is completed by the model and from the names in view.
 Typing without capitals matches any capitalisation (`layoutr` finds
 `LayoutRenderers`), and accepting restores the name's own spelling. When
@@ -475,9 +467,9 @@ though `item3` exists nowhere yet. Numbers at the end of a name, numbers on
 their own and letters count on; the steps must stand in neighbouring lines
 just above the caret.
 
-Where the patterns propose something other than what the model wrote (a
-renaming of parts, the next step of a series, a name from another file), the
-model is asked how likely it finds that text, and the two are weighed.
+The model also scores continuations proposed by the pattern predictor, such
+as a consistent rename or the next step in a series. VTComplete weighs that
+score alongside the evidence from the file.
 
 A small calibration model estimates how likely each token is to be right from
 both kinds of evidence. A prediction stops at the first uncertain token, so
@@ -512,22 +504,6 @@ the layers, and the neurons that differ most between them.
 `scripts/drive_vtcomplete_inline.py` starts the built editor in a
 pseudo-terminal, types scenarios into it key by key, and checks the
 prediction on screen and the text Tab inserts.
-
-Click **VTComplete** in the status bar or run **VTComplete: Manage File Learning**
-to manage learned files and resource limits. **Files you open** is the default;
-**Entire workspace** opts into gradual, ignore-aware discovery for local projects.
-**Pause learning** keeps learned suggestions available. **File learning CPU**
-controls learning and cache loading, not prediction. Background work sleeps when idle.
-
-Preferences live under **Settings → Text Editor → VTComplete**. The shared toggle
-for automatic VTComplete and LSP popups is under **Text Editor → Suggestions**.
-Automatic VTComplete suggestions start with one character and useful code
-punctuation; these triggers are configurable. The default source-file limit is
-**100 MiB**, adjustable up to **1 GiB**.
-
-Saved-file learning persists between sessions for local and remote workspaces.
-Remote learning uses already loaded files, adds no SSH source reads, and never
-scans unopened files.
 
 ## Language servers
 

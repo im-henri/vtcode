@@ -50,9 +50,6 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
     if app.handle_text_input_context_menu_key(key) { return false; }
     if crate::ui_workspaces::handle_key(app, key) { return false; }
     if app.handle_shortcut_editor_key(key) { return false; }
-    if crate::ui_vtcomplete_index::handle_key(app, key) {
-        return false;
-    }
     // The visible read-only preview owns clipboard and editing shortcuts
     // before workbench bindings can reach the obscured editor or Explorer.
     if app.hunk_popup_active
@@ -1219,18 +1216,6 @@ mod tests {
             assert_eq!(app.editor().unwrap().rope.to_string(), "meadow");
             assert!(!app.vtcomplete_active);
         }
-    }
-
-    #[test]
-    fn indexing_dialog_captures_typing_and_paste_without_modifying_editor() {
-        let mut app = completion_app();
-        crate::ui_vtcomplete_index::open(&mut app);
-        handle_keyboard_event(&mut app, key(KeyCode::Char('z')));
-        crate::app_event_loop::handle_paste_input(&mut app, "pasted text");
-        assert_eq!(app.editor().unwrap().rope.to_string(), "mea");
-        assert!(app.completion_index_ui.open);
-        handle_keyboard_event(&mut app, key(KeyCode::Esc));
-        assert!(!app.completion_index_ui.open);
     }
 
     #[test]

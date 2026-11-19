@@ -45,11 +45,6 @@ fn a_visible_suffix_can_bind_a_target_not_yet_seen_on_the_left() {
     assert!(local.candidates().any(|word| word == "payloadNew"));
     assert!(local.probability("payloadNew", 0.05) > 0.05);
 
-    let mut index = Index::default();
-    index.insert(7, Arc::new(parse(source)));
-    let mut retrieved = Evidence::default();
-    index.query(&query, 0, &mut retrieved);
-    assert!(retrieved.candidates().any(|word| word == "payloadNew"));
 }
 
 #[test]
@@ -100,22 +95,16 @@ fn suffix_binding_keeps_left_mappings_and_both_directions_injective() {
 }
 
 #[test]
-fn suffix_bindings_back_off_when_disabled_and_do_not_invent_unseen_active_file_names() {
-    let source = Arc::new(parse("dispatch(payloadOld, channelOld); validate(payloadOld)"));
-    let mut index = Index::default();
-    index.insert(7, source);
+fn suffix_bindings_back_off_when_disabled() {
+    let source = "dispatch(payloadOld, channelOld); validate(payloadOld)";
     for mode in [Mode::NoRightContext, Mode::LiteralOnly] {
         with_mode(mode, || {
             let query = Query::new("dispatch(", ", channelNew); validate(payloadNew)");
             let mut evidence = Evidence::default();
-            index.query(&query, 0, &mut evidence);
+            evidence.collect(&query, source, true);
             assert!(!evidence.candidates().any(|word| word == "payloadNew"));
         });
     }
-    let query = Query::new("dispatch(", ", channelNew); validate(payloadNew)");
-    let mut evidence = Evidence::default();
-    index.query(&query, 7, &mut evidence);
-    assert!(!evidence.candidates().any(|word| word == "payloadNew"));
 }
 
 #[test]
@@ -210,12 +199,7 @@ fn suffix_incompatible_long_context_backs_off_to_a_shorter_compatible_witness() 
         probabilities.push(evidence.probability("rightPayload", 0.1));
     }
     assert_eq!(probabilities[0], probabilities[1]);
-    let mut index = Index::default();
-    index.insert(1, Arc::new(parse(incompatible)));
-    index.insert(2, Arc::new(parse(compatible)));
-    let mut evidence = Evidence::default();
-    index.query(&query, 0, &mut evidence);
-    assert!(evidence.candidates().any(|word| word == "rightPayload"));
+
 }
 
 #[test]
@@ -243,7 +227,7 @@ fn optional_extension_target_collision_preserves_the_more_specific_literal_seed(
     evidence.collect(&query, left, true);
     assert!(evidence.candidates().any(|word| word == "rightSpecific"));
     assert!(evidence.probability("rightSpecific", 0.1) > evidence.probability("rightPayload", 0.1));
-    assert!(evidence.pools[5].length >= 8);
+    assert!(evidence.pools[3].length >= 8);
     with_mode(Mode::NoLiteralBackoff, || {
         let query = Query::new(left, ", finalMode)");
         let mut evidence = Evidence::default();
@@ -259,7 +243,7 @@ fn target_collision_fallback_requires_a_literal_seed_and_still_verifies_suffix_m
     let data = parse(left);
     let at = data.tokens.iter().position(|&t| data.word(t) == Some("rightSpecific")).unwrap();
     let mut renamed = Evidence::default();
-    renamed.observe(&query, &data, at, 8, true, 4, 1, false);
+    renamed.observe(&query, &data, at, 8, true, 2, 1);
     assert_eq!(renamed.mass(), 0.);
     assert!(!renamed.candidates().any(|word| word == "rightSpecific"));
 
@@ -270,76 +254,7 @@ fn target_collision_fallback_requires_a_literal_seed_and_still_verifies_suffix_m
 }
 
 #[test]
-fn cloned_shorter_fallbacks_do_not_inflate_confidence_or_call_support() {
-    let query = Query::new("prepare(channel); choose(channel, ", ", finalMode)");
-    let bad = Arc::new(parse("prepare(channel); choose(channel, wrongPayload, wrongMode)"));
-    let good = Arc::new(parse("choose(channel, rightPayload, finalMode)"));
-    let mut index = Index::default();
-    index.insert(1, bad);
-    index.insert(2, Arc::clone(&good));
-    let mut once = Evidence::default();
-    index.query(&query, 0, &mut once);
-    for file in 3..=1000 {
-        index.insert(file, Arc::clone(&good));
-    }
-    let mut copies = Evidence::default();
-    index.query(&query, 0, &mut copies);
-    assert_eq!(copies.mass(), once.mass());
-    assert_eq!(copies.probability("rightPayload", 0.1), once.probability("rightPayload", 0.1));
-    assert_eq!(copies.callable("rightPayload"), Some(false));
-    assert!(!copies.limited);
-    assert!(std::mem::size_of::<Evidence>() < 2048);
-}
-
-#[test]
-fn compatible_literal_suffix_is_not_hidden_by_a_renamed_clone_representative() {
-    let query = Query::new("choose(channel, ", ", finalMode)");
-    for reverse in [false, true] {
-        let mut index = Index::default();
-        let mut sources = [
-            "choose(channel, payload, wrongMode)",
-            "choose(channel, payload, finalMode)",
-        ];
-        if reverse {
-            sources.reverse();
-        }
-        for (i, text) in sources.into_iter().enumerate() {
-            index.insert(i as u64 + 1, Arc::new(parse(text)));
-        }
-        let mut evidence = Evidence::default();
-        index.query(&query, 0, &mut evidence);
-        assert!(evidence.candidates().any(|word| word == "payload"));
-        assert!(evidence.probability("payload", 0.1) > 0.1);
-    }
-}
-
-#[test]
-fn two_thousand_cross_file_clones_do_not_increase_prediction_confidence() {
-    let q = relational_query(")");
-    let data = Arc::new(parse(&relational_example(")")));
-    let mut index = Index::default();
-    index.insert(1, Arc::clone(&data));
-    let mut once = Evidence::default();
-    index.query(&q, 0, &mut once);
-    for file in 2..=2000 {
-        index.insert(file, Arc::clone(&data));
-    }
-    let mut clones = Evidence::default();
-    index.query(&q, 0, &mut clones);
-    assert!(once.mass() > 0.0);
-    assert_eq!(clones.mass(), once.mass());
-    assert_eq!(
-        clones.probability("handlerNew", 0.1),
-        once.probability("handlerNew", 0.1)
-    );
-    assert!(
-        !clones.limited,
-        "clone groups should not consume one match per file"
-    );
-}
-
-#[test]
-fn local_repetition_is_preserved_separately_from_cross_file_clone_mass() {
+fn local_repetition_adds_evidence() {
     let q = Query::new("emit(channel, ", ")");
     let once = "emit(channel, payload)\n";
     let repeated = once.repeat(12);
@@ -362,66 +277,6 @@ fn current_file_before_and_after_segments_do_not_alias_occurrence_offsets() {
 }
 
 #[test]
-fn every_file_identity_uses_the_same_occurrence_retrieval_path() {
-    let q = Query::new("bridge.send", "(");
-    // Identity values carry no extension, grammar, directory, or relationship.
-    // The learner must handle a new/high identity exactly like the first file.
-    for file in [1, 99, u64::MAX - 1] {
-        let mut index = Index::default();
-        index.insert(file, Arc::new(parse("bridge.send payload(")));
-        let mut e = Evidence::default();
-        index.query(&q, 0, &mut e);
-        assert!(e.candidates().any(|word| word == "payload"));
-        let mut excluded = Evidence::default();
-        index.query(&q, file, &mut excluded);
-        assert_eq!(excluded.mass(), 0.0);
-    }
-}
-
-#[test]
-fn active_indexed_relationships_can_adapt_only_to_names_already_visible_at_the_caret() {
-    with_mode(Mode::Full, || {
-        let file = 51;
-        let mut index = Index::default();
-        index.insert(
-            file,
-            Arc::new(parse(
-                "register(chanOld, handlerOld)\nunregister(chanOld, handlerOld)",
-            )),
-        );
-        let mut evidence = Evidence::default();
-        index.query(&relational_query(")"), file, &mut evidence);
-        assert!(evidence.candidates().any(|word| word == "handlerNew"));
-        let mut stale = Index::default();
-        stale.insert(file, Arc::new(parse("bridge.send payload(")));
-        let mut evidence = Evidence::default();
-        stale.query(&Query::new("bridge.send", "("), file, &mut evidence);
-        assert_eq!(evidence.mass(), 0.);
-    });
-}
-
-#[test]
-fn unanchored_renamed_clones_do_not_exhaust_verification_before_an_anchored_witness() {
-    let mut index = Index::default();
-    for file in 1..=1000 {
-        index.insert(
-            file,
-            Arc::new(parse(&format!(
-                "left{file}(arg{file}, out{file}) right{file}(arg{file}, out{file})"
-            ))),
-        );
-    }
-    index.insert(1001, Arc::new(parse(&relational_example(")"))));
-    let mut evidence = Evidence::default();
-    index.query(&relational_query(")"), 0, &mut evidence);
-    assert!(
-        !evidence.limited,
-        "unanchored shapes must not consume the expensive verification allowance"
-    );
-    assert!(evidence.candidates().any(|word| word == "handlerNew"));
-}
-
-#[test]
 fn query_keeps_the_caret_tail_after_more_than_the_index_token_limit() {
     let text = "unrelated(value);\n".repeat(MAX_TOKENS)
         + "register(chanNew, handlerNew)\nunregister(chanNew, ";
@@ -430,65 +285,6 @@ fn query_keeps_the_caret_tail_after_more_than_the_index_token_limit() {
     e.collect(&q, &relational_example(")"), true);
     assert!(e.candidates().any(|word| word == "handlerNew"));
     assert!(q.left.tokens.len() <= 64);
-}
-
-#[test]
-fn removing_all_files_releases_postings_and_keeps_accounting_balanced() {
-    let mut index = Index::default();
-    for file in 1..=12 {
-        index.insert(
-            file,
-            Arc::new(parse(&format!("emit(channel{file}, payload{file})\n"))),
-        );
-    }
-    assert!(index.memory() > 0);
-    for file in (1..=12).rev() {
-        index.remove(file);
-    }
-    assert_eq!(index.memory(), 0);
-    assert!(index.files.is_empty());
-    assert!(index.postings.is_empty());
-}
-
-#[test]
-fn churn_releases_sparse_posting_capacity_and_reconstructs_accounted_bytes() {
-    let mut index = Index::default();
-    for file in 1..=80 {
-        index.insert(file, Arc::new(parse(&format!(
-            "emit{file}(channel{file}, payload{file})\nrecv{file}(channel{file}, payload{file})\n"
-        ))));
-    }
-    for file in 2..=80 {
-        index.remove(file);
-    }
-    let mut expected = index.files.len() * 48 + 256
-        + index.postings.len() * 128 + 512;
-    for locations in index.postings.values() {
-        expected += locations.capacity() * std::mem::size_of::<Location>();
-        assert!(locations.capacity() <= (locations.len() * 2).max(4));
-        assert!(locations.windows(2).all(|pair| (pair[0].fingerprint, pair[0].file)
-            < (pair[1].fingerprint, pair[1].file)));
-    }
-    assert_eq!(index.memory(), expected);
-    index.remove(1);
-    assert_eq!(index.memory(), 0);
-}
-
-#[test]
-fn compact_posting_admission_bounds_capacity_growth_and_replacement() {
-    let mut index = Index::default();
-    for file in 0..100 {
-        let data = Arc::new(parse(&format!("register(chan{file}, handler{file}); unregister(chan{file}, handler{file});")));
-        let before = index.memory();
-        let additional = index.additional_memory(&data);
-        index.insert(file, Arc::clone(&data));
-        assert!(index.memory() <= before + additional, "file {file}: before {before}, bound {additional}, actual {}", index.memory());
-        let installed = index.memory();
-        index.insert(file, data);
-        assert_eq!(index.memory(), installed);
-    }
-    for file in 0..100 { index.remove(file); }
-    assert_eq!(index.memory(), 0);
 }
 
 #[test]
@@ -533,78 +329,19 @@ fn repeated_local_calls_support_parentheses_but_mixed_field_uses_do_not() {
 }
 
 #[test]
-fn cloned_call_examples_cannot_fabricate_independent_call_support() {
-    let q = Query::new("saved = flush; client.", "");
-    let data = Arc::new(parse("saved = flush; client.flush()"));
-    let mut index = Index::default();
-    for file in 1..=1000 {
-        index.insert(file, Arc::clone(&data));
-    }
-    let mut e = Evidence::default();
-    index.query(&q, 0, &mut e);
-    assert_eq!(e.callable("flush"), Some(false));
-}
-
-#[test]
-fn retrieved_repeat_mass_is_bounded_and_generated_boundary_windows_are_not_votes() {
-    let query = Query::new("client.", "");
-    let evidence = |source: &str| {
-        let mut index = Index::default();
-        index.insert(1, Arc::new(parse(source)));
-        let mut evidence = Evidence::default();
-        index.query(&query, 0, &mut evidence);
-        evidence
-    };
-    let two = evidence("client.flush(); client.flush();");
-    let many = evidence(&"client.flush(); ".repeat(100));
-    assert_eq!(two.callable("flush"), Some(true));
-    assert_eq!(
-        many.call_probability("flush"),
-        two.call_probability("flush")
-    );
-    assert_eq!(
-        many.probability("flush", 0.1),
-        two.probability("flush", 0.1)
-    );
-    let mut mixed = Index::default();
-    mixed.insert(1, Arc::new(parse(&"client.flush(); ".repeat(100))));
-    mixed.insert(
-        2,
-        Arc::new(parse("client.flush = true; client.flush = false;")),
-    );
-    let mut e = Evidence::default();
-    mixed.query(&query, 0, &mut e);
-    assert_eq!(e.callable("flush"), Some(false));
-}
-
-#[test]
-fn largest_ordered_token_builder_fits_reserved_half_megabyte() {
-    let mut builder = Builder::default();
-    let source: String = (0..MAX_WORDS)
-        .map(|n| format!("{n:04}{}\n", "x".repeat(MAX_WORD_BYTES - 4)))
-        .collect();
-    for chunk in source.as_bytes().chunks(64 * 1024) {
-        builder.feed(std::str::from_utf8(chunk).unwrap());
-    }
-    assert_eq!(builder.data.words.len(), MAX_WORDS);
-    assert!(builder.working_memory() <= 512 * 1024);
-    assert!(builder.finish().valid());
-}
-
-#[test]
 fn extended_left_verification_rejects_a_receiver_conflict_before_the_seed() {
     let data = parse("logger.printLine(value)\nlogger.printLine(value)");
     let at = data.tokens.len() - 4;
     with_mode(Mode::Phase1, || {
         let query = Query::new("buffer.printBuffer(value)\nlogger.", "");
         let mut evidence = Evidence::default();
-        evidence.observe(&query, &data, at, 8, true, 4, 1, false);
+        evidence.observe(&query, &data, at, 8, true, 2, 1);
         assert!(evidence.candidates().any(|word| word == "printBuffer"));
     });
     with_mode(Mode::NoLiteralBackoff, || {
         let query = Query::new("buffer.printBuffer(value)\nlogger.", "");
         let mut evidence = Evidence::default();
-        evidence.observe(&query, &data, at, 8, true, 4, 1, false);
+        evidence.observe(&query, &data, at, 8, true, 2, 1);
         assert_eq!(evidence.mass(), 0.);
     });
 }
@@ -615,7 +352,7 @@ fn literal_seed_can_bind_an_earlier_identifier_with_matching_roles() {
         let data = parse("pair.left = value; consume(pair.left, value)");
         let query = Query::new("pair.left = valueNext; consume(pair.left, ", "");
         let mut evidence = Evidence::default();
-        evidence.observe(&query, &data, data.tokens.len() - 2, 2, false, 5, 1, false);
+        evidence.observe(&query, &data, data.tokens.len() - 2, 2, false, 3, 1);
         assert!(evidence.candidates().any(|word| word == "valueNext"));
         assert!(!evidence.candidates().any(|word| word == "value"));
     });
@@ -627,7 +364,7 @@ fn fresh_left_binding_requires_both_neighbor_roles() {
         let data = parse("mode: fastMode\nmode: fastMode");
         let query = Query::new("factoryName\nmode:", "");
         let mut evidence = Evidence::default();
-        evidence.observe(&query, &data, data.tokens.len() - 1, 2, false, 5, 1, false);
+        evidence.observe(&query, &data, data.tokens.len() - 1, 2, false, 3, 1);
         assert!(evidence.candidates().any(|word| word == "fastMode"));
         assert!(!evidence.candidates().any(|word| word == "factoryName"));
     });
@@ -640,11 +377,11 @@ fn literal_backoff_keeps_the_exact_witness_without_the_conflicting_rename() {
         let query = Query::new("buffer.printBuffer(value)\nlogger.", "");
         let at = data.tokens.len() - 4;
         let mut literal = Evidence::default();
-        literal.observe(&query, &data, at, 2, false, 5, 1, false);
+        literal.observe(&query, &data, at, 2, false, 3, 1);
         assert!(literal.candidates().any(|word| word == "printLine"));
         assert!(!literal.candidates().any(|word| word == "printBuffer"));
         let mut parameter = Evidence::default();
-        parameter.observe(&query, &data, at, 8, true, 4, 1, false);
+        parameter.observe(&query, &data, at, 8, true, 2, 1);
         assert_eq!(parameter.mass(), 0.);
     });
 }
@@ -654,18 +391,7 @@ fn renamed_seed_edge_needs_a_compatible_neighbor_role() {
     let data = parse("mode: fastMode\nmode: fastMode");
     let query = Query::new("factoryName\nmode:", "");
     let mut evidence = Evidence::default();
-    evidence.observe(&query, &data, data.tokens.len() - 1, 4, true, 4, 1, false);
+    evidence.observe(&query, &data, data.tokens.len() - 1, 4, true, 2, 1);
     assert!(!evidence.candidates().any(|word| word == "factoryName"));
     assert_eq!(evidence.mass(), 0.);
-}
-
-#[test]
-fn workspace_presence_prior_does_not_gain_mass_from_generated_repetition() {
-    assert_eq!(workspace_count(0), 1.0);
-    assert_eq!(workspace_count(1), 2.0);
-    assert_eq!(workspace_count(1000), workspace_count(1));
-    with_mode(Mode::RawWorkspacePrior, || {
-        assert!(workspace_count(1000) > workspace_count(1));
-    });
-    assert_eq!(workspace_count(1000), 2.0);
 }

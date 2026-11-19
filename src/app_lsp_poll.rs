@@ -825,7 +825,6 @@ fn apply_pending_document_edits(app: &mut App, needs_redraw: &mut bool) {
             if let Some(editor) = app.editor_mut() {
                 let _ = crate::app_lsp_edits::apply(editor, &edits);
             }
-            app.completion_index_sync.buffers_changed = true;
             *needs_redraw = true;
         }
     }

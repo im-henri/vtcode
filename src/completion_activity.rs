@@ -7,7 +7,6 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 const QUIET: Duration = Duration::from_millis(24);
-const MAINTENANCE_QUIET: Duration = Duration::from_millis(350);
 const CANCEL_WAIT: Duration = Duration::from_millis(10);
 
 struct Shared {
@@ -87,20 +86,6 @@ impl Activity {
 
     pub(crate) fn generation(&self) -> u64 {
         self.0.generation.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn maintenance_remaining(&self) -> Option<Duration> {
-        if self.0.foreground.load(Ordering::Acquire) != 0 {
-            return Some(CANCEL_WAIT);
-        }
-        let deadline = self.0.deadline.load(Ordering::Acquire);
-        if deadline == 0 {
-            return None;
-        }
-        let remaining = deadline
-            .saturating_add((MAINTENANCE_QUIET - QUIET).as_micros() as u64)
-            .saturating_sub(self.now());
-        (remaining > 0).then(|| Duration::from_micros(remaining))
     }
 
     pub(crate) fn interrupted(&self, generation: u64) -> bool {

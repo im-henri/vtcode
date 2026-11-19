@@ -284,18 +284,18 @@ impl<'a> Scores<'a> {
         language: &str,
         context: crate::completion_context::Context,
         explicit: bool,
-        learned: &crate::completion_index::examples::Evidence,
+        learned: &crate::completion_examples::Evidence,
         generated: &super::patterns::Predictions,
     ) -> CompletionResult {
         use super::identifier::Match;
         use crate::app_vtcomplete::{CompletionDetail, CompletionKind as Kind};
         #[cfg(test)]
-        super::learning_replay_tests::trace_candidates(self.matches.keys().map(String::as_str));
+        super::recall::trace_candidates(self.matches.keys().map(String::as_str));
         let vocabulary_mass: f64 = self
             .matches
             .keys()
             .map(|w| {
-                crate::completion_index::examples::workspace_count(
+                crate::completion_examples::candidate_weight(
                     evidence.get(w).map_or(0, |e| e.frequency),
                 )
             })
@@ -308,11 +308,8 @@ impl<'a> Scores<'a> {
         // continuation. That is no ranking evidence for these candidates.
         let conditional_support = self.matches.keys().any(|w| learned.probability(w, 0.) > 0.);
         let edit_candidates = evidence.values().filter(|e| e.edit_history).count();
-        let statistical = conditional_support
-            || generated.active()
-            || edit_candidates > 0
-            || file_mass > 0. && crate::completion_index::examples::file_prior_without_context();
-        let log_scale = crate::completion_index::examples::likelihood_scale();
+        let statistical = conditional_support || generated.active() || edit_candidates > 0;
+        let log_scale = 32.;
         let mut sorted: Vec<_> = self
             .matches
             .into_iter()
@@ -338,10 +335,10 @@ impl<'a> Scores<'a> {
                     rank += 75;
                 }
                 if statistical {
-                    let workspace =
-                        crate::completion_index::examples::workspace_count(evidence.frequency)
+                    let base =
+                        crate::completion_examples::candidate_weight(evidence.frequency)
                             / vocabulary_mass.max(1.);
-                    let prior = (f64::from(evidence.file_frequency.min(16)) + 2. * workspace)
+                    let prior = (f64::from(evidence.file_frequency.min(16)) + 2. * base)
                         / (file_mass + 2.);
                     let mut probability =
                         generated.probability(&word, learned.probability(&word, prior));
@@ -368,37 +365,14 @@ impl<'a> Scores<'a> {
                     evidence.local_matched_calls >= 2
                         && evidence.local_matched_calls.saturating_mul(3)
                             >= evidence.local_matched_uses.saturating_mul(2)
-                } else if context.member() && !evidence.project_receiver {
-                    false
-                } else if evidence.example_reference {
-                    // A compatible callback/value role refines unconditional
-                    // calls of the same identifier in other contexts. One
-                    // positive call with insufficient support is not a veto.
-                    false
-                } else if evidence.code_uses > 0 {
-                    // Streaming state crosses line boundaries. Standalone line
-                    // observations cannot distinguish a multiline prose body.
-                    evidence.code_calls >= 2
+                } else {
+                    !context.member() && !evidence.example_reference && evidence.code_calls >= 2
                         && evidence.code_calls.saturating_mul(3)
                             >= evidence.code_uses.saturating_mul(2)
-                } else if let Some(callable) = evidence.example_callable {
-                    // Names may be learned from raw agnostic token windows;
-                    // call rendering also needs code-domain corroboration.
-                    callable && evidence.project_callable && evidence.calls >= 2
-                } else if evidence.matched_uses > 0 {
-                    evidence.matched_calls >= 2
-                        && evidence.matched_calls.saturating_mul(3)
-                            >= evidence.matched_uses.saturating_mul(2)
-                } else {
-                    evidence.project_callable
-                        && evidence.calls >= 2
-                        && evidence.calls.saturating_mul(2) >= evidence.frequency
                 };
                 let (kind, annotation) = if callable {
                     (Kind::Function, "call")
-                } else if context.member()
-                    && (evidence.semantic_score >= 100 || evidence.project_receiver)
-                {
+                } else if context.member() && evidence.semantic_score >= 100 {
                     (Kind::Member, "member")
                 } else if context.keys[4] != 0 && evidence.semantic_score >= 150 {
                     (Kind::Value, "value")
@@ -413,7 +387,7 @@ impl<'a> Scores<'a> {
                 } else if evidence.local {
                     (Kind::Word, "nearby")
                 } else {
-                    (Kind::Word, "project")
+                    (Kind::Word, "file")
                 };
                 (
                     word,
@@ -469,7 +443,7 @@ impl<'a> Scores<'a> {
                 .then_with(|| a.0.cmp(&b.0))
         };
         // Full identifier alignment only reranks a small relevant shortlist.
-        // At most 64 × 48 × 160 cells are visited, independent of project size.
+        // At most 64 × 48 × 160 cells are visited.
         if sorted.len() > 64 {
             sorted.select_nth_unstable_by(64, compare);
             sorted.truncate(64);
@@ -479,73 +453,14 @@ impl<'a> Scores<'a> {
             row.3 += quality;
             row.6 = class;
         }
-        // Stronger evidence in the current source/neighborhood should not be
-        // padded with much weaker matches from independent programs. This is a
-        // relative relevance cutoff, not a file or language eligibility rule:
-        // a better project-wide pattern can still win from any source.
-        let grounded = sorted
-            .iter()
-            .filter(|row| {
-                (row.5.local || row.5.example_seen)
-                    && row.5.domain == context.domain
-                    && (row.0 != prefix || row.2)
-            })
-            .map(|row| row.3)
-            .max();
-        // File unigrams alone did not improve ranking in replay. They still
-        // supply a useful confidence estimate for keeping unrelated project
-        // words out of an automatic popup, independently of fuzzy ordering.
-        let file_only_confidence = if !statistical && file_mass > 0. {
-            sorted
-                .iter()
-                .filter(|row| {
-                    row.5.local && row.5.domain == context.domain && (row.0 != prefix || row.2)
-                })
-                .map(|row| {
-                    let workspace =
-                        crate::completion_index::examples::workspace_count(row.5.frequency)
-                            / vocabulary_mass.max(1.);
-                    (f64::from(row.5.file_frequency.min(16)) + 2. * workspace) / (file_mass + 2.)
-                })
-                .reduce(f64::max)
-        } else {
-            None
-        };
         let focused = context.structural()
-            && sorted.iter().any(|row| {
-                row.5.semantic_score >= 200 || row.5.project_receiver || row.5.example_seen
-            });
-        // A statistical rank is expressed in log-probability units. Keep the
-        // relative popup threshold on that same scale rather than inheriting
-        // the much larger gap used by the heuristic fallback.
-        let automatic_gap = if statistical {
-            (log_scale / 3.).ceil() as i64
-        } else {
-            64
-        };
+            && sorted.iter().any(|row| row.5.semantic_score >= 200 || row.5.example_seen);
         sorted.retain(|row| {
             if row.0 == prefix && !row.2 {
                 return false;
             }
             if explicit {
                 return true;
-            }
-            if !row.5.local
-                && row.5.example_probability < 0.5
-                && row.5.history_score < 60
-                && row.4.kind != Kind::Keyword
-                && if let Some(best) = file_only_confidence {
-                    let workspace =
-                        crate::completion_index::examples::workspace_count(row.5.frequency)
-                            / vocabulary_mass.max(1.);
-                    let prior = (f64::from(row.5.file_frequency.min(16)) + 2. * workspace)
-                        / (file_mass + 2.);
-                    best.ln() - prior.max(1e-12).ln() > 1. / 3.
-                } else {
-                    grounded.is_some_and(|best| best - row.3 > automatic_gap)
-                }
-            {
-                return false;
             }
             if context.domain == crate::completion_context::Domain::Code
                 && (row.5.semantic_seen || row.5.lexical_seen)
@@ -567,7 +482,6 @@ impl<'a> Scores<'a> {
             if focused
                 && !row.5.edit_history
                 && row.5.semantic_score < 70
-                && !row.5.project_receiver
                 && !row.5.example_seen
                 && (prefix.is_empty() || row.6 <= Match::Fuzzy)
             {
@@ -577,7 +491,6 @@ impl<'a> Scores<'a> {
                 && !row.5.edit_history
                 && context.member()
                 && row.5.semantic_score < 100
-                && !row.5.project_receiver
                 && !row.5.example_seen
             {
                 return false;
@@ -602,15 +515,15 @@ impl<'a> Scores<'a> {
                     // Partial snippet rows share the predictor's probability
                     // scale. Exact triggers retain their deliberate priority.
                     let item = evidence.get(trigger).copied().unwrap_or_default();
-                    let count = crate::completion_index::examples::workspace_count(item.frequency);
+                    let count = crate::completion_examples::candidate_weight(item.frequency);
                     let mass = vocabulary_mass
                         + if sorted.iter().any(|row| row.0 == trigger) {
                             0.
                         } else {
                             count
                         };
-                    let workspace = count / mass.max(1.);
-                    let prior = (f64::from(item.file_frequency.min(16)) + 2. * workspace)
+                    let base = count / mass.max(1.);
+                    let prior = (f64::from(item.file_frequency.min(16)) + 2. * base)
                         / (file_mass + 2.);
                     105 + prefix.len() as i64 * 24
                         + (log_scale

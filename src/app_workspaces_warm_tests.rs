@@ -8,7 +8,6 @@ fn settle(app: &mut App) {
     until(|| {
         services(app);
         app.poll_git_watcher_refresh(Instant::now());
-        app.poll_completion_index();
         app.background.refresh_activity(Instant::now());
         if app.background.has_active_jobs()
             || app.workspaces_have_pending_results()
@@ -39,7 +38,6 @@ struct Snapshot {
     git: Option<Instant>,
     history: u64,
     jobs: u64,
-    index: u64,
     document: u64,
 }
 fn snapshot(app: &App) -> Snapshot {
@@ -48,13 +46,12 @@ fn snapshot(app: &App) -> Snapshot {
         git: app.source_control_last_refresh,
         history: app.git_history.generation,
         jobs: app.background.activity.totals.completed,
-        index: app.completion_index.revision(),
         document: app.editor().unwrap().content_version,
     }
 }
 
 #[test]
-fn unchanged_native_workspaces_reuse_git_explorer_documents_and_index() {
+fn unchanged_native_workspaces_reuse_git_explorer_and_documents() {
     let a = Project::new();
     let b = Project::new();
     for project in [&a, &b] {
@@ -69,11 +66,9 @@ fn unchanged_native_workspaces_reuse_git_explorer_documents_and_index() {
     for _ in 0..25 {
         app.switch_workspace(0);
         services(&mut app);
-        app.poll_completion_index();
         assert_eq!(snapshot(&app), first);
         app.switch_workspace(1);
         services(&mut app);
-        app.poll_completion_index();
         assert_eq!(snapshot(&app), second);
     }
     settle(&mut app);

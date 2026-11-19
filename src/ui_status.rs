@@ -88,11 +88,6 @@ const ITEMS: &[ItemDefinition] = &[
         pinned: false,
     },
     ItemDefinition {
-        id: "completion_index",
-        label: "VTComplete file learning",
-        pinned: true,
-    },
-    ItemDefinition {
         id: "performance",
         label: "Performance",
         pinned: true,
@@ -217,8 +212,7 @@ fn editor(app: &App) -> Option<&Editor> {
 }
 
 fn obscured(app: &App) -> bool {
-    app.completion_index_ui.open
-        || app.change_dir_active
+    app.change_dir_active
         || app.context_menu_active
         || app.menu_open
         || app.tab_context_active
@@ -339,10 +333,6 @@ pub(crate) fn activate(app: &mut App, action: &str) {
             dismiss(app);
             app.open_lsp_settings_page();
         }
-        "completion_index" => {
-            dismiss(app);
-            crate::ui_vtcomplete_index::open(app);
-        }
         "tab_size" | "encoding" | "line_ending" | "language" => {
             dismiss(app);
             app.open_palette();
@@ -398,23 +388,6 @@ impl StatusItem {
             (UnicodeWidthStr::width(text) + 2).min(self.width())
         })
     }
-}
-
-fn completion_status_item(
-    status: &crate::completion_index::IndexStatus,
-    foreground: Color,
-) -> StatusItem {
-    // Editor accents can equal statusBar.background in imported themes. This
-    // is a status-bar control in every phase, so use its foreground role; the
-    // label communicates activity, pause and limits without relying on color.
-    StatusItem::new(
-        crate::ui_vtcomplete_index::status_label(status),
-        "completion_index",
-        foreground,
-        4,
-        false,
-    )
-    .compact("VTComplete")
 }
 
 fn cache_selection(app: &mut App) {
@@ -530,10 +503,6 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     }
     if let Some(label) = file_activity {
         items.push(StatusItem::new(label, "file_details", app.colors.fg_accent, 0, false));
-    }
-    if is_pinned(app, "completion_index") {
-        let status = app.completion_index.status();
-        items.push(completion_status_item(&status, fg));
     }
     if let Some(editor) = editor(app) {
         if editor.read_only {
@@ -892,12 +861,6 @@ fn search_results(app: &App) -> Option<String> {
 
 fn all_detail_rows(app: &App) -> Vec<DetailRow> {
     let mut rows = file_detail_rows(app);
-    let index = app.completion_index.status();
-    rows.push(DetailRow::new(
-        "completion_index",
-        crate::ui_vtcomplete_index::status_label(&index),
-        Some("completion_index"),
-    ));
     if let Some(editor) = editor(app) {
         rows.push(DetailRow::new(
             "goto_line",
@@ -1472,14 +1435,6 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
         }
         HoverTarget::Status("language_server") => {
             "Configure language servers · Click to open LSP settings · Right-click to customize".into()
-        }
-        HoverTarget::Status("completion_index") => {
-            let status = app.completion_index.status();
-            format!(
-                "VTComplete file learning · {} indexed files · {} · Click to manage learning and RAM use",
-                status.indexed_files,
-                crate::ui_vtcomplete_index::phase_label(status.phase)
-            )
         }
         HoverTarget::Status("macro") => "Recording macro · Click to stop".into(),
         HoverTarget::Status("selection") => app.cached_sel_stats.clone().unwrap_or_default(),

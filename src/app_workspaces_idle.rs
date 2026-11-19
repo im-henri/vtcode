@@ -132,7 +132,6 @@ impl App {
             let _ = remote.client.notify(crate::remote::Command::PauseWatch);
             self.pause_remote_git_history();
         }
-        self.completion_index.set_workspace_suspended(true);
         self.lsp_manager.retain_document_feedback(None, None);
         self.lsp_manager.retain_document_highlight(None);
         self.lsp_manager.cancel_completion_resolve();
@@ -141,7 +140,6 @@ impl App {
     }
 
     pub(super) fn resume_workspace_observation(&mut self) {
-        self.completion_index.set_workspace_suspended(false);
         if self.workspace_observation.started {
             self.start_visible_workspace_services();
         }

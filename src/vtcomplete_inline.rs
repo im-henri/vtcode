@@ -16,8 +16,6 @@ use rustc_hash::FxHashMap;
 pub(crate) mod model;
 #[path = "vtcomplete_inline_subwords.rs"]
 pub(crate) mod subwords;
-#[path = "vtcomplete_inline_retrieval.rs"]
-pub(crate) mod retrieval;
 
 pub(crate) const MAX_DOCUMENT_BYTES: usize = 768 * 1024;
 const MAX_CORPUS_BYTES: usize = 4 * 1024 * 1024;
@@ -990,11 +988,13 @@ impl Engine {
         }
     }
 
+    #[allow(dead_code)] // Used by the standalone replay benchmark.
     pub(crate) fn has_reference(&self, key: u64) -> bool {
         self.documents[2..].iter().any(|document| document.key == key)
     }
 
     /// Add or replace the reference document identified by `key`.
+    #[allow(dead_code)] // Used by the standalone replay benchmark.
     pub(crate) fn set_reference(&mut self, key: u64, text: &str, syntax: Syntax) {
         self.remove_reference(key);
         if text.len() > MAX_DOCUMENT_BYTES {
@@ -1013,6 +1013,7 @@ impl Engine {
         self.evict();
     }
 
+    #[allow(dead_code)] // Used by the standalone replay benchmark.
     pub(crate) fn touch_reference(&mut self, key: u64) {
         self.clock += 1;
         let clock = self.clock;

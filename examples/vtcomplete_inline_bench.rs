@@ -14,6 +14,8 @@
 #[allow(dead_code)]
 #[path = "../src/vtcomplete_inline.rs"]
 mod inline;
+#[path = "../src/vtcomplete_inline_retrieval.rs"]
+mod retrieval;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -702,7 +704,7 @@ fn main() {
         let network = network.flatten().or_else(inline::model::embedded).expect("a model");
         Recorder::write_weights(directory, network);
     }
-    let mut retriever = inline::retrieval::Retriever::default();
+    let mut retriever = retrieval::Retriever::default();
     if retrieve > 0 {
         for (at, (_, reference)) in texts.iter().enumerate() {
             retriever.add(at as u64, reference);

@@ -254,10 +254,6 @@ impl App {
             PaletteCommand { name: "LSP: Configure Language Servers".into(), shortcut: String::new(), id: Cow::Borrowed("language_servers"),
             },
             PaletteCommand { name: "VTComplete: Predict Here".into(), shortcut: "Alt+I".into(), id: Cow::Borrowed("vtcomplete_inline_request") },
-            PaletteCommand {
-                name: "VTComplete: Manage File Learning".into(),
-                shortcut: String::new(),
-                id: Cow::Borrowed("completion_index") },
             PaletteCommand { name: "Explorer: Find Files and Folders by Name".into(), shortcut: String::new(), id: Cow::Borrowed("explorer_find") },
             PaletteCommand { name: "LSP: Restart Language Servers".into(), shortcut: String::new(), id: Cow::Borrowed("restart_language_servers") },
             PaletteCommand { name: "Preferences: Open Selected Settings (JSON)".into(), shortcut: String::new(), id: Cow::Borrowed("open_settings_json") },
