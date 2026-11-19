@@ -65,6 +65,7 @@ impl App {
             "acp_agents" => 6,
             "heading_autocomplete" | "quick_suggestions" => SETTINGS_AUTOCOMPLETE_CATEGORY,
             "heading_editor" | "tab_size" | "use_tabs" | "word_wrap" | "word_wrap_column" | "whitespace" | "comment_whitespace" | "read_only"
+            | "vim_mode" | "vim_ctrl_keys" | "vim_system_clipboard"
             | "hover_enabled" | "format_on_type" | "format_on_save" | "formatters"
             | "cursor_style" | "cursor_blinking" | "cursor_surrounding_lines" | "minimap" | "minimap_width" => 1,
             "heading_features" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens"
@@ -120,6 +121,7 @@ impl App {
             | "large_file_analysis_timeout_ms" => "number",
             "theme" | "sidebar_pos" | "activity_bar_position" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" => "dropdown",
             "use_tabs" | "word_wrap" | "read_only" | "quick_suggestions" | "hover_enabled" | "format_on_type" | "explorer"
+            | "vim_mode" | "vim_ctrl_keys" | "vim_system_clipboard"
             | "show_open_editors" | "sidebar_auto_hide" | "minimap" | "line_numbers" | "relative_lines" | "panel"
             | "zen" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens" | "sticky_scroll" | "focus_mode"
             | "word_count" | "trim_trailing" | "format_on_save" | "final_newline" | "scroll_past_end"
@@ -176,6 +178,9 @@ impl App {
             "read_only" => "readOnly",
             "quick_suggestions" => "quickSuggestions",
             "hover_enabled" => "hoverEnabled",
+            "vim_mode" => "vimMode",
+            "vim_ctrl_keys" => "vimUseCtrlKeys",
+            "vim_system_clipboard" => "vimUseSystemClipboard",
             "format_on_type" => "formatOnType",
             "theme" => "theme",
             "explorer" => "showExplorer",
@@ -444,6 +449,9 @@ impl App {
             "read_only" => "Prevent text edits in the active editor tab.",
             "quick_suggestions" => "Show suggestions from VTComplete, GPTComplete, and language servers while typing. Ctrl+Space opens the suggestion list and Alt+I requests an inline prediction.",
             "hover_enabled" => "Show language information when the pointer rests over editor text.",
+            "vim_mode" => "Edit with Vim keybindings: Normal, Insert, Visual and Replace modes, operators, text objects, registers, macros, marks, :commands and a vimrc. Everything stays reachable from the keyboard. Off by default.",
+            "vim_ctrl_keys" => "Let Vim mode handle Ctrl keys such as Ctrl+D, Ctrl+U, Ctrl+V, Ctrl+W and Ctrl+R. Turn off to keep VTCode's Ctrl shortcuts in Normal mode.",
+            "vim_system_clipboard" => "Yank, delete and put through the system clipboard, like :set clipboard=unnamedplus.",
             "format_on_type" => "When Language Server is the chosen formatter, adjust text after supported trigger characters. New lines are never formatted by this setting. External tools run on Format Document or Format on Save.",
             "theme" => "Select the active color theme for the whole editor.",
             "explorer" => "Show or hide the left sidebar explorer.",
@@ -773,6 +781,9 @@ impl App {
             ("Render Whitespace".into(), whitespace.name().to_string(), "whitespace".into()),
             ("Whitespace in Comments".into(), self.comment_whitespace_mode.map_or("Inherit", |mode| mode.name()).to_string(), "comment_whitespace".into()),
             ("Read Only".into(), on_off(read_only), "read_only".into()),
+            ("Vim Mode".into(), on_off(self.vim.enabled), "vim_mode".into()),
+            ("Vim: Use Ctrl Keys".into(), on_off(self.vim_ctrl_keys_setting), "vim_ctrl_keys".into()),
+            ("Vim: Use System Clipboard".into(), on_off(self.vim_clipboard_setting), "vim_system_clipboard".into()),
             ("Hover".into(), on_off(self.hover_enabled), "hover_enabled".into()),
             ("Format On Type".into(), on_off(self.on_type_formatting_enabled), "format_on_type".into()),
             // === Appearance ===

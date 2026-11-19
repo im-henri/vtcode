@@ -506,6 +506,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
         {
+            if app.vim.enabled && app.modal.focus >= offset && matches!(c, 'h' | 'j' | 'k' | 'l') && kind != Kind::Exit {
+                step_focus(app, kind, matches!(c, 'h' | 'k'), offset);
+                return Some(false);
+            }
             if kind == Kind::Exit && matches!(c.to_ascii_lowercase(), 'y' | 'd' | 'k' | 'n') {
                 return crate::input_dialogs::handle_exit_confirm_key(app, key);
             }

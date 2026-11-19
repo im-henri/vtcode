@@ -104,7 +104,7 @@ impl App {
                 | "toggle_word_wrap" | "toggle_whitespace" | "toggle_cursor_style"
                 | "toggle_cursor_blinking" | "toggle_focus_mode" | "toggle_sidebar_position"
                 | "toggle_zen" | "toggle_maximized" | "toggle_explorer" | "toggle_sidebar" | "toggle_sidebar_auto_hide"
-                | "toggle_panel" | "ruler_80" | "ruler_120" | "ruler_clear")
+                | "toggle_panel" | "ruler_80" | "ruler_120" | "ruler_clear" | "toggle_vim_mode")
         {
             self.flush_live_settings();
         }
@@ -126,6 +126,26 @@ impl App {
         if crate::ui_logs::command(self, id) { return true; }
         if self.route_explorer_edit_command(id) { return true; }
         match id {
+            "toggle_vim_mode" => {
+                let on = !self.vim.enabled;
+                crate::vim::app_host::set_enabled(self, on);
+                self.notify(if on { "Vim Mode: On" } else { "Vim Mode: Off" });
+                return true;
+            }
+            "vim_reload_rc" => {
+                crate::vim::app_host::load_vimrc(self);
+                self.notify("vimrc reloaded");
+                return true;
+            }
+            "vim_open_rc" => {
+                if let Some(path) = crate::vim::app_host::vimrc_path(self) {
+                    if !path.exists() {
+                        let _ = std::fs::write(&path, crate::vim::app_host::VIMRC_TEMPLATE);
+                    }
+                    self.open_file(&path);
+                }
+                return true;
+            }
             "about" => { self.show_about(); return true; }
             "remote" | "remote_connect" => { self.open_remote_sidebar(); return true; }
             "remote_target_add" => { self.open_remote_sidebar(); self.edit_remote_target(None, false); return true; }

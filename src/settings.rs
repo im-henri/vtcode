@@ -173,6 +173,18 @@ pub struct Settings {
     pub highlight_words_across_tabs: Option<bool>,
     pub error_lens: Option<bool>,
     pub hover_enabled: Option<bool>,
+    /// Native Vim mode (off by default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vim_mode: Option<bool>,
+    /// Let Vim handle Ctrl key combinations such as Ctrl+D, Ctrl+V and Ctrl+W.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vim_use_ctrl_keys: Option<bool>,
+    /// Yank and put through the system clipboard (`clipboard=unnamedplus`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vim_use_system_clipboard: Option<bool>,
+    /// vimrc file read when Vim mode starts (default `<vtcode-base>/vimrc`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vimrc_path: Option<String>,
     pub quick_suggestions: Option<bool>,
     pub inlay_hints: Option<bool>,
     pub code_lens: Option<bool>,
@@ -486,6 +498,10 @@ impl Settings {
             highlight_words_across_tabs: other.highlight_words_across_tabs.or(self.highlight_words_across_tabs),
             error_lens: other.error_lens.or(self.error_lens),
             hover_enabled: other.hover_enabled.or(self.hover_enabled),
+            vim_mode: other.vim_mode.or(self.vim_mode),
+            vim_use_ctrl_keys: other.vim_use_ctrl_keys.or(self.vim_use_ctrl_keys),
+            vim_use_system_clipboard: other.vim_use_system_clipboard.or(self.vim_use_system_clipboard),
+            vimrc_path: other.vimrc_path.clone().or_else(|| self.vimrc_path.clone()),
             quick_suggestions: other.quick_suggestions.or(self.quick_suggestions),
             inlay_hints: other.inlay_hints.or(self.inlay_hints),
             code_lens: other.code_lens.or(self.code_lens),

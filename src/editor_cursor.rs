@@ -706,11 +706,17 @@ impl Editor {
         if let Some(view) = &self.markdown_preview_scroll {
             return view.has_selection();
         }
+        if let Some((sl, sc, el, ec)) = self.vim_selection {
+            return (sl, sc) != (el, ec) || self.vim_block.is_some();
+        }
         self.selection_anchor.is_some_and(|anchor| anchor != (self.cursor_line, self.cursor_col))
     }
 
     /// Returns (start_line, start_col, end_line, end_col) normalized so start <= end
     pub(crate) fn selection_range(&self) -> Option<(usize, usize, usize, usize)> {
+        if self.vim_selection.is_some() {
+            return self.vim_selection;
+        }
         let (anchor_line, anchor_col) = self.selection_anchor?;
         let (sl, sc, el, ec) = if (anchor_line, anchor_col) <= (self.cursor_line, self.cursor_col) {
             (anchor_line, anchor_col, self.cursor_line, self.cursor_col)

@@ -547,8 +547,11 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     let badge_area = Rect::new(area.right() - badge_width, area.y, badge_width, 1);
     let details_area = Rect::new(badge_area.x - details_width, area.y, details_width, 1);
     let budget = usize::from(area.width - badge_width - details_width);
-    let mut items = Vec::with_capacity(ITEMS.len());
+    let mut items = Vec::with_capacity(ITEMS.len() + 1);
     let file_activity = editor(app).and_then(|editor| crate::ui_loading::editor_label(app, editor));
+    if let Some((text, color)) = crate::vim::ui::status_item(app) {
+        items.push(StatusItem::new(text, "vim_mode", color, 0, false));
+    }
 
     if is_pinned(app, "git_branch") && !app.cached_git_branch.is_empty() {
         let branch_width = (budget / 3).clamp(5, 24);
@@ -738,7 +741,7 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let mut candidates: Vec<usize> = (0..items.len())
-        .filter(|&index| matches!(items[index].action, "formatting" | "file_details")
+        .filter(|&index| matches!(items[index].action, "formatting" | "file_details" | "vim_mode")
             || is_pinned(app, items[index].action))
         .collect();
     candidates.sort_by_key(|&index| items[index].priority);

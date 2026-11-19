@@ -1024,7 +1024,10 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let syntax_language = editor.syntax_language_token().map(str::to_string);
     let content_version = editor.content_version;
     let link_hover = app.lsp_link_hover_range();
+    // Vim Insert/Replace mode shows the terminal's own bar/underline caret.
+    let bar_caret = crate::vim::ui::bar_caret(app);
     let show_cursor = (app.cursor_visible
+        || bar_caret
         || (app.terminal_has_focus
             && app.animations.cursor_smear_active(
                 editor.navigation_id,
@@ -1222,7 +1225,8 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 style = selection_style.apply(style);
             }
             if cursor {
-                if is_current_line && absolute_col == cursor_col && show_cursor {
+                let primary = is_current_line && absolute_col == cursor_col && show_cursor;
+                if primary {
                     let cursor_width = if ch == '\t' {
                         cell_width.min(visible_width.saturating_sub(rendered_width))
                     } else if animation_geometry.enabled() {
@@ -1232,8 +1236,10 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                     };
                     animation_geometry.record_primary_cursor(screen_row, animation_col, cursor_width, style);
                 }
-                style = style.patch(crate::ui_colors::block_cursor_style(
-                    colors.bg_cursor, colors.fg_cursor, style.bg.unwrap_or(line_bg), colors.ui.contrast_colors()));
+                if !(primary && bar_caret) {
+                    style = style.patch(crate::ui_colors::block_cursor_style(
+                        colors.bg_cursor, colors.fg_cursor, style.bg.unwrap_or(line_bg), colors.ui.contrast_colors()));
+                }
             }
 
             if ch == '\t' {
@@ -1258,9 +1264,11 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                     cell_batch.push(ch);
                     code_lines.flush(&mut spans, &mut cell_batch, style);
                 }
-                if animation_geometry.enabled() {
+                if animation_geometry.enabled() || bar_caret {
                     let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-                    animation_geometry.push(line_idx, absolute_col, ch, screen_row, animation_col, width);
+                    if animation_geometry.enabled() {
+                        animation_geometry.push(line_idx, absolute_col, ch, screen_row, animation_col, width);
+                    }
                     animation_col += width;
                 }
                 rendered_width += cell_width;
@@ -1283,7 +1291,9 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
         {
             let style = if is_current_line && cursor_col == content_len && show_cursor {
                 animation_geometry.record_primary_cursor(screen_row, animation_col, 1, Style::default().bg(line_bg));
-                crate::ui_colors::block_cursor_style(colors.bg_cursor, colors.fg_cursor, line_bg, colors.ui.contrast_colors())
+                if bar_caret { Style::default().bg(line_bg) } else {
+                    crate::ui_colors::block_cursor_style(colors.bg_cursor, colors.fg_cursor, line_bg, colors.ui.contrast_colors())
+                }
             } else {
                 colors.ui.find_style(Style::default(), search_eol == Some(true), colors.bg_search_match)
             };
@@ -1400,6 +1410,8 @@ pub(crate) fn editor_columns(area: Rect, gutter: u16, minimap: u16) -> std::rc::
 }
 
 pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
+    // Vim Insert/Replace mode shows the terminal's own bar/underline caret.
+    let bar_caret = crate::vim::ui::bar_caret(app);
     if crate::ui_animation_frame::begin_editor(f, app, area) {
         return;
     }
@@ -1700,7 +1712,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let cursor_fg = app.colors.fg_cursor;
     let cursor_style = |surface| crate::ui_colors::block_cursor_style(cursor_bg, cursor_fg, surface, app.colors.ui.contrast_colors());
+    let caret_style = |surface| if bar_caret { Style::default() } else { cursor_style(surface) };
     let show_cursors = (app.cursor_visible
+        || bar_caret
         || (app.terminal_has_focus
             && app.animations.cursor_smear_active(
                 editor.navigation_id,
@@ -2349,19 +2363,23 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                                 0
                             };
                             animation_geometry.record_primary_cursor(code_lines.len(), animation_col, cursor_width, s);
+                            s = s.patch(caret_style(s.bg.unwrap_or(line_bg)));
+                        } else {
+                            s = s.patch(cursor_style(s.bg.unwrap_or(line_bg)));
                         }
-                        s = s.patch(cursor_style(s.bg.unwrap_or(line_bg)));
                     } else if show_inactive_cursor
                         && line_idx == cursor_line
                         && abs_col == cursor_col
                     {
                         s = s.add_modifier(ratatui::style::Modifier::UNDERLINED);
                     }
-                    if animation_geometry.enabled() {
+                    if animation_geometry.enabled() || bar_caret {
                         let animation_width = if ch == '\t' {
                             ts.saturating_sub(wrap_visual_col % ts.max(1)).max(1)
                         } else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) };
-                        animation_geometry.push(line_idx, abs_col, ch, code_lines.len(), animation_col, animation_width);
+                        if animation_geometry.enabled() {
+                            animation_geometry.push(line_idx, abs_col, ch, code_lines.len(), animation_col, animation_width);
+                        }
                         animation_col += animation_width;
                     }
                     if guide_color.is_some() {
@@ -2469,7 +2487,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 line_spans.push(Span::styled(
                     " ",
-                    if show_cursors && cursor_at_end { cursor_style(line_bg) }
+                    if show_cursors && cursor_at_end { if bar_caret { Style::default().bg(line_bg) } else { cursor_style(line_bg) } }
                     else { app.colors.ui.find_style(Style::default(), search_eol == Some(true), app.colors.bg_search_match) },
                 ));
                 animation_col = animation_col.max(rendered_cols).saturating_add(1);
@@ -3137,8 +3155,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         } else {
                             batch_buf.extend(glyphs.chars[col..end].iter().copied());
                         }
-                        if animation_geometry.enabled() {
-                            animation_geometry.push_unit_width_run(i, col, &glyphs.chars[col..end], code_lines.len(), animation_col);
+                        if animation_geometry.enabled() || bar_caret {
+                            if animation_geometry.enabled() {
+                                animation_geometry.push_unit_width_run(i, col, &glyphs.chars[col..end], code_lines.len(), animation_col);
+                            }
                             animation_col += end - col;
                         }
                         visual_col += end - col;
@@ -3161,11 +3181,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     }
                     let mut s = text_style;
                     let cursor_animation_col = animation_col;
-                    if animation_geometry.enabled() {
+                    if animation_geometry.enabled() || bar_caret {
                         let animation_width = if ch == '\t' {
                             ts.saturating_sub(visual_col % ts.max(1)).max(1)
                         } else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) };
-                        animation_geometry.push(i, col, ch, code_lines.len(), animation_col, animation_width);
+                        if animation_geometry.enabled() {
+                            animation_geometry.push(i, col, ch, code_lines.len(), animation_col, animation_width);
+                        }
                         animation_col += animation_width;
                     }
                     // Bracket pair colorization
@@ -3280,8 +3302,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                                 0
                             };
                             animation_geometry.record_primary_cursor(code_lines.len(), cursor_animation_col, cursor_width, s);
+                            s = s.patch(caret_style(s.bg.unwrap_or(line_bg)));
+                        } else {
+                            s = s.patch(cursor_style(s.bg.unwrap_or(line_bg)));
                         }
-                        s = s.patch(cursor_style(s.bg.unwrap_or(line_bg)));
                     } else if show_inactive_cursor && is_current_line && col == cursor_col {
                         s = s.add_modifier(ratatui::style::Modifier::UNDERLINED);
                     }
@@ -3440,7 +3464,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             // Always reserve the cursor column to keep blame text stable
             let eol_style = if show_cursors && cursor_at_end {
                 animation_geometry.record_primary_cursor(code_lines.len(), rendered_cols, 1, Style::default().bg(line_bg));
-                cursor_style(line_bg)
+                if bar_caret { Style::default().bg(line_bg) } else { cursor_style(line_bg) }
             } else if let Some(current) = search_eol {
                 app.colors.ui.find_style(Style::default(), current, app.colors.bg_search_match)
             } else if show_inactive_cursor && cursor_at_end {

@@ -22,6 +22,7 @@ Built in Rust for Windows and Linux. Under active development.
 - **Repositories:** nested Git projects appear separately in Source Control, with independent changes and commit messages. Repositories above the opened folder require **Open Repository** before their changes are included. Click a repository header to select or collapse it, use **×** to close it, and **Actions → Open Repository…** to reopen a project. Repository visibility is remembered per workspace.
 - **Terminals and previews:** multiple terminals; Markdown preview with tables, math, Mermaid diagrams, and Ctrl+Click links.
 - **Agent chat:** connect Agent Client Protocol (ACP) agents, resume conversations, review changes, and respond to permission requests inside the editor.
+- **Vim mode:** optional native Vim editing (off by default): Normal, Insert, Replace and Visual (character, line and block) modes, operators, text objects, counts, registers, macros, marks, `.` repeat, search, `:` commands and a vimrc. Sidebars, lists and terminals are reachable from the keyboard too. See [Vim mode](#vim-mode).
 - **Customize:** user/workspace settings, keybindings, VS Code color themes, optional animations, and [Wasm extensions](extension-api/README.md) for commands, views, and custom editors.
 
 Filesystem-driven Git updates wait for 600 ms of quiet, with updates about every two seconds during sustained builds. Batches containing only ignored files or hidden untracked files skip worktree status scans. Open files reload promptly, and saves, Git actions, and manual refreshes bypass this delay.
@@ -557,6 +558,79 @@ palette or **Settings → Files → Formatters → Configure…**.
 External commands can edit a temporary file or return formatted text on stdout.
 File mode starts with `{file}` as an argument, includes unsaved edits, and applies
 formatting as one undoable change; it writes the original file only on Save.
+
+## Vim mode
+
+New to Vim, or coming from Vim or Neovim? Start with the [Vim mode tutorial](docs/vim-mode.md).
+
+Turn on **Settings → Editor → Vim Mode** (or run **Vim: Toggle Vim Mode**).
+It is off by default. The status bar shows the mode (`NORMAL`, `INSERT`,
+`VISUAL`, `V-LINE`, `V-BLOCK`, `REPLACE`), pending keys and `recording @q`.
+Insert mode uses a bar cursor and Replace mode an underline, as in terminal Vim.
+
+The engine follows Vim 9's behaviour closely. Its tests replay about 24,000
+recorded Vim sessions (`scripts/vim_parity.py`) and compare the text, cursor
+and register after each one.
+
+- **Normal and Visual mode:** all motions (`w b e ge W B E gE f t F T ; , % ( ) { } [[ ]] [( [{ ]) ]} gg G H M L | ^ $ g_ gm gM gj gk go` and more),
+  operators (`d c y > < = ! g~ gu gU g? gq gw gc zf`) with counts and forced motions (`dv`, `dV`, `d<C-v>`),
+  text objects (`iw aw iW aW is as ip ap i( a( i[ i{ i< i" i' it at ie`), `.` repeat, `u`/`<C-r>`/`U`,
+  `<C-a>`/`<C-x>` (decimal, hex, binary), `J gJ r R ~ x X s S D C Y p P gp gP ]p`,
+  Visual block `I`, `A`, `c`, `r`, `$`, and `gv`, `o`, `O`.
+- **Registers and macros:** `"a`-`"z` (uppercase appends), `"0`-`"9`, `"-`, `"_`, `".`, `":`, `"/`, `"%`, and
+  `"+`/`"*` for the system clipboard. `q{reg}` records and `@{reg}`, `@@` and `@:` replay.
+  **Vim: Use System Clipboard** (or `:set clipboard=unnamedplus`) makes the clipboard the default register.
+- **Marks and jumps:** `m{a-zA-Z}`, `` `x ``, `'x`, ` `` `, `` `. ``, `` `[ ``, `` `] ``, `` `< ``, `` `> ``,
+  `<C-o>`/`<C-i>`, and `g;`/`g,` for the change list.
+- **Search:** `/` and `?` with offsets (`/pat/e+1`), incremental highlighting, `n N * # g* g# gn gN`, and
+  Vim regular expressions (`\v`, `\<\>`, `\{n,m}`, `\zs`, `\ze`, `\c` and more). `:noh` clears the highlight.
+- **Insert mode:** VTCode's completion, snippets and auto-pairs keep working. Vim keys work too:
+  `<C-w> <C-u> <C-h> <C-t> <C-d> <C-r>{reg} <C-o> <C-a> <C-v> <C-k>{digraph}`, `<C-n>`/`<C-p>` (completion)
+  and `<C-e>`/`<C-y>`. Each insert is one undo step.
+- **`:` commands:** `:w :q :wq :x :qa :e :sav :sp :vs :new :tabnew :bn :bp :b :ls :s :g :v :normal :d :y :m :t :j :> :< :sort :! :cd :pwd`,
+  ranges (`%`, `'<,'>`, marks, `/pattern/`, `+N`), `:s///gcie` with `\1`, `\u` and `\U`, and `:reg :marks :jumps :changes`.
+  The command line has history (Up/Down filter by prefix) and Tab completion.
+- **Windows and panes:** `<C-w>h/j/k/l` moves between editor splits, the Explorer, the bottom panel, the terminal
+  and the docked Agent Chat; `<C-w>s`, `<C-w>v`, `<C-w>c` and `<C-w>o` split and close (`<C-w>c` also closes Settings
+  and other non-text tabs, and hides the chat). In the Explorer use `j k h l o gg G / a A r d y x p m q`; the Search,
+  Source Control and Extensions sidebars take `j k l gg G q` (Space stages in Source Control). Commands that show a
+  sidebar (`:VT source_control`, `:VT extensions`, their shortcuts) also move the keyboard there, and Esc leaves a
+  sidebar's search box for its list. `:` opens the command line from any of these panes. In a terminal or the
+  Agent Chat, `<C-\><C-n>` returns to the editor. The mouse keeps working: a drag selects in Visual mode.
+- **Problems (quickfix):** `:copen` (or `:cw`, `:cl`) opens the Problems panel with focus, `:cclose` hides it, and
+  `:cnext`/`:cprev` jump between diagnostics. In the panel, `j k gg G <C-d> <C-u>` move, `l` or Enter opens, `q` leaves.
+  The Output panel takes `j k G <C-d> <C-u> q`.
+- **Menus and dialogs:** context menus, the menu bar and the status bar menus take `j`/`k` (and `<C-n>`/`<C-p>`),
+  `l` to choose (`h`/`l` switch menus in the menu bar) and `q` to close. Text fields take `<C-w>` and `<C-u>` as on
+  Vim's command line. Dialog buttons move with `h j k l`;
+  popups such as code actions and references take `j`/`k`.
+- **LSP:** `gd`, `gD`, `gy`, `gr`, `K` (hover), `]d`/`[d` (diagnostics), `]c`/`[c` (changes), `g.` (code actions).
+
+**Vim: Use Ctrl Keys** (on by default) lets Vim own `<C-d>`, `<C-u>`, `<C-v>`,
+`<C-w>`, `<C-r>` and the other Ctrl keys Vim defines. Turn it off to keep
+VTCode's Ctrl shortcuts. Ctrl keys that Vim does not use (`Ctrl+P`, `Ctrl+S`,
+`Ctrl+Shift+P`...), Alt keys and function keys always reach VTCode.
+
+### vimrc
+
+The vimrc is `vimrc` beside `settings.json` (**Vim: Open vimrc** creates a
+commented template). It is read when Vim mode starts; **Vim: Reload vimrc**
+re-reads it. It supports `set`, `let mapleader`, the `map`/`noremap` family for
+every mode (with `<silent>` and `<nowait>`), `unmap`, and any `:` command.
+Plugin and Vimscript lines are skipped. Use `:VT {command}` to run any Command
+Palette command, for example:
+
+```vim
+let mapleader = " "
+set relativenumber ignorecase smartcase scrolloff=8
+inoremap jk <Esc>
+nnoremap <leader>ff :VT quick_open<CR>
+nnoremap <leader>fg :VT global_search<CR>
+nnoremap <leader>rn :VT rename_symbol<CR>
+nnoremap <leader>ca :VT code_action<CR>
+```
+
+The `vimrcPath` setting points to a different file.
 
 ## Customization and tools
 

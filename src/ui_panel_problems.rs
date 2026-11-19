@@ -77,8 +77,38 @@ pub(super) fn hit(app: &mut App, col: u16, row: u16) -> Option<Row> {
 }
 
 pub(super) fn activate(app: &mut App, col: u16, row: u16) {
-    let target = match hit(app, col, row) {
-        Some(Row::Marker(index)) => {
+    if let Some(row) = hit(app, col, row) {
+        activate_row(app, row);
+    }
+}
+
+/// Rows that open a location when activated.
+pub(super) fn selectable(layout: &Layout, index: usize) -> bool {
+    matches!(layout.row(index), Some(Row::Marker(_) | Row::Diagnostic(_)))
+}
+
+/// The selectable row nearest `index`, preferring the direction of travel.
+pub(super) fn nearest(layout: &Layout, index: usize, forward: bool) -> Option<usize> {
+    let index = index.min(layout.total.saturating_sub(1));
+    let ahead = |i: usize| (i..layout.total).find(|&i| selectable(layout, i));
+    let behind = |i: usize| (0..=i).rev().find(|&i| selectable(layout, i));
+    if forward { ahead(index).or_else(|| behind(index)) } else { behind(index).or_else(|| ahead(index)) }
+}
+
+/// The keyboard selection, when the panel has focus.
+pub(super) fn selected(app: &mut App, layout: &Layout) -> Option<usize> {
+    (app.active_pane == ActivePane::Panel).then(|| nearest(layout, app.problem_selected, true)).flatten()
+}
+
+pub(super) fn activate_index(app: &mut App, index: usize) {
+    if let Some(row) = layout(app).row(index) {
+        activate_row(app, row);
+    }
+}
+
+fn activate_row(app: &mut App, row: Row) {
+    let target = match row {
+        Row::Marker(index) => {
             let (_, line, _, _, id) = &app.cached_problems[index];
             let (id, line) = (*id, line.saturating_sub(1));
             let target = app
@@ -123,7 +153,7 @@ pub(super) fn activate(app: &mut App, col: u16, row: u16) {
             }
             Some((line, 0, false))
         }
-        Some(Row::Diagnostic(index)) => {
+        Row::Diagnostic(index) => {
             let target = app
                 .lsp_manager
                 .problems_diagnostics()
@@ -187,6 +217,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let text_width = area.width.saturating_sub(u16::from(
         area.width > 1 && layout.total > area.height as usize,
     ));
+    let selected = selected(app, &layout);
     let first_diag = app.problem_scroll.saturating_sub(layout.markers + 2);
     let mut diagnostics = app.lsp_manager.problems_diagnostics().skip(first_diag);
     let mut lines = Vec::with_capacity(area.height as usize);
@@ -196,8 +227,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .min(app.problem_scroll.saturating_add(area.height as usize))
     {
         let row_y = area.y + lines.len() as u16;
-        let hovered =
-            app.mouse_row == row_y && (area.x..area.x + text_width).contains(&app.mouse_col);
+        let hovered = selected == Some(index)
+            || (app.mouse_row == row_y && (area.x..area.x + text_width).contains(&app.mouse_col));
         let row_bg = if hovered { app.colors.bg_hover } else { bg };
         let fg = app.colors.ui.workbench_text_color(row_bg);
         let row = match layout.row(index).unwrap() {

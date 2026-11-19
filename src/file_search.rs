@@ -36,6 +36,9 @@ pub struct State {
     pub(crate) file_search_key: Option<crate::app_search_algo::FileSearchKey>,
     pub(crate) file_search_refresh_pending: bool,
     pub(crate) input_histories: [crate::text_input::TextInputHistory; 2],
+    /// Vim 'hlsearch' matches cache: (view, content version, pattern).
+    pub(crate) vim_hl_key: Option<(u64, u64, String)>,
+    pub(crate) vim_hl_len: usize,
 }
 
 impl Drop for State {

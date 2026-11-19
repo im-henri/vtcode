@@ -9,6 +9,7 @@ mod code_path_links;
 mod filesystem_roots;
 mod file_icons;
 mod app;
+mod vim;
 mod animation_config;
 mod animation_scope;
 mod animation_structural_scope;

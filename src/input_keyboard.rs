@@ -46,7 +46,9 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
     quit
 }
 
-fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+    // Vim mode: hjkl and q in menus that read keys before the Vim layer.
+    let key = crate::vim::app_host::menu_key(app, key);
     if app.handle_text_input_context_menu_key(key) { return false; }
     if crate::ui_workspaces::handle_key(app, key) { return false; }
     if app.handle_shortcut_editor_key(key) { return false; }
@@ -138,6 +140,12 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
             app.notify("Chord cancelled");
         }
         return false;
+    }
+
+    // Native Vim mode owns the focused editor's keys (and adds Vim-style
+    // navigation to sidebars, lists and terminals) before workbench shortcuts.
+    if let Some(quit) = crate::vim::app_host::handle_key(app, key) {
+        return quit;
     }
 
     let stroke = (key.modifiers, key.code);
@@ -981,12 +989,18 @@ fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -
         ActivePane::Explorer => input::handle_explorer_key(app, key.code, key.modifiers),
         ActivePane::Editor => input::handle_editor_key(app, key.code, key.modifiers),
         ActivePane::Chat => {},
-        ActivePane::Panel => {},
+        ActivePane::Panel => { crate::ui_panels::handle_key(app, key.code); },
     }
     false
 }
 
 fn dispatch_shortcut(app: &mut App, cmd_id: &str) {
+    let sidebar = crate::vim::app_host::sidebar_state(app);
+    dispatch_shortcut_command(app, cmd_id);
+    crate::vim::app_host::focus_revealed_sidebar(app, sidebar);
+}
+
+fn dispatch_shortcut_command(app: &mut App, cmd_id: &str) {
     if app.detached_chrome_command(cmd_id) { return; }
     if app.route_explorer_edit_command(cmd_id) { return; }
     // End clipboard cycle on any keybinding that isn't clipboard_history

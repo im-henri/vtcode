@@ -3108,6 +3108,13 @@ fn next_event_wait_with_output(
         include(wait);
     }
     if output_ready && let Some(wait) = app.copy_animation_next_wait(std::time::Instant::now()) { include(wait); }
+    // Vim mapping timeouts ('timeoutlen') and the yank highlight.
+    if let Some(deadline) = app.vim.next_deadline() {
+        include(deadline.saturating_duration_since(std::time::Instant::now()));
+    }
+    if let Some((started, _, _)) = app.vim_yank_flash {
+        include((started + Duration::from_millis(180)).saturating_duration_since(std::time::Instant::now()));
+    }
     if let Some(reconnect_wait) = app.remote_connection.next_wait() { include(reconnect_wait); }
     if let Some(format_wait) = app.formatting.next_wait() {
         include(format_wait);
@@ -4109,6 +4116,13 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 windows.paint_active(app);
                 painting_elapsed = painting_started.elapsed();
             }
+            // Vim Insert/Replace mode: bar/underline cursor in the main terminal.
+            if windows.is_main() && app.vim_cursor_shape != app.vim_cursor_shape_sent {
+                let shape = app.vim_cursor_shape.unwrap_or(crossterm::cursor::SetCursorStyle::DefaultUserShape);
+                let _ = crossterm::queue!(terminal.backend_mut(), shape);
+                let _ = io::Write::flush(terminal.backend_mut());
+                app.vim_cursor_shape_sent = app.vim_cursor_shape;
+            }
             // Foreground rendering can publish a new word or selection query.
             // Schedule peers before waiting, even when there is no further input.
             windows.invalidate_pending_workspace_redraw(app);
@@ -4355,6 +4369,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
         // Process macro replay queue or poll for new events
         needs_redraw |= app.update_file_deletion_timer();
+        needs_redraw |= crate::vim::app_host::tick(app);
         crate::app_source_control_hover::poll(app, std::time::Instant::now());
         app.background.refresh_activity(std::time::Instant::now());
         if !needs_redraw {

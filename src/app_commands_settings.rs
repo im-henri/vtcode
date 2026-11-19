@@ -194,6 +194,18 @@ impl App {
                     self.lsp_completion_active = false;
                 }
             }
+            "vim_mode" => {
+                let on = !self.vim.enabled;
+                crate::vim::app_host::set_enabled(self, on);
+            }
+            "vim_ctrl_keys" => {
+                self.vim_ctrl_keys_setting = !self.vim_ctrl_keys_setting;
+                self.vim.opts.ctrl_keys = self.vim_ctrl_keys_setting;
+            }
+            "vim_system_clipboard" => {
+                self.vim_clipboard_setting = !self.vim_clipboard_setting;
+                self.vim.opts.clipboard_unnamed = self.vim_clipboard_setting;
+            }
             "hover_enabled" => {
                 self.hover_enabled = !self.hover_enabled;
                 if !self.hover_enabled {

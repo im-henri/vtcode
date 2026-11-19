@@ -2458,7 +2458,7 @@ fn explorer_sticky_folders_use_sidebar_sticky_colors_instead_of_editor_sticky_co
     let mut app = sidebar_list_app();
     app.colors = theme.to_theme_colors();
     let folder = app.explorer.root.join("sticky_source");
-    app.explorer.entries = (0..20)
+    app.explorer.set_test_entries((0..20)
         .map(|index| FileEntry {
             path: if index == 0 {
                 folder.clone()
@@ -2476,7 +2476,7 @@ fn explorer_sticky_folders_use_sidebar_sticky_colors_instead_of_editor_sticky_co
             git_status: GitStatus::Unmodified,
             git_status_summary: GitStatusSummary::default(),
         })
-        .collect();
+        .collect());
     app.explorer_multi_selected.clear();
     app.explorer.scroll_offset = 5;
     let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();

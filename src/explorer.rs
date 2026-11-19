@@ -747,7 +747,7 @@ impl FileExplorer {
         self.ensure_selection_visible();
     }
 
-    fn ensure_selection_visible(&mut self) {
+    pub(crate) fn ensure_selection_visible(&mut self) {
         let visible_height = self.visible_height.max(1);
         if self.selected < self.scroll_offset {
             self.scroll_offset = self.selected;
@@ -771,6 +771,15 @@ impl FileExplorer {
     fn sticky_limit(height: usize) -> usize {
         // Always leave at least one row for tree content.
         5.min(height.saturating_sub(1))
+    }
+
+    /// Replace the tree in tests, keeping the parent index in step. Assigning
+    /// `entries` directly leaves the index from the folder scanned at startup,
+    /// which is used whenever its length happens to match.
+    #[cfg(test)]
+    pub(crate) fn set_test_entries(&mut self, entries: Vec<FileEntry>) {
+        self.entries = entries;
+        self.rebuild_parent_indices();
     }
 
     fn rebuild_parent_indices(&mut self) {

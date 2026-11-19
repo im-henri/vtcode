@@ -70,7 +70,35 @@ pub(crate) fn theme_extensions_dir() -> PathBuf {
 }
 
 pub(crate) fn workspace_dir(project_root: &Path) -> PathBuf {
+    #[cfg(test)]
+    if project_root.as_os_str().is_empty() {
+        return test_no_folder_workspace_dir();
+    }
     workspace_dir_in(&base_dir(), project_root)
+}
+
+/// Tests run in parallel threads, and every window without a folder shares
+/// one session store (`empty-window`): two such tests would
+/// contend for the same session writer lock ("Another VTCode window is
+/// saving this workspace session"). Each test thread gets its own store,
+/// removed when the thread ends.
+#[cfg(test)]
+fn test_no_folder_workspace_dir() -> PathBuf {
+    struct Store(PathBuf);
+    impl Drop for Store {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    thread_local! {
+        static STORE: Store = Store(data_dir().join("empty-window-tests").join(format!(
+            "{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        )));
+    }
+    STORE.with(|store| store.0.clone())
 }
 
 fn normalized_path(path: &Path) -> PathBuf {
@@ -162,8 +190,11 @@ mod tests {
         assert_eq!(base_dir().canonicalize().unwrap(), executable.parent().unwrap().canonicalize().unwrap());
         assert!(workspace_dir(Path::new(".")).starts_with(data_dir()));
         assert_eq!(theme_extensions_dir(), data_dir().join("theme-extensions"));
-        assert_eq!(workspace_dir(Path::new("")), data_dir().join("empty-window"));
-        assert_ne!(workspace_dir(Path::new("")), workspace_dir(Path::new(".")));
+        // Test builds give each thread its own no-folder store; check the
+        // mapping a real window uses.
+        assert_eq!(workspace_dir_in(&base_dir(), Path::new("")), data_dir().join("empty-window"));
+        assert_ne!(workspace_dir_in(&base_dir(), Path::new("")), workspace_dir(Path::new(".")));
+        assert!(workspace_dir(Path::new("")).starts_with(data_dir().join("empty-window-tests")));
     }
 
     #[test]

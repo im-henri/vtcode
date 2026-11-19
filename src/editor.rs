@@ -666,6 +666,14 @@ pub(crate) struct Editor {
     pub ec_trim_trailing: Option<bool>,
     /// Editorconfig: override insert final newline on save
     pub ec_insert_final_newline: Option<bool>,
+    /// Vim Visual-mode area as (start_line, start_col, end_line, end_col),
+    /// half-open. Overrides the anchor/cursor selection so that rendering
+    /// and selection-based commands see exactly the Vim region.
+    pub(crate) vim_selection: Option<(usize, usize, usize, usize)>,
+    /// Vim Visual-block area (lines and display columns).
+    pub(crate) vim_block: Option<crate::vim::BlockArea>,
+    /// Marks and other Vim per-buffer state.
+    pub(crate) vim_buf: crate::vim::BufState,
 }
 
 /// A snippet tab stop position
@@ -806,6 +814,9 @@ impl Editor {
             snippet_rope: None,
             ec_trim_trailing: None,
             ec_insert_final_newline: None,
+            vim_selection: None,
+            vim_block: None,
+            vim_buf: Default::default(),
         }
     }
 

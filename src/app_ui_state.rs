@@ -304,6 +304,7 @@ impl App {
     }
 
     pub(crate) fn dismiss_lsp_hover(&mut self) {
+        self.keyboard_hover = false;
         self.clear_lsp_hover();
         self.lsp_hover_suppressed = true;
     }

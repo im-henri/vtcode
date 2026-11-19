@@ -1134,6 +1134,7 @@ impl Editor {
     /// `delta`: positive = lines inserted, negative = lines deleted.
     /// Bookmarks on deleted lines are removed.
     pub(crate) fn shift_bookmarks(&mut self, from_line: usize, delta: isize) {
+        self.vim_buf.shift_lines(from_line, delta);
         if self.bookmarks.is_empty() {
             return;
         }

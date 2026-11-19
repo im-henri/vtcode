@@ -332,7 +332,8 @@ pub(crate) fn begin_frame(app: &mut App) {
     }
     if !app.show_panel || app.panel_tab != 2 {
         app.logs.hide();
-        if app.active_pane == ActivePane::Panel {
+        // Problems and Notifications keep keyboard focus while shown.
+        if app.active_pane == ActivePane::Panel && !app.show_panel {
             app.active_pane = ActivePane::Editor;
         }
     }

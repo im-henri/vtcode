@@ -38,6 +38,15 @@ fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    handle_mouse_workbench(app, mouse);
+    // Clicks and drags keep Vim's mode in step (a drag selects in Visual
+    // mode, a click in Normal mode keeps the cursor off the line end).
+    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_) | MouseEventKind::Up(_)) {
+        crate::vim::app_host::after_mouse(app);
+    }
+}
+
+fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
     app.mouse_position_known = true;
     app.editor_selection_scroll_at = None;
     if matches!(mouse.kind, MouseEventKind::Down(_)) {

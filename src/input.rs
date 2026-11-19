@@ -284,6 +284,19 @@ pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, mod
         KeyCode::Left | KeyCode::Right if modifiers.is_empty() => {
             app.set_selected_global_search_file_collapsed(code == KeyCode::Left);
         }
+        KeyCode::Home | KeyCode::End if modifiers.is_empty() => {
+            // Step until the selection stops moving: rows can be collapsed
+            // file headings or matches, so there is no direct index.
+            let mut last = app.global_search_selected_row();
+            for _ in 0..=app.global_search_results.len() * 2 {
+                if code == KeyCode::Home { app.global_search_select_prev_visible(); }
+                else { app.global_search_select_next_visible(); }
+                let now = app.global_search_selected_row();
+                if now == last { break; }
+                last = now;
+            }
+            app.preview_global_search_result();
+        }
         KeyCode::Delete if modifiers.is_empty() => {
             if let Some(row) = app.global_search_selected_row() {
                 app.dismiss_global_search_result(row);

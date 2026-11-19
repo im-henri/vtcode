@@ -218,6 +218,21 @@ fn get_char_for_key(key_event: &KeyEventRecord) -> Option<char> {
     Some(ch)
 }
 
+/// vtcode patch: when the layout lookup finds no key for a control code
+/// (ConPTY synthesises records for `Ctrl-\` and friends, and layouts without
+/// a `\` key cannot map them back), recover the caret-notation character so
+/// `Ctrl-\`, `Ctrl-]`, `Ctrl-^` and `Ctrl-_` still arrive.
+fn control_code_char(code: u16, modifiers: KeyModifiers) -> Option<char> {
+    if !modifiers.contains(KeyModifiers::CONTROL) {
+        return None;
+    }
+    match code {
+        0x01..=0x1a => char::from_u32(code as u32 + 0x60),
+        0x00 | 0x1b..=0x1f => char::from_u32(code as u32 + 0x40),
+        _ => None,
+    }
+}
+
 fn parse_key_event_record(key_event: &KeyEventRecord) -> Option<WindowsKeyEvent> {
     let modifiers = KeyModifiers::from(&key_event.control_key_state);
     let virtual_key_code = key_event.virtual_key_code as i32;
@@ -288,7 +303,9 @@ fn parse_key_event_record(key_event: &KeyEventRecord) -> Option<WindowsKeyEvent>
                     // character the key normally maps to on the user's keyboard layout.
                     // The keys that intentionally generate control codes (ESC, ENTER, TAB, etc.)
                     // are handled by their virtual key codes above.
-                    get_char_for_key(key_event).map(KeyCode::Char)
+                    get_char_for_key(key_event)
+                        .or_else(|| control_code_char(utf16, modifiers))
+                        .map(KeyCode::Char)
                 }
                 surrogate @ 0xD800..=0xDFFF => {
                     return Some(WindowsKeyEvent::Surrogate(surrogate));

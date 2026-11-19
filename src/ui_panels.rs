@@ -109,6 +109,60 @@ pub(crate) fn hovered_problem(app: &mut App, col: u16, row: u16) -> Option<usize
 
 pub(crate) fn activate_problem(app: &mut App, col: u16, row: u16) { problems::activate(app, col, row); }
 
+/// Keyboard control of the focused Problems and Notifications lists: arrows,
+/// Page Up/Down and Home/End move, Enter opens a problem, Esc returns to the
+/// editor.
+pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode) -> bool {
+    use crossterm::event::KeyCode;
+    use crate::app::ActivePane;
+    if !app.show_panel || app.active_pane != ActivePane::Panel || !matches!(app.panel_tab, 1 | 3) { return false; }
+    if code == KeyCode::Esc {
+        app.active_pane = ActivePane::Editor;
+        return true;
+    }
+    let height = app.panel_area.map_or(10, |area| area.height.saturating_sub(1) as usize).max(1);
+    if app.panel_tab == 3 {
+        let maximum = app.notification_history.len().saturating_sub(height);
+        let offset = notification_offset(app, height).min(maximum);
+        let next = match code {
+            KeyCode::Up => offset.saturating_sub(1),
+            KeyCode::Down => offset + 1,
+            KeyCode::PageUp => offset.saturating_sub(height),
+            KeyCode::PageDown => offset + height,
+            KeyCode::Home => 0,
+            KeyCode::End => maximum,
+            _ => return false,
+        };
+        scroll_to(app, 3, next, maximum);
+        return true;
+    }
+    let layout = problems::layout(app);
+    let Some(current) = problems::selected(app, &layout) else {
+        return matches!(code, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End | KeyCode::Enter);
+    };
+    let last = layout.total.saturating_sub(1);
+    let next = match code {
+        KeyCode::Up => problems::nearest(&layout, current.saturating_sub(1), false),
+        KeyCode::Down => problems::nearest(&layout, (current + 1).min(last), true),
+        KeyCode::PageUp => problems::nearest(&layout, current.saturating_sub(height), false),
+        KeyCode::PageDown => problems::nearest(&layout, (current + height).min(last), true),
+        KeyCode::Home => problems::nearest(&layout, 0, true),
+        KeyCode::End => problems::nearest(&layout, last, false),
+        KeyCode::Enter => {
+            problems::activate_index(app, current);
+            return true;
+        }
+        _ => return false,
+    };
+    let next = next.unwrap_or(current);
+    app.problem_selected = next;
+    // Keep the selection on screen; the first problem also shows the summary.
+    if problems::nearest(&layout, 0, true) == Some(next) { app.problem_scroll = 0; }
+    else if next < app.problem_scroll { app.problem_scroll = next; }
+    else if next >= app.problem_scroll + height { app.problem_scroll = next + 1 - height; }
+    true
+}
+
 pub(crate) fn hide_for_layout(app: &mut App) {
     app.show_panel = false;
     app.logs.hide();
@@ -606,6 +660,7 @@ pub(crate) fn draw_panel_notifications(f: &mut Frame, app: &App, area: Rect) {
 
 pub(crate) fn draw_status_bar(f: &mut Frame, app: &mut App, area: Rect) {
     crate::ui_status::draw_bar(f, app, area);
+    crate::vim::ui::draw_status(f, app, area);
 }
 
 #[cfg(test)]

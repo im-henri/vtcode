@@ -1281,6 +1281,20 @@ impl App {
         let copy = paste.is_none() && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
             && !modifiers.contains(KeyModifiers::ALT) && matches!(code, KeyCode::Char('c' | 'C') | KeyCode::Insert);
         if !copy { self.clear_text_input_viewport(id); }
+        // Vim mode: Ctrl-U deletes to the start of the field and Ctrl-W the
+        // word before the cursor, as on Vim's command line.
+        if self.vim.enabled && paste.is_none() && modifiers == KeyModifiers::CONTROL
+            && matches!(code, KeyCode::Char('u' | 'w'))
+        {
+            let (select, mods) = if code == KeyCode::Char('u') {
+                (KeyCode::Home, KeyModifiers::SHIFT)
+            } else {
+                (KeyCode::Left, KeyModifiers::SHIFT | KeyModifiers::CONTROL)
+            };
+            let selected = self.edit_text_input(id, select, mods, None);
+            let deleted = self.edit_text_input(id, KeyCode::Backspace, KeyModifiers::NONE, None);
+            return TextInputResult { consumed: true, changed: selected.changed || deleted.changed };
+        }
         match id {
             TextInputId::DeskPopup => return crate::ui_desks::edit_input(self, code, modifiers, paste),
             TextInputId::WorkspaceFilter => return crate::ui_workspaces::edit_filter(self, code, modifiers, paste),

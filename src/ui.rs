@@ -362,6 +362,8 @@ fn apply_area_gradient_reference(
 }
 
 pub(crate) fn draw(f: &mut Frame, app: &mut App) {
+    crate::vim::ui::prepare_frame(app);
+    crate::vim::ui::begin_caret_frame();
     app.git_operation_ui.buttons.clear();
     for draft in app.amend_commits.values_mut() {
         draft.buttons = None;
@@ -1103,6 +1105,8 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
     app.logs.finish_frame(app.background.wake_handle());
     crate::ui_logs::draw_dropdown(f, app);
     crate::ui_status::draw_overlays(f, app);
+    crate::vim::ui::draw_overlays(f, app);
+    crate::vim::ui::place_caret(f, app);
     crate::ui_quick_picker::draw_active(f, app);
     crate::ui_desks::draw(f, app);
     crate::ui_workspaces::draw(f, app);

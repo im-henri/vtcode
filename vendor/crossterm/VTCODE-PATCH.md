@@ -171,3 +171,7 @@ ConPTY children, including modified navigation/letter keys, command palette rout
 key releases, Unicode/multiline/bulk paste, and cleanup after panic unwinding.
 The console tests also reproduce Windows Terminal's leaked Enter press/release
 packets and cover all eight raw/encoded start/body/end combinations.
+
+Control codes whose key the keyboard layout cannot name (ConPTY synthesises
+`Ctrl-\` as code 0x1c on layouts without a `\` key) fall back to caret
+notation in `control_code_char`, so Vim mode's `Ctrl-\ Ctrl-N` still arrives.

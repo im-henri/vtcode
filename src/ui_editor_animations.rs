@@ -909,6 +909,9 @@ impl Geometry {
         width: usize,
         style: Style,
     ) {
+        if row < self.area.height as usize && column < self.area.width as usize {
+            crate::vim::ui::note_caret(self.area.x.saturating_add(column as u16), self.area.y.saturating_add(row as u16));
+        }
         if !self.enabled || row >= self.area.height as usize || column >= self.area.width as usize {
             return;
         }

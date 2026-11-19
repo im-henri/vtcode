@@ -213,6 +213,10 @@ impl App {
             highlight_words_across_tabs: Some(self.highlight_words_across_tabs),
             error_lens: Some(self.error_lens),
             hover_enabled: Some(self.hover_enabled),
+            vim_mode: Some(self.vim.enabled),
+            vim_use_ctrl_keys: Some(self.vim_ctrl_keys_setting),
+            vim_use_system_clipboard: Some(self.vim_clipboard_setting),
+            vimrc_path: self.vim_rc_path.as_ref().map(|p| p.display().to_string()),
             quick_suggestions: Some(self.quick_suggestions),
             inlay_hints: Some(self.show_inlay_hints),
             code_lens: Some(self.show_code_lenses),
@@ -573,6 +577,20 @@ impl App {
         }
         if let Some(v) = s.error_lens {
             self.error_lens = v;
+        }
+        if let Some(v) = s.vim_use_ctrl_keys {
+            self.vim_ctrl_keys_setting = v;
+            self.vim.opts.ctrl_keys = v;
+        }
+        if let Some(v) = s.vim_use_system_clipboard {
+            self.vim_clipboard_setting = v;
+            self.vim.opts.clipboard_unnamed = v;
+        }
+        if let Some(path) = &s.vimrc_path {
+            self.vim_rc_path = (!path.trim().is_empty()).then(|| std::path::PathBuf::from(path.trim()));
+        }
+        if let Some(v) = s.vim_mode {
+            crate::vim::app_host::set_enabled(self, v);
         }
         if let Some(v) = s.hover_enabled {
             self.hover_enabled = v;

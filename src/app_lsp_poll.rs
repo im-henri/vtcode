@@ -290,7 +290,7 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
                 app.lsp_hover_active = app.lsp_manager.request_hover(&path, line as u32, col);
             }
         }
-    } else {
+    } else if !app.keyboard_hover {
         *needs_redraw |= app.clear_lsp_hover();
     }
     request_passive_document_feedback(app, historical);
