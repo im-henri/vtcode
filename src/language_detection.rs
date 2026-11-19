@@ -6,7 +6,6 @@ use ropey::Rope;
 use std::{
     cell::RefCell,
     hash::Hasher,
-    io::{Error, ErrorKind},
     sync::{
         LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -15,7 +14,7 @@ use std::{
 
 // Magika's pinned standard_v3_3 implementation reads 4096 bytes from either end,
 // strips whitespace, then feeds 1024 bytes from each end to its classifier.
-// Pin the crate alongside this bound. Input rejects any out-of-bound read.
+// Preserve those blocks without copying the middle of a large document.
 pub(crate) const SAMPLE_BLOCK_BYTES: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,15 +51,11 @@ impl Snapshot {
         if rope.char_to_byte(end) < end_byte {
             end += 1;
         }
-        let start_byte = len.saturating_sub(SAMPLE_BLOCK_BYTES);
+        let start_byte = len.saturating_sub(SAMPLE_BLOCK_BYTES).max(end_byte);
         let start = rope.byte_to_char(start_byte);
         Self {
             head: Rope::from(rope.slice(..end)),
-            tail: if start_byte == 0 {
-                Rope::new()
-            } else {
-                Rope::from(rope.slice(start..))
-            },
+            tail: Rope::from(rope.slice(start..)),
             tail_skip: start_byte - rope.char_to_byte(start),
             len,
         }
@@ -70,16 +65,14 @@ impl Snapshot {
         if cancel.is_cancelled() {
             return None;
         }
-        let head: Vec<u8> = self.head.bytes().take(SAMPLE_BLOCK_BYTES).collect();
-        let tail = if self.tail.len_bytes() == 0 {
-            head.clone()
-        } else {
-            self.tail.bytes().skip(self.tail_skip).collect()
-        };
+        // Magika may read a small input in full. Pass a complete byte slice
+        // containing both feature blocks, with any overlap included once.
+        let mut bytes = Vec::with_capacity(self.len.min(SAMPLE_BLOCK_BYTES * 2));
+        bytes.extend(self.head.bytes().take(SAMPLE_BLOCK_BYTES));
+        bytes.extend(self.tail.bytes().skip(self.tail_skip));
         (!cancel.is_cancelled()).then_some(Sample {
-            head,
-            tail,
-            len: self.len as u64,
+            bytes,
+            original_len: self.len,
         })
     }
 
@@ -90,52 +83,25 @@ impl Snapshot {
 }
 
 pub(crate) struct Sample {
-    head: Vec<u8>,
-    tail: Vec<u8>,
-    len: u64,
+    bytes: Vec<u8>,
+    original_len: usize,
 }
 impl Sample {
     pub(crate) fn fingerprint(&self) -> u64 {
         let mut hash = rustc_hash::FxHasher::default();
-        hash.write_u64(self.len);
-        hash.write(&self.head);
-        hash.write(&self.tail);
+        hash.write_usize(self.original_len);
+        hash.write(&self.bytes);
         hash.finish()
     }
 
     pub(crate) fn first_line(&self) -> std::borrow::Cow<'_, str> {
         // Existing grammar first-line rules and modelines can cover languages
         // outside the model. Bound even an enormous one-line document.
-        let line = self
-            .head
+        let line = self.bytes[..self.bytes.len().min(256)]
             .split(|&byte| byte == b'\n')
             .next()
             .unwrap_or_default();
-        String::from_utf8_lossy(&line[..line.len().min(256)])
-    }
-}
-impl magika::Input for &Sample {
-    fn length(&self) -> anyhow::Result<u64> {
-        Ok(self.len)
-    }
-
-    fn read_at(&mut self, buffer: &mut [u8], offset: u64) -> anyhow::Result<()> {
-        let source = if offset == 0 {
-            self.head.get(..buffer.len())
-        } else {
-            offset
-                .checked_sub(self.len - self.tail.len() as u64)
-                .and_then(|index| usize::try_from(index).ok())
-                .and_then(|index| self.tail.get(index..)?.get(..buffer.len()))
-        };
-        let source = source.ok_or_else(|| {
-            Error::new(
-                ErrorKind::UnexpectedEof,
-                "language detector exceeded its bounded sample",
-            )
-        })?;
-        buffer.copy_from_slice(source);
-        Ok(())
+        String::from_utf8_lossy(line)
     }
 }
 
@@ -169,8 +135,7 @@ static FAILED: AtomicBool = AtomicBool::new(false);
 
 fn options(use_resolvers: bool) -> magika::Options {
     let mut options = magika::Options::default();
-    // Resolvers can validate short JSON/XML and other exact formats. Enable
-    // them only when the whole document fits in the bounded snapshot; larger
+    // Resolvers validate whole documents on the short-input path. Longer
     // documents use the model's fixed beginning/end feature extraction.
     options.use_resolvers = use_resolvers;
     options
@@ -180,14 +145,15 @@ pub(crate) fn classify(
     sample: &Sample,
     cancel: &CancellationToken,
 ) -> Option<&'static magika::TypeInfo> {
-    if cancel.is_cancelled() || sample.head.contains(&0) || sample.tail.contains(&0) {
+    if cancel.is_cancelled() || sample.bytes.contains(&0) {
         return None;
     }
     // Strict validation can recognize short JSON containers that do not give
     // a statistical classifier enough evidence. Inspect the complete document
     // only when it fits in the sample, without allocating a parsed object tree.
-    if sample.len <= SAMPLE_BLOCK_BYTES as u64 && sample.len >= 8 {
-        if let Ok(text) = std::str::from_utf8(&sample.head) {
+    let use_resolvers = sample.original_len <= SAMPLE_BLOCK_BYTES;
+    if use_resolvers && sample.bytes.len() >= 8 {
+        if let Ok(text) = std::str::from_utf8(&sample.bytes) {
             let text = text.trim_start();
             if text.starts_with(['{', '[']) {
                 let mut parser = serde_json::Deserializer::from_str(text);
@@ -200,14 +166,15 @@ pub(crate) fn classify(
         }
     }
     // Empty/very short documents don't even initialize the model.
-    let options = options(sample.len <= SAMPLE_BLOCK_BYTES as u64);
-    let features = match magika::FeaturesOr::extract_content(sample, &options).ok()? {
-        magika::FeaturesOr::Features(features) => features,
-        magika::FeaturesOr::Ruled(result) => {
-            let info = result.info();
-            return (info.is_text && info.label != "txt").then_some(info);
-        }
-    };
+    let options = options(use_resolvers);
+    let features =
+        match magika::FeaturesOr::extract_content(sample.bytes.as_slice(), &options).ok()? {
+            magika::FeaturesOr::Features(features) => features,
+            magika::FeaturesOr::Ruled(result) => {
+                let info = result.info();
+                return (info.is_text && info.label != "txt").then_some(info);
+            }
+        };
     if cancel.is_cancelled() {
         return None;
     }

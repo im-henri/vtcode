@@ -73,6 +73,52 @@ fn fallback_updates_language_and_syntax_without_creating_a_manual_override() {
 }
 
 #[test]
+fn c_detection_survives_the_sampling_boundary_when_opening_and_pasting() {
+    use std::fmt::Write;
+
+    let c_source = |lines: usize| {
+        let mut source = String::from(
+            "#include <stdio.h>\n#include <stdint.h>\n\nint main(void) {\n    uint32_t result = 0;\n",
+        );
+        for index in 0..lines - 8 {
+            writeln!(source, "    result += (uint32_t)({index:03} * 7);").unwrap();
+        }
+        source.push_str("    printf(\"%u\\n\", result);\n    return 0;\n}\n");
+        source
+    };
+    assert!(c_source(120).len() <= language_detection::SAMPLE_BLOCK_BYTES);
+    assert!(c_source(130).len() > language_detection::SAMPLE_BLOCK_BYTES);
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::new_deferred(directory.path().to_owned());
+    let expected = canonical(&app, "c");
+    let source = c_source(167);
+    let path = directory.path().join("extensionless-c-regression");
+    std::fs::write(&path, &source).unwrap();
+    app.open_file(&path);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading)
+    });
+    assert_eq!(app.editor().unwrap().rope.to_string(), source);
+    settle(&mut app);
+    assert_eq!(app.editor().unwrap().language_name(), expected);
+
+    for lines in [10, 120, 130, 167] {
+        let source = c_source(lines);
+        app.new_file();
+        assert!(app.editor().unwrap().file_path.is_none());
+        settle(&mut app);
+        app.paste_editor_text(source, false);
+        settle(&mut app);
+        assert_eq!(
+            app.editor().unwrap().language_name(),
+            expected,
+            "paste of {lines} lines"
+        );
+    }
+}
+
+#[test]
 fn registered_names_extensions_manual_modes_and_associations_take_precedence() {
     for filename in [
         "program.py",

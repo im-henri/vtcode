@@ -1,5 +1,4 @@
 use super::*;
-use magika::Input;
 
 fn label(source: &str) -> Option<&'static str> {
     let cancel = CancellationToken::new();
@@ -157,28 +156,24 @@ fn snapshots_preserve_exact_model_input_with_constant_retained_size() {
     for content in [
         String::new(),
         "short".into(),
-        "x".repeat(4096),
-        "x".repeat(4097),
+        "x".repeat(SAMPLE_BLOCK_BYTES),
+        "x".repeat(SAMPLE_BLOCK_BYTES + 1),
+        "☃".repeat(1800),
         format!("a{}b", "☃界👩".repeat(100_000)),
     ] {
         let snapshot = Snapshot::capture(&Rope::from_str(&content));
         assert!(snapshot.retained_bytes() <= SAMPLE_BLOCK_BYTES * 2 + 6);
         let sample = snapshot.sample(&cancel).unwrap();
         let count = content.len().min(SAMPLE_BLOCK_BYTES);
-        assert_eq!(sample.len, content.len() as u64);
-        assert_eq!(sample.head, content.as_bytes()[..count]);
-        assert_eq!(sample.tail, content.as_bytes()[content.len() - count..]);
-        let mut read = vec![0; count];
-        (&sample).read_at(&mut read, 0).unwrap();
-        assert_eq!(read, sample.head);
-        (&sample)
-            .read_at(&mut read, (content.len() - count) as u64)
-            .unwrap();
-        assert_eq!(read, sample.tail);
-        assert!(
-            (&sample)
-                .read_at(&mut [0; 1], content.len() as u64 + 1)
-                .is_err()
+        assert_eq!(sample.original_len, content.len());
+        assert_eq!(
+            sample.bytes.len(),
+            content.len().min(SAMPLE_BLOCK_BYTES * 2)
+        );
+        assert_eq!(&sample.bytes[..count], &content.as_bytes()[..count]);
+        assert_eq!(
+            &sample.bytes[sample.bytes.len() - count..],
+            &content.as_bytes()[content.len() - count..],
         );
     }
     let snapshot = Snapshot::capture(&Rope::from_str("fn main() {}\n"));
@@ -190,22 +185,37 @@ fn snapshots_preserve_exact_model_input_with_constant_retained_size() {
 
 #[test]
 fn bounded_input_agrees_with_the_upstream_whole_content_api() {
-    let cancel = CancellationToken::new();
-    let content = format!(
-        "// ☃ Example\n{}fn main() {{ println!(\"hello\"); }}\n",
-        "// comment\n".repeat(10_000)
-    );
-    let sample = Snapshot::capture(&Rope::from_str(&content))
-        .sample(&cancel)
-        .unwrap();
-    let actual = classify(&sample, &cancel).map(|info| info.label);
     let mut model = MODEL.as_ref().unwrap().session().unwrap();
-    let expected = model.identify_content(content.as_bytes()).unwrap();
-    let info = expected.info();
-    assert_eq!(
-        actual,
-        (info.is_text && info.label != "txt").then_some(info.label)
-    );
+    let prefix = "// ☃ Example\nfn main() {\n";
+    let line = "    println!(\"hello\");\n";
+    let suffix = "}\n";
+    for size in [
+        SAMPLE_BLOCK_BYTES,
+        SAMPLE_BLOCK_BYTES + 1,
+        SAMPLE_BLOCK_BYTES * 2,
+        SAMPLE_BLOCK_BYTES * 2 + 1,
+        64 * 1024,
+        64 * 1024 + 1,
+    ] {
+        let body_bytes = size - prefix.len() - suffix.len();
+        let content = format!(
+            "{prefix}{}{}{suffix}",
+            line.repeat(body_bytes / line.len()),
+            " ".repeat(body_bytes % line.len()),
+        );
+        model.options_mut().use_resolvers = size <= SAMPLE_BLOCK_BYTES;
+        let expected = model
+            .identify_content(content.as_bytes())
+            .unwrap()
+            .info()
+            .label;
+        assert_eq!(expected, "rust", "upstream classification for {size} bytes");
+        assert_eq!(
+            label(&content),
+            Some(expected),
+            "sampled classification for {size} bytes"
+        );
+    }
 }
 
 #[test]
