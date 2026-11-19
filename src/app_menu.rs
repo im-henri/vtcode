@@ -313,6 +313,7 @@ impl App {
             PaletteCommand { name: "File: Open File Under Cursor".into(), shortcut: String::new(), id: Cow::Borrowed("open_file_at_cursor") },
             PaletteCommand { name: "View: Toggle Focus Mode".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_focus_mode") },
             PaletteCommand { name: "View: Toggle Sidebar Position".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_sidebar_position") },
+            PaletteCommand { name: "View: Toggle Activity Bar Position".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_activity_bar_position") },
             PaletteCommand { name: "Go to Last Edit Location".into(), shortcut: "Ctrl+K, Ctrl+Q".into(), id: Cow::Borrowed("goto_last_edit") },
             PaletteCommand { name: "Compare Active File With Next Tab".into(), shortcut: String::new(), id: Cow::Borrowed("compare_tabs") },
             PaletteCommand { name: "Edit: Transform to Uppercase".into(), shortcut: String::new(), id: Cow::Borrowed("to_uppercase") },
@@ -518,6 +519,10 @@ impl App {
                 ("Split Editor Up", "", "split_editor_up"),
                 ("Sidebar", "", "toggle_sidebar"),
                 ("Auto-hide Sidebar", "", "toggle_sidebar_auto_hide"),
+                (match self.activity_bar_position {
+                    crate::settings::ActivityBarPosition::Top => "Move Activity Bar to Left",
+                    crate::settings::ActivityBarPosition::Left => "Move Activity Bar to Top",
+                }, "", "toggle_activity_bar_position"),
                 ("─", "", ""),
                 ("Minimap", "", "toggle_minimap"),
                 ("Word Wrap", "", "toggle_word_wrap"),

@@ -121,6 +121,7 @@ fn terminal_menu_actions_work_over_an_editor_terminal() {
                 for keyboard in [false, true] {
                     let context = format!("{command}, split={split}, mouse={mouse_tracking}, keyboard={keyboard}");
                     let mut app = App::test_new();
+                    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
                     app.show_explorer = false;
                     if split {
                         app.tabs = vec![Tab::new_file(Editor::new()), Tab::new_file(Editor::new())];

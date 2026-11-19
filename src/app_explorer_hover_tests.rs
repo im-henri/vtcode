@@ -309,7 +309,7 @@ fn commit_details_tabs_allow_explorer_hover_when_selected_hidden_or_in_another_g
         assert_eq!(app.commit_details.visible, placement != 1);
 
         let explorer_button =
-            crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap())
+            crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap(), app.activity_bar_position)
                 .into_iter()
                 .find(|(_, index)| *index == 0)
                 .unwrap()

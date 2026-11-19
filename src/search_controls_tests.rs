@@ -781,7 +781,7 @@ fn clicking_search_activity_focuses_query_from_editor() {
         app.global_search_field_cursors[0] = 4;
         app.search_focus_field = 3;
         draw(&mut app, &mut terminal);
-        let search = label_position(&terminal, app.activity_bar_area.unwrap(), "SEAR");
+        let search = label_position(&terminal, app.activity_bar_area.unwrap(), "Search");
         mouse(&mut app, MouseEventKind::Down(MouseButton::Left), search);
         assert!(app.show_explorer);
         assert_eq!(app.sidebar_view, SidebarView::Search);
@@ -879,7 +879,7 @@ fn clicking_search_activity_refocuses_other_fields_then_toggles_focused_query() 
     let (_workspace, mut app, mut terminal) = fixture();
     app.search_focus_field = 3;
     draw(&mut app, &mut terminal);
-    let search = label_position(&terminal, app.activity_bar_area.unwrap(), "SEAR");
+    let search = label_position(&terminal, app.activity_bar_area.unwrap(), "Search");
     mouse(&mut app, MouseEventKind::Down(MouseButton::Left), search);
     assert!(app.show_explorer);
     assert_eq!(app.search_focus_field, 0);

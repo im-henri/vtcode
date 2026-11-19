@@ -198,6 +198,7 @@ impl App {
             sidebar_right: Some(self.sidebar_right),
             explorer_width: Some(self.explorer_width),
             show_activity_bar: Some(show_activity_bar),
+            activity_bar_position: Some(self.activity_bar_position.setting_value().to_owned()),
             show_breadcrumbs: Some(self.show_breadcrumbs),
             show_status_bar: Some(show_status_bar),
             status_bar_items: self.status_bar_pins.clone(),
@@ -533,6 +534,11 @@ impl App {
             } else {
                 self.show_activity_bar = v;
             }
+        }
+        if let Some(position) = s.activity_bar_position.as_deref()
+            .and_then(crate::settings::ActivityBarPosition::parse)
+        {
+            self.activity_bar_position = position;
         }
         if let Some(v) = s.show_breadcrumbs {
             self.show_breadcrumbs = v;

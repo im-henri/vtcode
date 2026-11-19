@@ -89,6 +89,7 @@ fn new_terminal_menu_click_takes_priority_over_settings_search() {
     for width in [140, 180] {
         for explorer in [false, true] {
             let mut app = App::test_new();
+            app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
             app.show_explorer = explorer;
             app.open_settings_tab();
             app.settings_editor_search = "theme".into();
@@ -350,6 +351,7 @@ fn reconcile_dragging_tab_shifts_after_close_before_it() {
 #[test]
 fn activity_bar_switch_away_from_search_clears_global_search_popup() {
     let mut app = App::new(PathBuf::from("."));
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.activity_bar_area = Some(Rect::new(0, 0, 2, 20));
 
     handle_mouse(
@@ -382,6 +384,7 @@ fn activity_bar_switch_away_from_search_clears_global_search_popup() {
 #[test]
 fn activity_bar_toggling_search_off_clears_global_search_popup() {
     let mut app = App::new(PathBuf::from("."));
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.activity_bar_area = Some(Rect::new(0, 0, 2, 20));
 
     let search_click = MouseEvent {
@@ -404,8 +407,9 @@ fn activity_bar_toggling_search_off_clears_global_search_popup() {
 #[test]
 fn activity_bar_toggling_source_control_off_hides_sidebar() {
     let mut app = App::new(PathBuf::from("."));
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.activity_bar_area = Some(Rect::new(0, 0, 2, 20));
-    let source_control_area = crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap())
+    let source_control_area = crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap(), app.activity_bar_position)
         .into_iter().find(|(_, index)| *index == 2).unwrap().0;
 
     let source_control_click = MouseEvent {
@@ -428,25 +432,49 @@ fn activity_bar_toggling_source_control_off_hides_sidebar() {
 
 #[test]
 fn activity_item_hit_test_rejects_rows_outside_the_bar() {
-    let area = Rect::new(0, 2, 5, 24);
-    assert_eq!(activity_item_at(area, 1), None);
-    assert_eq!(activity_item_at(area, 26), None);
-    assert_eq!(activity_item_at(area, 2), Some(0));
-    assert_eq!(activity_item_at(area, 8), Some(2));
-    assert_eq!(activity_item_at(area, 11), Some(3));
-    assert_eq!(activity_item_at(area, 14), Some(4));
-    assert_eq!(activity_item_at(area, 17), None);
-    assert_eq!(activity_item_at(area, 20), None);
-    assert_eq!(activity_item_at(area, 25), Some(ACTIVITY_SETTINGS_INDEX));
+    let mut app = App::test_new();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
+    app.activity_bar_area = Some(Rect::new(0, 2, 5, 24));
+    for (row, expected) in [
+        (1, None), (26, None), (2, Some(0)), (8, Some(2)), (11, Some(3)),
+        (14, Some(4)), (17, None), (20, None), (25, Some(ACTIVITY_SETTINGS_INDEX)),
+    ] {
+        assert_eq!(activity_item_at(&app, 0, row), expected, "row {row}");
+    }
 
-    let compact = Rect::new(0, 2, 5, 15);
-    assert_eq!(
-        activity_item_at(compact, 16),
-        Some(ACTIVITY_SETTINGS_INDEX)
-    );
+    for height in [15, 17] {
+        let compact = Rect::new(0, 2, 5, height);
+        app.activity_bar_area = Some(compact);
+        assert_eq!(activity_item_at(&app, 0, compact.bottom() - 1), Some(ACTIVITY_SETTINGS_INDEX));
+    }
+}
 
-    let taller = Rect::new(0, 2, 5, 17);
-    assert_eq!(activity_item_at(taller, 18), Some(ACTIVITY_SETTINGS_INDEX));
+#[test]
+fn top_activity_bar_uses_rendered_columns_for_hover_and_clicks() {
+    let mut app = App::test_new();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let bar = app.activity_bar_area.unwrap();
+    let button = |index| crate::ui_chrome::activity_item_regions(bar, crate::settings::ActivityBarPosition::Top)[index];
+    let send = |app: &mut App, kind, column, row| handle_mouse(app, MouseEvent {
+        kind, column, row, modifiers: KeyModifiers::NONE,
+    });
+    let (search, _) = button(1usize);
+    send(&mut app, MouseEventKind::Moved, search.x + 1, search.y);
+    assert_eq!(app.hovered_activity, Some(1));
+    send(&mut app, MouseEventKind::Down(MouseButton::Left), search.x + 1, search.y);
+    assert_eq!(app.sidebar_view, crate::app::SidebarView::Search);
+    assert!(app.global_search_active);
+
+    let blank = bar.right() - 1;
+    send(&mut app, MouseEventKind::Moved, blank, bar.y);
+    assert_eq!(app.hovered_activity, None);
+    send(&mut app, MouseEventKind::Down(MouseButton::Left), blank, bar.y);
+    assert!(app.global_search_active);
+
+    let (settings, _) = button(ACTIVITY_SETTINGS_INDEX);
+    send(&mut app, MouseEventKind::Down(MouseButton::Left), settings.x + 1, settings.y);
+    assert!(app.settings_editor_active);
 }
 
 #[test]

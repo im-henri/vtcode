@@ -472,31 +472,37 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         }
     }
 
-    // Activity bar + main content
-    // Four-character text labels, an active marker, and the sidebar separator.
-    let activity_width: u16 = if detached || app.zen_mode || !app.show_activity_bar {
-        0
+    use crate::settings::ActivityBarPosition;
+    let (activity_area, content_area) = if detached || app.zen_mode || !app.show_activity_bar {
+        (Rect::default(), middle_area)
     } else {
-        6
+        match app.activity_bar_position {
+            // Very short viewports need both rows for the editor and dock controls.
+            ActivityBarPosition::Top if middle_area.height > 2 => (
+                Rect::new(middle_area.x, middle_area.y, middle_area.width, 1),
+                Rect::new(middle_area.x, middle_area.y + 1, middle_area.width, middle_area.height - 1),
+            ),
+            ActivityBarPosition::Top => (Rect::default(), middle_area),
+            ActivityBarPosition::Left => {
+                // Four-character labels, an active marker, and a separator.
+                let layout = Layout::horizontal([Constraint::Length(6), Constraint::Min(1)])
+                    .split(middle_area);
+                (layout[0], layout[1])
+            }
+        }
     };
-    let activity_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(activity_width), Constraint::Min(1)])
-        .split(middle_area);
-
-    let activity_area = activity_layout[0];
     let performance_dock = !detached || !app.rendering_background_window;
     let main_area = if performance_dock {
-        crate::ui_performance_details::reserve_dock(app, activity_layout[1])
+        crate::ui_performance_details::reserve_dock(app, content_area)
     } else {
-        activity_layout[1]
+        content_area
     };
 
-    if !detached && !app.zen_mode && app.show_activity_bar {
-        app.activity_bar_area = Some(activity_area);
+    app.activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
+    if let Some(activity_area) = app.activity_bar_area {
         draw_static_chrome(f, app, activity_area, ChromeRegion::Activity);
-        if activity_area.width > 0 {
-            let sep_x = activity_area.x + activity_area.width.saturating_sub(1);
+        if app.activity_bar_position == ActivityBarPosition::Left {
+            let sep_x = activity_area.right() - 1;
             let buf = f.buffer_mut();
             for y in activity_area.y..activity_area.y + activity_area.height {
                 if let Some(cell) = buf.cell_mut((sep_x, y)) {
@@ -506,8 +512,6 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
                 }
             }
         }
-    } else {
-        app.activity_bar_area = None;
     }
 
     // Main layout: body + optional panel
@@ -1251,9 +1255,21 @@ mod tests {
             .expect("responsive workbench draw");
 
         assert_eq!(app.explorer_width, 34, "the saved preference is preserved");
+        let top = app.activity_bar_area.expect("text navigation");
+        let top_body = app.workbench_body_area.expect("workbench body");
+        assert_eq!(top.width, 80);
+        assert_eq!(top.height, 1);
+        assert_eq!(top.y, app.menu_bar_area.unwrap().bottom());
+        assert_eq!(top_body.y, top.bottom());
+        assert_eq!(top_body.width, 80);
+        assert!(app.editor_area.expect("editor").width >= COMFORTABLE_EDITOR_WIDTH);
+
+        app.execute_palette_command("toggle_activity_bar_position");
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         assert_eq!(app.activity_bar_area.expect("text navigation").width, 6);
         assert_eq!(app.explorer_area.expect("sidebar").width, 30);
         assert!(app.editor_area.expect("editor").width >= COMFORTABLE_EDITOR_WIDTH);
+        assert_eq!(app.workbench_body_area.unwrap().width, top_body.width - 6);
     }
 
     #[test]
@@ -1382,11 +1398,10 @@ mod tests {
             .expect("workbench draw");
 
         let buffer = terminal.backend().buffer();
-        let sidebar_x = 6;
-        let sidebar_end = sidebar_x + app.explorer_width;
-        let src_row = (0..16)
+        let sidebar = app.explorer_area.expect("explorer sidebar");
+        let src_row = (sidebar.y..sidebar.bottom())
             .map(|y| {
-                (sidebar_x..sidebar_end)
+                (sidebar.x..sidebar.right())
                     .filter_map(|x| buffer.cell((x, y)))
                     .map(|cell| cell.symbol())
                     .collect::<String>()

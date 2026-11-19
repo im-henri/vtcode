@@ -210,8 +210,8 @@ fn restored_nested_repository_publishes_changes_before_the_final_discovery_resul
 fn assert_missing_repository_ui(app: &mut App) {
     assert_eq!(app.source_control_repository_state, State::Missing);
     let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
-    let bar = Rect::new(0, 0, 6, 18);
-    let panel = Rect::new(6, 0, 94, 18);
+    let bar = Rect::new(0, 0, 100, 1);
+    let panel = Rect::new(0, 1, 100, 17);
     terminal.draw(|frame| {
         crate::ui_chrome::draw_activity_bar(frame, app, bar);
         crate::ui_source_control::draw_source_control_sidebar(frame, app, panel);
@@ -416,12 +416,13 @@ fn progress_changes_the_loading_phase_without_publishing_a_zero_count() {
 #[test]
 fn loading_labels_and_unknown_badges_distinguish_detection_scan_and_completion() {
     let mut app = App::test_new();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.show_explorer = true;
     app.activity_bar_selected = 2;
     let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
     let bar = Rect::new(0, 0, 6, 18);
     let panel = Rect::new(6, 0, 94, 18);
-    let source_control = crate::ui_chrome::activity_item_regions(bar)
+    let source_control = crate::ui_chrome::activity_item_regions(bar, app.activity_bar_position)
         .into_iter()
         .find(|(_, index)| *index == 2)
         .unwrap()
@@ -479,7 +480,8 @@ fn loading_labels_and_unknown_badges_distinguish_detection_scan_and_completion()
 fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
     use crate::source_control_rows::Group;
     let bar = Rect::new(0, 0, 6, 21);
-    let region = crate::ui_chrome::activity_item_regions(bar)
+    let position = crate::settings::ActivityBarPosition::Left;
+    let region = crate::ui_chrome::activity_item_regions(bar, position)
         .into_iter()
         .find(|(_, index)| *index == 2)
         .unwrap()
@@ -489,6 +491,7 @@ fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
     for counts in [[1, 1, 1, 1], [1, 1, 1, 150], [0, 0, 0, 3], [1, 0, 0, 0], [0, 0, 0, 0]] {
         for collapsed in [false, true] {
             let mut app = App::test_new();
+            app.execute_palette_command("toggle_activity_bar_position");
             app.source_control_repository_state = State::Available;
             app.source_control_files = Group::ALL
                 .into_iter()
@@ -550,6 +553,7 @@ fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
 #[test]
 fn compact_activity_bars_keep_the_unknown_count_beside_the_label() {
     let mut app = App::test_new();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.source_control_repository_state = State::Loading;
     for height in [6, 12, 18] {
         let mut terminal = Terminal::new(TestBackend::new(6, height)).unwrap();
@@ -557,7 +561,7 @@ fn compact_activity_bars_keep_the_unknown_count_beside_the_label() {
         terminal
             .draw(|frame| crate::ui_chrome::draw_activity_bar(frame, &app, bar))
             .unwrap();
-        let region = crate::ui_chrome::activity_item_regions(bar)
+        let region = crate::ui_chrome::activity_item_regions(bar, app.activity_bar_position)
             .into_iter()
             .find(|(_, index)| *index == 2)
             .unwrap()

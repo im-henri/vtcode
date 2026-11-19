@@ -261,6 +261,9 @@ impl App {
             "sidebar_pos" => {
                 self.sidebar_right = !self.sidebar_right;
             }
+            "activity_bar_position" => {
+                self.activity_bar_position = self.activity_bar_position.opposite();
+            }
             "zen" => {
                 self.execute_view_command("toggle_zen");
             }
@@ -594,6 +597,7 @@ impl App {
                     .into_iter().map(str::to_string).collect(),
             ),
             "sidebar_pos" => Some(vec!["Left".to_string(), "Right".to_string()]),
+            "activity_bar_position" => Some(vec!["Top".into(), "Left".into()]),
             "rulers" => Some(vec![
                 "None".to_string(),
                 "80".to_string(),
@@ -864,6 +868,11 @@ impl App {
                     "Sidebar Position: {}",
                     if self.sidebar_right { "Right" } else { "Left" }
                 ));
+            }
+            "activity_bar_position" => {
+                if let Some(position) = crate::settings::ActivityBarPosition::parse(value) {
+                    self.activity_bar_position = position;
+                }
             }
             "rulers" => {
                 self.rulers = match value {

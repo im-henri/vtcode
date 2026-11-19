@@ -1516,9 +1516,9 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
         })
         .map(|&(_, _, action)| HoverTarget::Status(action))
         .or_else(|| {
-            app.activity_bar_area
-                .filter(|area| area.contains(point))
-                .and(app.hovered_activity.map(HoverTarget::Activity))
+            app.hovered_activity
+                .filter(|&index| crate::ui_chrome::activity_item_at(app, app.mouse_col, app.mouse_row) == Some(index))
+                .map(HoverTarget::Activity)
         })
         .or_else(|| {
             app.panel_tab_areas

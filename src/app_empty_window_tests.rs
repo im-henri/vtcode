@@ -134,7 +134,7 @@ fn empty_folder_panels_offer_only_relevant_controls_and_a_working_open_button() 
                     );
                     assert!(app.search_control_regions.is_empty());
                     let activity = app.activity_bar_area.unwrap();
-                    let source = crate::ui_chrome::activity_item_regions(activity)
+                    let source = crate::ui_chrome::activity_item_regions(activity, app.activity_bar_position)
                         .into_iter()
                         .find(|(_, index)| *index == 2)
                         .unwrap()

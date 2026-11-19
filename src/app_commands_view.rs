@@ -385,6 +385,10 @@ impl App {
                     "Sidebar: Left"
                 });
             }
+            "toggle_activity_bar_position" => {
+                self.activity_bar_position = self.activity_bar_position.opposite();
+                self.notify(format!("Activity Bar Position: {}", self.activity_bar_position.label()));
+            }
             "toggle_zen" => {
                 self.zen_mode = !self.zen_mode;
                 self.zen_exit_area = None;

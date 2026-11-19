@@ -127,7 +127,7 @@ fn activity_bar_reveals_sidebar_and_menu_and_status_edges_do_not() {
     app.set_sidebar_auto_hide(true);
     draw(&mut app);
     let activity = app.activity_bar_area.unwrap();
-    hover(&mut app, activity.x + 2, activity.y + 2);
+    hover(&mut app, activity.x + 2, activity.y);
     draw(&mut app);
     assert!(app.explorer_area.is_some());
     let code = app.code_area.unwrap();

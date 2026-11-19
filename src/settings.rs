@@ -38,6 +38,46 @@ impl SettingsScope {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ActivityBarPosition {
+    #[default]
+    Top,
+    Left,
+}
+
+impl ActivityBarPosition {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("top") {
+            Some(Self::Top)
+        } else if value.eq_ignore_ascii_case("left") {
+            Some(Self::Left)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Top => "Top",
+            Self::Left => "Left",
+        }
+    }
+
+    pub(crate) fn setting_value(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Left => "left",
+        }
+    }
+
+    pub(crate) fn opposite(self) -> Self {
+        match self {
+            Self::Top => Self::Left,
+            Self::Left => Self::Top,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct KeybindingSetting {
@@ -110,6 +150,8 @@ pub struct Settings {
     pub sidebar_right: Option<bool>,
     pub explorer_width: Option<u16>,
     pub show_activity_bar: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_bar_position: Option<String>,
     pub show_breadcrumbs: Option<bool>,
     pub show_status_bar: Option<bool>,
     /// Per-item placement: true keeps an item on the bar, false puts it in
@@ -422,6 +464,7 @@ impl Settings {
             sidebar_right: other.sidebar_right.or(self.sidebar_right),
             explorer_width: other.explorer_width.or(self.explorer_width),
             show_activity_bar: other.show_activity_bar.or(self.show_activity_bar),
+            activity_bar_position: other.activity_bar_position.clone().or_else(|| self.activity_bar_position.clone()),
             show_breadcrumbs: other.show_breadcrumbs.or(self.show_breadcrumbs),
             show_status_bar: other.show_status_bar.or(self.show_status_bar),
             status_bar_items: {
@@ -605,6 +648,10 @@ impl Settings {
             if !matches!(v.as_str(), "line" | "block" | "underline") {
                 self.cursor_style = None;
             }
+        }
+        if let Some(value) = self.activity_bar_position.as_deref() {
+            self.activity_bar_position = ActivityBarPosition::parse(value)
+                .map(|position| position.setting_value().to_owned());
         }
         if let Some(ref v) = self.whitespace_mode {
             if !matches!(v.as_str(), "selection" | "all" | "none" | "boundary" | "trailing") {

@@ -1054,7 +1054,7 @@ fn compact_panel_headers_keep_the_active_tab_and_close_control_usable() {
 fn activity_navigation_keeps_settings_reachable_in_short_terminals() {
     for height in 1..=30 {
         let area = Rect::new(3, 2, 4, height);
-        let items = crate::ui_chrome::activity_item_regions(area);
+        let items = crate::ui_chrome::activity_item_regions(area, crate::settings::ActivityBarPosition::Left);
         assert_eq!(items.last().unwrap().1, crate::ui_chrome::ACTIVITY_SETTINGS_INDEX);
         assert_eq!(items.last().unwrap().0.bottom(), area.bottom());
         let mut end = area.y;

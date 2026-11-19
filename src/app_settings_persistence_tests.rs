@@ -372,6 +372,7 @@ fn preference_commands_save_both_toggle_directions_without_unrelated_overrides()
         ("toggle_cursor_blinking", "cursor_blinking"),
         ("toggle_indent_rainbow", "indent_rainbow"),
         ("toggle_sidebar_position", "sidebar_pos"),
+        ("toggle_activity_bar_position", "activity_bar_position"),
         ("toggle_sidebar_auto_hide", "sidebar_auto_hide"),
         ("toggle_inlay_hints", "inlay_hints"),
     ] {
@@ -392,6 +393,43 @@ fn preference_commands_save_both_toggle_directions_without_unrelated_overrides()
         assert_eq!(saved(&app, SettingsScope::Global).tab_size, None);
         assert!(!app.settings_workspace_path.exists());
     }
+}
+
+#[test]
+fn activity_bar_position_is_saved_reloaded_and_inherited_by_scope() {
+    use crate::settings::ActivityBarPosition::{Left, Top};
+    let (directory, mut app) = fixture();
+    let id = "activity_bar_position";
+    assert_eq!(app.activity_bar_position, Top);
+    assert_eq!(App::setting_field_kind(id), "dropdown");
+    assert_eq!(App::settings_section_for_id(id), Some("Layout"));
+    assert_eq!(app.setting_dropdown_options(id).unwrap(), ["Top", "Left"]);
+    assert!(app.menu_entries(3).iter().any(|entry|
+        entry.label == "Move Activity Bar to Left" && entry.command == "toggle_activity_bar_position"));
+
+    app.apply_settings_dropdown_value(id, "Left");
+    assert_eq!(app.activity_bar_position, Left);
+    assert_eq!(saved(&app, SettingsScope::Global).activity_bar_position.as_deref(), Some("left"));
+
+    app.settings_scope = SettingsScope::Workspace;
+    app.apply_settings_dropdown_value(id, "Top");
+    assert_eq!(app.activity_bar_position, Top);
+    assert_eq!(saved(&app, SettingsScope::Workspace).activity_bar_position.as_deref(), Some("top"));
+
+    let mut reopened = App::new(directory.path().to_path_buf());
+    reopened.settings_global_path = app.settings_global_path.clone();
+    reopened.settings_workspace_path = app.settings_workspace_path.clone();
+    reopened.settings_global = saved(&app, SettingsScope::Global);
+    reopened.settings_workspace = saved(&app, SettingsScope::Workspace);
+    reopened.settings_persistence_enabled = true;
+    reopened.apply_effective_settings();
+    assert_eq!(reopened.activity_bar_position, Top);
+    reopened.settings_scope = SettingsScope::Workspace;
+    assert!(reopened.reset_setting_in_selected_scope(id));
+    assert_eq!(reopened.activity_bar_position, Left);
+    reopened.settings_scope = SettingsScope::Global;
+    assert!(reopened.reset_setting_in_selected_scope(id));
+    assert_eq!(reopened.activity_bar_position, Top);
 }
 
 #[test]

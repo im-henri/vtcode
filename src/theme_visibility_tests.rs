@@ -6,6 +6,7 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 fn pane_separators_use_their_own_theme_roles_without_covering_editor_content() {
     for direction in [crate::app::SplitDirection::Horizontal, crate::app::SplitDirection::Vertical] {
         let mut app = App::test_new();
+        app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
         app.settings_effective.workbench_color_customizations = serde_json::from_value(serde_json::json!({
             "editor.background":"#102030", "panel.background":"#304050",
             "panel.border":"#e0204080", "editorGroup.border":"#ff0000",
@@ -51,6 +52,7 @@ fn pane_separators_use_their_own_theme_roles_without_covering_editor_content() {
 #[test]
 fn transparent_panel_and_chat_borders_are_preserved() {
     let mut app = App::test_new();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.settings_effective.workbench_color_customizations = serde_json::from_value(serde_json::json!({
         "panel.border":"#ff000000", "sideBar.border":"#ff000000", "activityBar.border":"#ff000000"
     })).unwrap();

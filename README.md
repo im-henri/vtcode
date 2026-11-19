@@ -246,6 +246,11 @@ its edge or the Activity Bar. It stays open while you use sidebar fields or menu
 This is off by default and can also be changed in **Settings → Workbench → Layout**
 with **Auto-hide Sidebar** (`sidebarAutoHide` in `settings.json`).
 
+The Activity Bar uses one row below the menu by default, freeing six columns
+for the workbench. Switch it with **View → Move Activity Bar to Left** or use
+**Activity Bar Position** under **Settings → Workbench → Layout**
+(`"activityBarPosition": "top"` or `"activityBarPosition": "left"` in `settings.json`).
+
 **File Associations** also updates file icons throughout the Explorer, editor tabs,
 breadcrumbs, Quick Open, and Source Control. Explicit associations override built-in
 file types; for example, associating `*.rs` with C++ uses the C++ language and icon.
@@ -262,7 +267,7 @@ for a direct connection). `--ssh-command 'ssh -e none -tt -vv'` overrides the SS
 executable and flags. No second terminal is needed; the job's input/output stays
 attached to this SSH connection.
 
-Open **Remote** in the left activity bar (or run **View: Open Remote** from `F1`)
+Open **Remote** in the Activity Bar (or run **View: Open Remote** from `F1`)
 to manage saved targets. Choose **+ Add**, enter a name and SSH host or config
 alias, and optionally enter a remote folder. **Save & Connect** opens it;
 **Save** keeps it for later. SSH authentication appears inside VTCode. Both

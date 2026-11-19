@@ -99,6 +99,7 @@ impl App {
                 | "toggle_on_type_formatting" | "toggle_semantic_tokens" | "toggle_sticky_scroll"
                 | "toggle_screencast_mode" | "toggle_minimap" | "toggle_line_numbers"
                 | "toggle_indent_guides" | "toggle_breadcrumbs" | "toggle_activity_bar"
+                | "toggle_activity_bar_position"
                 | "toggle_status_bar" | "toggle_tab_bar" | "toggle_menu_bar" | "toggle_relative_lines"
                 | "toggle_word_wrap" | "toggle_whitespace" | "toggle_cursor_style"
                 | "toggle_cursor_blinking" | "toggle_focus_mode" | "toggle_sidebar_position"

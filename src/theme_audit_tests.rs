@@ -184,6 +184,7 @@ fn action_buttons_preserve_subtle_hover_fill_and_show_high_contrast_outlines() {
 #[test]
 fn activity_badges_and_panel_tabs_do_not_inherit_list_colors() {
     let mut app = App::test_new();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.colors = theme(serde_json::json!({
         "activityBar.background":"#111111", "activityBar.foreground":"#eeeeee", "activityBar.activeBorder":"#ff8800",
         "activityBarBadge.background":"#ffffff", "activityBarBadge.foreground":"#000000",

@@ -118,7 +118,7 @@ impl App {
             | "sticky_scroll_max" | "max_global_search_results" | "search_debounce_ms"
             | "cursor_surrounding_lines" | "large_file_threshold_mb"
             | "large_file_analysis_timeout_ms" => "number",
-            "theme" | "sidebar_pos" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" => "dropdown",
+            "theme" | "sidebar_pos" | "activity_bar_position" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" => "dropdown",
             "use_tabs" | "word_wrap" | "read_only" | "quick_suggestions" | "hover_enabled" | "format_on_type" | "explorer"
             | "show_open_editors" | "sidebar_auto_hide" | "minimap" | "line_numbers" | "relative_lines" | "panel"
             | "zen" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens" | "sticky_scroll" | "focus_mode"
@@ -187,6 +187,7 @@ impl App {
             "relative_lines" => "relativeLineNumbers",
             "indent_guides" => "showIndentGuides",
             "activity_bar" => "showActivityBar",
+            "activity_bar_position" => "activityBarPosition",
             "breadcrumbs" => "showBreadcrumbs",
             "status_bar" => "showStatusBar",
             "tab_bar" => "showTabBar",
@@ -353,7 +354,7 @@ impl App {
                 .find(|theme| theme.config_key == text)
                 .map(|theme| theme.name.clone())
                 .unwrap_or_else(|| text.to_string()),
-            "whitespace" | "comment_whitespace" | "cursor_style" => {
+            "whitespace" | "comment_whitespace" | "cursor_style" | "activity_bar_position" => {
                 let mut chars = text.chars();
                 chars
                     .next()
@@ -457,6 +458,7 @@ impl App {
             "sidebar_pos" => "Choose whether the sidebar is on the left or right side.",
             "zen" => "Toggle zen mode to reduce UI chrome.",
             "activity_bar" => "Show the Activity Bar for Explorer, Search, Source Control, Remote, Extensions, and Settings.",
+            "activity_bar_position" => "Place the Activity Bar across the top or along the left edge. Defaults to Top.",
             "indent_rainbow" => "Color indentation levels for easier nesting visibility.",
             "color_preview" => "Show inline color swatches for hex, rgb(), and rgba() color values.",
             "bracket_pair_colorization" => "Color matching bracket pairs by nesting depth.",
@@ -785,6 +787,7 @@ impl App {
             ("Relative Line Numbers".into(), on_off(self.relative_line_numbers), "relative_lines".into()),
             ("Show Indent Guides".into(), on_off(self.show_indent_guides), "indent_guides".into()),
             ("Show Activity Bar".into(), on_off(show_activity_bar), "activity_bar".into()),
+            ("Activity Bar Position".into(), self.activity_bar_position.label().into(), "activity_bar_position".into()),
             ("Show Breadcrumbs".into(), on_off(self.show_breadcrumbs), "breadcrumbs".into()),
             ("Show Status Bar".into(), on_off(self.show_status_bar), "status_bar".into()),
             ("Show Tab Bar".into(), on_off(self.show_tab_bar), "tab_bar".into()),

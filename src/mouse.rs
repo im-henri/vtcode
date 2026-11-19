@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use crate::app::{ActivePane, App, TerminalDock};
 use unicode_width::UnicodeWidthStr;
-use crate::ui_chrome::ACTIVITY_SETTINGS_INDEX;
+use crate::ui_chrome::{ACTIVITY_SETTINGS_INDEX, activity_item_at};
 use crate::ui_chrome_tabs::TabBarHits;
 use crate::ui_diff_display::diff_divider_hit;
 #[cfg(test)]
@@ -32,10 +32,6 @@ pub(crate) fn explorer_resize_hit(
     col == border_col
 }
 
-fn activity_item_at(area: ratatui::layout::Rect, row: u16) -> Option<usize> {
-    crate::ui_chrome::activity_item_regions(area).iter()
-        .find(|(item, _)| row >= item.y && row < item.bottom()).map(|(_, index)| *index)
-}
 fn open_editor_close_hit(area: ratatui::layout::Rect, col: u16) -> bool {
     col >= area.x.saturating_add(area.width).saturating_sub(3)
         && col < area.x.saturating_add(area.width)
@@ -522,15 +518,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             }
         }
         // Activity bar hover
-        if let Some(ab_area) = app.activity_bar_area {
-            if col >= ab_area.x && col < ab_area.x + ab_area.width
-                && row >= ab_area.y && row < ab_area.y + ab_area.height
-            {
-                app.hovered_activity = activity_item_at(ab_area, row);
-            } else {
-                app.hovered_activity = None;
-            }
-        }
+        app.hovered_activity = activity_item_at(app, col, row);
         // Menu bar hover
         if let Some(menu_area) = app.menu_bar_area {
             if row == menu_area.y {
@@ -839,7 +827,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     && row >= ab_area.y
                     && row < ab_area.y + ab_area.height
                 {
-                    if let Some(icon_idx) = activity_item_at(ab_area, row) {
+                    if let Some(icon_idx) = activity_item_at(app, col, row) {
                         if icon_idx == ACTIVITY_SETTINGS_INDEX {
                             app.execute_palette_command("settings");
                             return;
