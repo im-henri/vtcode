@@ -442,10 +442,22 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         );
         app.tab_window(view) == Some(1)
     });
-    windows.paint_background(&mut app);
+    let mut screen = crate::terminal::TermGrid::new(100, 28);
+    let mut parser = vte::Parser::new();
+    let mut screen_contains = |text: &str| {
+        for byte in output.drain(..).chain(output_rx.try_iter().flatten()) {
+            parser.advance(&mut screen, byte);
+        }
+        screen.cells.iter().any(|row| {
+            row.iter()
+                .map(|cell| cell.ch)
+                .collect::<String>()
+                .contains(text)
+        })
+    };
     until(&wake, "first frame", || {
-        output.extend(output_rx.try_iter().flatten());
-        String::from_utf8_lossy(&output).contains("detachable-probe.txt")
+        windows.paint_background(&mut app);
+        screen_contains("sample text")
     });
     assert!(windows.is_main());
     app.terminal_has_focus = true;
@@ -453,11 +465,15 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         app.editor_mut().unwrap().insert_char(ch);
     }
     app.sync_duplicate_file_tabs();
+    let (group, tab) = app.tab_location(view).unwrap();
+    assert_eq!(
+        app.groups[group].tabs[tab].editor.rope.to_string(),
+        "LIVE-UPDATEsample text\n"
+    );
     windows.poll(&mut app);
     until(&wake, "background update", || {
         windows.paint_background(&mut app);
-        output.extend(output_rx.try_iter().flatten());
-        String::from_utf8_lossy(&output).contains("LIVE-UPDATE")
+        screen_contains("LIVE-UPDATEsample text")
     });
     assert!(windows.is_main());
 
