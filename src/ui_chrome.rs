@@ -655,24 +655,42 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     let header_hovered = app.mouse_row == oe_area.y
         && app.mouse_col >= oe_area.x && app.mouse_col < oe_area.x + oe_area.width;
     let header_bg = app.colors.ui.bg_section;
-    let oe_header_text = if app.show_open_editors && open_editors_count > 0 && app.tabs.len() > open_editors_count {
-        Cow::Owned(format!("⌄ Open Editors {}–{}/{}", open_editors_offset + 1,
-            open_editors_offset + open_editors_count, app.tabs.len()))
-    } else {
-        Cow::Borrowed(if app.show_open_editors { "⌄ Open Editors" } else { "› Open Editors" })
-    };
-    let oe_header = Line::from(Span::styled(
-        oe_header_text,
-        {
-            let mut style = app.colors.ui.toolbar_layer_style(app.colors.ui.section_foreground, header_bg, header_hovered, false, false)
-                .add_modifier(Modifier::BOLD);
-            if let Some(border) = app.colors.ui.border_section {
-                style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+    let mut header_style = app.colors.ui.toolbar_layer_style(
+        app.colors.ui.section_foreground, header_bg, header_hovered, false, false,
+    ).add_modifier(Modifier::BOLD);
+    if let Some(border) = app.colors.ui.border_section {
+        header_style = header_style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+    }
+    let title = if app.show_open_editors { "⌄ Open Editors" } else { "› Open Editors" };
+    let mut oe_header = Line::from(Span::styled(title, header_style));
+    let header_area = explorer_section_area(app, Rect::new(oe_area.x, oe_area.y, oe_area.width, 1));
+    let mut remaining = usize::from(header_area.width).saturating_sub(title.width());
+    if remaining >= 4 {
+        let mut seen = FxHashSet::default();
+        let unsaved = app.tabs.iter()
+            .chain(app.groups.iter().flat_map(|group| &group.tabs))
+            .filter(|tab| tab.has_unsaved_changes() && seen.insert(tab.editor.save_identity))
+            .count();
+        if unsaved > 0 {
+            let label = format!("{unsaved} unsaved");
+            let label = if label.len() + 3 <= remaining { label } else { unsaved.to_string() };
+            let width = label.len() + 3; // Gap before the badge and one cell of padding on each side.
+            if width <= remaining {
+                let surface = header_style.bg.unwrap_or(header_bg);
+                oe_header.push_span(Span::styled(" ", header_style));
+                oe_header.push_span(Span::styled(format!(" {label} "), app.colors.ui.badge_style(surface)));
+                remaining -= width;
             }
-            style
-        },
-    ));
-    f.render_widget(Paragraph::new(oe_header).style(Style::default().bg(header_bg)), Rect::new(oe_area.x, oe_area.y, oe_area.width, 1));
+        }
+    }
+    if open_editors_count > 0 && app.tabs.len() > open_editors_count {
+        let range = format!(" {}–{}/{}", open_editors_offset + 1,
+            open_editors_offset + open_editors_count, app.tabs.len());
+        if range.width() <= remaining {
+            oe_header.push_span(Span::styled(range, header_style));
+        }
+    }
+    f.render_widget(Paragraph::new(oe_header).style(Style::default().bg(header_bg)), header_area);
 
     // Open editor entries
     if app.show_open_editors && oe_area.height > 1 {

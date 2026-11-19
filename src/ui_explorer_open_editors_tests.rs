@@ -68,6 +68,57 @@ fn mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
 }
 
 #[test]
+fn open_editors_badge_counts_unsaved_documents_and_uses_theme_colors() {
+    use crate::theme_workbench::ColorLayer;
+
+    let area = Rect::new(5, 2, 40, 12);
+    let header_row = area.y + 1;
+    let mut app = fixture(18);
+    assert!(!row_text(&draw(&mut app, area), area, header_row).contains("unsaved"));
+
+    let badge_bg = Color::Rgb(117, 113, 94);
+    let badge_fg = Color::Rgb(248, 248, 242);
+    app.colors.ui.badge_background = ColorLayer::opaque(badge_bg);
+    app.colors.ui.badge_foreground = ColorLayer::opaque(badge_fg);
+    app.tabs[17].editor.insert_char('x');
+
+    let mut duplicate = Editor::new();
+    duplicate.copy_document_from(&app.tabs[17].editor);
+    let mut untitled = Editor::new();
+    untitled.insert_char('y');
+    app.groups = vec![
+        Default::default(),
+        crate::app::EditorGroup {
+            tabs: vec![Tab::new_file(duplicate), Tab::new_file(untitled)],
+            ..Default::default()
+        },
+    ];
+
+    let buffer = draw(&mut app, area);
+    let header = row_text(&buffer, area, header_row);
+    let (before_badge, _) = header.split_once(" 2 unsaved ").expect("two unsaved documents");
+    let start = area.x + before_badge.width() as u16;
+    for x in start..start + " 2 unsaved ".len() as u16 {
+        assert_eq!(buffer[(x, header_row)].bg, badge_bg);
+        assert_eq!(buffer[(x, header_row)].fg, badge_fg);
+    }
+    assert!(header.contains("/18"), "keep the visible range when it fits");
+    assert!((area.y..area.bottom()).all(|row| !row_text(&buffer, area, row).contains("open-17.rs")));
+
+    app.show_open_editors = false;
+    assert!(row_text(&draw(&mut app, area), area, header_row).contains("2 unsaved"));
+    let narrow = Rect { width: 22, ..area };
+    let header = row_text(&draw(&mut app, narrow), narrow, header_row);
+    assert!(header.contains("Open Editors  2 "));
+
+    app.groups[1].tabs[1].editor.undo();
+    assert!(row_text(&draw(&mut app, area), area, header_row).contains("1 unsaved"));
+    app.tabs[17].editor.undo();
+    app.groups[1].tabs[0].editor.refresh_document();
+    assert!(!row_text(&draw(&mut app, area), area, header_row).contains("unsaved"));
+}
+
+#[test]
 fn tab_reveal_is_centered_in_the_tree_below_open_editors_and_find_controls() {
     for open_editors in [false, true] {
         for find in [false, true] {
