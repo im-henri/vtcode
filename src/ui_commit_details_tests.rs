@@ -549,7 +549,7 @@ fn commit_review_bounds_cached_revisions_and_preserves_visible_files() {
 }
 
 #[test]
-fn commit_review_adapts_to_small_screens_and_keeps_layout_choices_when_panes_reset() {
+fn commit_review_adapts_to_small_screens_and_keeps_explicit_layout_choices() {
     let mut app = review_fixture(2);
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
@@ -558,15 +558,11 @@ fn commit_review_adapts_to_small_screens_and_keeps_layout_choices_when_panes_res
     terminal.draw(|f| draw(f, &mut app)).unwrap();
     assert!(app.diff_mode == crate::app::DiffMode::SideBySide);
     assert!(app.diff_left_code_area.is_some());
-    activate(&mut app, 8);
-    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    let mut narrow = Terminal::new(TestBackend::new(60, 30)).unwrap();
+    narrow.draw(|f| draw(f, &mut app)).unwrap();
     assert!(app.diff_mode == crate::app::DiffMode::SideBySide);
-    // Resetting the review panes must not reset the user's saved diff layout.
     activate(&mut app, 9);
-    terminal.draw(|f| draw(f, &mut app)).unwrap();
-    assert!(app.diff_mode == crate::app::DiffMode::Inline);
-    activate(&mut app, 8);
-    terminal.draw(|f| draw(f, &mut app)).unwrap();
+    narrow.draw(|f| draw(f, &mut app)).unwrap();
     assert!(app.diff_mode == crate::app::DiffMode::Inline);
 }
 
@@ -969,6 +965,59 @@ fn press_context_button(
         crate::mouse::handle_mouse(app, mouse_at(kind, x, y));
     }
     terminal.draw(|frame| draw(frame, app)).unwrap();
+}
+
+#[test]
+fn commit_review_can_expand_common_lines_below_the_last_change() {
+    let wide = "x".repeat(140);
+    let base: String = (0..32)
+        .map(|line| format!("old {line} {wide}\n"))
+        .chain((32..72).map(|line| format!("common {line}\n")))
+        .collect();
+    let target = base.replace("old ", "new ");
+    for mode in [crate::app::DiffMode::Inline, crate::app::DiffMode::SideBySide] {
+        let mut app = fixture();
+        app.commit_details.data.files.truncate(1);
+        set_diff(&mut app, &base, &target);
+        app.commit_details.review.forced_mode = Some(mode);
+        app.set_commit_diff_context(true, 0);
+        let trailing = app
+            .diff_render_cache
+            .context_gap(app.diff_render_cache.rows.len() - 1)
+            .unwrap()
+            .clone();
+        assert_eq!(trailing.len(), 40);
+
+        let mut terminal = Terminal::new(TestBackend::new(110, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        app.commit_details.review.scroll = usize::MAX;
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert!(file_scrollbar(&app, 0, DiffSide::Target).maximum() > 0);
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            &trailing,
+            ContextExpansion::FromStart,
+        );
+        let remaining = trailing.start + 10..trailing.end;
+        assert_eq!(
+            app.commit_details.review.expanded_context_for(0),
+            &[trailing.start..remaining.start],
+        );
+
+        app.commit_details.review.scroll = usize::MAX;
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        press_context_button(
+            &mut app,
+            &mut terminal,
+            0,
+            &remaining,
+            ContextExpansion::All,
+        );
+        assert_eq!(app.commit_details.review.expanded_context_for(0), &[trailing]);
+        assert!(app.diff_render_cache.visible_target_lines.contains(&71));
+    }
 }
 
 #[test]
@@ -1520,6 +1569,9 @@ fn commit_inspector_responsive_layout_stays_inside_terminal() {
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                 terminal.draw(|frame| draw(frame, &mut app)).unwrap();
                 let view = app.commit_details.layout.as_ref().unwrap();
+                if width > 0 && height > 0 {
+                    assert_eq!(view.buttons.len(), 5);
+                }
                 for rect in [
                     view.area,
                     view.overview,
@@ -1537,7 +1589,10 @@ fn commit_inspector_responsive_layout_stays_inside_terminal() {
                     view.context_count,
                     view.context_more,
                     view.filter,
-                ] {
+                ]
+                .into_iter()
+                .chain(view.buttons.iter().copied())
+                {
                     if rect.width > 0 && rect.height > 0 {
                         assert!(
                             rect.right() <= width && rect.bottom() <= height,
@@ -1991,6 +2046,12 @@ fn commit_inspector_toolbar_skips_unavailable_controls_and_recovers_focus_after_
     let mut terminal = Terminal::new(TestBackend::new(110, 34)).unwrap();
     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
     assert_eq!(app.commit_details.focus, Focus::Action(7));
+    app.commit_details.focus = Focus::Action(4);
+    handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.commit_details.focus, Focus::Action(9));
+    handle_key(&mut app, KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+    assert_eq!(app.commit_details.focus, Focus::Action(4));
+    app.commit_details.focus = Focus::Action(7);
     let mut narrow = Terminal::new(TestBackend::new(40, 34)).unwrap();
     narrow.draw(|frame| draw(frame, &mut app)).unwrap();
     assert_eq!(app.commit_details.focus, Focus::Files);
@@ -2232,7 +2293,7 @@ fn mouse_at(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
 }
 
 #[test]
-fn commit_inspector_dividers_resize_both_layouts_and_reset_without_losing_selection() {
+fn commit_inspector_dividers_resize_both_layouts_without_losing_selection() {
     for width in [80, 150] {
         let mut app = fixture();
         let mut terminal = Terminal::new(TestBackend::new(width, 44)).unwrap();
@@ -2268,14 +2329,7 @@ fn commit_inspector_dividers_resize_both_layouts_and_reset_without_losing_select
         assert_eq!(app.commit_details.selected_file(), Some(2));
         assert!(app.commit_details.divider_drag.is_none());
 
-        activate(&mut app, 8);
-        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-        assert_eq!(
-            current_layout(&app).primary_divider,
-            original.primary_divider
-        );
-
-        let sash = current_layout(&app).primary_divider;
+        let sash = resized.primary_divider;
         for kind in [
             MouseEventKind::Down(MouseButton::Left),
             MouseEventKind::Drag(MouseButton::Left),

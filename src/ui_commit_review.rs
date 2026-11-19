@@ -159,7 +159,9 @@ fn cards(app: &mut App, area: Rect, filtered: &[usize]) -> Vec<Card> {
             header,
             body,
             open,
-            first_row: first.saturating_sub(start.saturating_add(1)),
+            // The sticky header has its own screen row. Use the full offset
+            // in the body so its last row fits above a horizontal scrollbar.
+            first_row: first.saturating_sub(start),
             ..Default::default()
         });
     }

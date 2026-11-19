@@ -27,16 +27,14 @@ mod tests;
 #[path = "ui_commit_review.rs"]
 mod review;
 
-const ACTIONS: [&str; 7] = [
+const ACTIONS: [&str; 5] = [
     "‹ Newer",
     "Older ›",
     "Copy SHA",
     "Copy message",
     "Open diff",
-    "Focus changes",
-    "Reset layout",
 ];
-const COMPACT_ACTIONS: [&str; 7] = ["‹", "›", "SHA", "Message", "Diff", "Focus", "Reset"];
+const COMPACT_ACTIONS: [&str; ACTIONS.len()] = ["‹", "›", "SHA", "Message", "Diff"];
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct InspectorLayout {
@@ -102,10 +100,7 @@ pub(crate) fn layout_in_area(area: Rect, expanded: bool, panes: PaneSizes) -> In
         (content.x, content.y.saturating_add(1))
     };
     for (index, label) in labels.iter().enumerate() {
-        if content.width < 30 && index >= 2
-            || content.width < 50 && index == 5
-            || content.width < 60 && index == 6
-        {
+        if content.width < 30 && index >= 2 {
             result.buttons.push(Rect::default());
             continue;
         }
@@ -204,7 +199,6 @@ fn actions(view: &InspectorLayout) -> impl Iterator<Item = (usize, Rect)> + '_ {
         .iter()
         .copied()
         .enumerate()
-        .map(|(i, area)| (if i == 6 { 8 } else { i }, area))
         .chain([
             (9, view.diff_toggle),
             (6, view.hunk_previous),
@@ -421,7 +415,6 @@ fn enabled(app: &App, action: usize) -> bool {
         11 | 14 => native_diff_ready(app),
         12 => native_diff_ready(app) && app.commit_details.diff_context.lines > 0,
         13 => native_diff_ready(app) && app.commit_details.diff_context.lines < 999,
-        8 => true,
         15 | 16 => !app.commit_details.loading && !app.commit_details.data.files.is_empty(),
         _ => false,
     }
@@ -547,13 +540,6 @@ fn activate(app: &mut App, action: usize) {
                 app.commit_details.context_draft = Some(String::new());
             }
             app.commit_details.focus = Focus::Action(14);
-        }
-        8 => {
-            app.commit_details.panes = PaneSizes::default();
-            app.commit_details.review.forced_mode = None;
-            app.commit_details.diff_expanded = false;
-            app.commit_details.layout = None;
-            app.commit_details.focus = Focus::Files;
         }
         15 | 16 => {
             if action == 15 {
@@ -1487,18 +1473,15 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
                 (false, true) => "!",
                 (false, false) => "Failed",
             }
-        } else if i == 5 && details.diff_expanded {
-            if view.compact { "Info" } else { "Commit info" }
         } else {
             labels[i]
         };
-        let action = if i == 6 { 8 } else { i };
-        let focused = details.focus == Focus::Action(action);
+        let focused = details.focus == Focus::Action(i);
         let mut style = app.colors.ui.button_style(
             bg,
             i == 4,
             focused || area.contains((app.mouse_col, app.mouse_row).into()),
-            enabled(app, action),
+            enabled(app, i),
         );
         if let Some(feedback) = feedback {
             let background = style.bg.unwrap_or(bg);
