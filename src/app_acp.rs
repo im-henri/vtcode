@@ -1372,6 +1372,7 @@ impl App {
             .chain(self.groups.iter().flat_map(|g| &g.tabs))
             .filter(|tab| {
                 tab.kind == TabKind::File
+                    && !tab.editor.has_deferred_file()
                     && self.acp_editor_matches(&tab.editor, path)
             })
             .collect()

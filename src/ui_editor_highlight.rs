@@ -1208,6 +1208,11 @@ impl RenderLineCache {
     }
 
     #[cfg(test)]
+    pub(crate) fn has_source_snapshot(&self) -> bool {
+        self.snapshot.is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn decoration_storage(&self) -> (usize, usize, usize) {
         (
             self.entries.len(),

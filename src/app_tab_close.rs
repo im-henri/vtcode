@@ -330,9 +330,7 @@ impl App {
             if let Some(index) = tab.terminal_idx {
                 terminals.push(index);
             }
-            // Do not retain the closed view's rope and attribution until a
-            // future analysis result happens to prune the document cache.
-            self.blame_documents.remove(&tab.navigation_id);
+            self.forget_editor_view_caches(tab.navigation_id);
             self.desks.membership.remove(&tab.navigation_id);
             self.desks.selected_tabs.remove(&tab.navigation_id);
             let still_open = self.tabs.iter().chain(self.groups.iter().flat_map(|g|&g.tabs)).any(|t|t.kind==tab.kind);

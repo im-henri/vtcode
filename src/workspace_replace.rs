@@ -277,6 +277,7 @@ pub(crate) fn file(
 #[derive(Default)]
 pub(crate) struct State {
     pub cancel: Option<CancellationToken>,
+    pub waiting_for_files: Option<(Job, rustc_hash::FxHashMap<std::path::PathBuf, u64>)>,
     pub open: Outcome,
     pub pending_saves: rustc_hash::FxHashSet<std::path::PathBuf>,
     pub completion: Option<Completion>,
@@ -295,6 +296,7 @@ impl State {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
+        self.waiting_for_files = None;
         self.open = Outcome::default();
         self.pending_saves.clear();
         self.completion = None;

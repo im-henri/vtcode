@@ -83,6 +83,39 @@ pub(crate) struct SessionRestore {
     pub id: u64,
     pub tab: SavedTab,
     pub recovery_lease: RecoveryLease,
+    pub(crate) load: RestoreLoad,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RestoreLoad {
+    /// Restore on startup, including unsaved recovery and visible panes.
+    #[default]
+    Eager,
+    /// The tab is open, but its clean contents are still on disk.
+    Deferred,
+    /// Activation or a workspace edit requested the deferred contents.
+    Requested,
+}
+
+impl SessionRestore {
+    pub(crate) fn new(tab: SavedTab, recovery_lease: RecoveryLease) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        Self {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            tab,
+            recovery_lease,
+            load: RestoreLoad::Eager,
+        }
+    }
+
+    pub(crate) fn can_defer(&self) -> bool {
+        self.load == RestoreLoad::Eager
+            && !self.tab.has_recovery_sidecars()
+            && self.tab.pending_unsaved_content.is_none()
+            && self.tab.undo_entries.is_none()
+            && self.tab.redo_entries.is_none()
+    }
 }
 
 /// Keeps an older manifest's sidecars readable while its restore is pending.

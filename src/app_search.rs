@@ -1475,6 +1475,7 @@ impl App {
         }
         // One pass over every desk's views, not a tab scan per matched file.
         // Hidden desk panes live in groups and share the same documents/history.
+        let mut deferred = rustc_hash::FxHashMap::default();
         for tab in self
             .tabs
             .iter_mut()
@@ -1483,18 +1484,18 @@ impl App {
             if tab.kind != crate::app::TabKind::File {
                 continue;
             }
-            let Some((_, snapshot)) = tab
-                .editor
-                .file_path
-                .as_ref()
-                .and_then(|path| by_file.get_mut(path))
-            else {
+            let Some((_, snapshot)) = tab.editor.file_path.as_ref().and_then(|path| by_file.get_mut(path)) else {
                 continue;
             };
             if snapshot.is_some() {
                 continue;
             }
             tab.editor.refresh_document();
+            if tab.editor.restoring_deferred_file()
+                && let Some(path) = &tab.editor.file_path
+            {
+                deferred.insert(path.clone(), tab.editor.save_identity);
+            }
             *snapshot = Some(Snapshot {
                 identity: tab.editor.save_identity,
                 version: tab.editor.content_version,
@@ -1535,11 +1536,52 @@ impl App {
             },
             remote: self.remote_workspace.clone(),
         };
+        if deferred.is_empty() {
+            self.start_workspace_replace(job);
+        } else {
+            for path in deferred.keys() {
+                self.load_deferred_file(path);
+            }
+            self.workspace_replace.waiting_for_files = Some((job, deferred));
+        }
+    }
+
+    fn start_workspace_replace(&mut self, job: crate::workspace_replace::Job) {
         let sender = self.background.sender.clone();
         self.workspace_replace.cancel = Some(
             self.background
                 .spawn_cancellable("workspace-replace", move |cancel| job.run(cancel, sender)),
         );
+    }
+
+    pub(crate) fn start_ready_workspace_replace(&mut self) {
+        let Some((_, waiting)) = &self.workspace_replace.waiting_for_files else { return };
+        let is_waiting = |tab: &crate::app::Tab| {
+            tab.kind == crate::app::TabKind::File
+                && tab.editor.bg_loading
+                && tab.editor.file_path.as_ref().and_then(|path| waiting.get(path)) == Some(&tab.editor.save_identity)
+        };
+        if self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)).any(is_waiting) {
+            return;
+        }
+        let (mut job, waiting) = self.workspace_replace.waiting_for_files.take().unwrap();
+        for target in &mut job.targets {
+            if !waiting.contains_key(&target.path) {
+                continue;
+            }
+            let snapshot = target.snapshot.as_mut().unwrap();
+            if let Some(editor) = self.find_editor_mut_by_path(&target.path)
+                && editor.save_identity == snapshot.identity
+                && editor.content_version == snapshot.version
+                && !editor.read_only
+                && editor.save_content_error().is_none()
+            {
+                snapshot.rope = editor.rope.clone();
+                snapshot.writable = true;
+                snapshot.save_when_clean = !editor.modified && editor.saved_rope.is_some();
+            }
+        }
+        self.start_workspace_replace(job);
     }
 
     pub(crate) fn cancel_workspace_replace(&mut self) {
@@ -1637,6 +1679,7 @@ impl App {
             return false;
         };
         self.bg_global_replace_running = false;
+        self.trim_large_file_cache();
         outcome.cancelled |= self
             .workspace_replace
             .cancel

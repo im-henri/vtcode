@@ -334,6 +334,11 @@ pub(crate) struct CursorWordEntry {
     pub(crate) word: Option<std::sync::Arc<str>>,
 }
 
+pub(crate) fn forget_word_snapshots(app: &mut App, view: u64) {
+    app.editor_cursor_word_cache.get_mut().retain(|entry| entry.key.0 != view);
+    app.editor_selection_word_cache.retain(|entry| entry.editor != view);
+}
+
 fn refresh_cursor_word(
     editor: &crate::editor::Editor,
     current_key: &mut crate::app::CursorWordKey,

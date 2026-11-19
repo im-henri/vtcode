@@ -4,9 +4,6 @@ use crate::app::{
 use crate::editor::Editor;
 use crate::settings::{KeybindingSetting, Settings};
 use crossterm::event::{KeyCode, KeyModifiers};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT_SESSION_RESTORE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
 #[path = "app_settings_persistence_tests.rs"]
@@ -1429,7 +1426,47 @@ impl App {
         self.refresh_language_servers(false);
     }
 
-    /// Build session state from current app state
+    pub(crate) fn saved_file_tab(tab: &Tab) -> crate::session::SavedTab {
+        // Keep the saved document state and recovery references while its
+        // disk content is loading or deferred until activation.
+        if tab.editor.bg_loading
+            && let Some(restore) = &tab.editor.pending_session_restore
+        {
+            let mut saved = restore.tab.clone();
+            saved.text_color = tab.text_color;
+            if restore.load != crate::session::RestoreLoad::Eager {
+                saved.pinned = tab.pinned;
+                saved.preview = tab.preview && !tab.pinned;
+            }
+            return saved;
+        }
+        let unsaved = tab.editor.modified.then(|| tab.editor.rope.clone());
+        let (undo_entries, redo_entries) = if tab.editor.modified {
+            (Some(tab.editor.export_undo_stack()), Some(tab.editor.export_redo_stack()))
+        } else {
+            (None, None)
+        };
+        crate::session::SavedTab {
+            file_path: tab.editor.file_path.clone(),
+            cursor_line: tab.editor.cursor_line,
+            cursor_col: tab.editor.cursor_col,
+            scroll_offset: tab.editor.scroll_offset,
+            horizontal_scroll: tab.editor.horizontal_scroll,
+            pinned: tab.pinned,
+            preview: tab.preview && !tab.pinned && !tab.has_unsaved_changes(),
+            text_color: tab.text_color,
+            pending_unsaved_content: unsaved,
+            unsaved_file: None,
+            undo_history_file: None,
+            language_override: tab.editor.language_override.clone(),
+            undo_entries,
+            redo_entries,
+            bookmarks: tab.editor.bookmarks.iter().copied().collect(),
+            folded_ranges: tab.editor.folded_ranges.iter().map(|(&start, &end)| (start, end)).collect(),
+        }
+    }
+
+    /// Build session state from current app state.
     pub(crate) fn build_session(&self) -> crate::session::Session {
         let saved_active_tab = |tabs: &[Tab], active_tab: usize| {
             let preceding_files = tabs
@@ -1452,49 +1489,7 @@ impl App {
                 self.show_activity_bar,
             )
         };
-        let save_tab = |tab: &Tab| -> crate::session::SavedTab {
-            // Keep the saved document state and recovery references while
-            // its background session load is still pending.
-            if tab.editor.bg_loading {
-                if let Some(restore) = &tab.editor.pending_session_restore {
-                    let mut saved = restore.tab.clone();
-                    saved.text_color = tab.text_color;
-                    return saved;
-                }
-            }
-            let unsaved = tab.editor.modified.then(|| tab.editor.rope.clone());
-            let (undo_entries, redo_entries) = if tab.editor.modified {
-                (
-                    Some(tab.editor.export_undo_stack()),
-                    Some(tab.editor.export_redo_stack()),
-                )
-            } else {
-                (None, None)
-            };
-            crate::session::SavedTab {
-                file_path: tab.editor.file_path.clone(),
-                cursor_line: tab.editor.cursor_line,
-                cursor_col: tab.editor.cursor_col,
-                scroll_offset: tab.editor.scroll_offset,
-                horizontal_scroll: tab.editor.horizontal_scroll,
-                pinned: tab.pinned,
-                preview: tab.preview && !tab.pinned && !tab.has_unsaved_changes(),
-                text_color: tab.text_color,
-                pending_unsaved_content: unsaved,
-                unsaved_file: None,
-                undo_history_file: None,
-                language_override: tab.editor.language_override.clone(),
-                undo_entries,
-                redo_entries,
-                bookmarks: tab.editor.bookmarks.iter().copied().collect(),
-                folded_ranges: tab
-                    .editor
-                    .folded_ranges
-                    .iter()
-                    .map(|(&k, &v)| (k, v))
-                    .collect(),
-            }
-        };
+        let save_tab = Self::saved_file_tab;
         let tabs: Vec<crate::session::SavedTab> = self
             .tabs
             .iter()
@@ -1633,17 +1628,14 @@ impl App {
         > = rustc_hash::FxHashMap::default();
         let mut untitled_restore_jobs = Vec::new();
         let mut restore_tab = |saved_tab: &crate::session::SavedTab| -> Tab {
-            let restore = crate::session::SessionRestore {
-                // Old workers may finish after a workspace switch. Their
-                // results must never match a new placeholder for the same path.
-                id: NEXT_SESSION_RESTORE_ID.fetch_add(1, Ordering::Relaxed),
-                tab: saved_tab.clone(),
-                recovery_lease: if saved_tab.has_recovery_sidecars() {
+            let restore = crate::session::SessionRestore::new(
+                saved_tab.clone(),
+                if saved_tab.has_recovery_sidecars() {
                     session.recovery_lease.clone()
                 } else {
                     Default::default()
                 },
-            };
+            );
             let mut editor = if let Some(path) = &saved_tab.file_path {
                 Editor::new_loading(path, 0)
             } else {

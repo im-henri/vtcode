@@ -566,6 +566,13 @@ pub enum BackgroundResult {
     },
     /// Recovery content for an untitled editor, matched by its restore ID.
     SessionUntitledLoaded { restore: crate::session::SessionRestore },
+    SessionFileDeferred {
+        workspace_generation: u64,
+        path: PathBuf,
+        restore_id: u64,
+        file_size: u64,
+        last_disk_modified: Option<SystemTime>,
+    },
     #[cfg(windows)]
     NativeOpenResolved {
         generation: u64,

@@ -7,6 +7,9 @@ use crate::highlight::Highlighter;
 
 mod types;
 
+#[path = "app_file_residency.rs"]
+pub(crate) mod file_residency;
+
 #[path = "app_lsp_sync.rs"]
 mod lsp_sync;
 
@@ -2065,6 +2068,7 @@ impl App {
                     | crate::background::BackgroundResult::RemoteLocationProgress { .. }
                     | crate::background::BackgroundResult::FileWatcherState { .. }
                     | crate::background::BackgroundResult::SessionUntitledLoaded { .. }
+                    | crate::background::BackgroundResult::SessionFileDeferred { .. }
                     | crate::background::BackgroundResult::FileLoaded { .. }
                     | crate::background::BackgroundResult::FileLoadFailed { .. }
                     | crate::background::BackgroundResult::FileReloaded { .. }
@@ -2920,6 +2924,13 @@ impl App {
                         }
                     }
                 }
+                crate::background::BackgroundResult::SessionFileDeferred {
+                    workspace_generation, path, restore_id, file_size, last_disk_modified,
+                } => {
+                    if workspace_generation == self.workspace_generation {
+                        has_visual_changes |= self.apply_deferred_session_file(&path, restore_id, file_size, last_disk_modified);
+                    }
+                }
                 #[cfg(windows)]
                 crate::background::BackgroundResult::NativeOpenResolved { generation, request, source } => {
                     if generation == self.workspace_generation {
@@ -3014,6 +3025,7 @@ impl App {
                         .collect();
                     let mut applied = false;
                     let mut applied_file = false;
+                    let mut resumed_version = None;
                     let mut loaded_large_file_mode = false;
                     let navigation = &mut self.navigation;
                     let mut apply_loaded = |tab: &mut crate::app::Tab| {
@@ -3032,6 +3044,7 @@ impl App {
                             pending_restore_id.is_none()
                         };
                         if belongs_to_result {
+                            let resumed = tab.editor.restoring_deferred_file().then_some(tab.editor.content_version);
                             let pending_selection = crate::app_navigation::NavigationSelection::capture(&tab.editor);
                             if let Some(saved) = matching_restore
                                 && let Some(restore) = &mut tab.editor.pending_session_restore
@@ -3046,6 +3059,10 @@ impl App {
                                 file_size,
                                 large_file_threshold_bytes,
                             );
+                            if let Some(version) = resumed {
+                                tab.editor.content_version = version;
+                                resumed_version = Some(version);
+                            }
                             tab.editor.last_disk_modified = last_disk_modified;
                             tab.editor.set_remote_checkpoint(remote_checkpoint.clone());
                             tab.editor.set_language_associations(&language_associations);
@@ -3081,6 +3098,9 @@ impl App {
                         }
                     }
                     if applied {
+                        if resumed_version.is_some() {
+                            self.desks.sync_stamp = None;
+                        }
                         has_visual_changes = true;
                         self.status_message = format!("Opened: {}", self.display_path(&path));
                         if applied_file
@@ -3095,7 +3115,7 @@ impl App {
                         if encoding == "Binary" {
                             self.notify("Binary file — editing disabled");
                         } else if !loaded_large_file_mode && applied_file {
-                            self.queue_lsp_document_sync(path.clone(), 0, rope.clone());
+                            self.queue_lsp_document_sync(path.clone(), resumed_version.unwrap_or(0), rope.clone());
                         } else if loaded_large_file_mode {
                             self.notify(format!(
                                 "Large file mode: rich features paused for {}",
@@ -3115,6 +3135,9 @@ impl App {
                         && self.editor().is_some_and(|editor| !editor.large_file_mode)
                     {
                         self.refresh_git_line_status_async();
+                    }
+                    if applied && rope.len_bytes() >= file_residency::MIN_DEFERRED_FILE_BYTES {
+                        self.trim_large_file_cache();
                     }
                 }
                 crate::background::BackgroundResult::FileLoadFailed {
@@ -4157,6 +4180,7 @@ impl App {
                 }
             }
         }
+        self.start_ready_workspace_replace();
         // Show notification if any files were auto-reloaded
         file_reload_names.sort();
         file_reload_names.dedup();
@@ -4217,6 +4241,9 @@ impl App {
             if self.editor().and_then(|editor| editor.file_path.as_deref()) == Some(path) {
                 self.blame_requested_path = None;
                 self.refresh_git_line_status_async();
+            }
+            if loaded.rope.len_bytes() >= file_residency::MIN_DEFERRED_FILE_BYTES {
+                self.trim_large_file_cache();
             }
         } else if crate::remote::workspace::is_view_key(path)
             && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
@@ -4769,6 +4796,8 @@ impl App {
             if tab.kind == TabKind::File
                 && (tab.editor.save_identity == identity
                     || (attach_matching_paths
+                        && !source.editor.restoring_deferred_file()
+                        && !tab.editor.restoring_deferred_file()
                         && path.is_some_and(|p| tab.editor.file_path.as_deref() == Some(p))))
             {
                 tab.editor.copy_document_from(&source.editor);

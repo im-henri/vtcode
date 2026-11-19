@@ -906,6 +906,7 @@ fn latest_search_click_survives_loading_in_an_inactive_split() {
         let session_restore = restoring_session.then(|| crate::session::SessionRestore {
             id: 123,
             recovery_lease: Default::default(),
+            load: Default::default(),
             tab: serde_json::from_value(serde_json::json!({
                 "filePath": path.to_string_lossy(),
                 "cursorLine": 1,

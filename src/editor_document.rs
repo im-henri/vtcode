@@ -217,6 +217,10 @@ macro_rules! edit {
 pub(crate) use edit;
 
 impl Editor {
+    pub(crate) fn document_has_other_views(&self) -> bool {
+        Arc::strong_count(&self.document.shared) > 1
+    }
+
     pub(crate) fn extension_buffer_snapshot(&self) -> crate::extension_buffer::Buffer {
         crate::extension_buffer::Buffer::from_rope(&self.rope)
     }

@@ -161,8 +161,26 @@ impl App {
         self.background.read_for_file("session-file-load", &activity_path, foreground, move || {
             crate::session::hydrate_saved_tabs(&project_root,
                 session_restores.iter_mut().map(|restore| &mut restore.tab));
-            match remote.as_ref().map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
-                crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false))) {
+            let loaded = if !foreground && !crate::remote::workspace::is_view_key(&path)
+                && let [restore] = session_restores.as_slice()
+                && restore.can_defer()
+            {
+                match crate::fs_ops::open_document_source(&path, false) {
+                    Ok((_, metadata)) if metadata.len() >= crate::app::file_residency::MIN_DEFERRED_FILE_BYTES as u64 => {
+                        let _ = sender.send(crate::background::BackgroundResult::SessionFileDeferred {
+                            workspace_generation, path, restore_id: restore.id, file_size: metadata.len(),
+                            last_disk_modified: metadata.modified().ok(),
+                        });
+                        return;
+                    }
+                    Ok((file, metadata)) => crate::editor::decode_text_source(file, metadata, &path, None),
+                    Err(error) => Err(error),
+                }
+            } else {
+                remote.as_ref().map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
+                    crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false)))
+            };
+            match loaded {
                 Ok(mut loaded) => {
                     crate::session::share_recovered_disk_snapshot(
                         session_restores.iter_mut().map(|restore| &mut restore.tab), &loaded.rope);
@@ -410,7 +428,8 @@ impl App {
                 .map(|(_, position)| *position)
         });
         if let Some(source) = self.groups.iter().flat_map(|g| &g.tabs).find(|tab|
-            tab.kind == TabKind::File && !tab.editor.bg_loading
+            tab.kind == TabKind::File
+                && (!tab.editor.bg_loading || tab.editor.pending_session_restore.is_some())
                 && tab.editor.file_path.as_ref().is_some_and(|path| Self::same_open_path(path,&open_path))) {
             let mut tab = self.clone_desk_tab(source);
             tab.editor.pending_reopen_view = saved_view;
@@ -479,6 +498,7 @@ impl App {
     /// replace each pane's request key. Stateful TextMate jobs yield checkpoints and
     /// resume in bounded slices, including when large-file mode is active.
     pub(crate) fn refresh_visible_highlights_async(&mut self) {
+        self.load_visible_deferred_files();
         if let Some(path) = self.tabs.get(self.active_tab)
             .filter(|tab| tab.editor.bg_loading).and_then(|tab| tab.editor.file_path.as_deref()) {
             self.background.prioritize_file_read(path);
@@ -859,11 +879,15 @@ impl App {
     }
     pub(crate) fn touch_tab_mru(&mut self, tab_idx: usize) {
         self.cancel_stale_remote_location();
+        if self.active_tab == tab_idx {
+            self.load_active_deferred_file();
+        }
         if let Some(id)=self.tabs.get(tab_idx).and_then(|t| self.desks.membership.get(&t.editor.navigation_id)).copied()
             && let Some(group)=self.desks.groups.get_mut(&id) { group.collapsed=false; }
         if tab_idx < self.tabs.len() && self.tab_mru_order.first() == Some(&tab_idx) { return; }
         self.tab_mru_order.retain(|&i| i != tab_idx && i < self.tabs.len());
         if tab_idx < self.tabs.len() { self.tab_mru_order.insert(0, tab_idx); }
+        self.trim_large_file_cache();
     }
 
     pub(crate) fn swap_tabs(&mut self, left: usize, right: usize) {

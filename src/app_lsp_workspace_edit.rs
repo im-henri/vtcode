@@ -200,6 +200,12 @@ impl App {
             )
         };
         for document in &mut documents {
+            let deferred_path = self.find_editor_mut_by_path(&document.path)
+                .filter(|editor| editor.has_deferred_file())
+                .and_then(|editor| editor.file_path.clone());
+            if let Some(path) = deferred_path {
+                self.load_deferred_file(&path);
+            }
             let editor = self
                 .find_editor_mut_by_path(&document.path)
                 .map(snapshot)
@@ -312,7 +318,9 @@ impl App {
             }
             Err(error) => self.notify_error(error),
         }
-        if !self.pending_lsp_workspace_edits.is_empty() {
+        if self.pending_lsp_workspace_edits.is_empty() {
+            self.trim_large_file_cache();
+        } else {
             self.background.wake_handle().notify();
         }
         true

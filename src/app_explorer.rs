@@ -594,9 +594,20 @@ impl App {
                 // Update paths in every group only after the move succeeds.
                 for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
                     if let Some(suffix) = tab.editor.file_path.as_ref().and_then(|path| path.strip_prefix(&target).ok()) {
-                        tab.editor.file_path = Some(new_path.join(suffix));
+                        let path = new_path.join(suffix);
+                        if tab.editor.restoring_deferred_file()
+                            && let Some(restore) = &mut tab.editor.pending_session_restore
+                        {
+                            restore.tab.file_path = Some(path.clone());
+                            if restore.load == crate::session::RestoreLoad::Requested {
+                                *restore = crate::session::SessionRestore::new(restore.tab.clone(), Default::default());
+                                restore.load = crate::session::RestoreLoad::Deferred;
+                            }
+                        }
+                        tab.editor.file_path = Some(path);
                     }
                 }
+                self.load_visible_deferred_files();
                 self.lsp_manager.did_close(&target);
                 self.lsp_manager.did_rename_files(&target, &new_path);
                 self.navigation.rename_path(&target, &new_path);

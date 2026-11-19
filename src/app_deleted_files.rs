@@ -28,7 +28,8 @@ impl App {
         let mut aliases_to_check = Vec::new();
         let mut matches = |tab: &Tab| {
             if !matches!(tab.kind, TabKind::File | TabKind::MarkdownPreview)
-                || (tab.editor.bg_loading && tab.editor.pending_session_restore.is_some())
+                || (tab.editor.bg_loading && tab.editor.pending_session_restore.is_some()
+                    && !tab.editor.restoring_deferred_file())
                 || !(confirmed
                     || tab.editor.last_disk_modified.is_some()
                     || tab.editor.saved_rope.is_some()
