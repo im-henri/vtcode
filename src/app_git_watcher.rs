@@ -118,7 +118,7 @@ impl App {
     }
 
     pub(crate) fn git_watcher_refresh_wait(&self, now: Instant) -> Option<Duration> {
-        if !self.workspace_visible || !self.source_control_enabled || self.bg_git_status_running {
+        if !self.workspace_is_displayed() || !self.source_control_enabled || self.bg_git_status_running {
             return None;
         }
         let pending = self.git_watcher_refresh.pending.as_ref()?;

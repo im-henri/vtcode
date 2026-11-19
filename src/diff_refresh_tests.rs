@@ -124,6 +124,33 @@ impl Fixture {
 }
 
 #[test]
+fn diffs_in_unfocused_windows_refresh_without_activating_their_tabs() {
+    for main_in_background in [false, true] {
+        let mut f = Fixture::new(false);
+        let (diff_index, _) = f.open(0, false);
+        let diff_view = f.app.tabs[diff_index].editor.navigation_id;
+        f.app.new_file();
+        let editor_view = f.app.editor().unwrap().navigation_id;
+        let moving = if main_in_background { editor_view } else { diff_view };
+        assert!(f.app.open_detached_window(1, moving));
+        if main_in_background {
+            assert!(f.app.activate_window(1));
+            f.app.set_main_window_in_background(true);
+        }
+
+        f.write(0, "changed while the other window was focused\n");
+        f.invalidate(0);
+        assert!(f.app.diff_tabs.refresh_running);
+        f.settle();
+        let (pane, tab) = f.app.tab_location(diff_view).unwrap();
+        assert_ne!(pane, f.app.active_group);
+        assert_eq!(f.app.groups[pane].tabs[tab].editor.rope.to_string(),
+            "changed while the other window was focused\n");
+        assert_eq!(f.app.editor().unwrap().navigation_id, editor_view);
+    }
+}
+
+#[test]
 fn diff_browsing_respects_preview_settings_locally_and_remotely() {
     for remote in [false, true] {
         for enabled in [false, true] {

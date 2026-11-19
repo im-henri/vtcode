@@ -167,7 +167,7 @@ impl App {
     }
 
     fn discardable_empty_window(&self) -> bool {
-        !self.has_open_folder() && self.tabs.is_empty()
+        !self.main_window_in_background && !self.has_open_folder() && self.tabs.is_empty()
             && self.groups.iter().all(|group| group.tabs.is_empty())
             && self.terminals.iter().all(|terminal| terminal.is_placeholder && terminal.terminal_pty.is_none())
             && self.chat.agent_order.is_empty() && !self.chat.visible
@@ -688,7 +688,7 @@ impl App {
         self.wheel_scroll = None;
         self.chat.background = true;
         self.idle_quiescent = true;
-        if !self.has_detached_windows() {
+        if !self.workspace_is_displayed() {
             self.suspend_workspace_observation();
         }
     }
@@ -769,6 +769,7 @@ impl App {
                     changed |= app.poll_background_results_until(deadline);
                     if app.workspace_visible { changed |= crate::diff_scope_source::poll(app); }
                     if index != 0 {
+                        changed |= app.poll_git_watcher_refresh(Instant::now());
                         if registry.exit.is_none() && !registry.sets.preserving {
                             crate::app_event_loop::queue_background_workspace_auto_saves(app);
                         }
@@ -787,7 +788,7 @@ impl App {
                 changed
             } else {
                 unread != app.workspace_activity.unread
-                    || (changed && (registry.popup.open || app.has_detached_windows()))
+                    || (changed && (registry.popup.open || app.workspace_is_displayed()))
             };
             if visited + 1 < remaining && (Instant::now() >= deadline || !can_continue()) {
                 break;

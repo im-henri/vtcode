@@ -82,6 +82,12 @@ impl Surface {
         self.output.ready.load(Ordering::Acquire)
     }
 
+    fn background_ready(&self, focused: bool) -> bool {
+        // The first frame must reach a new terminal even if its focus report
+        // arrives after registration.
+        self.dirty && self.ready() && (focused || self.title.is_empty())
+    }
+
     fn resize(&mut self, width: u16, height: u16) {
         if let Ok(area) = screen_area((width, height)) {
             self.desired_area = area;
@@ -137,6 +143,9 @@ struct DesktopDrag {
 pub(crate) struct Windows {
     id: WindowId,
     main_workspace: u64,
+    observed_main: Option<u64>,
+    main_dirty: bool,
+    main_size: Option<(u16, u16)>,
     main_host: Option<desktop::Host>,
     windows: BTreeMap<WindowId, Window>,
     next_window: WindowId,
@@ -184,6 +193,9 @@ impl Windows {
         Self {
             id: MAIN_WINDOW,
             main_workspace: app.workspaces.active,
+            observed_main: None,
+            main_dirty: false,
+            main_size: None,
             main_host: None,
             windows: BTreeMap::new(),
             next_window: 1,
@@ -229,6 +241,7 @@ impl Windows {
     }
 
     pub(crate) fn invalidate_background(&mut self) {
+        self.main_dirty |= !self.is_main();
         for (&id, window) in &mut self.windows {
             if id != self.id
                 && let Some(surface) = &mut window.surface
@@ -238,14 +251,52 @@ impl Windows {
         }
     }
 
-    pub(crate) fn background_draw_ready(&self) -> bool {
-        self.windows.iter().any(|(&id, window)| {
-            id != self.id
-                && window
-                    .surface
-                    .as_ref()
-                    .is_some_and(|surface| surface.dirty && surface.ready())
-        })
+    pub(crate) fn background_draw_ready(&self, focused: bool) -> bool {
+        (!self.is_main() && self.main_dirty && focused)
+            || self.windows.iter().any(|(&id, window)| {
+                id != self.id
+                    && window
+                        .surface
+                        .as_ref()
+                        .is_some_and(|surface| surface.background_ready(focused))
+            })
+    }
+
+    pub(crate) fn note_main_resize(&mut self, width: u16, height: u16) {
+        if width > 0 && height > 0 {
+            self.main_size = Some((width, height));
+            self.main_dirty = true;
+        }
+    }
+
+    pub(crate) fn apply_main_resize<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
+        if let Some((width, height)) = self.main_size.take()
+            && crate::terminal_output::apply_resize(terminal, &Event::Resize(width, height))?
+                .is_none()
+        {
+            // A sequence of resizes may have returned to the old dimensions.
+            terminal.clear()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn paint_main_background<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+        app: &mut App,
+    ) -> Result<(), B::Error> {
+        if self.is_main() || !self.main_dirty || !app.terminal_has_focus {
+            return Ok(());
+        }
+        if let Some(owner) = workspace_mut(app, self.main_workspace) {
+            self.apply_main_resize(terminal)?;
+            terminal.draw(|frame| crate::ui::draw_background_window(frame, owner, MAIN_WINDOW))?;
+        }
+        self.main_dirty = false;
+        Ok(())
     }
 
     pub(crate) fn paint_active(&mut self, app: &mut App) {
@@ -255,6 +306,7 @@ impl Windows {
 
     pub(crate) fn paint_background(&mut self, app: &mut App) {
         let budget = std::time::Instant::now() + std::time::Duration::from_millis(5);
+        let focused = app.terminal_has_focus;
         let mut ready: Vec<_> = self
             .windows
             .iter()
@@ -263,7 +315,7 @@ impl Windows {
                     && window
                         .surface
                         .as_ref()
-                        .is_some_and(|surface| surface.dirty && surface.ready()))
+                        .is_some_and(|surface| surface.background_ready(focused)))
                 .then_some(id)
             })
             .collect();
@@ -283,7 +335,7 @@ impl Windows {
             let title = terminal_title(owner, id);
             if surface
                 .paint(title, |frame| {
-                    crate::ui_chrome::draw_background_window(frame, owner, id)
+                    crate::ui::draw_background_window(frame, owner, id)
                 })
                 .is_err()
             {
@@ -388,18 +440,42 @@ impl Windows {
         } else {
             return false;
         };
+        // Keep the main window's workspace watched before parking it.
+        if source != MAIN_WINDOW {
+            self.observe_main(app, Some(self.main_workspace));
+        }
         if app.workspaces.active != owner {
             app.switch_workspace(owner);
         }
         if (source != MAIN_WINDOW && app.workspaces.active != owner) || !app.activate_window(source)
         {
+            self.sync_main_observation(app);
             return false;
         }
         self.id = source;
+        self.sync_main_observation(app);
+        self.invalidate_background();
         app.terminal_has_focus = true;
         app.forward_terminal_focus(true);
         app.idle_quiescent = false;
         true
+    }
+
+    fn sync_main_observation(&mut self, app: &mut App) {
+        self.observe_main(app, (!self.is_main()).then_some(self.main_workspace));
+    }
+
+    fn observe_main(&mut self, app: &mut App, next: Option<u64>) {
+        if self.observed_main == next {
+            return;
+        }
+        if let Some(owner) = self.observed_main.and_then(|id| workspace_mut(app, id)) {
+            owner.set_main_window_in_background(false);
+        }
+        self.observed_main = next;
+        if let Some(owner) = next.and_then(|id| workspace_mut(app, id)) {
+            owner.set_main_window_in_background(true);
+        }
     }
 
     fn focus(&self, id: WindowId) {
@@ -624,6 +700,7 @@ impl Windows {
             }
         }
         if changed {
+            self.sync_main_observation(app);
             self.invalidate_background();
         }
         changed

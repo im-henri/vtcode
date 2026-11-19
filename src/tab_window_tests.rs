@@ -1,6 +1,8 @@
 use super::*;
 use crate::{
-    app::{SplitDirection, Tab},
+    app::{
+        ActivePane, GitFileChange, SidebarView, SourceControlRepositoryState, SplitDirection, Tab,
+    },
     editor::Editor,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -83,6 +85,186 @@ fn detached_frame_keeps_tabs_and_hides_workbench_chrome() {
     assert!(app.activate_window(MAIN_WINDOW));
     assert!(app.show_explorer);
     assert!(!app.show_tab_bar);
+}
+
+fn screen_text(terminal: &Terminal<TestBackend>) -> String {
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[test]
+fn background_main_refreshes_its_own_sidebar_while_the_detached_editor_keeps_focus() {
+    for sidebar in [SidebarView::Explorer, SidebarView::SourceControl] {
+        let folder = tempfile::tempdir().unwrap();
+        let mut app = app_with_tabs(&["main-view.txt", "detached-view.txt"]);
+        app.explorer.root = folder.path().to_owned();
+        app.sidebar_view = sidebar;
+        app.show_explorer = true;
+        app.explorer_width = 40;
+        app.set_sidebar_auto_hide(true);
+        app.active_pane = ActivePane::Explorer;
+        app.source_control_enabled = true;
+        app.source_control_repository_state = SourceControlRepositoryState::Available;
+        app.sc_graph_collapsed = true;
+
+        let view = app.tabs[1].editor.navigation_id;
+        assert!(app.open_detached_window(1, view));
+        app.active_pane = ActivePane::Explorer;
+        assert!(app.activate_window(1));
+        app.terminal_has_focus = true;
+        app.show_explorer = false;
+        app.sidebar_view = SidebarView::Extensions;
+
+        let mut windows = Windows::new(&app);
+        windows.id = 1;
+        let mut main = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let mut detached = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        detached
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        let focused_code = app.code_area;
+        windows.invalidate_background();
+        windows.paint_main_background(&mut main, &mut app).unwrap();
+        assert!(screen_text(&main).contains("main-view.txt"));
+        assert!(!screen_text(&main).contains("fresh-change.txt"));
+
+        std::fs::write(
+            folder.path().join("fresh-change.txt"),
+            "created while detached",
+        )
+        .unwrap();
+        app.explorer.refresh();
+        app.source_control_files.push(GitFileChange {
+            path: "fresh-change.txt".into(),
+            directory: false,
+            status: 'M',
+            staged: false,
+            original_path: None,
+        });
+        windows.invalidate_background();
+        app.terminal_has_focus = false;
+        assert!(!windows.background_draw_ready(false));
+        windows.paint_main_background(&mut main, &mut app).unwrap();
+        assert!(!screen_text(&main).contains("fresh-change.txt"));
+
+        app.terminal_has_focus = true;
+        assert!(windows.background_draw_ready(true));
+        windows.paint_main_background(&mut main, &mut app).unwrap();
+        assert!(
+            screen_text(&main).contains("fresh-change.txt"),
+            "{sidebar:?}"
+        );
+        assert!(!windows.background_draw_ready(true));
+        assert_eq!(windows.active(), 1);
+        assert_eq!(app.detached_window_id(), Some(1));
+        assert_eq!(app.editor().unwrap().navigation_id, view);
+        assert!(app.terminal_has_focus);
+        assert_eq!(app.code_area, focused_code);
+        assert_eq!(app.sidebar_view, SidebarView::Extensions);
+        assert!(!app.show_explorer);
+        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::from(KeyCode::Char('Z')));
+        assert!(app.editor().unwrap().rope.to_string().starts_with('Z'));
+    }
+}
+
+#[test]
+fn a_displayed_parked_workspace_processes_git_changes_without_a_focus_event() {
+    let main_folder = tempfile::tempdir().unwrap();
+    let detached_folder = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(main_folder.path()).unwrap();
+    let filename = "main-change.txt";
+    let path = main_folder.path().join(filename);
+    std::fs::write(&path, "committed content\n").unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new(filename)).unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+    let author = git2::Signature::now("Test", "test@example.com").unwrap();
+    repo.commit(Some("HEAD"), &author, &author, "Initial", &tree, &[])
+        .unwrap();
+    let wake = UiWake::default();
+    let mut app = App::new_startup(main_folder.path().to_owned(), wake.clone());
+    app.show_explorer = true;
+    app.explorer_width = 46;
+    app.sidebar_view = SidebarView::SourceControl;
+    app.source_control_enabled = true;
+    app.sc_graph_collapsed = true;
+    app.refresh_explorer_async();
+    app.start_workspace_watcher();
+    app.refresh_source_control_async();
+    let poll_workers = |app: &mut App| {
+        app.service_workspaces_until(
+            crate::ui_work::Service::Workers,
+            Instant::now() + Duration::from_millis(20),
+            || true,
+        )
+    };
+    until(&wake, "workspace setup", || {
+        poll_workers(&mut app);
+        app.workspace_watcher_active
+            && app.source_control_repository_state == SourceControlRepositoryState::Available
+    });
+    app.repositories.expanded = true;
+    let mut windows = Windows::new(&app);
+    let main_workspace = app.workspaces.active;
+    windows.id = 1;
+    windows.observe_main(&mut app, Some(main_workspace));
+    app.insert_workspace(App::new_startup(
+        detached_folder.path().to_owned(),
+        wake.clone(),
+    ));
+    app.new_file();
+    let view = app.editor().unwrap().navigation_id;
+    assert!(app.open_detached_window(1, view));
+    assert!(app.activate_window(1));
+    app.terminal_has_focus = true;
+    assert_ne!(app.workspaces.active, main_workspace);
+    assert!(
+        workspace(&app, main_workspace)
+            .unwrap()
+            .workspace_is_displayed()
+    );
+
+    let mut main = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    windows.invalidate_background();
+    windows.paint_main_background(&mut main, &mut app).unwrap();
+    assert!(
+        screen_text(&main).contains("No changes"),
+        "{}",
+        screen_text(&main)
+    );
+    std::fs::write(&path, "modified outside VTCode\n").unwrap();
+    let created = "added-to-explorer.txt";
+    std::fs::write(main_folder.path().join(created), "new file\n").unwrap();
+    until(&wake, "visible parked workspace Git refresh", || {
+        if poll_workers(&mut app) {
+            windows.invalidate_background();
+        }
+        windows.paint_main_background(&mut main, &mut app).unwrap();
+        let owner = workspace(&app, main_workspace).unwrap();
+        owner
+            .source_control_files
+            .iter()
+            .any(|file| file.path == filename)
+            && owner
+                .explorer
+                .entries
+                .iter()
+                .any(|entry| entry.name == created)
+    });
+    assert!(
+        screen_text(&main).contains(filename),
+        "{}",
+        screen_text(&main)
+    );
+    assert_ne!(app.workspaces.active, main_workspace);
+    assert_eq!(app.detached_window_id(), Some(1));
+    assert_eq!(app.editor().unwrap().navigation_id, view);
 }
 
 #[test]
@@ -173,7 +355,7 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         frontend::run(endpoint).unwrap();
         return;
     }
-    let mut app = app_with_tabs(&["detachable-probe.txt"]);
+    let mut app = app_with_tabs(&["detachable-probe.txt", "detachable-probe.txt"]);
     let view = app.tabs[0].editor.navigation_id;
     let wake = app.background.wake_handle();
     let mut windows = Windows::new(&app);
@@ -265,6 +447,19 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
         output.extend(output_rx.try_iter().flatten());
         String::from_utf8_lossy(&output).contains("detachable-probe.txt")
     });
+    assert!(windows.is_main());
+    app.terminal_has_focus = true;
+    for ch in "LIVE-UPDATE".chars() {
+        app.editor_mut().unwrap().insert_char(ch);
+    }
+    app.sync_duplicate_file_tabs();
+    windows.poll(&mut app);
+    until(&wake, "background update", || {
+        windows.paint_background(&mut app);
+        output.extend(output_rx.try_iter().flatten());
+        String::from_utf8_lossy(&output).contains("LIVE-UPDATE")
+    });
+    assert!(windows.is_main());
 
     // VT input is sent only to the private process created by this test.
     writer.write_all(b"Z").unwrap();
@@ -283,7 +478,10 @@ fn tab_window_frontend_presents_frames_and_routes_input_over_a_real_pty() {
     });
     assert!(windows.close(&mut app, 1));
     assert_eq!(app.tab_window(view), Some(MAIN_WINDOW));
-    assert_eq!(app.editor().unwrap().rope.to_string(), "Zsample text\n");
+    assert_eq!(
+        app.editor().unwrap().rope.to_string(),
+        "ZLIVE-UPDATEsample text\n"
+    );
     until(&wake, "shutdown", || {
         child.0.try_wait().unwrap().is_some_and(|status| {
             assert!(status.success(), "frontend shutdown returned {status:?}");

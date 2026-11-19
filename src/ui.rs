@@ -437,6 +437,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.folder_browser_area = None;
     app.folder_browser_buttons.clear();
 
+    draw_workbench(f, app, false);
+    crate::ui_file_deletion::draw(f, app);
+
+    draw_overlays(f, app);
+}
+
+fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
     // Top-level layout: menu bar + middle + status bar
     let detached = app.detached_window_id().is_some();
     let menu_bar_height: u16 = u16::from(!detached && (app.zen_mode || app.show_menu_bar));
@@ -502,7 +509,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
 
     // Main layout: body + optional panel
-    let panel_height = if !detached && app.show_panel {
+    let panel_height = if !detached && !app.zen_mode && app.show_panel {
         if app.panel_chrome.maximized { main_area.height.saturating_sub(2) } else { responsive_panel_height(main_area.height, app.panel_height) }
     } else {
         0
@@ -551,7 +558,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         workbench_area.y, 1, workbench_area.height,
     ));
     let sidebar_width = responsive_sidebar_width(workbench_area.width, app.explorer_width);
-    if app.sidebar_is_visible() && sidebar_width > 0 {
+    if !app.zen_mode && app.sidebar_is_visible() && sidebar_width > 0 {
         let (sidebar_area, editor_area) = if app.sidebar_right {
             let body = Layout::default()
                 .direction(Direction::Horizontal)
@@ -583,7 +590,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         }
         crate::ui_loading::draw_sidebar(f, app, sidebar_area);
         app.editor_gradient_area = Some(editor_area);
-        ui_chrome::draw_editor_section(f, app, editor_area);
+        ui_chrome::draw_editor_section_with_pending_diff(f, app, editor_area, pending_diff);
         app.editor_gradient_area = None;
         apply_area_gradient(
             f,
@@ -628,7 +635,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else {
         app.explorer_area = None;
         app.editor_gradient_area = Some(workbench_area);
-        ui_chrome::draw_editor_section(f, app, workbench_area);
+        ui_chrome::draw_editor_section_with_pending_diff(f, app, workbench_area, pending_diff);
         app.editor_gradient_area = None;
         apply_area_gradient(
             f,
@@ -677,7 +684,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 }
             }
         }
-    } else {
+    } else if !app.rendering_background_window {
         crate::ui_panels::invalidate_layout(app);
     }
 
@@ -690,8 +697,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
 
     if !detached { crate::ui_performance_details::draw_docked(f, app); }
-    crate::ui_file_deletion::draw(f, app);
+}
 
+fn draw_overlays(f: &mut Frame, app: &mut App) {
     if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Search {
         crate::ui_search_controls::draw_tooltip(f, app, crate::ui_search_controls::SearchScope::Workspace);
     }
@@ -1089,6 +1097,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     app.draw_text_input_context_menu(f);
     crate::ui_loading::finish_frame(app, std::time::Instant::now());
 }
+
+#[path = "ui_background_window.rs"]
+mod background_window;
+pub(crate) use background_window::draw as draw_background_window;
 
 #[cfg(test)]
 mod tests {

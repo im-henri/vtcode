@@ -341,7 +341,7 @@ impl App {
         if self.bg_git_log_running || !self.git_history.has_more {
             return;
         }
-        if !self.workspace_visible {
+        if !self.workspace_is_displayed() {
             self.defer_git_work(crate::app_workspaces::GitWork::MoreHistory);
             return;
         }

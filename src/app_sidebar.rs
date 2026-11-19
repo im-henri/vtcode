@@ -48,6 +48,7 @@ impl App {
     /// popups, whose hit regions must remain stable until the interaction ends.
     pub(crate) fn update_sidebar_auto_hide(&mut self, mouse: MouseEvent) -> bool {
         if !self.sidebar_auto_hide.enabled
+            || self.detached_window_id().is_some()
             || self.zen_mode
             || !self.show_explorer
             || !matches!(

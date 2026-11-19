@@ -42,7 +42,7 @@ pub(crate) fn draw_surfaces(f: &mut Frame, app: &mut App, dock: Option<Rect>) {
         });
         placements.push((None, agent, app.active_group, area, id));
     }
-    if app.active_pane == ActivePane::Editor
+    if !app.rendering_background_window && app.active_pane == ActivePane::Editor
         && !app.terminal_panel_focused
         && let Some(TabKind::Chat(key)) = app.tabs.get(app.active_tab).map(|tab| tab.kind)
         && let Some(view) = app.chat.layout.editors.get(&key).cloned()

@@ -24,9 +24,26 @@ struct Status {
 pub(crate) enum GitWork { Branch, Lines, History, MoreHistory }
 
 impl App {
+    pub(crate) fn workspace_is_displayed(&self) -> bool {
+        self.workspace_visible || self.main_window_in_background || self.has_detached_windows()
+    }
+
+    pub(crate) fn set_main_window_in_background(&mut self, visible: bool) {
+        let displayed = self.workspace_is_displayed();
+        self.main_window_in_background = visible;
+        if !visible {
+            self.background_main_terminal_surfaces.clear();
+        }
+        match (displayed, self.workspace_is_displayed()) {
+            (false, true) => self.resume_workspace_observation(),
+            (true, false) => self.suspend_workspace_observation(),
+            _ => {}
+        }
+    }
+
     pub(crate) fn defer_explorer_refresh(&mut self, full: bool) -> bool {
         if !self.has_open_folder() { return true; }
-        if self.workspace_visible { return false; }
+        if self.workspace_is_displayed() { return false; }
         let work = &mut self.workspace_observation.work;
         work.explorer_full |= full;
         work.explorer_tree = true;
@@ -51,7 +68,7 @@ impl App {
 
     pub(crate) fn defer_git_status(&mut self, paths: Option<&FxHashSet<PathBuf>>, passive: bool) -> bool {
         if !self.has_open_folder() { return true; }
-        if self.workspace_visible { return false; }
+        if self.workspace_is_displayed() { return false; }
         let pending = self.workspace_observation.work.status.get_or_insert_with(|| Status {
             paths: Some(FxHashSet::default()), passive: true,
         });
@@ -69,7 +86,7 @@ impl App {
 
     pub(crate) fn defer_git_work(&mut self, kind: GitWork) -> bool {
         if !self.has_open_folder() { return true; }
-        if self.workspace_visible { return false; }
+        if self.workspace_is_displayed() { return false; }
         let work = &mut self.workspace_observation.work;
         match kind {
             GitWork::Branch => work.branch = true,
@@ -81,7 +98,7 @@ impl App {
     }
 
     pub(crate) fn start_workspace_watcher(&mut self) {
-        if !self.workspace_visible || !self.has_open_folder() {
+        if !self.workspace_is_displayed() || !self.has_open_folder() {
             return;
         }
         self.workspace_observation.started = true;
@@ -94,7 +111,7 @@ impl App {
     }
 
     pub(crate) fn start_visible_workspace_services(&mut self) {
-        if !self.workspace_visible {
+        if !self.workspace_is_displayed() {
             return;
         }
         if !self.workspace_observation.assets_started {
@@ -139,7 +156,7 @@ impl App {
         // local history cursors while deferring new passive work.
     }
 
-    pub(super) fn resume_workspace_observation(&mut self) {
+    pub(crate) fn resume_workspace_observation(&mut self) {
         if self.workspace_observation.started {
             self.start_visible_workspace_services();
         }
@@ -194,7 +211,7 @@ impl App {
     }
 
     pub(crate) fn defer_workspace_file_check(&mut self, path: &std::path::Path) -> bool {
-        if self.workspace_visible { return false; }
+        if self.workspace_is_displayed() { return false; }
         let observation = &mut self.workspace_observation;
         if !observation.check_all_files {
             observation.checks.insert(path.to_path_buf());

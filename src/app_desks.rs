@@ -7,12 +7,16 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct DeskLayout {
     pub tree: Option<SplitNode>,
     pub active_group: usize,
+    #[serde(skip)]
+    pub active_pane: Option<ActivePane>,
     pub explorer: bool,
     pub explorer_width: u16,
     pub sidebar: String,
     pub panel: bool,
     pub panel_tab: u8,
     pub panel_height: u16,
+    #[serde(skip)]
+    pub panel_maximized: bool,
     pub terminal: usize,
     pub terminal_sidebar: bool,
     pub terminal_revealed: bool,
@@ -29,6 +33,47 @@ pub(crate) struct DeskLayout {
     pub search_replace: String,
     pub search_include: String,
     pub search_exclude: String,
+}
+
+impl DeskLayout {
+    fn sidebar_view(&self) -> SidebarView {
+        match self.sidebar.as_str() {
+            "Search" => SidebarView::Search,
+            "SourceControl" => SidebarView::SourceControl,
+            "Settings" => SidebarView::Settings,
+            "Extensions" => SidebarView::Extensions,
+            "Remote" => SidebarView::Remote,
+            _ => SidebarView::Explorer,
+        }
+    }
+
+    /// Project the saved layout for painting. The inverse swap restores the
+    /// foreground layout without running desk activation or editor commands.
+    pub(crate) fn swap_presentation(&mut self, app: &mut App) {
+        use std::mem::swap;
+        swap(&mut self.tree, &mut app.split_tree);
+        swap(&mut self.active_group, &mut app.active_group);
+        swap(&mut self.explorer, &mut app.show_explorer);
+        swap(&mut self.explorer_width, &mut app.explorer_width);
+        let previous = std::mem::replace(&mut app.sidebar_view, self.sidebar_view());
+        self.sidebar = format!("{previous:?}");
+        swap(&mut self.panel, &mut app.show_panel);
+        swap(&mut self.panel_tab, &mut app.panel_tab);
+        swap(&mut self.panel_height, &mut app.panel_height);
+        swap(&mut self.panel_maximized, &mut app.panel_chrome.maximized);
+        swap(&mut self.terminal, &mut app.active_terminal);
+        swap(&mut self.terminal_sidebar, &mut app.show_terminal_sidebar);
+        swap(&mut self.terminal_revealed, &mut app.terminal_sidebar_revealed);
+        swap(&mut self.terminal_width, &mut app.terminal_sidebar.width);
+        swap(&mut self.chat, &mut app.chat.layout.dock_visible);
+        swap(&mut self.chat_visible, &mut app.chat.visible);
+        swap(&mut self.chat_width, &mut app.chat.width);
+        swap(&mut self.chat_agent, &mut app.chat.layout.dock_agent);
+        swap(&mut self.search, &mut app.global_search_query);
+        swap(&mut self.search_replace, &mut app.global_search_replace_query);
+        swap(&mut self.search_include, &mut app.search_include_pattern);
+        swap(&mut self.search_exclude, &mut app.search_exclude_pattern);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -646,12 +691,14 @@ impl App {
         DeskLayout {
             tree: self.split_tree.clone(),
             active_group: self.active_group,
+            active_pane: Some(self.active_pane),
             explorer: self.show_explorer,
             explorer_width: self.explorer_width,
             sidebar: format!("{:?}", self.sidebar_view),
             panel: self.show_panel,
             panel_tab: self.panel_tab,
             panel_height: self.panel_height,
+            panel_maximized: self.panel_chrome.maximized,
             terminal: self.active_terminal,
             terminal_sidebar: self.show_terminal_sidebar,
             terminal_revealed: self.terminal_sidebar_revealed,
@@ -676,18 +723,12 @@ impl App {
 
     fn apply_desk_layout(&mut self, layout: DeskLayout) {
         crate::ui_panels::invalidate_layout(self);
-        self.panel_chrome.maximized = false;
+        self.panel_chrome.maximized = layout.panel_maximized && layout.panel;
+        self.sidebar_view = layout.sidebar_view();
         self.split_tree = layout.tree;
         self.active_group = layout.active_group;
         self.show_explorer = layout.explorer && !self.zen_mode;
         self.explorer_width = layout.explorer_width.max(15);
-        self.sidebar_view = match layout.sidebar.as_str() {
-            "Search" => SidebarView::Search,
-            "SourceControl" => SidebarView::SourceControl,
-            "Settings" => SidebarView::Settings,
-            "Extensions" => SidebarView::Extensions,
-            _ => SidebarView::Explorer,
-        };
         self.show_panel = layout.panel && !self.zen_mode;
         self.panel_tab = Self::normalize_panel_tab(layout.panel_tab);
         self.panel_height = layout.panel_height.max(3);

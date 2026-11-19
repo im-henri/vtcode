@@ -750,7 +750,7 @@ impl App {
     /// Revalidate a visible view after tab moves, external reloads, or a shared
     /// search preference change. Pending edit scans still keep their debounce.
     pub(crate) fn refresh_file_search_view(&mut self, group: usize) {
-        if !self.file_search_visible() || self.search_query.is_empty()
+        if self.rendering_background_window || !self.file_search_visible() || self.search_query.is_empty()
             || (self.file_search_refresh_pending && !self.rendering_inactive_editor) {
             return;
         }

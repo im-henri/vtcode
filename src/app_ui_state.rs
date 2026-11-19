@@ -954,6 +954,7 @@ impl App {
     }
 
     pub(crate) fn refresh_compare_diff(&mut self) {
+        if self.rendering_background_window { return; }
         // Live Source Control tabs refresh both revisions together, including
         // inactive tabs. The generic comparer handles fixed snapshots/files.
         if self.active_diff_tab_id().is_some() {

@@ -375,7 +375,7 @@ impl App {
                 // between parser quanta, not only when moving to another PTY.
                 if pty.process_while(|| Instant::now() < deadline && continue_processing()) {
                     processed_output = true;
-                    needs_redraw |= self.terminal_surfaces.iter().any(|surface| {
+                    needs_redraw |= self.terminal_surfaces.iter().chain(&self.background_main_terminal_surfaces).any(|surface| {
                         surface.index == index && !surface.area.is_empty()
                     }) || detached_terminals.contains(&index) || terminal.input_activity.visible();
                 }

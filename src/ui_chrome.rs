@@ -1078,7 +1078,7 @@ fn draw_divider(f: &mut Frame, area: Rect, direction: &Direction, style: Style) 
 }
 
 /// Render a group pane (tab bar + breadcrumb + editor) for the active group.
-fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, show_chrome: bool) {
+fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, show_chrome: bool, pending_diff: bool) {
     if group_id == app.active_group {
         let current_tab_kind = app.tabs.get(app.active_tab).map(|tab| tab.kind);
         let show_tabs = app.detached_window_id().is_some() || (show_chrome && app.show_tab_bar);
@@ -1118,7 +1118,9 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
         app.editor_area = Some(area);
         app.viewport = Some(pane_layout[2]);
         app.refresh_file_search_view(group_id);
-        if let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
+        if pending_diff {
+            crate::ui_loading::draw_diff(f, app, pane_layout[2]);
+        } else if let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
             app.settings_editor_active = false;
             crate::ui_remote_targets::draw_connection_tab(f, app, pane_layout[2], id);
         } else if let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {
@@ -1227,11 +1229,11 @@ impl SplitPaneLayout {
     }
 }
 
-fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode, area: Rect, show_chrome: bool) {
+fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode, area: Rect, show_chrome: bool, pending_diff: bool) {
     let mut layout = std::mem::take(&mut app.split_layout_cache);
     layout.update(node, area, &mut app.split_dividers);
     for &(group, pane) in &layout.panes {
-        render_group_pane(f, app, pane, group, show_chrome);
+        render_group_pane(f, app, pane, group, show_chrome, pending_diff);
     }
     let background = app.colors.bg_editor;
     for (rect, path, child, direction, _) in &app.split_dividers {
@@ -1253,59 +1255,24 @@ fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode,
     app.split_layout_cache = layout;
 }
 
-pub(crate) fn draw_background_window(
-    f: &mut Frame,
-    app: &mut App,
-    window: crate::tab_windows::WindowId,
-) {
-    let Some(layout) = app.window_desk(window).and_then(|desk| desk.layout.as_ref()) else {
-        return;
-    };
-    let area = f.area();
-    let mut panes = SplitPaneLayout::default();
-    let mut dividers = Vec::new();
-    if let Some(tree) = &layout.tree {
-        panes.collect(tree, area, &mut Vec::new(), &mut dividers);
-    } else {
-        panes.panes.push((layout.active_group, area));
-    }
-
-    let viewport = app.viewport;
-    let placements = std::mem::take(&mut app.chat.layout.placements);
-    let surface_count = app.terminal_surfaces.len();
-    f.buffer_mut().set_style(area, Style::default().bg(app.colors.bg_editor));
-    for (group, pane) in panes.panes {
-        draw_split_editor_for_group(f, app, pane, group);
-    }
-    for (rect, _, _, direction, _) in dividers {
-        let direction = match direction {
-            crate::app::SplitDirection::Horizontal => Direction::Horizontal,
-            crate::app::SplitDirection::Vertical => Direction::Vertical,
-        };
-        let background = app.colors.bg_editor;
-        let foreground = app.colors.ui.editor_split_borders[usize::from(direction == Direction::Vertical)]
-            .border(background).unwrap_or(background);
-        draw_divider(f, rect, &direction, Style::default().fg(foreground).bg(background));
-    }
-    if !app.chat.layout.placements.is_empty() {
-        crate::ui_chat::draw_surfaces(f, app, None);
-    }
-    app.chat.layout.placements = placements;
-    app.terminal_surfaces.truncate(surface_count);
-    app.viewport = viewport;
+#[cfg(test)]
+pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
+    draw_editor_section_with_pending_diff(f, app, area, false);
 }
 
-pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
+pub(crate) fn draw_editor_section_with_pending_diff(
+    f: &mut Frame, app: &mut App, area: Rect, pending_diff: bool,
+) {
     app.remote_targets.connection_area = Rect::default();
     app.remote_targets.connection_hits.clear();
     app.remote_connection.area = None;
     app.remote_connection.buttons.clear();
     app.keybindings_ui.begin_frame();
     crate::ui_extension_info::begin_frame(app);
-    app.sync_diff_tab();
+    if !app.rendering_background_window { app.sync_diff_tab(); }
     app.commit_details.visible = false;
     // Safety: if split mode is active but current group has no tabs, recover to a non-empty group.
-    if app.split_active() && app.tabs.is_empty() {
+    if !app.rendering_background_window && app.split_active() && app.tabs.is_empty() {
         app.close_empty_groups();
     }
 
@@ -1371,6 +1338,11 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
         crate::ui_loading::draw_editor_header(f, app, layout[0], layout[1]);
     }
 
+    if pending_diff && !is_split {
+        crate::ui_loading::draw_diff(f, app, layout[2]);
+        return;
+    }
+
     // Settings/Keyboard Shortcuts tab view
     if !is_split && let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
         app.settings_editor_active = false;
@@ -1433,7 +1405,7 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
     if is_split {
         // Tree-based split rendering
         if let Some(tree) = app.split_tree.take() {
-            render_split_tree(f, app, &tree, area, show_chrome);
+            render_split_tree(f, app, &tree, area, show_chrome, pending_diff);
             app.split_tree = Some(tree);
         } else {
             // Fallback: flat rendering for legacy splits without a tree
@@ -1464,7 +1436,7 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
                 }
             }
             if let Some(&(_, active_rect_idx)) = pane_assignments.iter().find(|(gi, _)| *gi == app.active_group) {
-                render_group_pane(f, app, split[active_rect_idx], app.active_group, show_chrome);
+                render_group_pane(f, app, split[active_rect_idx], app.active_group, show_chrome, pending_diff);
             }
             let divider_bg = app.colors.bg_editor;
             let divider_style = Style::default().bg(divider_bg).fg(app.colors.ui.editor_split_borders[
@@ -1494,7 +1466,7 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
         draw_inline_diff(f, app, layout[2]);
     } else {
         // If diff mode is on but no base content, clear it
-        if app.diff_mode != crate::app::DiffMode::Off && app.compare_base_content.is_none() {
+        if !app.rendering_background_window && app.diff_mode != crate::app::DiffMode::Off && app.compare_base_content.is_none() {
             app.clear_diff_state();
         }
         app.editor_area = Some(layout[2]);

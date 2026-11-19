@@ -74,6 +74,7 @@ impl App {
         if self.tab_location(view).is_none() || self.window_desk(window).is_some() {
             return false;
         }
+        let was_displayed = self.workspace_is_displayed();
         self.materialize_desk_pane();
         let id = self.desks.allocate_id();
         let mut pane = EditorGroup::new();
@@ -96,6 +97,9 @@ impl App {
             window: Some(window),
         });
         if self.move_tab_to_window(view, window) {
+            if !was_displayed {
+                self.resume_workspace_observation();
+            }
             true
         } else {
             self.return_detached_tabs(window);
@@ -248,7 +252,7 @@ impl App {
         self.compact_desk_groups();
         self.load_group(self.active_group);
         self.sync_diff_tab();
-        if !self.workspace_visible && !self.has_detached_windows() {
+        if !self.workspace_is_displayed() {
             self.suspend_workspace_observation();
         }
         true

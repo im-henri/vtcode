@@ -3059,6 +3059,7 @@ pub(crate) fn background_workspace_wait(app: &App, closing_workspaces: bool) -> 
         app.chat.rollback.next_capture_deadline().map(|deadline| deadline.saturating_duration_since(now)),
         app.lsp_manager.diagnostic_publication.next_wait(now),
         crate::extension_scheduler::next_wait(app),
+        app.git_watcher_refresh_wait(now),
     ];
     if !closing_workspaces && !app.exit_keep_unsaved_quit && !app.exit_discard_quit && !app.shutdown_anim_active
         && matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay) && has_delayed_auto_save_candidate(app) {
@@ -3862,6 +3863,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         }
         if app.poll_git_watcher_refresh(std::time::Instant::now()) {
             needs_redraw = true;
+            windows.invalidate_background();
         }
         if app.expire_inline_hold() {
             needs_redraw = true;
@@ -3981,7 +3983,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         if !unfocused_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
             needs_redraw = false;
         }
-        needs_redraw |= windows.background_draw_ready();
+        needs_redraw |= windows.background_draw_ready(app.terminal_has_focus);
 
         let activity_now = std::time::Instant::now();
         app.background.refresh_activity(activity_now);
@@ -4010,6 +4012,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             app.rendering_animation_frame = !needs_redraw;
             if needs_redraw {
                 app.sync_duplicate_file_tabs();
+                if std::mem::take(&mut app.tab_window_document_changed) {
+                    windows.invalidate_background();
+                }
                 app.ensure_active_tab_visible();
                 app.prepare_visible_merge_conflicts();
                 refresh_caches(app);
@@ -4073,8 +4078,12 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             let render_started = std::time::Instant::now();
             app.background.activity.ui.record(UiPhase::Preparation, render_started.saturating_duration_since(frame_started), render_started);
             let mut painting_elapsed = Duration::ZERO;
-            windows.paint_background(app);
+            if draw_changed {
+                windows.paint_main_background(terminal, app)?;
+                windows.paint_background(app);
+            }
             if windows.is_main() {
+                windows.apply_main_resize(terminal)?;
                 terminal.draw(|f| {
                     let painting_started = std::time::Instant::now();
                     ui::draw(f, app);
@@ -4342,7 +4351,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             // Every asynchronous producer signals `ui_wake`. With no queued
             // result, input, animation, or genuine deadline, this wait blocks
             // rather than periodically walking the application state.
-            let wait = next_event_wait_for_redraw(app, needs_redraw && windows.ready_to_draw(),
+            let redraw_ready = windows.ready_to_draw()
+                && (needs_redraw || windows.background_draw_ready(app.terminal_has_focus));
+            let wait = next_event_wait_for_redraw(app, redraw_ready,
                 input_redraw, !periodic_disk_paths.is_empty());
             let mut next_event = deferred_window_event.take();
             if next_event.is_none() { next_event = windows.next_event(&mut main_events)?; }
@@ -4383,6 +4394,12 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
             let (source, next_event) = next_event.expect("terminal event checked above");
             let old_window = windows.active();
+            if source == crate::tab_windows::MAIN_WINDOW && !windows.is_main()
+                && let Event::Resize(width, height) = next_event
+            {
+                windows.note_main_resize(width, height);
+                continue;
+            }
             if !windows.accept_focus(app, source, &next_event) {
                 continue;
             }

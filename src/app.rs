@@ -55,6 +55,7 @@ pub(crate) struct App {
     pub(crate) workspaces: crate::app_workspaces::Workspaces,
     pub(crate) workspace_activity: crate::app_workspaces::Activity,
     pub(crate) workspace_visible: bool,
+    pub(crate) main_window_in_background: bool,
     pub(crate) workspace_observation: crate::app_workspaces::Observation,
     pub(crate) remote_workspace: Option<crate::remote::workspace::Workspace>,
     pub(crate) remote_connection: crate::app_remote_connection::State,
@@ -145,6 +146,7 @@ pub(crate) struct App {
     pub(crate) copy_animation: crate::copy_animation::CopyAnimation,
     pub(crate) animation_frame_cache: crate::ui_animation_frame::AnimationFrameCache,
     pub(crate) rendering_animation_frame: bool,
+    pub(crate) rendering_background_window: bool,
     pub(crate) tab_animation_cache:
         std::cell::RefCell<Option<crate::ui_chrome_tabs::TabAnimationCache>>,
     pub(crate) tab_name_cache: std::cell::RefCell<crate::ui_chrome_tabs::NameCache>,
@@ -518,6 +520,7 @@ pub(crate) struct App {
     pub(crate) terminal_close: Option<crate::app_terminal::CloseTerminal>,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
+    pub(crate) background_main_terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_find: crate::app_terminal_find::Controller,
     pub(crate) terminal_links: crate::app_terminal_links::Controller,
     pub(crate) terminal_scrollbar: crate::terminal_scrollbar::State,
@@ -1142,6 +1145,7 @@ impl App {
             workspaces: Default::default(),
             workspace_activity: Default::default(),
             workspace_visible: true,
+            main_window_in_background: false,
             workspace_observation: Default::default(),
             remote_workspace: None,
             remote_connection: Default::default(),
@@ -1217,6 +1221,7 @@ impl App {
             copy_animation: crate::copy_animation::CopyAnimation::default(),
             animation_frame_cache: Default::default(),
             rendering_animation_frame: false,
+            rendering_background_window: false,
             tab_animation_cache: Default::default(),
             tab_name_cache: Default::default(),
             scroll_speed: 3,
@@ -1546,6 +1551,7 @@ impl App {
             terminal_close: None,
             next_terminal_to_process: 0,
             terminal_surfaces: Vec::new(),
+            background_main_terminal_surfaces: Vec::new(),
             terminal_find: Default::default(),
             terminal_links: Default::default(),
             terminal_scrollbar: Default::default(),
@@ -4390,7 +4396,7 @@ impl App {
     pub(crate) fn refresh_explorer_changed_path_states<'a>(
         &mut self, paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>, structural: bool,
     ) {
-        if !self.workspace_visible {
+        if !self.workspace_is_displayed() {
             self.defer_explorer_paths(paths, structural);
             return;
         }

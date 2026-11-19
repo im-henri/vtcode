@@ -592,7 +592,7 @@ impl App {
     /// Only displayed panes may perform I/O; hidden tabs keep their dirty bits.
     pub(crate) fn refresh_dirty_source_control_diffs(&mut self) {
         if self.rendering_inactive_editor || !self.source_control_enabled || self.diff_tabs.refresh_running || self.diff_tabs.dirty.is_empty() { return; }
-        if !self.workspace_visible { return; }
+        if !self.workspace_is_displayed() { return; }
         let mut requests = Vec::new();
         let mut add = |tab: Option<&Tab>| {
             if let Some(tab) = tab {
@@ -626,14 +626,40 @@ impl App {
                 });
             }
         };
-        add(self.tabs.get(self.active_tab));
-        if let Some(tree) = &self.split_tree {
-            tree.visit_leaves(&mut |group| {
-                if group != self.active_group && let Some(group) = self.groups.get(group) { add(group.tabs.get(group.active_tab)); }
-            });
-        } else if self.split_active() {
-            for (index, group) in self.groups.iter().enumerate() {
-                if index != self.active_group && self.group_in_current_desk(index) { add(group.tabs.get(group.active_tab)); }
+        let main_desk = if self.main_window_in_background {
+            self.window_desk(crate::tab_windows::MAIN_WINDOW).map(|desk| desk.id)
+        } else {
+            None
+        };
+        if self.workspace_visible || main_desk == Some(self.desks.active) || self.detached_window_id().is_some() {
+            add(self.tabs.get(self.active_tab));
+            if let Some(tree) = &self.split_tree {
+                tree.visit_leaves(&mut |group| {
+                    if group != self.active_group && let Some(group) = self.groups.get(group) {
+                        add(group.tabs.get(group.active_tab));
+                    }
+                });
+            } else if self.split_active() {
+                for (index, group) in self.groups.iter().enumerate() {
+                    if index != self.active_group && self.group_in_current_desk(index) {
+                        add(group.tabs.get(group.active_tab));
+                    }
+                }
+            }
+        }
+        for desk in self.desks.items.iter().filter(|desk| {
+            desk.id != self.desks.active && (desk.window.is_some() || main_desk == Some(desk.id))
+        }) {
+            let Some(layout) = &desk.layout else { continue; };
+            let mut add_pane = |index: usize| {
+                if let Some(group) = self.groups.get(index) {
+                    add(group.tabs.get(group.active_tab));
+                }
+            };
+            if let Some(tree) = &layout.tree {
+                tree.visit_leaves(&mut add_pane);
+            } else {
+                add_pane(layout.active_group);
             }
         }
         if requests.is_empty() {
@@ -1294,7 +1320,9 @@ impl App {
     // cached view without cancelling or starting any active-tab workers.
     pub(crate) fn begin_inactive_diff_view(&mut self) -> Option<InactiveDiffView> {
         let id = self.active_diff_tab_id();
-        if id.is_none() && self.diff_tabs.owner.is_none() {
+        if id.is_none() && self.diff_tabs.owner.is_none()
+            && (!self.rendering_background_window || self.diff_mode == DiffMode::Off)
+        {
             return None;
         }
         let saved = DiffViewState::take(self);

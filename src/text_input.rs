@@ -670,6 +670,7 @@ impl App {
     }
 
     pub(crate) fn register_text_input(&mut self, id: TextInputId, hit_map: TextInputHitMap) {
+        if self.rendering_background_window { return; }
         let file_search_owner = matches!(id, TextInputId::SearchFind | TextInputId::SearchReplace)
             .then(|| self.file_search_owner()).flatten();
         self.register_input_viewport(id, file_search_owner, &hit_map);
