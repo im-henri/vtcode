@@ -59,6 +59,89 @@ fn moving_between_windows_retains_the_edited_view() {
 }
 
 #[test]
+fn opening_a_file_in_a_new_window_loads_it_only_in_that_window() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("new.txt");
+    std::fs::write(&path, "new window\n").unwrap();
+    let mut app = app_with_tabs(&["original.txt"]);
+    let original = app.editor().unwrap().navigation_id;
+    let mut windows = Windows::new(&app);
+    windows.windows.insert(1, Window {
+        workspace: app.workspaces.active,
+        source: WindowSource::File { path, generation: app.workspace_generation },
+        surface: None,
+        launch: None,
+    });
+    windows.poll(&mut app);
+    assert!(windows.windows.contains_key(&1));
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.editor().unwrap().navigation_id, original);
+
+    let listener = transport::Listener::bind().unwrap();
+    let endpoint = listener.endpoint();
+    let notices = windows.notices.clone();
+    let wake = windows.wake.clone();
+    let server_wake = wake.clone();
+    let server = std::thread::spawn(move || {
+        frontend::accept(listener, move |notice| {
+            notices.send((1, notice)).map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+            server_wake.notify();
+            Ok(())
+        }, UiWake::default(), Arc::new(transport::Opening::new().unwrap()))
+    });
+    let mut peer = transport::connect(&endpoint).unwrap();
+    let hello = frontend::Input::Hello { size: (80, 24), host: None };
+    transport::write_packet(&mut peer, &serde_json::to_vec(&hello).unwrap()).unwrap();
+    until(&wake, "file window handshake", || {
+        windows.poll(&mut app);
+        windows.windows.get(&1).is_some_and(|window| window.surface.is_some())
+    });
+
+    assert_eq!(windows.active(), 1);
+    assert_eq!(app.detached_window_id(), Some(1));
+    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    assert_eq!(app.editor().unwrap().rope, "new window\n");
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.tab_window(original), Some(MAIN_WINDOW));
+    assert!(app.activate_window(MAIN_WINDOW));
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.editor().unwrap().navigation_id, original);
+    assert!(windows.close(&mut app, 1));
+    drop(peer);
+    server.join().unwrap().unwrap();
+}
+
+#[test]
+fn opening_a_file_in_an_existing_window_shares_the_live_document() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("shared.txt");
+    let mut app = app_with_tabs(&["original.txt", "destination.txt"]);
+    app.tabs[0].editor.file_path = Some(path.clone());
+    app.tabs[0].editor.insert_char('X');
+    let original = app.tabs[0].editor.navigation_id;
+    let destination = app.tabs[1].editor.navigation_id;
+    assert!(app.open_detached_window(1, destination));
+    let mut windows = Windows::new(&app);
+
+    app.request_file_window(path.clone(), true);
+    for code in [KeyCode::Down, KeyCode::Enter] {
+        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+    let request = app.tab_window_request.take().unwrap();
+    assert!(matches!(&request, Request::OpenFile { path: target, window: Some(1) } if target == &path));
+    assert!(windows.request(&mut app, request));
+    assert_eq!(app.detached_window_id(), Some(1));
+    let opened = app.editor().unwrap();
+    let original_group = app.tab_location(original).unwrap().0;
+    assert!(opened.shares_document(&app.groups[original_group].tabs[0].editor));
+    assert_eq!(opened.rope, "Xsample text\n");
+    assert_eq!(app.tabs.len(), 2);
+    assert!(app.activate_window(MAIN_WINDOW));
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.editor().unwrap().navigation_id, original);
+}
+
+#[test]
 fn detached_frame_keeps_tabs_and_hides_workbench_chrome() {
     let mut app = app_with_tabs(&["first.txt", "second.txt"]);
     let view = app.tabs[0].editor.navigation_id;
@@ -504,8 +587,7 @@ fn check_frontend_lifetime(test: &str, endpoint_var: &str, mut app: App, move_ba
         1,
         Window {
             workspace: app.workspaces.active,
-            source_window: MAIN_WINDOW,
-            source_view: view,
+            source: WindowSource::Tab { view, window: MAIN_WINDOW },
             surface: None,
             launch: None,
         },
@@ -764,8 +846,7 @@ fn closing_a_source_tab_cancels_a_launch_even_during_a_partial_handshake() {
         1,
         Window {
             workspace: app.workspaces.active,
-            source_window: MAIN_WINDOW,
-            source_view: view,
+            source: WindowSource::Tab { view, window: MAIN_WINDOW },
             surface: None,
             launch: Some(frontend::Launch(opening.clone())),
         },
@@ -814,8 +895,7 @@ fn failed_start_keeps_the_dirty_tab_in_its_original_window() {
         1,
         Window {
             workspace: app.workspaces.active,
-            source_window: MAIN_WINDOW,
-            source_view: view,
+            source: WindowSource::Tab { view, window: MAIN_WINDOW },
             surface: None,
             launch: None,
         },

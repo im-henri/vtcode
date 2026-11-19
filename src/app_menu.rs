@@ -769,20 +769,20 @@ impl App {
                 "Sort by Type",
             ];
         }
-        let mut items = vec!["Open", "Find by Name…"];
-        if self.explorer_context_target.as_ref().is_some_and(|target| {
-            self.explorer.entries.iter()
-                .find(|entry| Self::same_open_path(&entry.path, target))
-                .map_or_else(|| target.is_dir(), |entry| entry.is_dir)
-        }) {
+        let target = self.explorer_context_target.as_ref();
+        let entry = target.and_then(|target| self.explorer.entries.iter()
+            .find(|entry| Self::same_open_path(&entry.path, target)));
+        let file = target.filter(|target| entry.map_or_else(|| target.is_file(), |entry| !entry.is_dir));
+        let mut items = vec!["Open"];
+        if file.is_some() {
+            items.extend_from_slice(&["Open in New Window", "Open in Window…"]);
+        }
+        items.push("Find by Name…");
+        if target.is_some_and(|target| entry.map_or_else(|| target.is_dir(), |entry| entry.is_dir)) {
             items.push("Find in Folder…");
         }
         items.extend_from_slice(&["─", "Copy File", "Cut File", "Paste File"]);
-        if let Some(target) = self.explorer_context_target.as_ref().filter(|target| {
-            self.explorer.entries.iter()
-                .find(|entry| Self::same_open_path(&entry.path, target))
-                .map_or_else(|| target.is_file(), |entry| !entry.is_dir)
-        }) {
+        if let Some(target) = file {
             items.extend_from_slice(&["─", "Select for Compare"]);
             if self.can_compare_with_selected(target) {
                 items.push("Compare with Selected");

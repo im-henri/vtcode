@@ -295,6 +295,11 @@ impl App {
                     self.open_file(&path);
                 }
             }
+            "Open in New Window" | "Open in Window…" => {
+                if let Some(path) = self.explorer_context_target.take() {
+                    self.request_file_window(path, action == "Open in Window…");
+                }
+            }
             "Copy File" | "Cut File" => {
                 let mut targets = self.explorer_context_targets();
                 // Selecting all can include a folder and its visible children.

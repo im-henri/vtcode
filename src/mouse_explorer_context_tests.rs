@@ -74,6 +74,43 @@ fn label_position(buffer: &Buffer, label: &str) -> (u16, u16) {
 }
 
 #[test]
+fn explorer_file_window_actions_dispatch_paths_without_opening_source_tabs() {
+    use crate::tab_windows::{MAIN_WINDOW, Request};
+
+    let (directory, mut app) = fixture(false, 2, 2);
+    let path = directory.path().join("main.rs");
+    let original = app.editor().unwrap().navigation_id;
+    let click = |app: &mut App, label: &str| {
+        app.open_explorer_context_menu(2, 2);
+        let buffer = draw(app, 80, 25);
+        let (column, row) = label_position(&buffer, label);
+        mouse(app, MouseEventKind::Down(MouseButton::Left), column, row);
+    };
+    click(&mut app, "Open in New Window");
+    assert!(matches!(app.tab_window_request.take(),
+        Some(Request::OpenFile { path: target, window: None }) if target == path));
+
+    click(&mut app, "Open in Window");
+    assert!(matches!(app.desks.popup.mode, Some(crate::ui_desks::Mode::Window(_))));
+    assert!(app.tab_window_request.is_none());
+    key(&mut app, KeyCode::Esc);
+    assert!(app.desks.popup.mode.is_none());
+    assert!(app.tab_window_request.is_none());
+    app.open_explorer_context_menu(2, 2);
+    app.explorer_context_selected = app.explorer_context_menu_items().iter()
+        .position(|&label| label == "Open in Window…").unwrap();
+    key(&mut app, KeyCode::Enter);
+    key(&mut app, KeyCode::Enter);
+    assert!(matches!(app.tab_window_request.take(),
+        Some(Request::OpenFile { path: target, window: Some(MAIN_WINDOW) }) if target == path));
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.editor().unwrap().navigation_id, original);
+
+    app.open_explorer_workspace_context_menu(2, 2);
+    assert!(!app.explorer_context_menu_items().iter().any(|item| item.starts_with("Open in Window") || *item == "Open in New Window"));
+}
+
+#[test]
 fn explorer_context_wheel_scrolls_visible_rows_and_scrolled_actions_work() {
     for workspace_menu in [false, true] {
         for (width, height, x, y) in [(80, 18, 4, 7), (44, 12, 40, 8), (24, 8, u16::MAX, u16::MAX)]

@@ -13,6 +13,13 @@ use crate::explorer::FileExplorer;
 #[path = "app_native_open.rs"]
 pub(crate) mod native_open;
 
+#[derive(Default)]
+struct FileOpenOptions {
+    preview: bool,
+    preserve_existing_preview: bool,
+    skip_open_prompt: bool,
+}
+
 pub(crate) fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loaded: crate::editor::LoadedTextFile, skip_open_prompt: bool) -> crate::background::BackgroundResult {
     let result = crate::background::BackgroundResult::FileLoaded {
         workspace_generation, path, rope: loaded.rope, encoding: loaded.encoding,
@@ -328,22 +335,36 @@ impl App {
 
     /// Browse search matches in a reusable preview and retain existing tab states.
     pub(crate) fn open_file_from_search(&mut self, path: &Path) {
-        self.open_file_with_source(path, self.enable_preview_tabs, true, None);
+        self.open_file_with_source(path, FileOpenOptions {
+            preview: self.enable_preview_tabs,
+            preserve_existing_preview: true,
+            ..Default::default()
+        }, None);
     }
 
     fn open_file_with_preview(&mut self, path: &Path, preview: bool) {
-        self.open_file_with_source(path, preview, false, None);
+        self.open_file_with_source(path, FileOpenOptions { preview, ..Default::default() }, None);
     }
 
     pub(crate) fn open_file_with_preloaded(&mut self, path: &Path, loaded: crate::editor::LoadedTextFile) {
-        self.open_file_with_source(path, false, false, Some(loaded));
+        self.open_file_with_source(path, FileOpenOptions::default(), Some(loaded));
     }
 
-    fn open_file_with_source(&mut self, path: &Path, preview: bool, preserve_existing_preview: bool, mut loaded: Option<crate::editor::LoadedTextFile>) {
+    pub(crate) fn open_file_in_standard_editor(&mut self, path: &Path) {
+        // A detached window needs its document to stay in its own pane. The
+        // workbench-wide Open With picker removes the loading tab on arrival.
+        self.open_file_with_source(
+            path,
+            FileOpenOptions { skip_open_prompt: true, ..Default::default() },
+            None,
+        );
+    }
+
+    fn open_file_with_source(&mut self, path: &Path, options: FileOpenOptions, mut loaded: Option<crate::editor::LoadedTextFile>) {
         self.start_empty_window_document_services();
         self.cancel_remote_location();
         self.record_navigation();
-        self.open_file_with_preview_inner(path, preview, preserve_existing_preview, &mut loaded);
+        self.open_file_with_preview_inner(path, options, &mut loaded);
         self.record_navigation();
         if let Some(unused) = loaded {
             // Opening an already-live/shared buffer, or a pending Save As,
@@ -352,7 +373,8 @@ impl App {
         }
     }
 
-    fn open_file_with_preview_inner(&mut self, path: &Path, preview: bool, preserve_existing_preview: bool, loaded: &mut Option<crate::editor::LoadedTextFile>) {
+    fn open_file_with_preview_inner(&mut self, path: &Path, options: FileOpenOptions, loaded: &mut Option<crate::editor::LoadedTextFile>) {
+        let FileOpenOptions { preview, preserve_existing_preview, skip_open_prompt } = options;
         if self.pending_save_as.values().any(|(generation, target)|
             *generation == self.workspace_generation && Self::paths_may_share_entry(target, path))
         {
@@ -444,13 +466,14 @@ impl App {
             return;
         }
 
-        let skip_open_prompt = self
+        let skip_prompt_once = self
             .binary_open_prompt_skip_once
             .as_ref()
             .is_some_and(|skip| Self::same_open_path(skip, &open_path));
-        if skip_open_prompt {
+        if skip_prompt_once {
             self.binary_open_prompt_skip_once = None;
         }
+        let skip_open_prompt = skip_open_prompt || skip_prompt_once;
 
         // Every file follows the same asynchronous path. Even an apparently
         // small file can live on a slow filesystem, and metadata/header reads

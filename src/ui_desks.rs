@@ -21,9 +21,16 @@ pub(crate) enum Mode {
     Group(u64),
     AddGroup,
     Move { ids: Vec<u64>, copy: bool },
-    Window { view: u64 },
+    Window(WindowItem),
     Close,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum WindowItem {
+    Tab(u64),
+    File(std::path::PathBuf),
+}
+
 #[derive(Clone)]
 enum Action {
     Switch(u64),
@@ -42,8 +49,7 @@ enum Action {
     Move(u64),
     MoveNew,
     MoveGroup(u64),
-    Window(crate::tab_windows::WindowId),
-    NewWindow,
+    Window(Option<crate::tab_windows::WindowId>),
     ConfirmClose,
     Cancel,
 }
@@ -282,13 +288,19 @@ fn entries(app: &App, label_width: usize) -> Vec<(String, Action)> {
             .map(|d| (d.name.clone(), Action::Move(d.id)))
             .chain([("+ New desk…".into(), Action::MoveNew)])
             .collect(),
-        Some(Mode::Window { view }) => std::iter::once(crate::tab_windows::MAIN_WINDOW)
-            .chain(app.desks.items.iter().filter_map(|desk| desk.window))
-            .filter(|&window| Some(window) != app.tab_window(*view))
-            .map(|window| (app.window_name(window), Action::Window(window)))
-            .chain([("New Window".into(), Action::NewWindow)])
-            .filter(|(label, _)| label.to_lowercase().contains(&query))
-            .collect(),
+        Some(Mode::Window(item)) => {
+            let source = match item {
+                WindowItem::Tab(view) => app.tab_window(*view),
+                WindowItem::File(_) => None,
+            };
+            std::iter::once(crate::tab_windows::MAIN_WINDOW)
+                .chain(app.desks.items.iter().filter_map(|desk| desk.window))
+                .filter(|&window| Some(window) != source)
+                .map(|window| (app.window_name(window), Action::Window(Some(window))))
+                .chain([("New Window".into(), Action::Window(None))])
+                .filter(|(label, _)| label.to_lowercase().contains(&query))
+                .collect()
+        }
         Some(Mode::Close) => vec![
             ("Cancel".into(), Action::Cancel),
             ("Close desk".into(), Action::ConfirmClose),
@@ -380,16 +392,14 @@ fn activate(app: &mut App, action: Action) {
             }
         }
         Action::Window(window) => {
-            if let Some(Mode::Window { view }) = app.desks.popup.mode {
-                app.tab_window_request = Some(crate::tab_windows::Request::Move { view, window });
+            use crate::tab_windows::Request;
+            if let Some(Mode::Window(item)) = std::mem::take(&mut app.desks.popup).mode {
+                app.tab_window_request = Some(match (item, window) {
+                    (WindowItem::Tab(view), Some(window)) => Request::Move { view, window },
+                    (WindowItem::Tab(view), None) => Request::Open { view, point: None },
+                    (WindowItem::File(path), window) => Request::OpenFile { path, window },
+                });
             }
-            app.desks.popup = Default::default();
-        }
-        Action::NewWindow => {
-            if let Some(Mode::Window { view }) = app.desks.popup.mode {
-                app.tab_window_request = Some(crate::tab_windows::Request::Open { view, point: None });
-            }
-            app.desks.popup = Default::default();
         }
         Action::ConfirmClose => app.close_desk(),
         Action::Cancel => app.desks.popup = Default::default(),
@@ -816,7 +826,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         Mode::AddGroup => "Add to Group",
         Mode::Move { copy: true, .. } => "Also Open in Desk",
         Mode::Move { .. } => "Move to Desk",
-        Mode::Window { .. } => "Move Tab to Window",
+        Mode::Window(WindowItem::Tab(_)) => "Move Tab to Window",
+        Mode::Window(WindowItem::File(_)) => "Open in Window",
         Mode::Close => "Close Desk?",
     };
     let placeholder = match mode {

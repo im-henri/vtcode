@@ -1,4 +1,6 @@
 //! Detached windows own arrangements of editor groups in the same workbench.
+use std::path::{Path, PathBuf};
+
 use crate::{
     app::{ActivePane, App, EditorGroup},
     app_desks::Desk,
@@ -71,10 +73,53 @@ impl App {
     }
 
     pub(crate) fn open_detached_window(&mut self, window: WindowId, view: u64) -> bool {
-        if self.tab_location(view).is_none() || self.window_desk(window).is_some() {
+        let was_displayed = self.workspace_is_displayed();
+        if self.tab_location(view).is_none() || !self.create_detached_desk(window) {
             return false;
         }
+        if self.move_tab_to_window(view, window) {
+            if !was_displayed {
+                self.resume_workspace_observation();
+            }
+            true
+        } else {
+            self.return_detached_tabs(window);
+            false
+        }
+    }
+
+    pub(crate) fn open_detached_file_window(&mut self, window: WindowId, path: &Path) -> bool {
         let was_displayed = self.workspace_is_displayed();
+        if !self.create_detached_desk(window) {
+            return false;
+        }
+        if !self.open_file_in_window(window, path) || self.tabs.is_empty() {
+            self.return_detached_tabs(window);
+            return false;
+        }
+        if !was_displayed {
+            self.resume_workspace_observation();
+        }
+        true
+    }
+
+    pub(crate) fn open_file_in_window(&mut self, window: WindowId, path: &Path) -> bool {
+        if !self.activate_window(window) {
+            return false;
+        }
+        self.terminal_panel_focused = false;
+        if window == MAIN_WINDOW {
+            self.open_file(path);
+        } else {
+            self.open_file_in_standard_editor(path);
+        }
+        true
+    }
+
+    fn create_detached_desk(&mut self, window: WindowId) -> bool {
+        if self.window_desk(window).is_some() {
+            return false;
+        }
         self.materialize_desk_pane();
         let id = self.desks.allocate_id();
         let mut pane = EditorGroup::new();
@@ -96,15 +141,7 @@ impl App {
             closed: false,
             window: Some(window),
         });
-        if self.move_tab_to_window(view, window) {
-            if !was_displayed {
-                self.resume_workspace_observation();
-            }
-            true
-        } else {
-            self.return_detached_tabs(window);
-            false
-        }
+        true
     }
 
     pub(crate) fn tab_window(&self, view: u64) -> Option<WindowId> {
@@ -275,9 +312,19 @@ impl App {
             return;
         };
         if choose {
-            crate::ui_desks::open(self, crate::ui_desks::Mode::Window { view });
+            use crate::ui_desks::{Mode, WindowItem};
+            crate::ui_desks::open(self, Mode::Window(WindowItem::Tab(view)));
         } else {
             self.tab_window_request = Some(Request::Open { view, point: None });
+        }
+    }
+
+    pub(crate) fn request_file_window(&mut self, path: PathBuf, choose: bool) {
+        if choose {
+            use crate::ui_desks::{Mode, WindowItem};
+            crate::ui_desks::open(self, Mode::Window(WindowItem::File(path)));
+        } else {
+            self.tab_window_request = Some(Request::OpenFile { path, window: None });
         }
     }
 

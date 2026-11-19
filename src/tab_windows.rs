@@ -4,6 +4,7 @@ use std::{
     ffi::OsString,
     io,
     ops::Bound::{Excluded, Unbounded},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -50,6 +51,10 @@ pub(crate) enum Request {
     Move {
         view: u64,
         window: WindowId,
+    },
+    OpenFile {
+        path: PathBuf,
+        window: Option<WindowId>,
     },
 }
 
@@ -140,10 +145,31 @@ impl Surface {
 
 struct Window {
     workspace: u64,
-    source_window: WindowId,
-    source_view: u64,
+    source: WindowSource,
     surface: Option<Surface>,
     launch: Option<frontend::Launch>,
+}
+
+#[derive(PartialEq, Eq)]
+enum WindowSource {
+    Tab { view: u64, window: WindowId },
+    File { path: PathBuf, generation: u64 },
+}
+
+impl WindowSource {
+    fn is_valid(&self, app: &App) -> bool {
+        match self {
+            Self::Tab { view, window } => app.tab_window(*view) == Some(*window),
+            Self::File { generation, .. } => app.workspace_generation == *generation,
+        }
+    }
+
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Tab { .. } => "detach tab",
+            Self::File { .. } => "open file in a new window",
+        }
+    }
 }
 
 struct DesktopDrag {
@@ -690,12 +716,15 @@ impl Windows {
                 "finish the open dialog or paste and try again",
             ));
         }
-        if owner.tab_window(window.source_view) != Some(window.source_window)
-            || !owner.open_detached_window(id, window.source_view)
-        {
-            return Err(io::Error::other(
-                "the tab was closed or moved before the terminal opened",
-            ));
+        if !window.source.is_valid(owner) {
+            return Err(io::Error::other("the source changed before the terminal opened"));
+        }
+        let opened = match &window.source {
+            WindowSource::Tab { view, .. } => owner.open_detached_window(id, *view),
+            WindowSource::File { path, .. } => owner.open_detached_file_window(id, path),
+        };
+        if !opened {
+            return Err(io::Error::other("the destination could not be opened"));
         }
         window.surface = Some(Surface {
             terminal,
@@ -715,54 +744,44 @@ impl Windows {
         Ok(true)
     }
 
+    fn launch_window(&mut self, app: &mut App, source: WindowSource, point: Option<ScreenPoint>) -> bool {
+        let workspace = app.workspaces.active;
+        if self.windows.values().any(|window| {
+            window.surface.is_none() && window.workspace == workspace && window.source == source
+        }) {
+            return false;
+        }
+        if self.is_main() && self.main_host.is_none() {
+            self.main_host = desktop::foreground_host();
+        }
+        let id = self.next_window;
+        self.next_window += 1;
+        let notices = self.notices.clone();
+        let wake = self.wake.clone();
+        let notify = move |event| {
+            notices.send((id, event)).map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "the owning workbench has closed")
+            })?;
+            wake.notify();
+            Ok(())
+        };
+        match frontend::start(self.wake.clone(), notify, point) {
+            Ok(launch) => {
+                self.windows.insert(id, Window { workspace, source, surface: None, launch: Some(launch) });
+            }
+            Err(error) => app.notify_warn(format!("Could not {}: {error}", source.operation())),
+        }
+        true
+    }
+
     fn request(&mut self, app: &mut App, request: Request) -> bool {
         if transfer_blocked(app) {
             return false;
         }
         match request {
             Request::Open { view, point } => {
-                let Some(source_window) = app.tab_window(view) else {
-                    return false;
-                };
-                if self.windows.values().any(|window| {
-                    window.surface.is_none()
-                        && window.workspace == app.workspaces.active
-                        && window.source_view == view
-                }) {
-                    return false;
-                }
-                if self.is_main() && self.main_host.is_none() {
-                    self.main_host = desktop::foreground_host();
-                }
-                let id = self.next_window;
-                self.next_window += 1;
-                let notices = self.notices.clone();
-                let wake = self.wake.clone();
-                let notify = move |event| {
-                    notices.send((id, event)).map_err(|_| {
-                        io::Error::new(io::ErrorKind::BrokenPipe, "the owning workbench has closed")
-                    })?;
-                    wake.notify();
-                    Ok(())
-                };
-                match frontend::start(self.wake.clone(), notify, point) {
-                    Ok(launch) => {
-                        self.windows.insert(
-                            id,
-                            Window {
-                                workspace: app.workspaces.active,
-                                source_window,
-                                source_view: view,
-                                surface: None,
-                                launch: Some(launch),
-                            },
-                        );
-                    }
-                    Err(error) => {
-                        app.notify_warn(format!("Could not open a detached terminal: {error}"))
-                    }
-                }
-                true
+                let Some(window) = app.tab_window(view) else { return false; };
+                self.launch_window(app, WindowSource::Tab { view, window }, point)
             }
             Request::Move { view, window } => {
                 if app.move_tab_to_window(view, window) {
@@ -777,6 +796,18 @@ impl Windows {
                 } else {
                     false
                 }
+            }
+            Request::OpenFile { path, window: None } => {
+                let generation = app.workspace_generation;
+                self.launch_window(app, WindowSource::File { path, generation }, None)
+            }
+            Request::OpenFile { path, window: Some(window) } => {
+                if app.open_file_in_window(window, &path) {
+                    self.invalidate_workspace(app.workspaces.active);
+                } else {
+                    app.notify_warn("The selected window has closed");
+                }
+                true
             }
         }
     }
@@ -800,23 +831,25 @@ impl Windows {
                 frontend::Notice::Ready(ready) => match self.attach(app, id, ready) {
                     Ok(attached) => changed |= attached,
                     Err(error) => {
+                        let operation = self.windows.get(&id).map_or("open window", |window| window.source.operation());
                         self.close(app, id);
-                        app.notify_warn(format!("Could not detach tab: {error}"));
+                        app.notify_warn(format!("Could not {operation}: {error}"));
                         changed = true;
                     }
                 },
                 frontend::Notice::Closed(result) => {
-                    let pending = self
+                    let pending_operation = self
                         .windows
                         .get(&id)
-                        .is_some_and(|window| window.surface.is_none());
+                        .filter(|window| window.surface.is_none())
+                        .map(|window| window.source.operation());
                     if self.close(app, id) {
-                        if pending {
+                        if let Some(operation) = pending_operation {
                             let error = result.err().map_or_else(
                                 || "the terminal closed".to_owned(),
                                 |e| e.to_string(),
                             );
-                            app.notify_warn(format!("Could not detach tab: {error}"));
+                            app.notify_warn(format!("Could not {operation}: {error}"));
                         }
                         changed = true;
                     }
@@ -844,7 +877,7 @@ impl Windows {
                     self.populated.contains(&id)
                 } else {
                     workspace(app, window.workspace).is_some_and(|owner| {
-                        owner.tab_window(window.source_view) == Some(window.source_window)
+                        window.source.is_valid(owner)
                     })
                 };
                 (!still_open).then_some(id)
