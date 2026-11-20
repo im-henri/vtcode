@@ -96,6 +96,9 @@ COMMANDS = [
     "Rxy<Esc>", "Rxy<BS><Esc>", "Rabcdef<Esc>", "gIx<Esc>", "aY<Esc>", "iA<CR>B<Esc>", "A<CR>c<Esc>",
     "i<C-w><Esc>", "A<C-w><Esc>", "A<C-u><Esc>", "A<C-h><Esc>", "i<C-t><Esc>", "i<C-d><Esc>", "A<C-r>\"<Esc>",
     "yiwA<C-r>0<Esc>", "ix<Esc>A<C-a><Esc>",
+    # <C-o>: one Normal-mode command, then Insert mode resumes where Vim does.
+    "i<C-o>$!<Esc>", "A<C-o>h!<Esc>", "A<C-o>x!<Esc>", "A<C-o>j!<Esc>", "A<C-o>k!<Esc>", "i<C-o>w!<Esc>",
+    "A<C-o>0!<Esc>", "a<C-o>l!<Esc>", "i<C-o>dw!<Esc>", "A<C-o>b!<Esc>", "i<C-o>j!<Esc>",
     "ve", "vey", "ved", "vjd", "vjy", "v$d", "vlld", "vllc!<Esc>", "v3ld", "vawd", "viwd", "vi(d", "va\"d",
     "viwy", "vjo<Esc>", "vjoy", "Vd", "Vjd", "Vjy", "VjJ", "Vj>", "Vj<", "Vj~", "VjU", "Vju", "vlU", "vlu", "vl~",
     "Vjrx", "vllrx", "vjrx", "V>.", "Vjd.", "vlld.", "<C-v>jd", "<C-v>jld", "<C-v>jjlld", "<C-v>jy", "<C-v>j$d",

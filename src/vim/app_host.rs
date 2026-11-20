@@ -200,6 +200,8 @@ pub(crate) fn handle_key(app: &mut App, event: KeyEvent) -> Option<bool> {
         }
     }
     if !owns_editor(app) {
+        // A one-line message is about the previous key, as in the editor.
+        if app.vim.message.as_ref().is_some_and(|m| m.lines.is_empty()) { app.vim.message = None; }
         return other_pane_key(app, key, event);
     }
     sync_focus(app);
@@ -236,12 +238,6 @@ pub(crate) fn sync_focus(app: &mut App) {
 }
 
 fn after_key(vim: &mut VimState, host: &mut AppHost<'_>) {
-    // `<C-o>` from Insert mode: resume after one complete command.
-    if vim.mode == Mode::Normal && vim.pending.is_empty() && vim.cmdline.is_none() {
-        if let Some(r) = vim.insert_oneshot.take() {
-            super::insert::resume(vim, host, r);
-        }
-    }
     if let Some(ed) = host.app.editor() {
         vim.last_nav_id = ed.navigation_id;
     }
@@ -311,7 +307,7 @@ pub(crate) fn after_mouse(app: &mut App) {
 
 /// Mapping timeouts; returns true when something changed.
 pub(crate) fn tick(app: &mut App) -> bool {
-    let mut changed = false;
+    let mut changed = super::feedback::tick(app);
     if let Some((at, _, _)) = app.vim_yank_flash
         && at.elapsed() >= std::time::Duration::from_millis(180)
     {
@@ -337,20 +333,7 @@ fn clear_yank_flash(app: &mut App) {
 
 fn window_key(key: Key) -> Option<Window> {
     let c = match key.k { K::Char(c) => c, K::Left => 'h', K::Right => 'l', K::Up => 'k', K::Down => 'j', _ => return None };
-    Some(match c {
-        'h' => Window::Left,
-        'j' => Window::Down,
-        'k' => Window::Up,
-        'l' => Window::Right,
-        'w' => Window::Next,
-        'W' => Window::Prev,
-        'p' => Window::Last,
-        'c' | 'q' => Window::Close,
-        'o' => Window::Only,
-        's' => Window::Split,
-        'v' => Window::VSplit,
-        _ => return None,
-    })
+    super::parse::window_cmd(c)
 }
 
 fn translate(app: &mut App, code: KeyCode) -> Option<bool> {
@@ -394,8 +377,15 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
     // Ctrl-W prefix works from every non-text pane.
     if app.vim_window_prefix {
         app.vim_window_prefix = false;
-        if let Some(w) = window_key(Key { ctrl: false, ..key }) {
-            let _ = window(app, w, 1);
+        match window_key(Key { ctrl: false, ..key }) {
+            Some(w) => {
+                if let Err(e) = window(app, w, 1) { app.vim.set_error(e); }
+            }
+            None if key == Key::ESC => {}
+            None => {
+                app.vim.bell = Some(std::time::Instant::now());
+                app.vim.set_message(format!("^W{}: not a window command (^W then h j k l, s, v, c, o...)", super::keys::showcmd(&[key]).trim_start_matches("^W")));
+            }
         }
         return Some(false);
     }
@@ -525,8 +515,18 @@ fn panel_list_key(app: &mut App, key: Key) -> Option<bool> {
         'G' => translate(app, KeyCode::End),
         'l' | 'o' => translate(app, KeyCode::Enter),
         'q' => { focus_editor(app); Some(false) }
-        _ => Some(false),
+        c => {
+            let typed = if pending == Some('g') { format!("g{c}") } else { c.to_string() };
+            not_a_key(app, &typed, "j k gg G move, l opens, q returns, : runs a command");
+            Some(false)
+        }
     }
+}
+
+/// A key that does nothing here: flash the badge and say what works.
+fn not_a_key(app: &mut App, typed: &str, help: &str) {
+    app.vim.bell = Some(std::time::Instant::now());
+    app.vim.set_message(format!("{typed}: not a key here ({help})"));
 }
 
 fn explorer_key(app: &mut App, key: Key, _event: KeyEvent) -> Option<bool> {
@@ -552,6 +552,8 @@ fn explorer_key(app: &mut App, key: Key, _event: KeyEvent) -> Option<bool> {
             app.explorer.ensure_selection_visible();
         } else if c == 'g' {
             return translate(app, KeyCode::Home);
+        } else {
+            not_a_key(app, &format!("g{c}"), "gg goes to the top");
         }
         return Some(false);
     }
@@ -670,6 +672,13 @@ fn current_target(app: &App) -> Target {
 
 fn focus_target(app: &mut App, t: Target) {
     let before = current_target(app);
+    // Only Vim window commands move focus here (the engine may be taken out
+    // of the App at this point, so its `enabled` flag cannot be read).
+    if before != t
+        && let Some((_, area)) = visible_targets(app).into_iter().find(|(target, _)| *target == t)
+    {
+        super::feedback::flash_focus(app, area);
+    }
     if before != t { app.vim_last_window = Some(before_id(before)); }
     if app.vim.enabled {
         // Leaving the editor ends Insert/Visual mode, as in Vim.

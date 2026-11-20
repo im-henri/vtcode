@@ -48,6 +48,32 @@ Vim is *modal*: the same key does different things depending on the mode.
 `<Esc>` always brings you back to Normal mode. If you are ever unsure, press
 `<Esc>`.
 
+### Knowing where you are
+
+The badge at the left of the status bar always answers "where am I, and did
+that key do anything?":
+
+- **The mode or the pane.** In the editor it shows the mode (`NORMAL`,
+  `INSERT`, `VISUAL`...). Anywhere else it names the pane that has the
+  keyboard: `EXPLORER`, `SEARCH`, `SOURCE CONTROL`, `PROBLEMS`, `OUTPUT`,
+  `TERMINAL`, `CHAT`, `SETTINGS`, `PALETTE`, `MENU`, `DIALOG`...
+- **Keys waiting for more.** A prefix such as `<C-w>`, `g`, `z`, `"a` or an
+  operator like `d2` shows next to the badge as soon as you type it (`^W`,
+  `g`, `d2`). `O-PENDING` means an operator waits for a motion.
+- **What can follow.** Pause for a moment after a prefix and a list of the
+  keys that can come next opens above the status bar. It closes when the
+  command completes or you press `<Esc>`. `:set nowhichkey` turns it off.
+- **Keys that are not commands.** The badge flashes red and the status bar
+  says so, for example `gX: not a command`, or lists the keys a list
+  accepts.
+- **Window moves.** After `<C-w>h/j/k/l` the pane you landed in is outlined
+  briefly.
+- **Searches** show which match you are on (`/foo  [3/12]`), and Visual mode
+  shows the size of the selection (characters, lines, or rows x columns).
+- **`(INSERT)`** means `<C-o>` is running one Normal-mode command from
+  Insert mode; `^R`, `^K` or `^V` mean Insert mode waits for a register, a
+  digraph or a literal key.
+
 ### Your first edit
 
 Open any file and try this:
@@ -231,7 +257,7 @@ to preview matches, `h` to collapse a file, and `l` to open a match.
 press Space to stage or unstage, `l` to open a diff, Tab to move between
 sections. The commit message box is a normal text field.
 
-**Problems (quickfix).** `:copen` opens the Problems panel with the cursor in
+*sd*Problems (quickfix).** `:copen` opens the Problems panel with the cursor in
 it. `j`/`k` move, `l` jumps to the problem. `:cnext` / `:cprev` (or `]d` /
 `[d`) step through diagnostics without opening the panel. `:cclose` hides it.
 

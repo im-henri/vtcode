@@ -704,6 +704,39 @@ def scenario_cd(e, d):
     ]
 
 
+def scenario_feedback(e, d):
+    results = []
+    # The badge names the pane that has the keyboard.
+    e.keys(":Explore" + CR)
+    results.append(("badge shows EXPLORER in the file tree", wait_for(e, lambda: "EXPLORER" in e.status())))
+    # Ctrl-W shows at once; after a pause its commands are listed.
+    e.process.write(ctrl("w"))
+    e.settle(0.1)
+    results.append(("^W shows in the status bar at once", "^W" in e.status() and not screen_has(e, "move left / down")))
+    results.append(("after a pause the window commands are listed", wait_for(e, lambda: screen_has(e, "move left / down / up / right"), 3)))
+    e.keys("l")
+    results.append(("the command runs and the list closes", wait_for(e, lambda: "NORMAL" in e.status() and not screen_has(e, "move left / down"))))
+    # Keys that are not a command say so.
+    e.process.write(ctrl("w"))
+    e.keys("Z")
+    results.append(("^W Z reports it is not a window command", wait_for(e, lambda: "not a window command" in e.status())))
+    e.keys("gX")
+    results.append(("gX reports it is not a command", wait_for(e, lambda: "gX: not a command" in e.status())))
+    # Operator-pending shows the operator and, after a pause, motions.
+    e.keys("d")
+    results.append(("d shows O-PENDING and lists motions", wait_for(e, lambda: "O-PENDING" in e.status() and screen_has(e, "whole line (dd"), 3)))
+    e.keys(ESC)
+    # <C-o> in Insert mode shows (INSERT) and runs one command.
+    e.keys("i")
+    e.process.write(ctrl("o"))
+    results.append(("<C-o> shows (INSERT)", wait_for(e, lambda: "(INSERT)" in e.status())))
+    e.keys("$")
+    results.append(("then Insert mode resumes", wait_for(e, lambda: " INSERT " in e.status())))
+    e.keys("!" + ESC + ":w" + CR)
+    results.append(("and typing continues at the line end", wait_for(e, lambda: (d / "a.txt").read_text().startswith("alpha!"))))
+    return results
+
+
 SCENARIOS = [
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
@@ -732,6 +765,7 @@ SCENARIOS = [
     ("more dialogs", scenario_more_dialogs, {"a.txt": "alpha\ngamma\n"}),
     ("mouse still works", scenario_mouse_still_works, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n", "sub/inner.txt": "x\n"}),
     (":cd", scenario_cd, {"a.txt": "alpha\ngamma\n", "sub/inner.txt": "inside\n"}),
+    ("feedback", scenario_feedback, {"a.txt": "alpha\ngamma\n"}),
 ]
 
 VIMRC = 'let mapleader = " "\ninoremap jk <Esc>\nnnoremap <leader>w :w<CR>\n'

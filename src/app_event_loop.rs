@@ -3109,6 +3109,9 @@ fn next_event_wait_with_output(
     }
     if output_ready && let Some(wait) = app.copy_animation_next_wait(std::time::Instant::now()) { include(wait); }
     // Vim mapping timeouts ('timeoutlen') and the yank highlight.
+    if let Some(deadline) = crate::vim::feedback::next_deadline(app) {
+        include(deadline.saturating_duration_since(std::time::Instant::now()));
+    }
     if let Some(deadline) = app.vim.next_deadline() {
         include(deadline.saturating_duration_since(std::time::Instant::now()));
     }

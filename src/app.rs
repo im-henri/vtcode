@@ -244,6 +244,12 @@ pub(crate) struct App {
     pub(crate) vim_terminal_prefix: bool,
     pub(crate) vim_window_prefix: bool,
     pub(crate) vim_explorer_pending: Option<char>,
+    /// The pending Vim prefix and when it started, for the hint popup.
+    pub(crate) vim_hint_since: Option<(String, std::time::Instant)>,
+    /// The hint popup for the current prefix has been drawn.
+    pub(crate) vim_hint_shown: bool,
+    /// The pane a Vim window move just focused, outlined briefly.
+    pub(crate) vim_focus_flash: Option<(std::time::Instant, ratatui::layout::Rect)>,
     pub(crate) vim_last_window: Option<usize>,
     pub(crate) vim_yank_flash: Option<(std::time::Instant, (usize, usize, usize, usize), bool)>,
     pub(crate) vim_owns_search_matches: bool,
@@ -1327,6 +1333,9 @@ impl App {
             vim_terminal_prefix: false,
             vim_window_prefix: false,
             vim_explorer_pending: None,
+            vim_hint_since: None,
+            vim_hint_shown: false,
+            vim_focus_flash: None,
             vim_last_window: None,
             vim_yank_flash: None,
             vim_owns_search_matches: false,

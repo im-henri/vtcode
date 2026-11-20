@@ -144,7 +144,7 @@ pub(crate) fn clamp_normal(ed: &mut Editor) {
     }
 }
 
-fn tabstop(ed: &Editor) -> usize { ed.tab_size.max(1) }
+pub(crate) fn tabstop(ed: &Editor) -> usize { ed.tab_size.max(1) }
 
 /// Column for a vertical move to `line` keeping `curswant`.
 fn col_for_curswant(vim: &VimState, ed: &Editor, line: usize, visual: bool) -> usize {
@@ -682,10 +682,21 @@ pub(crate) fn search_motion(vim: &mut VimState, host: &mut dyn Host, pat: &str, 
     }
     let p = t.pos(from);
     let p = Pos::new(p.line.min(t.last_line()), p.col);
+    // Vim's search count: which match this is, of how many ([3/10]).
+    let at = ed.rope.char_to_byte(from);
+    let mut total = 0usize;
+    let mut index = 0usize;
+    for (s, _) in re.find_iter(&hay) {
+        total += 1;
+        if s == at { index = total; }
+        if total > 99 { break; }
+    }
+    let show = |n: usize| if n > 99 { ">99".to_string() } else { n.to_string() };
+    let count = if index == 0 { format!("[?/{}]", show(total)) } else { format!("[{}/{}]", show(index), show(total)) };
     if wrapped {
-        vim.set_message(if forward { "search hit BOTTOM, continuing at TOP" } else { "search hit TOP, continuing at BOTTOM" });
+        vim.set_message(format!("{}  {count}", if forward { "search hit BOTTOM, continuing at TOP" } else { "search hit TOP, continuing at BOTTOM" }));
     } else {
-        vim.set_message(format!("{}{pat}", if forward { '/' } else { '?' }));
+        vim.set_message(format!("{}{pat}  {count}", if forward { '/' } else { '?' }));
     }
     Some(p)
 }
@@ -1114,6 +1125,14 @@ pub(crate) fn run(vim: &mut VimState, host: &mut dyn Host, cmd: Cmd) {
         }
         Action::Motion(m) => {
             let visual = vim.is_visual();
+            // Vim's nv_beginline/nv_home: `0`, `^` and <Home> under <C-o>
+            // do not continue past the end of the line afterwards (only
+            // visible on a one-character line).
+            if matches!(m, Motion::LineStart | Motion::FirstNonBlank)
+                && let Some(r) = vim.insert_oneshot.as_mut()
+            {
+                r.eol_line = None;
+            }
             let Some(r) = eval_motion(vim, host, m, count, has_count, None) else { vim.beep(); return; };
             let Some(ed) = host.ed() else { return; };
             if r.jump { push_jump(vim, ed); }

@@ -516,3 +516,178 @@ fn cd_changes_where_relative_ex_paths_start() {
     app.explorer.root = std::env::temp_dir();
     assert_eq!(super::app_host::vim_cwd(&app), std::env::temp_dir().as_path());
 }
+
+/// Pretend the current prefix has waited long enough for its hints.
+fn wait_for_hints(app: &mut App) {
+    frame(app);
+    if let Some((_, since)) = app.vim_hint_since.as_mut() {
+        *since -= super::feedback::HINT_DELAY * 2;
+    }
+}
+
+fn screen_text(app: &mut App) -> String { frame(app).0.join("\n") }
+
+#[test]
+fn the_badge_names_the_focused_pane() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    assert!(frame(&mut app).0.last().unwrap().contains("NORMAL"));
+    app.active_pane = ActivePane::Explorer;
+    assert!(frame(&mut app).0.last().unwrap().contains("EXPLORER"));
+    with_problems(&mut app);
+    keys(&mut app, ":copen<CR>");
+    assert!(frame(&mut app).0.last().unwrap().contains("PROBLEMS"));
+    keys(&mut app, "q");
+    assert!(frame(&mut app).0.last().unwrap().contains("NORMAL"));
+}
+
+#[test]
+fn ctrl_w_shows_as_pending_and_then_lists_window_commands() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    app.active_pane = ActivePane::Explorer;
+    keys(&mut app, "<C-w>");
+    let (rows, _) = frame(&mut app);
+    assert!(rows.last().unwrap().contains("^W"), "pending ^W in the status bar: {}", rows.last().unwrap());
+    assert!(!screen_text(&mut app).contains("move left / down"), "no popup before the pause");
+    wait_for_hints(&mut app);
+    let screen = screen_text(&mut app);
+    assert!(screen.contains("^W window"), "{screen}");
+    assert!(screen.contains("move left / down / up / right"));
+    assert!(screen.contains("split vertically"));
+    keys(&mut app, "l");
+    assert!(!screen_text(&mut app).contains("move left / down"), "the popup closes with the command");
+    assert_eq!(app.active_pane, ActivePane::Editor);
+}
+
+#[test]
+fn editor_prefixes_list_what_can_follow() {
+    let mut app = vim_app("abc def");
+    keys(&mut app, "g");
+    assert!(frame(&mut app).0.last().unwrap().contains(" g"));
+    wait_for_hints(&mut app);
+    let screen = screen_text(&mut app);
+    assert!(screen.contains("definition / declaration"), "{screen}");
+    keys(&mut app, "<Esc>d");
+    wait_for_hints(&mut app);
+    assert!(screen_text(&mut app).contains("whole line (dd, yy, cc...)"));
+    keys(&mut app, "i");
+    wait_for_hints(&mut app);
+    assert!(screen_text(&mut app).contains("text object"));
+    keys(&mut app, "w");
+    assert_eq!(text(&app), " def");
+    // :set nowhichkey turns the popup off; the pending keys still show.
+    keys(&mut app, ":set nowhichkey<CR>g");
+    wait_for_hints(&mut app);
+    let (rows, _) = frame(&mut app);
+    assert!(!rows.join("\n").contains("definition / declaration"));
+    assert!(rows.last().unwrap().contains(" g"));
+}
+
+#[test]
+fn keys_that_are_not_commands_say_so() {
+    let mut app = vim_app("abc");
+    keys(&mut app, "<C-w>Z");
+    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    assert!(message.contains("not a window command"), "{message}");
+    assert!(super::feedback::bell_active(&app), "the badge flashes");
+    keys(&mut app, "gX");
+    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    assert_eq!(message, "gX: not a command");
+    assert!(frame(&mut app).0.last().unwrap().contains("gX: not a command"));
+    // The message goes with the next key; editing is unaffected.
+    keys(&mut app, "x");
+    assert!(app.vim.message.is_none());
+    assert_eq!(text(&app), "bc");
+    // The same from a sidebar.
+    let _root = with_explorer(&mut app);
+    app.active_pane = ActivePane::Explorer;
+    keys(&mut app, "<C-w>Z");
+    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.contains("not a window command")));
+}
+
+#[test]
+fn insert_mode_prefixes_and_one_shot_normal_commands_are_shown() {
+    let mut app = vim_app("abc");
+    keys(&mut app, "i<C-r>");
+    assert!(frame(&mut app).0.last().unwrap().contains("^R"));
+    wait_for_hints(&mut app);
+    assert!(screen_text(&mut app).contains("insert register"));
+    keys(&mut app, "<Esc><C-k>");
+    assert!(frame(&mut app).0.last().unwrap().contains("^K"));
+    keys(&mut app, "a:");
+    assert_eq!(text(&app), "äabc");
+    // <C-o> runs one Normal-mode command: Vim shows "(insert)".
+    keys(&mut app, "<C-o>");
+    let status = frame(&mut app).0.last().unwrap().clone();
+    assert!(status.contains("(INSERT)"), "status: {status} mode={:?} oneshot={}", app.vim.mode, app.vim.insert_oneshot.is_some());
+    keys(&mut app, "$");
+    assert!(frame(&mut app).0.last().unwrap().contains("INSERT"));
+    assert_eq!(app.vim.mode, Mode::Insert);
+}
+
+#[test]
+fn a_window_move_outlines_the_pane_it_lands_in() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    frame(&mut app);
+    keys(&mut app, "<C-w>h");
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    let (_, area) = app.vim_focus_flash.expect("the Explorer is outlined");
+    assert_eq!(Some(area), app.explorer_area);
+    assert!(super::feedback::next_deadline(&app).is_some(), "a redraw is scheduled to clear it");
+}
+
+#[test]
+fn ctrl_o_in_insert_mode_runs_one_normal_command() {
+    let mut app = vim_app("abc def");
+    keys(&mut app, "i<C-o>");
+    assert_eq!(app.vim.mode, Mode::Normal, "<C-o> waits for one Normal-mode command");
+    keys(&mut app, "w");
+    assert_eq!(app.vim.mode, Mode::Insert, "then Insert mode resumes");
+    keys(&mut app, "X<Esc>");
+    assert_eq!(text(&app), "abc Xdef");
+    // A multi-key command counts as one: <C-o>dw.
+    keys(&mut app, "0i<C-o>dw");
+    assert_eq!(app.vim.mode, Mode::Insert);
+    assert_eq!(text(&app), "Xdef");
+}
+
+
+#[test]
+fn visual_mode_shows_the_selection_size_and_search_shows_its_count() {
+    let mut app = vim_app("one two\nthree four\nfive\n");
+    let status = |app: &mut App| frame(app).0.last().unwrap().clone();
+    keys(&mut app, "vll");
+    assert!(status(&mut app).contains("VISUAL  3"), "{}", status(&mut app));
+    keys(&mut app, "j");
+    assert!(status(&mut app).contains("VISUAL  2"));
+    keys(&mut app, "<Esc>Vj");
+    assert!(status(&mut app).contains("V-LINE  2"));
+    keys(&mut app, "<Esc>gg<C-v>jl");
+    assert!(status(&mut app).contains("V-BLOCK  2x2"), "{}", status(&mut app));
+    keys(&mut app, "<Esc>gg/o<CR>");
+    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    assert_eq!(message, "/o  [2/3]", "o in one, two, four: the second");
+    keys(&mut app, "nn");
+    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    assert_eq!(message, "search hit BOTTOM, continuing at TOP  [1/3]");
+}
+
+#[test]
+fn lists_say_which_keys_they_take() {
+    let mut app = vim_app(&"line\n".repeat(10));
+    with_problems(&mut app);
+    keys(&mut app, ":copen<CR>x");
+    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    assert!(message.starts_with("x: not a key here (j k gg G move"), "{message}");
+    assert!(super::feedback::bell_active(&app));
+    assert_eq!(app.active_pane, ActivePane::Panel, "focus stays");
+    keys(&mut app, "q");
+    let _root = with_explorer(&mut app);
+    app.active_pane = ActivePane::Explorer;
+    keys(&mut app, "gX");
+    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.starts_with("gX: not a key here")));
+    keys(&mut app, "j");
+    assert!(app.vim.message.is_none(), "the next key clears it");
+}

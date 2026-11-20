@@ -59,11 +59,19 @@ fn mode_color(app: &App) -> Color {
 /// The status bar item: (text, colour). Shown whenever Vim mode is on.
 pub(crate) fn status_item(app: &App) -> Option<(String, Color)> {
     if !app.vim.enabled { return None; }
-    let mut text = format!(" {} ", app.vim.mode_name());
+    let mut text = format!(" {} ", super::feedback::badge(app));
     if let Some(rec) = app.vim.recording_label() { text.push_str(&format!(" {rec}")); }
-    let showcmd = app.vim.showcmd();
-    if app.vim.opts.showcmd && !showcmd.is_empty() { text.push_str(&format!(" {showcmd}")); }
-    Some((text, mode_color(app)))
+    let pending = super::feedback::pending(app);
+    if app.vim.opts.showcmd && !pending.is_empty() { text.push_str(&format!(" {pending}")); }
+    Some((text, badge_color(app)))
+}
+
+/// The badge colour: the mode's in the editor, a neutral one elsewhere, red
+/// for a moment after a key that is not a command.
+fn badge_color(app: &App) -> Color {
+    if super::feedback::bell_active(app) { return app.colors.fg_error; }
+    if super::feedback::context(app).is_some() { return super::feedback::context_color(app); }
+    mode_color(app)
 }
 
 /// Paint the mode badge and, while active, the command line or message
@@ -73,9 +81,10 @@ pub(crate) fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
     let area = Rect::new(area.x, area.y, area.width, 1);
     let bg = app.colors.bg_statusbar;
     let fg = app.colors.ui.readable_foreground(app.colors.fg_statusbar, bg, 4.5);
-    let badge_color = mode_color(app);
+    let badge_color = badge_color(app);
     let badge_fg = app.colors.ui.readable_foreground(bg, badge_color, 4.5);
-    let mode_width = app.vim.mode_name().chars().count() as u16 + 2;
+    let badge_text = super::feedback::badge(app);
+    let mode_width = badge_text.chars().count() as u16 + 2;
     let badge_x = app.status_bar_items.iter().find(|(_, _, id)| *id == "vim_mode").map(|(x, _, _)| *x);
     let paint_badge = |f: &mut Frame, x: u16| {
         for dx in 0..mode_width.min(area.right().saturating_sub(x)) {
@@ -98,7 +107,7 @@ pub(crate) fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
     let mut x = area.x;
     if cmdline.is_none() {
-        let label = format!(" {} ", app.vim.mode_name());
+        let label = format!(" {badge_text} ");
         f.render_widget(Paragraph::new(label.clone()).style(Style::default().fg(badge_fg).bg(badge_color).add_modifier(Modifier::BOLD)), Rect::new(x, area.y, mode_width.min(area.width), 1));
         x += mode_width + 1;
     }
@@ -132,6 +141,8 @@ pub(crate) fn draw_status(f: &mut Frame, app: &mut App, area: Rect) {
 /// status bar.
 pub(crate) fn draw_overlays(f: &mut Frame, app: &mut App) {
     if !app.vim.enabled { return; }
+    super::feedback::draw_focus_flash(f, app);
+    super::feedback::draw_hint(f, app);
     let Some(status) = app.status_bar_area else { return; };
     let screen = f.area();
     let bg = app.colors.bg_statusbar;
@@ -177,6 +188,7 @@ pub(crate) fn draw_overlays(f: &mut Frame, app: &mut App) {
 /// rendering. Matches use the editor's own search highlighting.
 pub(crate) fn prepare_frame(app: &mut App) {
     if !app.vim.enabled { return; }
+    super::feedback::update(app);
     let incsearch = app.vim.incsearch.clone().filter(|_| app.vim.mode == Mode::Cmdline);
     let pattern = incsearch.clone().or_else(|| {
         (app.vim.opts.hlsearch && !app.vim.hl_hidden).then(|| app.vim.last_search.as_ref().map(|s| s.0.clone())).flatten()

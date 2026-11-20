@@ -615,33 +615,7 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
             'w' => {
                 let Some(k2) = p.next() else { return R::Need; };
                 let c2 = match k2.k { K::Char(c) => c, K::Left => 'h', K::Right => 'l', K::Up => 'k', K::Down => 'j', _ => return R::Bad };
-                Window(match c2 {
-                    'h' => self::Window::Left,
-                    'j' => self::Window::Down,
-                    'k' => self::Window::Up,
-                    'l' => self::Window::Right,
-                    'w' => self::Window::Next,
-                    'W' => self::Window::Prev,
-                    'p' => self::Window::Last,
-                    's' | 'S' => self::Window::Split,
-                    'v' => self::Window::VSplit,
-                    'c' | 'q' => self::Window::Close,
-                    'o' => self::Window::Only,
-                    'n' => self::Window::New,
-                    't' => self::Window::Top,
-                    'b' => self::Window::Bottom,
-                    '=' => self::Window::Equalize,
-                    'r' | 'R' => self::Window::Rotate,
-                    'x' => self::Window::Exchange,
-                    '_' => self::Window::MaxHeight,
-                    '|' => self::Window::MaxWidth,
-                    'H' => self::Window::MoveLeft,
-                    'L' => self::Window::MoveRight,
-                    'K' => self::Window::MoveUp,
-                    'J' => self::Window::MoveDown,
-                    'T' => self::Window::ToTab,
-                    _ => return R::Bad,
-                })
+                match window_cmd(c2) { Some(w) => Window(w), None => return R::Bad }
             }
             _ => return R::Bad,
         });
@@ -795,6 +769,38 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
         '*' if visual => VisualSearch(true),
         '#' if visual => VisualSearch(false),
         _ => return R::Bad,
+    })
+}
+
+/// The command after `Ctrl-W`, from the editor or any other pane.
+pub(crate) fn window_cmd(c: char) -> Option<Window> {
+    use self::Window as W;
+    Some(match c {
+        'h' => W::Left,
+        'j' => W::Down,
+        'k' => W::Up,
+        'l' => W::Right,
+        'w' => W::Next,
+        'W' => W::Prev,
+        'p' => W::Last,
+        's' | 'S' => W::Split,
+        'v' => W::VSplit,
+        'c' | 'q' => W::Close,
+        'o' => W::Only,
+        'n' => W::New,
+        't' => W::Top,
+        'b' => W::Bottom,
+        '=' => W::Equalize,
+        'r' | 'R' => W::Rotate,
+        'x' => W::Exchange,
+        '_' => W::MaxHeight,
+        '|' => W::MaxWidth,
+        'H' => W::MoveLeft,
+        'L' => W::MoveRight,
+        'K' => W::MoveUp,
+        'J' => W::MoveDown,
+        'T' => W::ToTab,
+        _ => return None,
     })
 }
 

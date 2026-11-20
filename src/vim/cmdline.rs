@@ -31,7 +31,7 @@ pub(crate) struct CmdLine {
     pub(crate) completion: Option<Completion>,
     /// The match previewed by 'incsearch': (start, end) char offsets.
     pub(crate) preview: Option<(usize, usize)>,
-    resume_insert: Option<super::insert::Resume>,
+    pub(crate) resume_insert: Option<super::insert::Resume>,
 }
 
 impl CmdLine {
@@ -103,7 +103,7 @@ fn resume_after(vim: &mut VimState, host: &mut dyn Host) {
     if vim.mode == Mode::Normal
         && let Some(r) = vim.insert_oneshot.take()
     {
-        super::insert::resume(vim, host, r);
+        super::insert::resume(vim, host, r, None);
     }
 }
 

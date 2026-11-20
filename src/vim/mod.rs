@@ -21,6 +21,7 @@ pub(crate) mod cmdline;
 pub(crate) mod ex;
 pub(crate) mod app_host;
 pub(crate) mod ui;
+pub(crate) mod feedback;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -171,6 +172,8 @@ pub(crate) struct Options {
     pub(crate) nrformats_octal: bool,
     pub(crate) nrformats_alpha: bool,
     pub(crate) showcmd: bool,
+    /// Show what can follow a prefix after a short pause (`:set nowhichkey`).
+    pub(crate) which_key: bool,
     pub(crate) showmode: bool,
     pub(crate) scrolloff: Option<usize>,
     pub(crate) sidescroll: usize,
@@ -213,6 +216,7 @@ impl Default for Options {
             nrformats_octal: false,
             nrformats_alpha: false,
             showcmd: true,
+            which_key: true,
             showmode: true,
             scrolloff: None,
             sidescroll: 0,
@@ -363,6 +367,8 @@ pub(crate) struct VimState {
     pub(crate) pending: Vec<Key>,
     typeahead: VecDeque<Typed>,
     map_wait_since: Option<Instant>,
+    /// When a key that is not a command was typed (the badge flashes).
+    pub(crate) bell: Option<Instant>,
     pub(crate) maps: map::Maps,
     pub(crate) leader: Vec<Key>,
     pub(crate) regs: register::Registers,
@@ -423,6 +429,7 @@ impl Default for VimState {
             pending: Vec::new(),
             typeahead: VecDeque::new(),
             map_wait_since: None,
+            bell: None,
             maps: map::Maps::default(),
             leader: vec![Key::ch('\\')],
             regs: register::Registers::default(),
@@ -643,10 +650,20 @@ impl VimState {
             ex::confirm_key(self, host, key);
             return;
         }
+        // A `<C-o>` one-shot waiting before this key (also through `:`).
+        let armed = self.insert_oneshot.is_some()
+            || self.cmdline.as_ref().is_some_and(|c| c.resume_insert.is_some());
+        let before = host.ed_ref().map(|ed| (ed.cursor_line, ed.cursor_col));
         match self.mode {
             Mode::Insert | Mode::Replace => insert::key(self, host, key),
             Mode::Cmdline => cmdline::key(self, host, key),
             Mode::Normal | Mode::Visual(_) => self.normal_key(host, key),
+        }
+        // `<C-o>`: once the one Normal-mode command is complete, resume Insert mode.
+        if armed && self.mode == Mode::Normal && self.pending.is_empty() && self.cmdline.is_none()
+            && let Some(r) = self.insert_oneshot.take()
+        {
+            insert::resume(self, host, r, before);
         }
     }
 
@@ -676,6 +693,14 @@ impl VimState {
                     exec::after_native(self, host);
                 } else if !(keys.len() == 1 && keys[0].is_escape()) {
                     self.beep();
+                    // Say so: silently dropping keys leaves the user guessing.
+                    self.bell = Some(Instant::now());
+                    let typed = keys::showcmd(&keys);
+                    self.set_message(if keys[0].is_ctrl('w') {
+                        format!("{typed}: not a window command (^W then h j k l, s, v, c, o...)")
+                    } else {
+                        format!("{typed}: not a command")
+                    });
                 }
             }
             Parsed::Done(cmd) => {
@@ -689,6 +714,7 @@ impl VimState {
     pub(crate) fn mode_name(&self) -> &'static str {
         match self.mode {
             Mode::Normal if self.op_pending() => "O-PENDING",
+            Mode::Normal if self.insert_oneshot.is_some() => "(INSERT)",
             Mode::Normal => "NORMAL",
             Mode::Insert => "INSERT",
             Mode::Replace => "REPLACE",

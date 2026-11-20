@@ -567,6 +567,10 @@ Turn on **Settings → Editor → Vim Mode** (or run **Vim: Toggle Vim Mode**).
 It is off by default. The status bar shows the mode (`NORMAL`, `INSERT`,
 `VISUAL`, `V-LINE`, `V-BLOCK`, `REPLACE`), pending keys and `recording @q`.
 Insert mode uses a bar cursor and Replace mode an underline, as in terminal Vim.
+Outside the editor the badge names the focused pane (`EXPLORER`, `PROBLEMS`,
+`TERMINAL`...). Prefix keys such as `^W` or `g` show as you type them, and a
+short pause lists what can follow (`:set nowhichkey` turns that off). Keys
+that are not commands flash the badge and say so.
 
 The engine follows Vim 9's behaviour closely. Its tests replay about 24,000
 recorded Vim sessions (`scripts/vim_parity.py`) and compare the text, cursor

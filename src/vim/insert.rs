@@ -65,6 +65,9 @@ pub(crate) struct Session {
 #[derive(Clone, Debug)]
 pub(crate) struct Resume {
     pub(crate) replace: bool,
+    /// The line `<C-o>` was pressed on, when the cursor was past its end
+    /// (Vim's `ins_at_eol`).
+    pub(crate) eol_line: Option<usize>,
 }
 
 pub(crate) fn undo_back_id(ed: &Editor) -> Option<u64> {
@@ -274,9 +277,24 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
         let handled = match key.k {
             K::Char('o') => {
                 let replace = vim.mode == Mode::Replace;
+                // As in Vim, the Normal-mode cursor steps back onto the
+                // last character, but the column Insert mode was at stays
+                // the desired column for the command.
+                let before = host.ed_ref().map(|ed| {
+                    let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+                    let p = cursor(ed);
+                    (p.line, p.col >= t.len(p.line), t.vcol(p.line, p.col, super::exec::tabstop(ed)))
+                });
                 finish_session(vim, host, false, true);
                 vim.mode = Mode::Normal;
-                vim.insert_oneshot = Some(Resume { replace });
+                if let Some(ed) = host.ed() {
+                    let len = Text::of(&ed.rope, ed.vim_buf.trailing_empty).len(ed.cursor_line);
+                    if len > 0 && ed.cursor_col >= len { ed.cursor_col = len - 1; }
+                }
+                if let Some((_, _, vcol)) = before { vim.curswant = Some(vcol); }
+                vim.curswant_eol = false;
+                let eol_line = before.and_then(|(line, eol, _)| eol.then_some(line));
+                vim.insert_oneshot = Some(Resume { replace, eol_line });
                 true
             }
             K::Char('w') => { delete_word_before(vim, host); true }
@@ -741,9 +759,30 @@ fn finish_session(vim: &mut VimState, host: &mut dyn Host, move_left: bool, fina
 }
 
 /// Resume Insert mode after a `<C-o>` command.
-pub(crate) fn resume(vim: &mut VimState, host: &mut dyn Host, r: Resume) {
+/// Back to Insert mode after the `<C-o>` command. `before`: the cursor
+/// before that command's last key.
+pub(crate) fn resume(vim: &mut VimState, host: &mut dyn Host, r: Resume, before: Option<(usize, usize)>) {
     vim.insert_oneshot = None;
     let Some(ed) = host.ed() else { return; };
+    // Vim's edit() restart, which sees the cursor where the command left it.
+    {
+        let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+        let p = cursor(ed);
+        let len = t.len(p.line);
+        // During <C-o> Vim lets the cursor rest past the end of the line: a
+        // command that deleted from the cursor to the end (`x`, `dw`, `D`)
+        // leaves it there, where our Normal mode stepped back onto the
+        // last character.
+        let rested_past_end = before.is_some_and(|(line, col)| line == p.line && col == len && len > 0 && p.col + 1 == len);
+        // Then, on the last character, continue after it when <C-o> was
+        // pressed past the end of this line, or when the wanted column is
+        // beyond the cursor (`$`, `j` onto a shorter line, a failed motion).
+        let vcol = t.vcol(p.line, p.col, super::exec::tabstop(ed));
+        let wanted_beyond = vim.curswant.is_some_and(|w| w > vcol);
+        if rested_past_end || ((r.eol_line == Some(p.line) || wanted_beyond) && len > 0 && p.col + 1 == len) {
+            ed.cursor_col = len;
+        }
+    }
     vim.insert = Some(new_session(ed, InsertKind::Before, 1, false, None));
     vim.mode = if r.replace { Mode::Replace } else { Mode::Insert };
 }
