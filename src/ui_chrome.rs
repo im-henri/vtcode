@@ -1676,7 +1676,7 @@ pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &mut App) {
 
 // Single-cell text glyphs also used elsewhere in the workbench.
 pub(crate) const TOP_ACTIVITY_ICONS: [&str; 6] = ["▤", "⌕", "⑂", "↗", "▦", "⚙"];
-pub(crate) const TOP_ACTIVITY_BUTTON_WIDTH: u16 = 3;
+const TOP_ACTIVITY_BUTTON_WIDTH: u16 = 3;
 pub(crate) const ACTIVITY_OVERFLOW_INDEX: usize = TOP_ACTIVITY_ICONS.len();
 const ACTIVITY_OVERFLOW_ICON: &str = "⌄";
 
@@ -1685,22 +1685,36 @@ pub(crate) fn sidebar_activity_header(app: &App, sidebar: Rect) -> Option<Rect> 
     (!header.is_empty()).then_some(header)
 }
 
-fn top_activity_layout(area: Rect) -> (usize, u16, Option<Rect>) {
-    let slots = usize::from(area.width / TOP_ACTIVITY_BUTTON_WIDTH);
-    let needs_overflow = slots < TOP_ACTIVITY_ICONS.len();
-    let visible = if needs_overflow { slots.saturating_sub(1) } else { TOP_ACTIVITY_ICONS.len() };
-    let icons_width = visible as u16 * TOP_ACTIVITY_BUTTON_WIDTH;
-    let overflow_width = if needs_overflow { area.width.min(TOP_ACTIVITY_BUTTON_WIDTH) } else { 0 };
+struct TopActivityLayout {
+    visible: usize,
+    start_x: u16,
+    button_width: u16,
+    overflow: Option<Rect>,
+}
+
+fn top_activity_layout(area: Rect) -> TopActivityLayout {
+    let icon_count = TOP_ACTIVITY_ICONS.len();
+    let wide_width = TOP_ACTIVITY_BUTTON_WIDTH + 1;
+    let button_width = if area.width >= icon_count as u16 * wide_width {
+        wide_width
+    } else {
+        TOP_ACTIVITY_BUTTON_WIDTH
+    };
+    let slots = usize::from(area.width / button_width);
+    let needs_overflow = slots < icon_count;
+    let visible = if needs_overflow { slots.saturating_sub(1) } else { icon_count };
+    let icons_width = visible as u16 * button_width;
+    let overflow_width = if needs_overflow { area.width.min(button_width) } else { 0 };
     let start_x = area.x + (area.width - icons_width - overflow_width) / 2;
     let overflow = (needs_overflow && !area.is_empty())
         .then(|| Rect::new(start_x + icons_width, area.y, overflow_width, 1));
-    (visible, start_x, overflow)
+    TopActivityLayout { visible, start_x, button_width, overflow }
 }
 
 pub(crate) fn activity_overflow_button(app: &App) -> Option<(Rect, usize)> {
     if app.activity_bar_position != crate::settings::ActivityBarPosition::Top { return None; }
-    let (visible, _, overflow) = top_activity_layout(app.activity_bar_area?);
-    Some((overflow?, visible))
+    let layout = top_activity_layout(app.activity_bar_area?);
+    Some((layout.overflow?, layout.visible))
 }
 
 pub(crate) fn activity_item_regions(
@@ -1709,10 +1723,10 @@ pub(crate) fn activity_item_regions(
 ) -> Vec<(Rect, usize)> {
     if area.is_empty() { return Vec::new(); }
     if position == crate::settings::ActivityBarPosition::Top {
-        let (visible, start_x, overflow) = top_activity_layout(area);
+        let TopActivityLayout { visible, start_x, button_width, overflow } = top_activity_layout(area);
         return (0..visible)
-            .map(|index| (Rect::new(start_x + index as u16 * TOP_ACTIVITY_BUTTON_WIDTH,
-                area.y, TOP_ACTIVITY_BUTTON_WIDTH, 1), index))
+            .map(|index| (Rect::new(start_x + index as u16 * button_width,
+                area.y, button_width, 1), index))
             .chain(overflow.map(|button| (button, ACTIVITY_OVERFLOW_INDEX)))
             .collect();
     }
@@ -1796,7 +1810,8 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
     for (item_area, index) in activity_item_regions(area, position) {
         let active = if index == ACTIVITY_OVERFLOW_INDEX {
-            app.activity_overflow_menu_open() || (top_activity_layout(area).0..TOP_ACTIVITY_ICONS.len()).any(is_active)
+            app.activity_overflow_menu_open()
+                || (top_activity_layout(area).visible..TOP_ACTIVITY_ICONS.len()).any(is_active)
         } else {
             is_active(index)
         };
@@ -2447,7 +2462,10 @@ mod tests {
         let mut app = App::test_new();
         let selected = Color::Rgb(52, 58, 68);
         app.colors.ui.bg_activity_active = crate::theme_workbench::ColorLayer::opaque(selected);
-        for (width, visible) in [(1, 0), (2, 0), (5, 0), (6, 1), (12, 3), (17, 4), (18, 6), (19, 6), (42, 6), (80, 6)] {
+        for (width, visible, button_width) in [
+            (1, 0, 1), (2, 0, 2), (5, 0, 3), (6, 1, 3), (12, 3, 3), (17, 4, 3),
+            (18, 6, 3), (23, 6, 3), (24, 6, 4), (25, 6, 4), (42, 6, 4), (80, 6, 4),
+        ] {
             let area = Rect::new(0, 0, width, 1);
             let buttons = activity_item_regions(area, app.activity_bar_position);
             let expected_indexes: Vec<_> = (0..visible)
@@ -2464,7 +2482,7 @@ mod tests {
                 terminal.draw(|frame| draw_activity_bar(frame, &app, area)).unwrap();
                 let buffer = terminal.backend().buffer();
                 for &(button, index) in &buttons {
-                    assert_eq!(button.width, width.min(TOP_ACTIVITY_BUTTON_WIDTH));
+                    assert_eq!(button.width, button_width);
                     let icon = TOP_ACTIVITY_ICONS.get(index).copied().unwrap_or(ACTIVITY_OVERFLOW_ICON);
                     assert_eq!(icon.width(), 1);
                     let icon_x = button.x + (button.width - 1) / 2;
@@ -2474,7 +2492,9 @@ mod tests {
                     let suffix = if index == 2 && button.width > 1 { badge } else { "" };
                     assert_eq!(text.trim(), format!("{icon}{suffix}"));
                     if index == 0 || visible == 0 {
-                        assert_eq!(buffer[(icon_x, button.y)].bg, selected);
+                        for x in button.x..button.right() {
+                            assert_eq!(buffer[(x, button.y)].bg, selected);
+                        }
                     }
                 }
             }

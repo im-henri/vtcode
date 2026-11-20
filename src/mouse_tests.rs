@@ -463,9 +463,11 @@ fn top_activity_bar_uses_rendered_columns_for_hover_and_clicks() {
         kind, column, row, modifiers: KeyModifiers::NONE,
     });
     let search = button(&app, 1);
-    send(&mut app, MouseEventKind::Moved, search.x, search.y);
+    assert_eq!(search.width, 4);
+    let search_right = search.right() - 1;
+    send(&mut app, MouseEventKind::Moved, search_right, search.y);
     assert_eq!(app.hovered_activity, Some(1));
-    send(&mut app, MouseEventKind::Down(MouseButton::Left), search.x, search.y);
+    send(&mut app, MouseEventKind::Down(MouseButton::Left), search_right, search.y);
     assert_eq!(app.sidebar_view, crate::app::SidebarView::Search);
     assert!(app.global_search_active);
 

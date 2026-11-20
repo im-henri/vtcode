@@ -570,6 +570,12 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
 
         let top_activity = show_activity_bar && app.activity_bar_position == ActivityBarPosition::Top
             && sidebar_area.height > 1;
+        // Reserve a seam outside scrollbar and activity button content.
+        let border_col = if app.sidebar_right {
+            sidebar_area.x
+        } else {
+            sidebar_area.right() - 1
+        };
         let mut sidebar_content = sidebar_area;
         if top_activity {
             app.activity_bar_area = ui_chrome::sidebar_activity_header(app, sidebar_area);
@@ -593,10 +599,9 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
             }
             crate::app::SidebarView::Remote => crate::ui_remote_targets::draw_sidebar(f, app, sidebar_content),
         }
-        if top_activity {
-            if let Some(activity_area) = app.activity_bar_area {
-                draw_static_chrome(f, app, activity_area, ChromeRegion::Activity);
-            }
+        if top_activity && let Some(activity_area) = app.activity_bar_area {
+            draw_static_chrome(f, app, activity_area, ChromeRegion::Activity);
+            f.buffer_mut()[(border_col, activity_area.y)].set_bg(app.colors.bg_activitybar);
         }
         crate::ui_loading::draw_sidebar(f, app, sidebar_content);
         app.editor_gradient_area = Some(editor_area);
@@ -615,13 +620,7 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
             app.colors.gradients.bg_editor,
         );
 
-        // Reserve a seam outside scrollbar content. Preserve transparent
-        // borders and resolve the sash color on each final gradient cell.
-        let border_col = if app.sidebar_right {
-            sidebar_area.x
-        } else {
-            sidebar_area.x + sidebar_area.width.saturating_sub(1)
-        };
+        // Resolve the sidebar border over each cell's final background.
         let is_hovering_border = crate::mouse::explorer_resize_hit(
             sidebar_area,
             app.sidebar_right,
@@ -1292,6 +1291,8 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
             let mut app = App::test_new();
             app.show_panel = false;
+            let activity_bg = Color::Rgb(24, 72, 116);
+            app.colors.bg_activitybar = activity_bg;
             app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
             for right in [false, true] {
                 app.sidebar_right = right;
@@ -1308,6 +1309,8 @@ mod tests {
                     assert!(bar.intersection(sidebar).is_empty());
                     assert!(bar.intersection(tabs).is_empty());
                     assert!(bar.x >= sidebar.x && bar.right() <= sidebar.right());
+                    let border_col = if right { sidebar.x } else { sidebar.right() - 1 };
+                    assert_eq!(terminal.backend().buffer()[(border_col, bar.y)].bg, activity_bg);
                     let overflow = ui_chrome::activity_overflow_button(&app);
                     assert_eq!(overflow.is_some(), width == 42);
                     if view == SidebarView::SourceControl {
