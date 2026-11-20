@@ -74,6 +74,50 @@ that key do anything?":
   Insert mode; `^R`, `^K` or `^V` mean Insert mode waits for a register, a
   digraph or a literal key.
 
+### Getting around
+
+The screen has three areas you move between: the **sidebar** on the left
+(Explorer, Search, Source Control, Extensions), the **editor** with its tabs
+in the middle, and the **panel** at the bottom (Problems, Output, Terminal).
+The docked Agent Chat, when shown, sits on the right.
+
+**Two keys get you almost everywhere:**
+
+- `<C-w>` then `h`, `j`, `k` or `l` moves to the area on the left, below,
+  above or right, from wherever you are. `<C-w>h` from the editor goes to the
+  sidebar; `<C-w>l` from the sidebar comes back.
+- `:` opens the command line from any area, the sidebar and panels included,
+  and even with no file open. Type a command and press `<CR>`.
+
+**Switching what the sidebar shows.** The sidebar shows one view at a time,
+and `<C-w>h` goes to whichever one it shows. To change the view, type one of
+these from anywhere (or use the shortcut):
+
+| To get to | Type | Shortcut |
+|---|---|---|
+| Explorer (files) | `:Explore` | `Ctrl+Shift+E` |
+| Search in files | `:VT global_search` | |
+| Source Control (Git) | `:VT source_control` | `Ctrl+Shift+G` |
+| Extensions | `:VT extensions` | |
+
+For example, **from Source Control to the Explorer**: type `:Explore` and
+press `<CR>`. The badge changes from `SOURCE CONTROL` to `EXPLORER`. If a
+text box has the cursor (the commit message, a search box), press `<Esc>`
+first, or `:` is typed into it. `:VT ` followed by Tab completes command names, so you don't
+have to remember them.
+
+**Tabs.** Back in the editor (`q` or `<Esc>` leaves any sidebar or list),
+`gt` and `gT` go to the next and previous tab, and `3gt` to the third. `<C-p>`
+finds a file by name; `:e path` opens one.
+
+**The bottom panel.** `:copen` opens Problems, `:terminal` opens a terminal,
+and `<C-w>j` from the editor moves into whatever the panel shows. In a
+terminal, keys go to the shell; `<C-\><C-n>` returns to the editor.
+
+**Lost?** Look at the badge: it names the area that has the keyboard. Press
+`<Esc>` (or `q` in a list) to get back to the editor, then start again from
+there.
+
 ### Your first edit
 
 Open any file and try this:
@@ -233,7 +277,9 @@ All of VTCode works from the keyboard in Vim mode. Inside lists, `j`/`k` move,
 `<Esc>` returns to the editor. `:` opens the command line from any of them
 (the Explorer, the panels, a sidebar), as from any window in Vim.
 
-**Explorer.** `:Explore` (or `<C-w>h`) focuses the file tree.
+**Explorer.** `:Explore` focuses the file tree from anywhere, including another
+sidebar view; `<C-w>h` reaches it when the sidebar already shows it (see
+[Getting around](#getting-around)).
 
 | Key | Does |
 |---|---|
@@ -257,7 +303,7 @@ to preview matches, `h` to collapse a file, and `l` to open a match.
 press Space to stage or unstage, `l` to open a diff, Tab to move between
 sections. The commit message box is a normal text field.
 
-*sd*Problems (quickfix).** `:copen` opens the Problems panel with the cursor in
+**Problems (quickfix).** `:copen` opens the Problems panel with the cursor in
 it. `j`/`k` move, `l` jumps to the problem. `:cnext` / `:cprev` (or `]d` /
 `[d`) step through diagnostics without opening the panel. `:cclose` hides it.
 
@@ -419,6 +465,7 @@ the current values.
 | Files | `:w :q :wq :q!` · `:e path` · `<C-p>` · `gt gT` · `:Explore` |
 | Windows | `<C-w>h j k l` · `<C-w>s v` · `<C-w>c o` · `<C-w>w` |
 | Lists and sidebars | `j k` · `l` open · `gg G` · `q` back to the editor |
+| Sidebar views | `:Explore` · `:VT global_search` · `:VT source_control` · `:VT extensions` |
 | Code | `gd gy gr K` · `g.` · `]d [d` · `]c [c` · `gc` comment |
 | Problems | `:copen :cclose` · `:cnext :cprev` |
 | Terminal and chat | `<C-\><C-n>` back to the editor |

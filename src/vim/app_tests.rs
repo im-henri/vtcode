@@ -691,3 +691,62 @@ fn lists_say_which_keys_they_take() {
     keys(&mut app, "j");
     assert!(app.vim.message.is_none(), "the next key clears it");
 }
+
+#[test]
+fn sidebar_views_switch_from_any_sidebar_view() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    app.explorer_area = Some(ratatui::layout::Rect::new(0, 0, 20, 30));
+    app.editor_area = Some(ratatui::layout::Rect::new(20, 0, 60, 30));
+    // Into Source Control from the editor, then back to the Explorer.
+    keys(&mut app, ":VT source_control<CR>");
+    assert_eq!(app.sidebar_view, SidebarView::SourceControl);
+    app.active_pane = ActivePane::Explorer; // focused, as the app does
+    assert_eq!(super::feedback::badge(&app), "SOURCE CONTROL");
+    keys(&mut app, ":Explore<CR>");
+    assert_eq!(app.sidebar_view, SidebarView::Explorer);
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    // <C-w>l returns to the editor; <C-w>h reaches whichever view the sidebar shows.
+    keys(&mut app, ":VT source_control<CR><C-w>l");
+    assert_eq!(app.active_pane, ActivePane::Editor);
+    keys(&mut app, "<C-w>h");
+    assert_eq!(app.sidebar_view, SidebarView::SourceControl);
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    // The usual VTCode shortcut works from a sidebar view too.
+    press(&mut app, KeyCode::Char('E'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    assert_eq!(app.sidebar_view, SidebarView::Explorer);
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    press(&mut app, KeyCode::Char('G'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    assert_eq!(app.sidebar_view, SidebarView::SourceControl);
+    keys(&mut app, ":VT global_search<CR>");
+    assert_eq!(app.sidebar_view, SidebarView::Search);
+    keys(&mut app, "<Esc>:VT extensions<CR>");
+    assert_eq!(app.sidebar_view, SidebarView::Extensions);
+}
+
+#[test]
+fn the_command_line_opens_from_a_sidebar_with_no_file_open() {
+    let mut app = vim_app("");
+    let _root = with_explorer(&mut app);
+    app.tabs.clear();
+    keys(&mut app, ":");
+    keys(&mut app, "VT source_control<CR>");
+    assert_eq!(app.sidebar_view, SidebarView::SourceControl);
+    app.active_pane = ActivePane::Explorer;
+    keys(&mut app, ":");
+    assert!(app.vim.cmdline.is_some(), "':' opens the command line");
+    assert!(screen_text(&mut app).lines().last().is_some_and(|l| l.starts_with(":")), "it shows at the bottom");
+    keys(&mut app, "Explore<CR>");
+    assert!(app.vim.cmdline.is_none());
+    assert_eq!(app.sidebar_view, SidebarView::Explorer);
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    // A command that needs a file says so instead of doing nothing.
+    keys(&mut app, ":w<CR>");
+    assert!(app.vim.cmdline.is_none());
+    assert!(app.vim.message.is_some(), "an error is shown");
+    // <Esc> closes an unfinished command line.
+    keys(&mut app, ":Exp<Esc>");
+    assert!(app.vim.cmdline.is_none());
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+}
+

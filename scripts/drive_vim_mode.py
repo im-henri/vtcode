@@ -737,6 +737,40 @@ def scenario_feedback(e, d):
     return results
 
 
+def scenario_sidebar_views(e, d):
+    results = []
+    e.keys(":VT source_control" + CR)
+    results.append(("Source Control has the keyboard", wait_for(e, lambda: "SOURCE CONTROL" in e.status())))
+    e.keys(":")
+    results.append(("':' opens the command line there", wait_for(e, lambda: e.status().startswith(":"))))
+    e.keys("Explore" + CR)
+    results.append(("':Explore' switches to the Explorer", wait_for(e, lambda: "EXPLORER" in e.status())))
+    e.process.write(ctrl("w"))
+    e.keys("l")
+    results.append(("<C-w>l returns to the editor", wait_for(e, lambda: "NORMAL" in e.status())))
+    e.keys(":VT source_control" + CR)
+    wait_for(e, lambda: "SOURCE CONTROL" in e.status())
+    e.keys("q")
+    wait_for(e, lambda: "NORMAL" in e.status())
+    e.process.write(ctrl("w"))
+    e.keys("h")
+    results.append(("<C-w>h reaches the view the sidebar shows", wait_for(e, lambda: "SOURCE CONTROL" in e.status())))
+    return results
+
+
+def scenario_no_file_open(e, d):
+    results = []
+    e.keys(":VT source_control" + CR)
+    results.append(("':VT source_control' works with no file open", wait_for(e, lambda: "SOURCE CONTROL" in e.status())))
+    e.keys(":")
+    results.append(("':' opens the command line in Source Control", wait_for(e, lambda: e.status().startswith(":"))))
+    e.keys("Explore" + CR)
+    results.append(("':Explore' switches to the Explorer", wait_for(e, lambda: "EXPLORER" in e.status())))
+    e.keys("l")
+    results.append(("l opens the file from the tree", wait_for(e, lambda: "NORMAL" in e.status() and screen_has(e, "alpha"))))
+    return results
+
+
 SCENARIOS = [
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
@@ -766,6 +800,8 @@ SCENARIOS = [
     ("mouse still works", scenario_mouse_still_works, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n", "sub/inner.txt": "x\n"}),
     (":cd", scenario_cd, {"a.txt": "alpha\ngamma\n", "sub/inner.txt": "inside\n"}),
     ("feedback", scenario_feedback, {"a.txt": "alpha\ngamma\n"}),
+    ("sidebar views", scenario_sidebar_views, {"a.txt": "alpha\n"}),
+    ("no file open", scenario_no_file_open, {"a.txt": "alpha\n", "@nofile": ""}),
 ]
 
 VIMRC = 'let mapleader = " "\ninoremap jk <Esc>\nnnoremap <leader>w :w<CR>\n'
@@ -783,15 +819,21 @@ def run(exe, name, fn, files, show):
         work = tmp / "work"
         work.mkdir()
         for fname, body in files.items():
+            if fname == "@nofile":
+                continue
             if fname == "@extension":
                 fixture = pathlib.Path(__file__).resolve().parent.parent / "tests" / "fixtures" / body
                 shutil.copytree(fixture, home / ".vtcode" / "extensions" / body)
                 continue
             (work / fname).parent.mkdir(parents=True, exist_ok=True)
             (work / fname).write_text(body, encoding="utf-8", newline="\n")
-        editor = Editor(local, [work / "a.txt"], work)
+        nofile = "@nofile" in files
+        editor = Editor(local, [work] if nofile else [work / "a.txt"], work)
         try:
-            wait_for(editor, lambda: "NORMAL" in editor.status(), 15)
+            if nofile:
+                wait_for(editor, lambda: screen_has(editor, "a.txt"), 15)
+            else:
+                wait_for(editor, lambda: "NORMAL" in editor.status(), 15)
             editor.settle(0.5)
             results = fn(editor, work)
             ok = all(r for _, r in results)

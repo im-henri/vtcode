@@ -22,7 +22,7 @@ pub(crate) fn vim_tab(app: &App) -> bool {
 }
 
 /// Popups that own the keyboard while open.
-fn popup_open(app: &App) -> bool {
+pub(crate) fn popup_open(app: &App) -> bool {
     app.palette.active
         || app.quick_open_active
         || app.goto_line_active
@@ -199,6 +199,11 @@ pub(crate) fn handle_key(app: &mut App, event: KeyEvent) -> Option<bool> {
             return Some(false);
         }
     }
+    // A command line opened from a pane with no editor behind it (no file
+    // open) takes every key until it closes, like the one in the editor.
+    if app.vim.cmdline.is_some() && !owns_editor(app) && !popup_open(app) {
+        return Some(feed_without_editor(app, key));
+    }
     if !owns_editor(app) {
         // A one-line message is about the previous key, as in the editor.
         if app.vim.message.as_ref().is_some_and(|m| m.lines.is_empty()) { app.vim.message = None; }
@@ -210,6 +215,15 @@ pub(crate) fn handle_key(app: &mut App, event: KeyEvent) -> Option<bool> {
         after_key(vim, host);
     });
     Some(std::mem::take(&mut app.vim_quit))
+}
+
+/// Feed a command-line key to the engine while no editor owns the keyboard.
+fn feed_without_editor(app: &mut App, key: Key) -> bool {
+    with_vim(app, |vim, host| {
+        vim.feed(host, key);
+        after_key(vim, host);
+    });
+    std::mem::take(&mut app.vim_quit)
 }
 
 /// Leave Insert/Visual mode when another editor got focus.
@@ -442,7 +456,12 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
     if popup_open(app) { return None; }
     // `:` opens the command line from any pane, as in Vim, where Ex commands
     // work from every window. They act on the editor, which takes focus.
-    if key.char() == Some(':') && app.editor().is_some() && !app.tabs.is_empty() {
+    if key.char() == Some(':') && !(app.editor().is_some() && !app.tabs.is_empty()) {
+        // No file is open: the command line opens over the pane that has
+        // the keyboard, which keeps it, so `:Explore` or `:VT ...` still work.
+        return Some(feed_without_editor(app, key));
+    }
+    if key.char() == Some(':') {
         focus_editor(app);
         if owns_editor(app) {
             sync_focus(app);

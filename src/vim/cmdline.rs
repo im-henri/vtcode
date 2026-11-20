@@ -42,7 +42,13 @@ pub(crate) fn open(vim: &mut VimState, host: &mut dyn Host, kind: char, pending:
     if vim.is_visual() && kind != ':' {
         // Searching from Visual mode extends the selection.
     }
-    let Some(ed) = host.ed_ref() else { return; };
+    // `:` also works with no file open (Ex commands such as `:Explore` or
+    // `:VT` reach the workbench); a search needs a buffer to search.
+    let (saved_cursor, saved_scroll) = match host.ed_ref() {
+        Some(ed) => (cursor(ed), (ed.scroll_offset, ed.wrap_scroll_offset)),
+        None if kind == ':' => (Pos { line: 0, col: 0 }, (0, 0)),
+        None => return,
+    };
     let text: Vec<char> = init.chars().collect();
     let cursor_pos = text.len();
     vim.cmdline = Some(CmdLine {
@@ -50,8 +56,8 @@ pub(crate) fn open(vim: &mut VimState, host: &mut dyn Host, kind: char, pending:
         text,
         cursor: cursor_pos,
         pending,
-        saved_cursor: cursor(ed),
-        saved_scroll: (ed.scroll_offset, ed.wrap_scroll_offset),
+        saved_cursor,
+        saved_scroll,
         hist_idx: None,
         hist_prefix: String::new(),
         awaiting_register: false,
