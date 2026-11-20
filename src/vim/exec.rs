@@ -42,7 +42,14 @@ impl Tx {
         let (start, end) = (start.min(len), end.min(len).max(start.min(len)));
         if start == end && text.is_empty() { return; }
         let eol = doc_eol(ed);
-        let text = if eol != "\n" && text.contains('\n') { text.replace('\n', eol) } else { text.to_string() };
+        // Text read back from a CRLF buffer already ends its lines in "\r\n":
+        // only bare "\n" line breaks take the document's ending, or a case
+        // change over two lines would leave "\r\r\n".
+        let text = if eol != "\n" && text.contains('\n') {
+            text.replace("\r\n", "\n").replace('\n', eol)
+        } else {
+            text.to_string()
+        };
         if !self.begun {
             ed.begin_document_edit();
             self.begun = true;
@@ -1169,9 +1176,10 @@ pub(crate) fn run(vim: &mut VimState, host: &mut dyn Host, cmd: Cmd) {
         Action::VisualOp(op) => visual_op(vim, host, &cmd, op),
         Action::Simple(s) => simple(vim, host, &cmd, s, count, has_count),
     }
-    // Most commands reset the wanted column (Vim's w_set_curswant).
+    // Most commands reset the wanted column (Vim's w_set_curswant). A macro
+    // only queues its keys here; its own commands set the column as they run.
     let keeps = matches!(cmd.action, Action::Motion(_))
-        || matches!(cmd.action, Action::Simple(Simple::Scroll(_) | Simple::Cancel | Simple::Visual(_) | Simple::Redraw | Simple::Window(_)));
+        || matches!(cmd.action, Action::Simple(Simple::Scroll(_) | Simple::Cancel | Simple::Visual(_) | Simple::Redraw | Simple::Window(_) | Simple::Play(_)));
     if !keeps && !vim.is_insert() && vim.mode != Mode::Cmdline {
         if let Some(ed) = host.ed() {
             if !(vim.curswant == Some(usize::MAX) && matches!(cmd.action, Action::Simple(Simple::Reselect))) {

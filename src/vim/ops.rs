@@ -166,10 +166,12 @@ pub(crate) fn op_target(
         && !matches!(op, Op::Change | Op::Indent | Op::Outdent | Op::Reindent | Op::Filter | Op::Format | Op::FormatKeep | Op::Comment | Op::Fold
             | Op::Tilde | Op::Lower | Op::Upper | Op::Rot13)
     {
-        // Vim still makes an (empty) undo step for `x` on an empty line.
+        // Vim still makes an (empty) undo step for `x` on an empty line, and
+        // `.` repeats that `x` afterwards.
         if op == Op::Delete && let Some(ed) = host.ed() {
             let line = ed.cursor_line;
             ed.save_undo_for_range(line, line);
+            record_change(vim, cmd, None, search_target.map(|(_, _, p, f)| (p, f)));
         }
         return;
     }
@@ -1970,8 +1972,7 @@ fn play(vim: &mut VimState, host: &mut dyn Host, r: char, count: usize) {
         keys.extend(text_to_keys(&reg.text));
         if reg.kind == RegKind::Line && !reg.text.ends_with('\n') { keys.push(super::Key::ENTER); }
     }
-    vim.replaying += 1;
-    vim.feed_keys(host, &keys, true, true);
-    vim.replaying -= 1;
+    vim.queue_keys(&keys, true, true);
+    let _ = host;
 }
 

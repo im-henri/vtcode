@@ -44,9 +44,15 @@ pub(crate) struct Actual {
 /// Run keys the way `:normal` does: as typeahead that an error flushes, with
 /// an unfinished command or Insert mode ended at the end.
 pub(crate) fn replay(lines: &[String], eol: bool, cursor: [usize; 2], keys_text: &str) -> Actual {
-    let mut text = lines.join("\n");
-    if eol { text.push('\n'); }
+    replay_with(lines, eol, cursor, keys_text, "\n").0
+}
+
+/// `replay` on text whose lines end in `newline`; also returns the buffer.
+fn replay_with(lines: &[String], eol: bool, cursor: [usize; 2], keys_text: &str, newline: &str) -> (Actual, String) {
+    let mut text = lines.join(newline);
+    if eol { text.push_str(newline); }
     let mut host = TestHost::new(&text);
+    host.ed.detect_line_ending();
     host.ed.cursor_line = cursor[0];
     host.ed.cursor_col = cursor[1];
     let mut vim = parity_vim();
@@ -67,11 +73,56 @@ pub(crate) fn replay(lines: &[String], eol: bool, cursor: [usize; 2], keys_text:
         RegKind::Line => "V".to_string(),
         RegKind::Block(w) => format!("\u{16}{w}"),
     };
-    Actual {
+    let actual = Actual {
         lines: vim_lines(&host.ed),
         cursor: visual_cursor.unwrap_or([host.ed.cursor_line, host.ed.cursor_col]),
         reg: reg.text,
         regtype,
+    };
+    (actual, host.ed.rope.to_string())
+}
+
+/// The same cases on a CRLF buffer, as files from Windows usually are. Vim
+/// keeps a "dos" file's lines without the "\r", so the results must match
+/// with "\r\n" endings. A bare "\n" is allowed (saving writes "\r\n"), but
+/// a "\r" anywhere else would reach the file as a stray line break.
+#[test]
+fn engine_matches_real_vim_on_crlf_text() {
+    let cases = corpus();
+    let filter = std::env::var("VIM_PARITY_FILTER").unwrap_or_default();
+    let mut failures = Vec::new();
+    let mut ran = 0;
+    for case in &cases {
+        if !filter.is_empty() && !case.name.contains(&filter) { continue; }
+        // Text containing a carriage return of its own cannot be told apart.
+        if case.lines.iter().any(|l| l.contains('\r')) || case.keys.contains("<C-v><C-m>") || case.keys.contains("<C-m>") { continue; }
+        ran += 1;
+        let got = std::panic::catch_unwind(|| replay_with(&case.lines, case.eol, case.cursor, &case.keys, "\r\n"));
+        let (got, raw) = match got {
+            Ok(g) => g,
+            Err(_) => { failures.push(format!("{}: PANIC", case.name)); continue; }
+        };
+        let e = &case.expect;
+        let mut diffs = Vec::new();
+        let plain = raw.replace("\r\n", "\n");
+        if plain.contains('\r') { diffs.push(format!("stray \\r in {raw:?}")); }
+        let lines: Vec<String> = got.lines.iter().map(|l| l.trim_end_matches('\r').to_string()).collect();
+        if lines != e.lines { diffs.push(format!("lines {:?} != vim {:?}", lines, e.lines)); }
+        if got.cursor != e.cursor { diffs.push(format!("cursor {:?} != vim {:?}", got.cursor, e.cursor)); }
+        let reg = got.reg.replace("\r\n", "\n");
+        if reg != e.reg || (!e.reg.is_empty() && got.regtype != e.regtype) {
+            diffs.push(format!("reg {:?}/{:?} != vim {:?}/{:?}", got.reg, got.regtype, e.reg, e.regtype));
+        }
+        if !diffs.is_empty() {
+            failures.push(format!("{}: {}", case.name, diffs.join("; ")));
+        }
+    }
+    if !failures.is_empty() {
+        let shown: Vec<&String> = failures.iter().take(400).collect();
+        if let Ok(path) = std::env::var("VIM_PARITY_REPORT") {
+            let _ = std::fs::write(path, failures.join("\n"));
+        }
+        panic!("{} of {} CRLF cases differ from Vim:\n{}", failures.len(), ran, shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
     }
 }
 

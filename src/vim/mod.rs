@@ -401,6 +401,8 @@ pub(crate) struct VimState {
     /// Running `.`, a macro or `:normal`: do not record changes.
     pub(crate) replaying: u32,
     pub(crate) key_budget: usize,
+    /// Nesting of `:normal` (Vim's E192 limit).
+    pub(crate) normal_depth: u32,
     /// Buffer text for searching, per (view, content version).
     pub(crate) hay_cache: std::cell::RefCell<Option<(u64, u64, std::sync::Arc<String>)>>,
     /// Compiled patterns by (pattern, ignorecase, smartcase, magic).
@@ -457,6 +459,7 @@ impl Default for VimState {
             message: None,
             replaying: 0,
             key_budget: 0,
+            normal_depth: 0,
             hay_cache: Default::default(),
             re_cache: Default::default(),
             confirm: None,
@@ -562,6 +565,17 @@ impl VimState {
         self.drain(host, false);
     }
 
+    /// Queue keys to run next, ahead of anything typed (a macro). The loop
+    /// already draining runs them, so a macro that plays itself (`qa...@aq`)
+    /// loops in that one loop instead of nesting a call per round, which
+    /// would overflow the stack. A runaway one stops at the key budget.
+    pub(crate) fn queue_keys(&mut self, keys: &[Key], remap: bool, from_macro: bool) {
+        if self.key_budget == 0 { self.key_budget = KEY_BUDGET; }
+        for (i, &key) in keys.iter().enumerate() {
+            self.typeahead.insert(i, Typed { key, remap, from_macro });
+        }
+    }
+
     /// Run keys as if typed, synchronously (`:normal`, macros, tests).
     pub(crate) fn feed_keys(&mut self, host: &mut dyn Host, keys: &[Key], remap: bool, from_macro: bool) {
         // Nested calls (`:normal` inside a macro) share the outer budget.
@@ -595,8 +609,13 @@ impl VimState {
         let mut timed_out = timed_out;
         while !self.typeahead.is_empty() {
             if self.key_budget == 0 {
+                let in_macro = self.typeahead.iter().any(|t| t.from_macro);
                 self.typeahead.clear();
-                self.set_error("E223: recursive mapping");
+                self.set_error(if in_macro {
+                    "E223: macro stopped after 200000 keys (does it call itself with nothing to stop it?)"
+                } else {
+                    "E223: recursive mapping"
+                });
                 break;
             }
             self.key_budget -= 1;
@@ -628,7 +647,10 @@ impl VimState {
             }
             self.map_wait_since = None;
             let t = self.typeahead.pop_front().unwrap();
+            // Keys a macro replays do not record changes for `.`.
+            if t.from_macro { self.replaying += 1; }
             self.process(host, t.key);
+            if t.from_macro { self.replaying -= 1; }
             if self.error_in_replay {
                 self.error_in_replay = false;
                 self.abort_macro();

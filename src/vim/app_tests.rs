@@ -750,3 +750,20 @@ fn the_command_line_opens_from_a_sidebar_with_no_file_open() {
     assert_eq!(app.active_pane, ActivePane::Explorer);
 }
 
+
+#[test]
+fn x_and_zz_close_an_unchanged_buffer_without_a_name() {
+    // Vim writes only a changed buffer: on the last, unchanged tab they quit.
+    for cmd in [":x<CR>", "ZZ"] {
+        let mut app = vim_app("abc");
+        let mut quit = false;
+        for key in super::keys::parse(cmd, &[]) {
+            quit |= crate::input_keyboard::handle_keyboard_event(&mut app, key.to_event());
+        }
+        assert!(quit, "{cmd} quits");
+    }
+    // A changed one still needs a name.
+    let mut app = vim_app("abc");
+    keys(&mut app, "x:x<CR>");
+    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.starts_with("E32")));
+}

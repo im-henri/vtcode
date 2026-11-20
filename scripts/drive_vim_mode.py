@@ -771,6 +771,31 @@ def scenario_no_file_open(e, d):
     return results
 
 
+def scenario_crlf(e, d):
+    path = d / "a.txt"
+    def disk():
+        return path.read_bytes()
+    results = []
+    # Case change over two lines, then :w: no doubled "\r".
+    e.keys("gUj:w" + CR)
+    results.append(("gUj and :w keep CRLF line ends", wait_for(e, lambda: disk() == b"ALPHA\r\nGAMMA\r\nbeta\r\n")))
+    # Lines added with o and Enter are written with CRLF too.
+    e.keys("Gonew" + ESC + "A" + CR + "end" + ESC + ":w" + CR)
+    results.append(("o and Enter write CRLF", wait_for(e, lambda: disk() == b"ALPHA\r\nGAMMA\r\nbeta\r\nnew\r\nend\r\n")))
+    # :s over a line break joins lines without leaving a "\r".
+    e.keys("gg:s/\\n/ /" + CR + ":w" + CR)
+    results.append((":s/\\n/ / joins cleanly", wait_for(e, lambda: disk() == b"ALPHA GAMMA\r\nbeta\r\nnew\r\nend\r\n")))
+    # Ctrl+S saves from Normal and from Insert mode.
+    e.keys("x")
+    e.process.write(ctrl("s"))
+    results.append(("Ctrl+S saves in Normal mode", wait_for(e, lambda: disk().startswith(b"LPHA GAMMA\r\n"))))
+    e.keys("i!")
+    e.process.write(ctrl("s"))
+    results.append(("Ctrl+S saves in Insert mode", wait_for(e, lambda: disk().startswith(b"!LPHA GAMMA\r\n"))))
+    e.keys(ESC)
+    return results
+
+
 SCENARIOS = [
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
@@ -801,6 +826,7 @@ SCENARIOS = [
     (":cd", scenario_cd, {"a.txt": "alpha\ngamma\n", "sub/inner.txt": "inside\n"}),
     ("feedback", scenario_feedback, {"a.txt": "alpha\ngamma\n"}),
     ("sidebar views", scenario_sidebar_views, {"a.txt": "alpha\n"}),
+    ("crlf", scenario_crlf, {"a.txt": "alpha\r\ngamma\r\nbeta\r\n"}),
     ("no file open", scenario_no_file_open, {"a.txt": "alpha\n", "@nofile": ""}),
 ]
 

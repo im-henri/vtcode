@@ -388,6 +388,10 @@ Supported beyond the basics include:
   completion; `:cd -` goes back and `:pwd` shows it. Opening another folder
   (`:VT open_folder`) starts from that folder again.
 - **The quickfix list is the Problems panel** (TODO markers and diagnostics).
+- **`\n` after the last line.** Vim lets a pattern's `\n` match the end of
+  the last line, even in a file without a final line break; VTCode has no
+  line break there to match. Elsewhere `\n` works as in Vim, and in files
+  with Windows (CRLF) line endings it matches the whole `\r\n`.
 
 ### Run any VTCode command
 

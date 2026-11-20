@@ -51,21 +51,44 @@ fn split_bar(line: &str) -> Vec<String> {
     {
         return vec![line.to_string()];
     }
-    let mut parts = Vec::new();
-    let mut cur = String::new();
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' && chars.peek() == Some(&'|') {
+    // `:s/pat/rep/`: the pattern and replacement are taken as they are (a
+    // `|` there is part of them, and `\|` is alternation), as Vim's do_sub
+    // skips them before looking for a `|`.
+    let is_sub = !name.is_empty() && "substitute".starts_with(name.as_str());
+    let mut skip_to = 0;
+    if is_sub {
+        let at = line.len() - trimmed.len() + trimmed.find(name.as_str()).unwrap_or(0) + name.len();
+        if let Some(delim) = line[at..].chars().next().filter(|d| !d.is_alphanumeric() && !matches!(d, ' ' | '"' | '|' | '\\')) {
+            let start = at + delim.len_utf8();
+            // Without a closing delimiter the rest of the line is the argument.
+            skip_to = line.len();
+            let mut seen = 0;
+            let mut it = line[start..].char_indices();
+            while let Some((off, ch)) = it.next() {
+                if ch == '\\' { it.next(); continue; }
+                if ch == delim {
+                    seen += 1;
+                    if seen == 2 { skip_to = start + off + ch.len_utf8(); break; }
+                }
+            }
+        }
+    }
+    let mut cur = line[..skip_to].to_string();
+    let mut chars = line[skip_to..].char_indices().peekable();
+    while let Some((off, c)) = chars.next() {
+        if c == '\\' && chars.peek().map(|p| p.1) == Some('|') {
             cur.push('|');
             chars.next();
         } else if c == '|' {
-            parts.push(std::mem::take(&mut cur));
+            // The next command decides for itself how it takes a `|`.
+            let mut parts = vec![cur];
+            parts.extend(split_bar(&line[skip_to + off + 1..]));
+            return parts;
         } else {
             cur.push(c);
         }
     }
-    parts.push(cur);
-    parts
+    vec![cur]
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +334,9 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         "write" | "update" | "wq" | "xit" | "exit" => {
             let path = (!arg_trim.is_empty()).then(|| arg_trim.to_string());
             let write = match full {
-                "update" | "xit" | "exit" => host.ed_ref().is_some_and(|e| e.modified || e.file_path.is_none()) || path.is_some(),
+                // As in Vim, only a changed buffer is written: `:x` and `ZZ`
+                // on an unchanged one just close it, named or not.
+                "update" | "xit" | "exit" => host.ed_ref().is_some_and(|e| e.modified) || path.is_some(),
                 _ => true,
             };
             if let Some(cmd) = arg_trim.strip_prefix('!').filter(|_| full == "write") {
@@ -1033,7 +1058,21 @@ fn substitute(vim: &mut VimState, host: &mut dyn Host, range: &Range, cmd: &str,
     let mut lines = std::collections::BTreeSet::new();
     let at_end = be >= hay.len();
     let in_block = |s: usize| s >= bs && (s < be || (at_end && s == be));
-    for caps in re.re.captures_iter(&hay).filter(|c| c.get(0).is_some_and(|m| in_block(m.start()))) {
+    // Search from the first line of the range, not the top of the buffer: a
+    // match starting on the line above (`\n\n` at its end) must not swallow
+    // one that starts in the range.
+    let mut all = Vec::new();
+    let mut pos = bs;
+    while pos <= hay.len() {
+        let Some(caps) = re.re.captures_at(&hay, pos) else { break; };
+        let whole = caps.get(0).unwrap();
+        if !in_block(whole.start()) { break; }
+        pos = if whole.end() > whole.start() { whole.end() } else {
+            whole.end() + hay[whole.end()..].chars().next().map_or(1, char::len_utf8)
+        };
+        all.push(caps);
+    }
+    for caps in all {
         let whole = caps.get(0).unwrap();
         let m = if re.zs { caps.name("vzs").unwrap_or(whole) } else { whole };
         if !in_block(m.start()) { continue; }
@@ -1068,11 +1107,11 @@ fn substitute(vim: &mut VimState, host: &mut dyn Host, range: &Range, cmd: &str,
         ed.cursor_col = 0;
     }
     let mut tx = Tx::default();
-    // The cursor goes to the line of the last substitution, counting lines
-    // added or removed by the earlier ones.
+    // The cursor goes to the line where the last substitution's text ends,
+    // counting lines added or removed by the earlier ones.
     let mut last_line = start_line;
-    if let Some((s, _, _)) = found.last() {
-        let mut delta = 0isize;
+    if let Some((s, _, last_rep)) = found.last() {
+        let mut delta = last_rep.matches('\n').count() as isize;
         for (ms, me, rep) in &found[..found.len() - 1] {
             let removed = ed.rope.slice(*ms..*me).chars().filter(|&c| c == '\n').count() as isize;
             delta += rep.matches('\n').count() as isize - removed;
@@ -1247,6 +1286,15 @@ fn global(vim: &mut VimState, host: &mut dyn Host, range: &Range, invert: bool, 
 fn normal(vim: &mut VimState, host: &mut dyn Host, range: &Range, arg: &str, remap: bool) -> R<()> {
     let arg = arg.strip_prefix(' ').unwrap_or(arg);
     if arg.is_empty() { return Err("E471: Argument required".into()); }
+    // Each level runs synchronously; Vim stops runaway recursion the same way.
+    if vim.normal_depth >= 20 { return Err("E192: Recursive use of :normal too deep".into()); }
+    vim.normal_depth += 1;
+    let r = normal_lines(vim, host, range, arg, remap);
+    vim.normal_depth -= 1;
+    r
+}
+
+fn normal_lines(vim: &mut VimState, host: &mut dyn Host, range: &Range, arg: &str, remap: bool) -> R<()> {
     let keys = super::keys::parse(arg, &vim.leader.clone());
     let lines: Vec<usize> = if range.given > 0 { (range.start..=range.end).collect() } else { vec![usize::MAX] };
     let multi = range.given > 0;

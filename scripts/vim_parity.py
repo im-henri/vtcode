@@ -119,6 +119,16 @@ COMMANDS = [
     "di(", "da(", "ci(X<Esc>", "ca(X<Esc>", "dit", "dat", "cit<Esc>", "yitP", "di\"", "ci\"X<Esc>", "da'", "ci'Z<Esc>",
     "dip", "yap", "dap", "cipX<Esc>", "dis", "das", "cisX<Esc>", "d2aw", "c2iwX<Esc>", "yiwviwy", "v3iwd",
     "vipd", "vapd", "vipJ", "v2apd", "vasd", "visd",
+    # Line breaks and "not" classes in patterns (CRLF buffers keep "\r").
+    # (Vim's quirks with the line break after the last line, and the cursor
+    # after a :s that joins lines, are left out: see docs/vim-mode.md.)
+    ":s/\\n/,/<CR>", ":%s/e\\n/E/<CR>", ":%s/\\S\\+/X/g<CR>", ":1s/\\n/-/<CR>u", ":1,2s/\\n/-/<CR>dd",
+    ":s/ [^ ]*/_/g<CR>", ":%s/[^a-z]/_/g<CR>", ":%s/\\w\\+$/X/<CR>", ":%s/.*/[&]/<CR>", ":1,2s/\\_s\\+/ /g<CR>",
+    ":%s/\\s*$/;/<CR>", ":%s/\\W/_/g<CR>", ":%s/\\D\\+/#/g<CR>", "/e\\n<CR>", ":s/\\n\\n/\\r/<CR>dd",
+    "/\\S\\+$<CR>", "/[^ ]$<CR>", ":%s/\\_.//<CR>", ":%s/$\\n^//<CR>", ":%s/.$//<CR>", ":%s/\\n\\(.\\)/|\\1/<CR>",
+    ":s/ /\\r/<CR>x", ":s/ /\\r/g<CR>x", ":%s/e/\\r/<CR>x", ":%s/ /\\r\\r/g<CR>x", ":s/o/<\\r>/<CR>x",
+    "qaxjq@a.", "qaA!<Esc>jq@aj.", "qadwq@aj.", "xqajq@a.", "qaqqaxj@aq@a", "qaqqa~l@aq@a", "qaxq2@a.u",
+    ":s/o\\|a/X/g<CR>", ":%s/e\\|o/[&]/g|1<CR>", ":s/ /|/g|s/|/+/<CR>", ":s#o#|#g<CR>", ":s/x/y/|norm! x<CR>",
 ]
 
 
@@ -151,6 +161,10 @@ def build_cases(filter_text):
                 # `*` on an empty line falls back to the previous search in
                 # an undocumented way; covered by unit tests instead.
                 if tname == "blank" and keys in ("*N", "#n"):
+                    continue
+                # Vim matches `\n` after the last line even when the file has
+                # no final line break; VTCode's buffer has nothing there.
+                if not eol and "\\n" in keys and cl == len(lines) - 1:
                     continue
                 name = f"{tname}@{cl},{cc}:{keys}"
                 if filter_text and filter_text not in name:

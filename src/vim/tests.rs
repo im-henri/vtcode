@@ -212,6 +212,30 @@ fn macros_record_and_replay() {
 }
 
 #[test]
+fn a_recursive_macro_runs_to_the_end_without_overflowing_the_stack() {
+    // The usual idiom: the macro plays itself and stops when `j` fails on
+    // the last line. Each round used to nest a call, so long files crashed.
+    let text = vec!["x"; 3000].join("\n");
+    let o = run(&text, (0, 0), "qaqqaA;<Esc>j@aq@a");
+    assert!(o.lines.iter().all(|l| l == "x;"), "every line done");
+    assert!(o.vim.message.is_none(), "{:?}", o.vim.message.as_ref().map(|m| &m.text));
+    // A macro with nothing to stop it ends with an error instead of hanging.
+    let o = run("abc", (0, 0), "qaqqa@aq@a");
+    assert!(o.vim.message.as_ref().is_some_and(|m| m.error && m.text.contains("macro stopped")));
+    // `.` afterwards repeats the last change, as in Vim.
+    let o = run("abc\nabc", (0, 0), "xqaqqajq@a.");
+    assert_eq!(o.lines, ["bc", "bc"]);
+}
+
+#[test]
+fn runaway_normal_recursion_stops_with_e192() {
+    // `y` runs `:normal y`, which uses the mapping again, and so on.
+    let o = run("abc", (0, 0), ":nmap y :normal y<lt>CR><CR>y");
+    let msg = o.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    assert!(msg.starts_with("E192"), "{msg}");
+}
+
+#[test]
 fn ex_commands() {
     let o = run("a1\nb2\na3", (0, 0), ":%s/a/X/<CR>");
     assert_eq!(o.lines, ["X1", "b2", "X3"]);

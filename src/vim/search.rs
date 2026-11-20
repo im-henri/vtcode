@@ -47,23 +47,23 @@ fn regex_syntax_meta(c: char) -> bool {
 fn class(c: char) -> Option<&'static str> {
     Some(match c {
         's' => r"[ \t]",
-        'S' => r"[^ \t\n]",
+        'S' => r"[^ \t\r\n]",
         'd' => r"[0-9]",
-        'D' => r"[^0-9\n]",
+        'D' => r"[^0-9\r\n]",
         'w' => r"[0-9A-Za-z_]",
-        'W' => r"[^0-9A-Za-z_\n]",
+        'W' => r"[^0-9A-Za-z_\r\n]",
         'a' => r"[A-Za-z]",
-        'A' => r"[^A-Za-z\n]",
+        'A' => r"[^A-Za-z\r\n]",
         'l' => r"[a-z]",
-        'L' => r"[^a-z\n]",
+        'L' => r"[^a-z\r\n]",
         'u' => r"[A-Z]",
-        'U' => r"[^A-Z\n]",
+        'U' => r"[^A-Z\r\n]",
         'x' => r"[0-9A-Fa-f]",
-        'X' => r"[^0-9A-Fa-f\n]",
+        'X' => r"[^0-9A-Fa-f\r\n]",
         'o' => r"[0-7]",
-        'O' => r"[^0-7\n]",
+        'O' => r"[^0-7\r\n]",
         'h' => r"[A-Za-z_]",
-        'H' => r"[^A-Za-z_\n]",
+        'H' => r"[^A-Za-z_\r\n]",
         'k' | 'i' => r"[\w]",
         'K' | 'I' => r"[\w&&[^0-9]]",
         'f' | 'F' => r"[^\s]",
@@ -103,7 +103,9 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
                 'V' => { magic = Magic::VeryNo; at_start = start_before; continue; }
                 'c' => { case = Some(false); at_start = start_before; continue; }
                 'C' => { case = Some(true); at_start = start_before; continue; }
-                'n' => out.push_str(r"\n"),
+                // A line break: lines in a CRLF buffer end in "\r\n". A `^`
+                // after it is the start of the next line, as in Vim.
+                'n' => { out.push_str(r"(?:\r?\n)"); at_start = true; }
                 't' => out.push_str(r"\t"),
                 'e' => out.push_str(r"\x1b"),
                 'r' => out.push_str(r"\r"),
@@ -130,10 +132,10 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
                     let Some(&k) = chars.get(i) else { return Err("E63: Invalid use of \\_".into()); };
                     i += 1;
                     match k {
-                        '.' => out.push_str(r"(?s:.)"),
+                        '.' => out.push_str(r"(?:\r\n|(?s:.))"),
                         '^' => out.push('^'),
                         '$' => out.push('$'),
-                        's' => out.push_str(r"[ \t\n]"),
+                        's' => out.push_str(r"[ \t\r\n]"),
                         '[' => {
                             let (cls, used) = bracket(&chars[i..], true)?;
                             out.push_str(&cls);
@@ -143,9 +145,9 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
                             Some(cls) => {
                                 let inner = &cls[1..cls.len() - 1];
                                 if let Some(neg) = inner.strip_prefix('^') {
-                                    out.push_str(&format!("[^{}]", neg.trim_end_matches(r"\n")));
+                                    out.push_str(&format!("[^{}]", neg.trim_end_matches(r"\r\n")));
                                 } else {
-                                    out.push_str(&format!("[{inner}\\n]"));
+                                    out.push_str(&format!("[{inner}\\r\\n]"));
                                 }
                             }
                             None => return Err("E63: Invalid use of \\_".into()),
@@ -197,6 +199,7 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
                 let at_end = i + 1 == chars.len()
                     || chars[i + 1..].starts_with(&['\\', '|'])
                     || chars[i + 1..].starts_with(&['\\', ')'])
+                    || chars[i + 1..].starts_with(&['\\', 'n'])
                     || (magic == Magic::Very && matches!(chars.get(i + 1), Some('|' | ')')));
                 if at_end || magic == Magic::Very { out.push('$'); } else { out.push_str(r"\$"); }
                 i += 1;
@@ -304,7 +307,8 @@ fn special(chars: &[char], i: usize, depth: &mut i32, opts: &Options<'_>) -> Res
 fn bracket(chars: &[char], newline: bool) -> Result<(String, usize), String> {
     let mut out = String::from("[");
     let mut i = 0;
-    if chars.first() == Some(&'^') {
+    let negated = chars.first() == Some(&'^');
+    if negated {
         out.push('^');
         i += 1;
     }
@@ -331,7 +335,7 @@ fn bracket(chars: &[char], newline: bool) -> Result<(String, usize), String> {
                 let Some(&n) = chars.get(i) else { out.push_str(r"\\"); continue; };
                 i += 1;
                 match n {
-                    'n' => out.push_str(r"\n"),
+                    'n' => out.push_str(r"\r\n"),
                     't' => out.push_str(r"\t"),
                     'e' => out.push_str(r"\x1b"),
                     'r' => out.push_str(r"\r"),
@@ -348,8 +352,8 @@ fn bracket(chars: &[char], newline: bool) -> Result<(String, usize), String> {
             c => out.push(c),
         }
     }
-    if newline {
-        out.push_str(r"\n");
+    if newline != negated {
+        out.push_str(r"\r\n");
     }
     out.push(']');
     Ok((out, i))
