@@ -655,6 +655,31 @@ fn profile_large_workspace_stress() {
     log("huge.rs settle after typing", until_stable(&mut app, &mut term));
 }
 
+/// Worker-side phases of a large Git compare, on the stress profile's data.
+#[test]
+#[ignore = "manual diff preparation phase profile"]
+fn profile_diff_preparation_phases() {
+    let source = std::fs::read_to_string(repo().join("src/app.rs")).unwrap();
+    let base: String = std::iter::repeat_n(source.as_str(), 9).collect();
+    let target: String = base.lines().enumerate().filter(|(i, _)| i % 499 != 7)
+        .map(|(i, line)| if i % 61 == 3 { format!("{line} // edited\n") } else { format!("{line}\n") }).collect();
+    let rope = ropey::Rope::from_str(&target);
+    for round in 0..3 {
+        let started = Instant::now();
+        let text = rope.to_string();
+        let stringified = started.elapsed();
+        let diff = crate::app::compute_file_diff(&base, &text);
+        let diffed = started.elapsed();
+        let cache = crate::app::DiffRenderCache::new(&diff);
+        let cached = started.elapsed();
+        let markers = crate::app_git_display::target_line_markers_from_compare_diff(&diff, rope.len_lines());
+        let marked = started.elapsed();
+        std::hint::black_box((cache, markers));
+        eprintln!("PROFILE diff phases #{round} lines={}: to_string {stringified:?}, compute_file_diff {:?}, render cache {:?}, markers {:?}",
+            diff.len(), diffed - stringified, cached - diffed, marked - cached);
+    }
+}
+
 #[test]
 #[ignore = "manual Explorer expansion phase profile"]
 fn profile_explorer_expand_phases() {

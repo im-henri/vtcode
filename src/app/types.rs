@@ -43,9 +43,14 @@ impl InlayHintDisplay {
 pub(crate) fn compute_file_diff(base: &str, target: &str) -> Vec<(char, String)> {
     use similar::{ChangeTag, TextDiff};
     // Normalize line endings so CRLF/LF differences don't mark every line as changed.
-    let base_normalized = base.replace("\r\n", "\n").replace('\r', "\n");
-    let target_normalized = target.replace("\r\n", "\n").replace('\r', "\n");
-    let diff = TextDiff::from_lines(&base_normalized, &target_normalized);
+    // Most files have no CR at all; skip both whole-text copies for them.
+    fn normalize(text: &str) -> std::borrow::Cow<'_, str> {
+        if memchr::memchr(b'\r', text.as_bytes()).is_none() { return text.into(); }
+        text.replace("\r\n", "\n").replace('\r', "\n").into()
+    }
+    let base_normalized = normalize(base);
+    let target_normalized = normalize(target);
+    let diff = TextDiff::from_lines(base_normalized.as_ref(), target_normalized.as_ref());
     let mut result = Vec::new();
     for change in diff.iter_all_changes() {
         let kind = match change.tag() {
@@ -414,22 +419,21 @@ impl AlignedDiffRow {
         right_text: String,
         right_char_highlights: Option<Vec<bool>>,
     ) -> Self {
-        let left_text_index = DiffTextIndex::new(&left_text);
-        let right_text_index = DiffTextIndex::new(&right_text);
-        let left_highlight_hash = crate::highlight::Highlighter::line_hash(
-            left_text_index.window(
-                &left_text,
-                0,
-                crate::highlight::MAX_SYNTAX_LINE_CHARS,
-            ),
-        );
-        let right_highlight_hash = crate::highlight::Highlighter::line_hash(
-            right_text_index.window(
-                &right_text,
-                0,
-                crate::highlight::MAX_SYNTAX_LINE_CHARS,
-            ),
-        );
+        let prepare = |text: &str| {
+            let index = DiffTextIndex::new(text);
+            let hash = crate::highlight::Highlighter::line_hash(
+                index.window(text, 0, crate::highlight::MAX_SYNTAX_LINE_CHARS),
+            );
+            (index, hash)
+        };
+        let (left_text_index, left_highlight_hash) = prepare(&left_text);
+        // Unchanged rows, nearly all of a typical diff, show the same text on
+        // both sides; reuse its index and hash instead of scanning it twice.
+        let (right_text_index, right_highlight_hash) = if right_text == left_text {
+            (left_text_index.clone(), left_highlight_hash)
+        } else {
+            prepare(&right_text)
+        };
         Self {
             hidden_lines: 0,
             left_kind,
@@ -1110,7 +1114,9 @@ impl DiffRenderCache {
 /// Align unified diff lines into side-by-side rows with spacer lines.
 /// This keeps matching lines at the same visual height in both panes.
 pub(crate) fn align_diff_rows(diff_lines: &[(char, String)]) -> Vec<AlignedDiffRow> {
-    let mut rows: Vec<AlignedDiffRow> = Vec::new();
+    // Rows are large; a paired delete/insert shares one, so this bound never
+    // reallocates (and avoids copying the growing vector on huge diffs).
+    let mut rows: Vec<AlignedDiffRow> = Vec::with_capacity(diff_lines.len());
     let mut left_line = 0usize;
     let mut right_line = 0usize;
     let mut i = 0usize;
