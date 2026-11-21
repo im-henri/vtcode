@@ -429,6 +429,19 @@ impl App {
                     self.notify("Zen Mode: Off");
                 }
             }
+            "toggle_diff_algorithm" => {
+                use crate::{diff_algorithm::DiffAlgorithm, settings::SettingsScope};
+                let algorithm = match self.diff_algorithm {
+                    DiffAlgorithm::Smart => DiffAlgorithm::Classic,
+                    DiffAlgorithm::Classic => DiffAlgorithm::Smart,
+                };
+                let scope = if self.settings_workspace.diff_algorithm.is_some() {
+                    SettingsScope::Workspace
+                } else {
+                    SettingsScope::Global
+                };
+                self.save_diff_algorithm(scope, algorithm);
+            }
             "toggle_diff_layout" => {
                 if !self.should_render_diff_for_active_editor() {
                     return true;

@@ -375,13 +375,14 @@ fn tree_text(
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_history(
     file_path: PathBuf,
     info: &Commit,
     line: usize,
     limit: u64,
 ) -> Result<History, String> {
-    prepare_history_at(file_path, info, line, limit, None)
+    prepare_history_at(file_path, info, line, limit, None, Default::default())
 }
 
 pub(crate) fn revision_for(
@@ -552,8 +553,10 @@ fn prepare_history_at(
     line: usize,
     limit: u64,
     source: Option<&Revision>,
+    algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) -> Result<History, String> {
-    read_history_at(file_path,info,line,limit,source).map(prepare_history_contents)
+    read_history_at(file_path, info, line, limit, source)
+        .map(|contents| prepare_history_contents(contents, algorithm))
 }
 
 pub(crate) fn read_history_at(
@@ -619,19 +622,18 @@ pub(crate) fn read_history_at(
     })
 }
 
-pub(crate) fn prepare_history_contents(source: HistoryContents) -> History {
+pub(crate) fn prepare_history_contents(
+    source: HistoryContents,
+    algorithm: crate::diff_algorithm::DiffAlgorithm,
+) -> History {
     let HistoryContents { file_path, hash, summary, before_label, after_label, before, after, line, revision, previous_revision } = source;
     let contents = Rope::from_str(&after);
     let line = git_row_to_line(&contents,line).min(contents.len_lines().saturating_sub(1));
-    let diff_lines = crate::app::compute_file_diff(&before,&after);
-    let render_cache = crate::app::DiffRenderCache::new(&diff_lines);
-    let target_line_markers = crate::app_git_display::target_line_markers_from_compare_diff(&diff_lines,contents.len_lines());
+    let diff = crate::background::PreparedDiffRefresh::new(
+        before.into(), &after, contents.len_lines(), algorithm,
+    );
     History { file_path, hash, summary, before_label, after_label, contents, line, revision, previous_revision,
-        diff: crate::background::PreparedDiffRefresh { base_content: before.into(),
-            diff_lines,
-            render_cache,
-            target_line_markers,
-        },
+        diff,
     }
 }
 
@@ -664,16 +666,14 @@ pub(crate) fn open_previous(app: &mut App, line: usize) {
     let sender = app.source_control_sender();
     app.notify("Opening previous version…");
     let remote = app.remote_workspace.clone();
+    let algorithm = app.diff_algorithm;
     app.background.spawn("blame-history", move || {
         if sender.is_cancelled() { return; }
         let result = if let Some(remote) = remote {
-            remote.blame_history(&path, &commit, original_line, limit, revision.as_deref()).map_err(|error| error.to_string())
-        } else { match revision.as_deref() {
-            Some(revision) => {
-                prepare_history_at(path, &commit, original_line, limit, Some(revision))
-            }
-            None => prepare_history(path, &commit, original_line, limit),
-        } }
+            remote.blame_history(&path, &commit, original_line, limit, revision.as_deref(), algorithm).map_err(|error| error.to_string())
+        } else {
+            prepare_history_at(path, &commit, original_line, limit, revision.as_deref(), algorithm)
+        }
         .map(|mut history| {
             history.line = (history.line + git_subrow(&source, line))
                 .min(history.contents.len_lines().saturating_sub(1));

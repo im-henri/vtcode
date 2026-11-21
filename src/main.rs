@@ -155,6 +155,7 @@ mod basic_file_safety_tests;
 mod basic_operations_audit_tests;
 mod editor;
 mod editor_ai_review;
+mod diff_algorithm;
 mod diff_context;
 mod diff_wrap;
 mod diff_selection;

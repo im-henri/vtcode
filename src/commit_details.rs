@@ -248,13 +248,19 @@ pub(crate) struct CommitDiff {
     pub prepared: crate::background::PreparedDiffRefresh,
 }
 
-pub(crate) fn load_diff(
+#[cfg(test)]
+pub(crate) fn load_diff(root: &Path, hash: &str, file: &CommitFile, limit: u64) -> Result<CommitDiff, String> {
+    load_diff_with_algorithm(root, hash, file, limit, Default::default())
+}
+
+fn load_diff_with_algorithm(
     root: &Path,
     hash: &str,
     file: &CommitFile,
     limit: u64,
+    algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) -> Result<CommitDiff, String> {
-    Ok(prepare_diff(read_diff(root, hash, file, limit)?))
+    Ok(prepare_diff_with_algorithm(read_diff(root, hash, file, limit)?, algorithm))
 }
 
 /// Repository reads happen beside the files; comparison and render preparation
@@ -330,25 +336,25 @@ pub(crate) fn read_diff(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_diff(contents: DiffContents) -> CommitDiff {
+    prepare_diff_with_algorithm(contents, Default::default())
+}
+
+pub(crate) fn prepare_diff_with_algorithm(
+    contents: DiffContents,
+    algorithm: crate::diff_algorithm::DiffAlgorithm,
+) -> CommitDiff {
     let DiffContents { path, base, target, labels } = contents;
-    let diff_lines = crate::app::compute_file_diff(&base, &target);
-    let target = ropey::Rope::from_str(&target);
-    let render_cache = crate::app::DiffRenderCache::new(&diff_lines);
-    let target_line_markers = crate::app_git_display::target_line_markers_from_compare_diff(
-        &diff_lines,
-        target.len_lines(),
+    let target_rope = ropey::Rope::from_str(&target);
+    let prepared = crate::background::PreparedDiffRefresh::new(
+        base.into(), &target, target_rope.len_lines(), algorithm,
     );
     CommitDiff {
         path,
-        target,
+        target: target_rope,
         labels,
-        prepared: crate::background::PreparedDiffRefresh {
-            base_content: base.into(),
-            diff_lines,
-            render_cache,
-            target_line_markers,
-        },
+        prepared,
     }
 }
 
@@ -752,14 +758,15 @@ impl App {
         let sender = self.source_control_sender();
         let remote = self.remote_workspace.clone();
         let log = self.git_output();
+        let algorithm = self.diff_algorithm;
         self.background.spawn("commit-diff", move || {
             if sender.is_cancelled() || open.as_ref().is_some_and(CancellationToken::is_cancelled) {
                 return;
             }
             let operation = remote.is_none().then(|| crate::git_output::native(&log, "Read commit diff", &root));
             let result = match remote {
-                Some(remote) => remote.commit_diff(&root, hash, file, limit).map_err(|error| error.to_string()),
-                None => load_diff(&root, &hash, &file, limit),
+                Some(remote) => remote.commit_diff(&root, hash, file, limit, algorithm).map_err(|error| error.to_string()),
+                None => load_diff_with_algorithm(&root, &hash, &file, limit, algorithm),
             };
             if let Some(operation) = &operation {
                 operation.result(&result, |_| "Commit diff prepared".into());
@@ -829,6 +836,9 @@ impl App {
         let selected = self.commit_details.selected_file() == Some(result.file);
         if selected { self.commit_details.diff_loading = false; }
         match result.result {
+            Ok(diff) if diff.prepared.render_cache.algorithm != self.diff_algorithm => {
+                self.queue_commit_review_file(result.file);
+            }
             Ok(diff) => {
                 self.commit_details.review.errors.remove(&result.file);
                 if selected {

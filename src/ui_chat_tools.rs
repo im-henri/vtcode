@@ -212,6 +212,7 @@ pub(super) fn body(
     c: &ThemeColors,
     open: bool,
     syntax: ChatSyntax<'_>,
+    diff_algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) {
     let input = tool.raw_input.as_ref().map(decoded);
     let input = input.as_deref();
@@ -288,7 +289,7 @@ pub(super) fn body(
                 }
             }
             p::ToolCallContent::Diff(diff) => {
-                diff_rows(rows, diff, width, c, if open { 200 } else { 6 })
+                diff_rows(rows, diff, width, c, if open { 200 } else { 6 }, diff_algorithm)
             }
             p::ToolCallContent::Terminal(terminal) => plain(
                 rows,

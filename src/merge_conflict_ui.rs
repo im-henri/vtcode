@@ -334,6 +334,7 @@ impl App {
                     .clone()
                     .unwrap_or_else(|| "[Untitled]".into());
                 let sender = self.background.sender.clone();
+                let algorithm = self.diff_algorithm;
                 self.background
                     .read_for_file("merge-compare", &path, true, move || {
                         let current = source
@@ -348,8 +349,8 @@ impl App {
                                 region.incoming(),
                             ))
                             .into();
-                        let lines = crate::app::compute_file_diff(&current, &incoming.to_string());
-                        let cache = crate::app::DiffRenderCache::new(&lines);
+                        let lines = crate::diff_algorithm::file_diff(&current, &incoming.to_string(), algorithm);
+                        let cache = crate::app::DiffRenderCache::with_algorithm(&lines, algorithm);
                         let _ = sender.send(crate::background::BackgroundResult::MergeComparison(
                             Comparison {
                                 view,

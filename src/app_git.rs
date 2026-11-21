@@ -1115,6 +1115,7 @@ impl App {
             last_disk_modified: editor.last_disk_modified,
         };
         let target_rope = editor.rope.clone();
+        let algorithm = self.diff_algorithm;
         let staged = self.tabs.get(self.active_tab)
             .and_then(|tab| self.diff_tabs.staged_for_tab(tab));
         let file_name = editor.file_display_name().into_owned();
@@ -1138,9 +1139,10 @@ impl App {
                     let is_new_file = staged.is_some() && base.is_none();
                     let base_content = base.unwrap_or_default();
                     let comparison_target = target_snapshot.as_ref().unwrap_or(&target_rope);
-                    let diff_lines = crate::app::compute_file_diff(&base_content, &comparison_target.to_string());
-                    let render_cache = crate::app::DiffRenderCache::new(&diff_lines);
-                    let target_line_markers = crate::app_git_display::target_line_markers_from_compare_diff(&diff_lines, comparison_target.len_lines());
+                    let crate::background::PreparedDiffRefresh { base_content, diff_lines, render_cache, target_line_markers } =
+                        crate::background::PreparedDiffRefresh::new(
+                            base_content, &comparison_target.to_string(), comparison_target.len_lines(), algorithm,
+                        );
                     Ok(crate::background::PreparedGitCompare { source_revisions, target_snapshot, is_new_file, base_content, file_name, diff_lines, render_cache, target_line_markers })
                 })();
                 let _ = sender.send(crate::background::BackgroundResult::GitCompare { target, result });
@@ -1175,14 +1177,9 @@ impl App {
                 let base_content = base_content.unwrap_or_default();
                 let comparison_target = target_snapshot.as_ref().unwrap_or(&target_rope);
                 if sender.is_cancelled() { return Err("Git comparison cancelled".into()); }
-                let target_content = comparison_target.to_string();
-                let diff_lines =
-                    crate::app::compute_file_diff(base_content.as_ref(), &target_content);
-                let render_cache = crate::app::DiffRenderCache::new(&diff_lines);
-                let target_line_markers =
-                    crate::app_git_display::target_line_markers_from_compare_diff(
-                        &diff_lines,
-                        comparison_target.len_lines(),
+                let crate::background::PreparedDiffRefresh { base_content, diff_lines, render_cache, target_line_markers } =
+                    crate::background::PreparedDiffRefresh::new(
+                        base_content, &comparison_target.to_string(), comparison_target.len_lines(), algorithm,
                     );
                 let file_name = relative
                     .file_name()

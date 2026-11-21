@@ -383,6 +383,7 @@ impl App {
             PaletteCommand { name: "Indentation: Toggle Tabs/Spaces".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_indent_mode") },
             PaletteCommand { name: "Indentation: Reindent Lines".into(), shortcut: String::new(), id: Cow::Borrowed("reindent_lines") },
             PaletteCommand { name: "View: Toggle Diff View".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_diff_view") },
+            PaletteCommand { name: "View: Toggle Diff Algorithm (Smart / Classic)".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_diff_algorithm") },
             PaletteCommand { name: "View: Toggle Diff Layout (Side by Side / Inline)".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_diff_layout") },
             PaletteCommand { name: "View: Compare Active File with Tab...".into(), shortcut: String::new(), id: Cow::Borrowed("compare_with_tab") },
             PaletteCommand { name: "View: Compare with Git (Saved Version)".into(), shortcut: String::new(), id: Cow::Borrowed("compare_with_git") },

@@ -363,6 +363,7 @@ impl workspace::Workspace {
         line: usize,
         limit: u64,
         source: Option<&native::Revision>,
+        algorithm: crate::diff_algorithm::DiffAlgorithm,
     ) -> io::Result<native::History> {
         let command = Command::BlameHistory {
             file: self.remote_path(path)?,
@@ -390,7 +391,7 @@ impl workspace::Workspace {
                 .previous_revision
                 .map(|revision| revision.for_client(self))
                 .transpose()?,
-        }))
+        }, algorithm))
     }
     fn decode_snapshot(&self, snapshot: Snapshot) -> io::Result<native::Snapshot> {
         let revision = snapshot.revision.for_client(self)?;

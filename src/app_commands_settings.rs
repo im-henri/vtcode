@@ -608,6 +608,8 @@ impl App {
                 ["Inherit", "None", "Boundary", "Selection", "Trailing", "All"]
                     .into_iter().map(str::to_string).collect(),
             ),
+            "diff_algorithm" => Some(crate::diff_algorithm::DiffAlgorithm::ALL
+                .into_iter().map(|algorithm| algorithm.label().into()).collect()),
             "sidebar_pos" => Some(vec!["Left".to_string(), "Right".to_string()]),
             "activity_bar_position" => Some(vec!["Top".into(), "Left".into()]),
             "rulers" => Some(vec![
@@ -846,6 +848,14 @@ impl App {
         }
         self.flush_live_settings();
         self.settings_dropdown_committed = true;
+        if id == "diff_algorithm" {
+            if let Some(algorithm) = crate::diff_algorithm::DiffAlgorithm::ALL.into_iter()
+                .find(|algorithm| algorithm.label() == value)
+            {
+                self.save_diff_algorithm(self.settings_scope, algorithm);
+            }
+            return;
+        }
         let scoped_before = self.selected_scope_settings();
         self.apply_setting_value(id, &scoped_before);
         match id {

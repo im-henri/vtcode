@@ -199,6 +199,7 @@ impl App {
             .filter(|_| crate::remote::workspace::is_view_key(&target.path));
         let sender = self.background.sender.clone();
         let activity_path = target.path.clone();
+        let algorithm = self.diff_algorithm;
         self.background
             .read_for_file("save-conflict-diff", &activity_path, true, move || {
                 let result = (|| {
@@ -213,21 +214,12 @@ impl App {
                     if cancel.is_cancelled() {
                         return Err(io::ErrorKind::Interrupted.into());
                     }
-                    let lines = crate::app::compute_file_diff(&disk_text, &source.to_string());
-                    let render_cache = crate::app::DiffRenderCache::new(&lines);
-                    let markers = crate::app_git_display::target_line_markers_from_compare_diff(
-                        &lines,
-                        source.len_lines(),
-                    );
                     Ok(Prepared {
                         encoding,
                         missing,
-                        diff: PreparedDiffRefresh {
-                            base_content: disk_text,
-                            diff_lines: lines,
-                            render_cache,
-                            target_line_markers: markers,
-                        },
+                        diff: PreparedDiffRefresh::new(
+                            disk_text, &source.to_string(), source.len_lines(), algorithm,
+                        ),
                     })
                 })()
                 .map_err(|error: io::Error| error.to_string());

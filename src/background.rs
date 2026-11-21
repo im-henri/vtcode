@@ -305,6 +305,21 @@ pub struct PreparedDiffRefresh {
     pub target_line_markers: Vec<char>,
 }
 
+impl PreparedDiffRefresh {
+    pub(crate) fn new(
+        base_content: Arc<str>,
+        target: &str,
+        line_count: usize,
+        algorithm: crate::diff_algorithm::DiffAlgorithm,
+    ) -> Self {
+        let diff_lines = crate::diff_algorithm::file_diff(&base_content, target, algorithm);
+        let render_cache = crate::app::DiffRenderCache::with_algorithm(&diff_lines, algorithm);
+        let target_line_markers =
+            crate::app_git_display::target_line_markers_from_compare_diff(&diff_lines, line_count);
+        Self { base_content, diff_lines, render_cache, target_line_markers }
+    }
+}
+
 /// Replacement output for an editor that stayed open while work happened on
 /// a Rope snapshot. The UI applies it only if the source version still matches.
 pub struct OpenFileReplaceResult {

@@ -7,7 +7,7 @@ fn tool_links_use_schema_locations_and_hide_remote_view_key_roots() {
     let tool: p::ToolCall = serde_json::from_value(serde_json::json!({"toolCallId":"view", "title":"Read file", "kind":"read", "status":"completed", "locations":[{"path":key,"line":7}], "rawInput":{"path":"/node/original.rs", "view_range":[3,4]}})).unwrap();
     assert_eq!(tools::location(&tool), Some((key.clone(), Some(7))));
     let mut rows = Vec::new();
-    tools::body(&mut rows, &tool, 100, &app.colors, true, None);
+    tools::body(&mut rows, &tool, 100, &app.colors, true, None, app.diff_algorithm);
     let text: String = rows.iter().map(|row| row.line.to_string()).collect();
     assert!(text.contains("dir/colon:file.rs:8"), "{text}");
     assert!(!text.contains(char::from(0u8)) && !text.contains("vtcode-remote") && !text.contains("/node/original.rs"));

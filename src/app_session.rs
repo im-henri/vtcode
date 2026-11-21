@@ -183,6 +183,7 @@ impl App {
             comment_whitespace_mode: Some(self.comment_whitespace_mode.map_or("inherit", |mode| mode.name()).to_lowercase()),
             read_only: Some(self.default_read_only),
             diff_side_by_side: Some(self.preferred_diff_mode == crate::app::DiffMode::SideBySide),
+            diff_algorithm: Some(self.diff_algorithm),
             theme: Some(theme_name),
             workbench_color_customizations: self.settings_effective.workbench_color_customizations.clone(),
             show_explorer: Some(show_explorer),
@@ -341,6 +342,9 @@ impl App {
 
     /// Apply a Settings struct to the app
     pub(crate) fn apply_settings(&mut self, s: &Settings) {
+        if let Some(algorithm) = s.diff_algorithm {
+            self.set_diff_algorithm(algorithm);
+        }
         if let Some(side_by_side) = s.diff_side_by_side {
             self.preferred_diff_mode = if side_by_side { crate::app::DiffMode::SideBySide } else { crate::app::DiffMode::Inline };
         }
@@ -906,6 +910,7 @@ impl App {
         // the live default, so compare with both it and the previous stack.
         let current = self.current_settings();
         let mut applied = settings.clone();
+        applied.diff_algorithm = Some(settings.diff_algorithm.unwrap_or_default());
         macro_rules! preserve_document_overrides {
             ($($field:ident),+ $(,)?) => {
                 $(if settings.$field == self.settings_effective.$field

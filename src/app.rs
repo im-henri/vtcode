@@ -32,7 +32,7 @@ pub(crate) type OverviewChangeRowsKey = (
 pub(crate) type CursorWordKey = (u64, usize, usize, u64);
 
 pub(crate) use types::{
-    compute_file_diff, default_keybindings, ActivePane, AlignedDiffRow, AutoSaveMode,
+    default_keybindings, ActivePane, AlignedDiffRow, AutoSaveMode,
     CallHierarchyEntry, CallHierarchyMode, ContextMenuItem, CursorStyle, DiffBaseRevision,
     DiffLabels, DiffMode, DiffRenderCache, DiffScopeLineSummary, EditorGroup, ExtensionPaletteAction, ExtensionViewTabRef,
     GitBranchPickerItem, GitCommitInfo, GitCommitReference, GitFileChange, GlobalSearchResult, InlayHintDisplay, KeyBinding, NotifyLevel,
@@ -40,6 +40,8 @@ pub(crate) use types::{
     SourceControlRepositoryState, SplitDirection, SplitNode, SymbolItem, Tab, TabDropZone, TabKind, TabTextColor,
     TerminalDock, TerminalTab, TypeHierarchyMode, WhitespaceMode,
 };
+#[cfg(test)]
+pub(crate) use types::compute_file_diff;
 pub(crate) use types::{contains_ignore_case, fuzzy_match, fuzzy_match_indices, fuzzy_match_score};
 
 #[derive(Default)]
@@ -633,6 +635,7 @@ pub(crate) struct App {
     pub diff_mode: DiffMode,
     /// Last chosen diff layout, restored from settings and retained when closing comparisons.
     pub(crate) preferred_diff_mode: DiffMode,
+    pub(crate) diff_algorithm: crate::diff_algorithm::DiffAlgorithm,
     pub(crate) diff_inline_scroll: crate::inline_diff::InlineDiffScroll,
     pub(crate) diff_selection: crate::diff_selection::DiffSelection,
     pub(crate) diff_scope_source: crate::diff_scope_source::DiffScopeSource,
@@ -1671,6 +1674,7 @@ impl App {
             exit_confirm_buttons: Vec::new(),
             diff_mode: DiffMode::Off,
             preferred_diff_mode: DiffMode::SideBySide,
+            diff_algorithm: Default::default(),
             diff_inline_scroll: crate::inline_diff::InlineDiffScroll::default(),
             diff_selection: crate::diff_selection::DiffSelection::default(),
             diff_scope_source: crate::diff_scope_source::DiffScopeSource::default(),
@@ -3563,6 +3567,10 @@ impl App {
                     has_visual_changes = true;
                     match result {
                         Ok(prepared) => {
+                            if prepared.render_cache.algorithm != self.diff_algorithm {
+                                self.start_pending_git_compare_for_path(&target.file_path);
+                                continue;
+                            }
                             self.pending_git_compare_path = None;
                             self.set_source_control_diff_revisions(prepared.source_revisions);
                             if let Some(rope) = prepared.target_snapshot {
@@ -3668,6 +3676,10 @@ impl App {
                     has_visual_changes = true;
                     match result {
                         Ok(prepared) => {
+                            if prepared.render_cache.algorithm != self.diff_algorithm {
+                                self.refresh_compare_diff();
+                                continue;
+                            }
                             let initial_result = self.compare_diff_target_version.is_none();
                             self.compare_base_content = Some(prepared.base_content);
                             self.pending_compare_base_rope = None;

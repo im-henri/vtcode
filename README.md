@@ -27,6 +27,8 @@ Built in Rust for Windows and Linux. Under active development.
 
 Filesystem-driven Git updates wait for 600 ms of quiet, with updates about every two seconds during sustained builds. Batches containing only ignored files or hidden untracked files skip worktree status scans. Open files reload promptly, and saves, Git actions, and manual refreshes bypass this delay.
 
+The default **Smart** diff uses distinctive lines to align revisions, pairs related edits even when lines were inserted nearby, and highlights changes within words. Move markers show where a block left (→) and where it arrived (←). Choose **Classic** in **Settings → Source Control → Diff Algorithm** to use the original Myers diff, or switch from the command palette with **View: Toggle Diff Algorithm (Smart / Classic)**.
+
 Large-repository status refreshes automatically use the installed Git executable for faster scans, with bundled libgit2 as a fallback when Git is unavailable. Startup shows the repository and current branch first, then its changes while remaining repositories are discovered, including over SSH. Remote status scans use a separate queue so discovery cannot hold up staging or diff requests.
 
 Navigating back to Source Control reuses watched status, with complete revalidation after 30 seconds. Index-only changes update staged files without reloading commit history or branch counts. Repository discovery caches inherited ignore rules using Explorer's matcher and reuses directory listings to avoid redundant Git metadata probes.

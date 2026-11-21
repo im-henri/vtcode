@@ -86,6 +86,7 @@ struct DiffRefreshRequest {
     revisions: Option<crate::git_diff_sources::Revisions>,
     dirty: Dirty,
     cache_current: bool,
+    algorithm: crate::diff_algorithm::DiffAlgorithm,
 }
 
 pub(crate) struct SourceControlDiffUpdate {
@@ -205,27 +206,23 @@ fn finish_refresh(request: DiffRefreshRequest, base: Arc<str>, target: crate::ed
             diff: None,
         });
     }
-    let diff_lines = crate::app::compute_file_diff(&base, &target.rope.to_string());
-    let render_cache = DiffRenderCache::new(&diff_lines);
-    let target_line_markers = crate::app_git_display::target_line_markers_from_compare_diff(
-        &diff_lines,
-        target.rope.len_lines(),
+    let diff = crate::background::PreparedDiffRefresh::new(
+        base, &target.rope.to_string(), target.rope.len_lines(), request.algorithm,
     );
     Ok(SourceControlDiffContent {
         revisions,
         target,
         target_changed,
         missing,
-        diff: Some(crate::background::PreparedDiffRefresh {
-            base_content: base,
-            diff_lines,
-            render_cache,
-            target_line_markers,
-        }),
+        diff: Some(diff),
     })
 }
 
 impl DiffTabs {
+    pub(crate) fn is_source_control_diff(&self, id: u64) -> bool {
+        self.source_control.contains_key(&id)
+    }
+
     pub(crate) fn row_scroll_mut(&mut self, kind: TabKind) -> Option<&mut crate::inline_diff::InlineDiffScroll> {
         let id = match kind {
             TabKind::Diff(id) => id,
@@ -381,6 +378,39 @@ impl DiffViewState {
 }
 
 impl App {
+    pub(crate) fn save_diff_algorithm(
+        &mut self,
+        scope: crate::settings::SettingsScope,
+        algorithm: crate::diff_algorithm::DiffAlgorithm,
+    ) {
+        match self.patch_settings_scope(scope, "diffEditor.diffAlgorithm", |settings| {
+            settings.diff_algorithm = Some(algorithm);
+        }) {
+            Ok(()) => self.notify(format!("Diff Algorithm: {}", self.diff_algorithm.label())),
+            Err(error) => self.notify_error(format!("Could not save diff algorithm: {error}")),
+        }
+    }
+
+    pub(crate) fn set_diff_algorithm(&mut self, algorithm: crate::diff_algorithm::DiffAlgorithm) {
+        if self.diff_algorithm == algorithm { return; }
+        self.diff_algorithm = algorithm;
+        self.diff_tabs.recent.entries.clear();
+        // Rebuild displayed rows from their existing snapshots. If a Git or
+        // disk refresh is in flight, its invalidated result requeues that I/O.
+        for (&id, origin) in &mut self.diff_tabs.source_control {
+            origin.epoch = origin.epoch.wrapping_add(1);
+            self.diff_tabs.dirty.insert(id);
+        }
+        self.clear_commit_review_files();
+        self.commit_details.review.expanded_context.clear();
+        self.clear_commit_diff_view();
+        if self.is_commit_details_tab() {
+            self.request_commit_diff();
+        }
+        self.refresh_dirty_source_control_diffs();
+        self.refresh_compare_diff();
+    }
+
     fn cached_commit_review_diff(
         &mut self, file: usize,
     ) -> Option<(&mut DiffViewState, &mut crate::editor::Editor)> {
@@ -598,15 +628,16 @@ impl App {
             if let Some(tab) = tab {
                 let TabKind::Diff(id) = tab.kind else { return; };
                 if !self.diff_tabs.dirty.contains(&id) || tab.editor.bg_loading { return; }
-                let (base, version, pending) = if self.diff_tabs.owner == Some(id) {
+                let (base, version, pending, algorithm) = if self.diff_tabs.owner == Some(id) {
                     (
                         self.compare_base_content.as_ref(),
                         self.compare_diff_target_version,
                         self.pending_git_compare_path.is_some(),
+                        self.diff_render_cache.algorithm,
                     )
                 } else {
                     let Some(view) = self.diff_tabs.views.get(&id) else { return; };
-                    (view.base.as_ref(), view.target_version, view.pending)
+                    (view.base.as_ref(), view.target_version, view.pending, view.cache.algorithm)
                 };
                 if pending { return; }
                 let (Some(base), Some(path), Some(origin)) = (base, &tab.editor.file_path, self.diff_tabs.source_control.get(&id)) else { return; };
@@ -622,7 +653,8 @@ impl App {
                     missing: tab.editor.disk_unavailable,
                     revisions: origin.revisions,
                     dirty: origin.dirty,
-                    cache_current: version == Some(tab.editor.content_version),
+                    cache_current: version == Some(tab.editor.content_version) && algorithm == self.diff_algorithm,
+                    algorithm: self.diff_algorithm,
                 });
             }
         };
@@ -805,6 +837,9 @@ impl App {
                     let version = Some(editor.content_version);
                     let cache = Arc::new(diff.render_cache);
                     if active {
+                        if self.diff_render_cache.algorithm != cache.algorithm {
+                            self.clear_diff_selection();
+                        }
                         // Supersede any older generic refresh of this view.
                         self.diff_refresh_generation = self.diff_refresh_generation.wrapping_add(1);
                         self.bg_diff_refresh_running = false;
@@ -816,6 +851,9 @@ impl App {
                     } else if let Some(view) = self.diff_tabs.views.get_mut(&id) {
                         view.scope_source.forget_original_view(&mut self.animations);
                         view.scope_source = Default::default();
+                        if view.cache.algorithm != cache.algorithm {
+                            view.selection = Default::default();
+                        }
                         view.base = Some(diff.base_content);
                         view.lines = diff.diff_lines;
                         view.cache = cache;
@@ -1302,14 +1340,23 @@ impl App {
         self.open_previewable_tab(tab, self.enable_preview_tabs);
         self.clear_diff_state();
         self.diff_tabs.owner = Some(id);
-        self.compare_base_content = Some(diff.old_text.clone().unwrap_or_default().into());
-        self.set_compare_diff_lines(crate::app::compute_file_diff(diff.old_text.as_deref().unwrap_or_default(), &diff.new_text));
-        self.compare_diff_target_version = self.editor().map(|e| e.content_version);
-        self.compare_diff_base_revision = Some(DiffBaseRevision::Snapshot);
+        let base: Arc<str> = diff.old_text.as_deref().unwrap_or_default().into();
+        self.compare_base_content = Some(base.clone());
         self.diff_labels = Some(DiffLabels::new("Before agent edit", "Agent result"));
         self.diff_target_path = Some(diff.path.clone());
         self.diff_tab_label = Some(format!("{} (Agent diff)", self.tabs[self.active_tab].editor.file_display_name()));
         self.diff_mode = self.preferred_diff_mode;
+        if base.len() + diff.new_text.len() > 256 * 1024 {
+            self.refresh_compare_diff();
+        } else {
+            let prepared = crate::background::PreparedDiffRefresh::new(
+                base,
+                &diff.new_text,
+                self.editor().map_or(0, |editor| editor.rope.len_lines()),
+                self.diff_algorithm,
+            );
+            self.apply_prepared_compare_diff(prepared.diff_lines, prepared.render_cache, prepared.target_line_markers);
+        }
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;
         self.touch_tab_mru(self.active_tab);

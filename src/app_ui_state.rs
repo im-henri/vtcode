@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use crate::app::{compute_file_diff, ActivePane, App, DiffMode, NotifyLevel, SidebarView};
+use crate::app::{ActivePane, App, DiffMode, NotifyLevel, SidebarView};
+#[cfg(test)]
+use crate::app::compute_file_diff;
 
 pub(crate) const BINARY_DIFF_MESSAGE: &str = "Diff is unavailable for binary files.";
 
@@ -957,9 +959,15 @@ impl App {
 
     pub(crate) fn refresh_compare_diff(&mut self) {
         if self.rendering_background_window { return; }
-        // Live Source Control tabs refresh both revisions together, including
-        // inactive tabs. The generic comparer handles fixed snapshots/files.
-        if self.active_diff_tab_id().is_some() {
+        let algorithm = self.diff_algorithm;
+        let algorithm_changed = self.diff_render_cache.algorithm != algorithm;
+        // Live Source Control tabs refresh both revisions together. Fixed
+        // snapshot tabs only need an initial build or a change of algorithm.
+        if let Some(id) = self.active_diff_tab_id()
+            && (self.compare_diff_target_version.is_some() && !algorithm_changed
+                || id == crate::diff_tabs::COMMIT_DIFF_ID
+                || self.diff_tabs.is_source_control_diff(id))
+        {
             return;
         }
         if self.diff_mode != DiffMode::Off
@@ -977,13 +985,13 @@ impl App {
         let Some(editor) = self.editor() else {
             return;
         };
-        if editor.bg_loading || editor.large_file_mode {
+        if editor.bg_loading || editor.large_file_mode && !algorithm_changed {
             return;
         }
 
         let target_version = Some(editor.content_version);
         let base_revision = self.compare_base_revision();
-        if self.compare_diff_target_version == target_version
+        if !algorithm_changed && self.compare_diff_target_version == target_version
             && self.compare_diff_base_revision == Some(base_revision)
         {
             return;
@@ -1070,20 +1078,9 @@ impl App {
                         loaded.rope.to_string().into()
                     }
                 };
-                let target_content = target_rope.to_string();
-                let diff_lines = compute_file_diff(base_content.as_ref(), &target_content);
-                let render_cache = crate::app::DiffRenderCache::new(&diff_lines);
-                let target_line_markers =
-                    crate::app_git_display::target_line_markers_from_compare_diff(
-                        &diff_lines,
-                        target.line_count,
-                    );
-                Ok(crate::background::PreparedDiffRefresh {
-                    base_content,
-                    diff_lines,
-                    render_cache,
-                    target_line_markers,
-                })
+                Ok(crate::background::PreparedDiffRefresh::new(
+                    base_content, &target_rope.to_string(), target.line_count, algorithm,
+                ))
             })();
             let _ = sender.send(crate::background::BackgroundResult::DiffRefresh {
                 target,
@@ -1172,12 +1169,13 @@ impl App {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn set_compare_diff_lines(&mut self, compare_diff_lines: Vec<(char, String)>) {
         let target_line_markers = crate::app_git_display::target_line_markers_from_compare_diff(
             &compare_diff_lines,
             self.editor().map_or(0, |editor| editor.rope.len_lines()),
         );
-        let render_cache = crate::app::DiffRenderCache::new(&compare_diff_lines);
+        let render_cache = crate::app::DiffRenderCache::with_algorithm(&compare_diff_lines, self.diff_algorithm);
         self.apply_prepared_compare_diff(compare_diff_lines, render_cache, target_line_markers);
     }
 
@@ -1192,6 +1190,9 @@ impl App {
     ) {
         let target_version = self.editor().map(|editor| editor.content_version);
         let base_revision = self.compare_base_revision();
+        if self.diff_render_cache.algorithm != render_cache.algorithm {
+            self.clear_diff_selection();
+        }
         self.compare_diff_lines = compare_diff_lines;
         self.diff_render_cache = std::sync::Arc::new(render_cache);
         self.compare_diff_target_version = target_version;

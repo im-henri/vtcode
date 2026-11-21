@@ -532,6 +532,7 @@ impl workspace::Workspace {
         hash: String,
         file: crate::commit_details::CommitFile,
         limit: u64,
+        algorithm: crate::diff_algorithm::DiffAlgorithm,
     ) -> io::Result<crate::commit_details::CommitDiff> {
         let repo = self.remote_path(root)?;
         let Reply::CommitDiff(diff) = self.client.call(Command::CommitDiff {
@@ -543,13 +544,14 @@ impl workspace::Workspace {
         else {
             return Err(io::Error::other("Invalid commit diff reply"));
         };
-        Ok(crate::commit_details::prepare_diff(
+        Ok(crate::commit_details::prepare_diff_with_algorithm(
             crate::commit_details::DiffContents {
                 path: self.view_key(&diff.path),
                 base: diff.base,
                 target: diff.target,
                 labels: diff.labels,
             },
+            algorithm,
         ))
     }
     pub(crate) fn git_sources(

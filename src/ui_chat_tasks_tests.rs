@@ -424,6 +424,7 @@ fn tasks_tool_cards_use_checklists_instead_of_raw_todo_json() {
             "Local agent",
             None,
             detail,
+            app.diff_algorithm,
         );
         let text: String = rows.iter().map(|row| row.line.to_string()).collect();
         assert!(text.contains("TODOs 1/2"));

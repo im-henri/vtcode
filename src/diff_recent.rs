@@ -128,7 +128,9 @@ impl App {
             editor.horizontal_scroll, editor.wrap_scroll_offset);
         if self.diff_tabs.owner == Some(id) { self.suspend_diff_tab(); }
         let Some(mut view) = self.diff_tabs.views.remove(&id) else { return; };
-        if view.pending || view.base.is_none() || view.target_version != Some(version) {
+        if view.pending || view.base.is_none() || view.target_version != Some(version)
+            || view.cache.algorithm != self.diff_algorithm
+        {
             view.scope_source.forget_original_view(&mut self.animations);
             return;
         }

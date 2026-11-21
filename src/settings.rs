@@ -131,6 +131,8 @@ pub struct Settings {
     pub read_only: Option<bool>,
     #[serde(rename = "diffEditor.renderSideBySide", skip_serializing_if = "Option::is_none")]
     pub diff_side_by_side: Option<bool>,
+    #[serde(rename = "diffEditor.diffAlgorithm", skip_serializing_if = "Option::is_none")]
+    pub(crate) diff_algorithm: Option<crate::diff_algorithm::DiffAlgorithm>,
 
     // Appearance
     pub theme: Option<String>,
@@ -461,6 +463,7 @@ impl Settings {
             comment_whitespace_mode: other.comment_whitespace_mode.clone().or_else(|| self.comment_whitespace_mode.clone()),
             read_only: other.read_only.or(self.read_only),
             diff_side_by_side: other.diff_side_by_side.or(self.diff_side_by_side),
+            diff_algorithm: other.diff_algorithm.or(self.diff_algorithm),
             theme: other.theme.clone().or_else(|| self.theme.clone()),
             workbench_color_customizations: crate::theme_customizations::merge(&self.workbench_color_customizations, &other.workbench_color_customizations),
             show_explorer: other.show_explorer.or(self.show_explorer),

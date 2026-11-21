@@ -38,30 +38,11 @@ impl InlayHintDisplay {
     }
 }
 
-/// Compute a unified diff between two file contents using the `similar` crate.
-/// Returns a Vec of (kind, text) where kind is ' ' (equal), '+' (added in target), '-' (removed from base).
+use crate::diff_algorithm::{self, DiffAlgorithm};
+
+#[cfg(test)]
 pub(crate) fn compute_file_diff(base: &str, target: &str) -> Vec<(char, String)> {
-    use similar::{ChangeTag, TextDiff};
-    // Normalize line endings so CRLF/LF differences don't mark every line as changed.
-    // Most files have no CR at all; skip both whole-text copies for them.
-    fn normalize(text: &str) -> std::borrow::Cow<'_, str> {
-        if memchr::memchr(b'\r', text.as_bytes()).is_none() { return text.into(); }
-        text.replace("\r\n", "\n").replace('\r', "\n").into()
-    }
-    let base_normalized = normalize(base);
-    let target_normalized = normalize(target);
-    let diff = TextDiff::from_lines(base_normalized.as_ref(), target_normalized.as_ref());
-    let mut result = Vec::new();
-    for change in diff.iter_all_changes() {
-        let kind = match change.tag() {
-            ChangeTag::Equal => ' ',
-            ChangeTag::Delete => '-',
-            ChangeTag::Insert => '+',
-        };
-        let text = change.value().trim_end_matches(['\n', '\r']).to_string();
-        result.push((kind, text));
-    }
-    result
+    diff_algorithm::file_diff(base, target, DiffAlgorithm::default())
 }
 
 /// Compute per-character diff highlights for a pair of old/new lines.
@@ -93,11 +74,13 @@ pub(crate) fn compute_char_diff(old: &str, new: &str) -> (Vec<bool>, Vec<bool>) 
 pub(crate) struct AlignedDiffRow {
     pub hidden_lines: usize,
     pub left_kind: char,
+    pub left_moved: bool,
     pub left_line: Option<usize>,
     pub left_text: String,
     /// Per-char highlight flags for left text (true = changed char, use highlight color)
     pub left_char_highlights: Option<Vec<bool>>,
     pub right_kind: char,
+    pub right_moved: bool,
     pub right_line: Option<usize>,
     pub right_text: String,
     /// Per-char highlight flags for right text (true = changed char, use highlight color)
@@ -437,10 +420,12 @@ impl AlignedDiffRow {
         Self {
             hidden_lines: 0,
             left_kind,
+            left_moved: false,
             left_line,
             left_text,
             left_char_highlights,
             right_kind,
+            right_moved: false,
             right_line,
             right_text,
             right_char_highlights,
@@ -565,6 +550,7 @@ pub(crate) enum DiffBaseRevision {
 /// rendered frame.
 #[derive(Clone, Debug)]
 pub(crate) struct DiffRenderCache {
+    pub algorithm: DiffAlgorithm,
     /// Bounded original/target headers survive scrolling and compact views.
     pub syntax_first_lines: [String; 2],
     pub context_lines: Option<usize>,
@@ -593,6 +579,7 @@ pub(crate) struct DiffRenderCache {
 impl Default for DiffRenderCache {
     fn default() -> Self {
         Self {
+            algorithm: DiffAlgorithm::default(),
             syntax_first_lines: Default::default(),
             context_lines: None,
             expanded_context: Vec::new(),
@@ -619,7 +606,12 @@ impl Default for DiffRenderCache {
 }
 
 impl DiffRenderCache {
+    #[cfg(test)]
     pub(crate) fn new(diff_lines: &[(char, String)]) -> Self {
+        Self::with_algorithm(diff_lines, DiffAlgorithm::default())
+    }
+
+    pub(crate) fn with_algorithm(diff_lines: &[(char, String)], algorithm: DiffAlgorithm) -> Self {
         let syntax_first_lines = ['-', '+'].map(|side| {
             let mut line = diff_lines.iter()
                 .find(|(kind, _)| *kind == ' ' || *kind == side)
@@ -629,7 +621,7 @@ impl DiffRenderCache {
             line
         });
         let syntax_hashes = syntax_first_lines.each_ref().map(|line| crate::highlight::Highlighter::line_hash(line));
-        let mut rows = align_diff_rows(diff_lines);
+        let mut rows = align_diff_rows_with_algorithm(diff_lines, algorithm);
         let max_left_line = rows
             .iter()
             .filter_map(|row| row.left_line)
@@ -741,6 +733,7 @@ impl DiffRenderCache {
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
         Self {
+            algorithm,
             syntax_first_lines,
             context_lines: None,
             expanded_context: Vec::new(),
@@ -1047,6 +1040,7 @@ impl DiffRenderCache {
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
         Self {
+            algorithm: self.algorithm,
             syntax_first_lines: self.syntax_first_lines.clone(),
             context_lines: Some(context),
             expanded_context: expanded.to_vec(),
@@ -1111,102 +1105,113 @@ impl DiffRenderCache {
     }
 }
 
-/// Align unified diff lines into side-by-side rows with spacer lines.
-/// This keeps matching lines at the same visual height in both panes.
+#[cfg(test)]
 pub(crate) fn align_diff_rows(diff_lines: &[(char, String)]) -> Vec<AlignedDiffRow> {
-    // Rows are large; a paired delete/insert shares one, so this bound never
-    // reallocates (and avoids copying the growing vector on huge diffs).
-    let mut rows: Vec<AlignedDiffRow> = Vec::with_capacity(diff_lines.len());
-    let mut left_line = 0usize;
-    let mut right_line = 0usize;
-    let mut i = 0usize;
+    align_diff_rows_with_algorithm(diff_lines, DiffAlgorithm::Classic)
+}
 
-    while i < diff_lines.len() {
-        let (kind, text) = &diff_lines[i];
-        match *kind {
-            ' ' => {
-                rows.push(AlignedDiffRow::new(
-                    ' ',
-                    Some(left_line),
-                    text.clone(),
-                    None,
-                    ' ',
-                    Some(right_line),
-                    text.clone(),
-                    None,
-                ));
-                left_line += 1;
-                right_line += 1;
-                i += 1;
-            }
-            '-' => {
-                let mut deletes: Vec<String> = Vec::new();
-                while i < diff_lines.len() && diff_lines[i].0 == '-' {
-                    deletes.push(diff_lines[i].1.clone());
-                    i += 1;
-                }
+/// Align unified diff lines into side-by-side rows with spacer lines.
+fn align_diff_rows_with_algorithm(
+    diff_lines: &[(char, String)],
+    algorithm: DiffAlgorithm,
+) -> Vec<AlignedDiffRow> {
+    let moved = (algorithm == DiffAlgorithm::Smart)
+        .then(|| diff_algorithm::moved_lines(diff_lines))
+        .flatten();
+    let mut rows = Vec::with_capacity(diff_lines.len());
+    let (mut left_line, mut right_line, mut i) = (0, 0, 0);
 
-                let mut inserts: Vec<String> = Vec::new();
-                while i < diff_lines.len() && diff_lines[i].0 == '+' {
-                    inserts.push(diff_lines[i].1.clone());
-                    i += 1;
-                }
+    while let Some((kind, text)) = diff_lines.get(i) {
+        if *kind == ' ' {
+            rows.push(AlignedDiffRow::new(
+                ' ', Some(left_line), text.clone(), None,
+                ' ', Some(right_line), text.clone(), None,
+            ));
+            left_line += 1;
+            right_line += 1;
+            i += 1;
+            continue;
+        }
 
-                let max_len = deletes.len().max(inserts.len());
-                for idx in 0..max_len {
-                    let (left_kind, left_idx, left_text) = if idx < deletes.len() {
-                        ('-', Some(left_line + idx), deletes[idx].clone())
-                    } else {
-                        (' ', None, String::new())
-                    };
-                    let (right_kind, right_idx, right_text) = if idx < inserts.len() {
-                        ('+', Some(right_line + idx), inserts[idx].clone())
-                    } else {
-                        (' ', None, String::new())
-                    };
-                    // Compute char-level diff for paired delete/insert lines
-                    let (left_char_highlights, right_char_highlights) =
-                        if idx < deletes.len() && idx < inserts.len() {
-                            let (lh, rh) = compute_char_diff(&deletes[idx], &inserts[idx]);
-                            (Some(lh), Some(rh))
-                        } else {
-                            (None, None)
-                        };
-                    rows.push(AlignedDiffRow::new(
-                        left_kind,
-                        left_idx,
-                        left_text,
-                        left_char_highlights,
-                        right_kind,
-                        right_idx,
-                        right_text,
-                        right_char_highlights,
-                    ));
+        let start = i;
+        while diff_lines.get(i).is_some_and(|(kind, _)| *kind == '-') {
+            i += 1;
+        }
+        let middle = i;
+        while diff_lines.get(i).is_some_and(|(kind, _)| *kind == '+') {
+            i += 1;
+        }
+        if start == i {
+            i += 1;
+            continue;
+        }
+
+        let deletes = &diff_lines[start..middle];
+        let inserts = &diff_lines[middle..i];
+        let emit = |rows: &mut Vec<_>, left, right, paired| {
+            let (left_idx, left_text, left_moved) = diff_line_side(deletes, left, left_line, moved.as_deref(), start);
+            let (right_idx, right_text, right_moved) = diff_line_side(inserts, right, right_line, moved.as_deref(), middle);
+            let (left_highlights, right_highlights) = if paired {
+                let (old, new) = match algorithm {
+                    DiffAlgorithm::Smart => diff_algorithm::word_highlights(&left_text, &right_text),
+                    DiffAlgorithm::Classic => compute_char_diff(&left_text, &right_text),
+                };
+                (Some(old), Some(new))
+            } else {
+                (None, None)
+            };
+            let mut row = AlignedDiffRow::new(
+                if left_idx.is_some() { '-' } else { ' ' }, left_idx, left_text, left_highlights,
+                if right_idx.is_some() { '+' } else { ' ' }, right_idx, right_text, right_highlights,
+            );
+            row.left_moved = left_moved;
+            row.right_moved = right_moved;
+            rows.push(row);
+        };
+
+        if algorithm == DiffAlgorithm::Smart {
+            let (old_moved, new_moved) = moved.as_ref().map_or(
+                (&[][..], &[][..]),
+                |moved| (&moved[start..middle], &moved[middle..i]),
+            );
+            let pairs = diff_algorithm::replacement_pairs(deletes, inserts, old_moved, new_moved);
+            let (mut left, mut right) = (0, 0);
+            for (next_left, next_right) in pairs.into_iter().chain([(deletes.len(), inserts.len())]) {
+                for offset in 0..(next_left - left).max(next_right - right) {
+                    emit(&mut rows, (left + offset < next_left).then_some(left + offset),
+                        (right + offset < next_right).then_some(right + offset), false);
                 }
-                left_line += deletes.len();
-                right_line += inserts.len();
+                if next_left < deletes.len() {
+                    emit(&mut rows, Some(next_left), Some(next_right), true);
+                }
+                left = next_left + 1;
+                right = next_right + 1;
             }
-            '+' => {
-                rows.push(AlignedDiffRow::new(
-                    ' ',
-                    None,
-                    String::new(),
-                    None,
-                    '+',
-                    Some(right_line),
-                    text.clone(),
-                    None,
-                ));
-                right_line += 1;
-                i += 1;
-            }
-            _ => {
-                i += 1;
+        } else {
+            for idx in 0..deletes.len().max(inserts.len()) {
+                let left = (idx < deletes.len()).then_some(idx);
+                let right = (idx < inserts.len()).then_some(idx);
+                emit(&mut rows, left, right, left.is_some() && right.is_some());
             }
         }
+        left_line += deletes.len();
+        right_line += inserts.len();
     }
-
     rows
+}
+
+fn diff_line_side(
+    lines: &[(char, String)],
+    index: Option<usize>,
+    line_start: usize,
+    moved: Option<&[bool]>,
+    diff_start: usize,
+) -> (Option<usize>, String, bool) {
+    index.map_or_else(
+        || (None, String::new(), false),
+        |index| (Some(line_start + index), lines[index].1.clone(),
+            moved.is_some_and(|moved| moved[diff_start + index])),
+    )
 }
 
 #[derive(Clone, Copy, PartialEq)]

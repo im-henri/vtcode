@@ -60,7 +60,7 @@ impl App {
             return 5;
         }
         match setting_id {
-            "source_control_enabled" | "source_control_show_untracked" => 9,
+            "source_control_enabled" | "source_control_show_untracked" | "diff_algorithm" => 9,
             "lsp_servers" | "lsp_enabled" | "lsp_diagnostic_delay_ms" => 8,
             "acp_agents" => 6,
             "heading_autocomplete" | "quick_suggestions" => SETTINGS_AUTOCOMPLETE_CATEGORY,
@@ -119,7 +119,7 @@ impl App {
             | "sticky_scroll_max" | "max_global_search_results" | "search_debounce_ms"
             | "cursor_surrounding_lines" | "large_file_threshold_mb"
             | "large_file_analysis_timeout_ms" => "number",
-            "theme" | "sidebar_pos" | "activity_bar_position" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" => "dropdown",
+            "theme" | "sidebar_pos" | "activity_bar_position" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" | "diff_algorithm" => "dropdown",
             "use_tabs" | "word_wrap" | "read_only" | "quick_suggestions" | "hover_enabled" | "format_on_type" | "explorer"
             | "vim_mode" | "vim_ctrl_keys" | "vim_system_clipboard"
             | "show_open_editors" | "sidebar_auto_hide" | "minimap" | "line_numbers" | "relative_lines" | "panel"
@@ -161,6 +161,7 @@ impl App {
             "lsp_enabled" => "lspEnabled",
             "source_control_enabled" => "sourceControlEnabled",
             "source_control_show_untracked" => "sourceControlShowUntracked",
+            "diff_algorithm" => "diffEditor.diffAlgorithm",
             "lsp_diagnostic_delay_ms" => "lspDiagnosticDelayMs",
             "animation_duration_ms" => "animationDurationMs",
             "animation_fps" => "animationFps",
@@ -359,7 +360,7 @@ impl App {
                 .find(|theme| theme.config_key == text)
                 .map(|theme| theme.name.clone())
                 .unwrap_or_else(|| text.to_string()),
-            "whitespace" | "comment_whitespace" | "cursor_style" | "activity_bar_position" => {
+            "whitespace" | "comment_whitespace" | "cursor_style" | "activity_bar_position" | "diff_algorithm" => {
                 let mut chars = text.chars();
                 chars
                     .next()
@@ -416,6 +417,7 @@ impl App {
             "lsp_servers" => "Set up language servers (LSP) for completion, diagnostics, navigation, and formatting. Add an executable, language ID, file patterns, arguments, and initialization options. Install the server separately. Saved servers override extension defaults for the same language.",
             "lsp_enabled" => "Enable language servers (LSP) from settings and extensions. Changes apply to open files immediately.",
             "source_control_enabled" => "Enable Git changes, history, blame and file decorations. Turn off to stop background Git work on slow or shared disks. Editing, saving and undo still work.",
+            "diff_algorithm" => "Smart detects moved lines and aligns related edits with word-level highlights. Classic uses the original Myers diff and character highlights.",
             "source_control_show_untracked" => "Show untracked files in Source Control, include them in its change count, and show their Git badges in Explorer and change markers in the editor. Turn off to skip untracked-file scanning and automatic diffs on local and SSH folders. Tracked changes stay visible. Remembered across restarts.",
             "lsp_diagnostic_delay_ms" => "Wait this many milliseconds after the last edit before displaying updated LSP problems, underlines, and error messages. Completion stays responsive. Default: 1000. Set to 0 for immediate updates (maximum 10000).",
             "tab_size" => "Number of spaces a tab character visually uses in the editor.",
@@ -871,6 +873,7 @@ impl App {
         items.push(("Enable Language Servers".into(), on_off(self.lsp_enabled), "lsp_enabled".into()));
         items.push(("Enable Source Control".into(), on_off(self.source_control_enabled), "source_control_enabled".into()));
         items.push(("Show Untracked Files".into(), on_off(self.sc_visibility.untracked), "source_control_show_untracked".into()));
+        items.push(("Diff Algorithm".into(), self.diff_algorithm.label().into(), "diff_algorithm".into()));
         items.push(("Diagnostic Delay (ms)".into(), self.lsp_manager.diagnostic_publication.delay_ms().to_string(), "lsp_diagnostic_delay_ms".into()));
         items.push(("Language Server Setup".into(), " Manage Servers… (0) ".into(), "lsp_servers".into()));
         for &(label, heading_id, effects) in ANIMATION_SECTIONS {

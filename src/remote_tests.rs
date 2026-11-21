@@ -1679,6 +1679,7 @@ fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
             hash,
             details.files[0].clone(),
             1024 * 1024,
+            Default::default(),
         )
         .unwrap();
     let key = workspace.target_key("file[1].rs").unwrap();
@@ -1985,7 +1986,7 @@ fn remote_blame_caches_committed_content_and_navigates_history_without_edit_traf
         panic!()
     };
     let history = workspace
-        .blame_history(&key, commit, 1, 1024 * 1024, None)
+        .blame_history(&key, commit, 1, 1024 * 1024, None, Default::default())
         .unwrap();
     assert_eq!(history.contents.to_string(), current);
     assert_eq!(history.diff.base_content.as_ref(), original);

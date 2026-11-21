@@ -916,6 +916,10 @@ fn theme_coverage_plain_diff_preserves_named_and_indexed_foregrounds() {
     }
 }
 
+pub(crate) fn moved_background(colors: &crate::app_theme::ThemeColors, base: Color) -> Color {
+    crate::app_theme::lerp_color(base, colors.fg_accent_blue, 0.16)
+}
+
 fn style_diff_spans(spans: &mut [Span<'_>], colors: &crate::app_theme::ThemeColors, kind: char, contrast: &mut crate::ui_colors::TextContrastCache) {
     let (highlight, border) = match kind {
         '+' => (colors.bg_diff_added_highlight, colors.ui.border_diff_added),
@@ -1035,6 +1039,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         }
 
         let bg = match status {
+            _ if diff_row.left_moved => moved_background(&app.colors, base_bg),
             '-' => app.colors.bg_diff_removed,
             '+' => app.colors.bg_diff_added,
             _ => base_bg,
@@ -1059,6 +1064,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         };
 
         let indicator = match if display.continuation == 0 { status } else { ' ' } {
+            '-' if diff_row.left_moved => Span::styled("→ ", Style::default().fg(app.colors.fg_accent_blue).bg(bg)),
             '-' => Span::styled("- ", Style::default().fg(app.colors.fg_diff_removed).bg(bg)),
             '+' => Span::styled("+ ", Style::default().fg(app.colors.fg_diff_added).bg(bg)),
             _ => Span::styled("  ", Style::default().fg(app.colors.fg_dim).bg(bg)),
@@ -1256,6 +1262,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             app.colors.bg_editor
         };
         let row_bg = match diff_row.right_kind {
+            _ if diff_row.right_moved => moved_background(&app.colors, base_bg),
             '+' => app.colors.bg_diff_added,
             '-' => app.colors.bg_diff_removed,
             _ => base_bg,
@@ -1263,6 +1270,10 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
 
         let marker_kind = if display.continuation == 0 { diff_row.right_kind } else { ' ' };
         let (diff_char, diff_style) = match marker_kind {
+            '+' if diff_row.right_moved => (
+                "←",
+                Style::default().fg(app.colors.fg_accent_blue).bg(row_bg).add_modifier(Modifier::BOLD),
+            ),
             '+' => (
                 "+",
                 Style::default()
@@ -1314,11 +1325,13 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         ]));
 
         let fg = match diff_row.right_kind {
+            _ if diff_row.right_moved => app.colors.fg_text,
             '+' => app.colors.fg_diff_added,
             '-' => app.colors.fg_diff_removed,
             _ => app.colors.fg_text,
         };
         let marker = match marker_kind {
+            '+' if diff_row.right_moved => Span::styled("← ", Style::default().fg(app.colors.fg_accent_blue).bg(row_bg)),
             '+' => Span::styled(
                 "+ ",
                 Style::default().fg(app.colors.fg_diff_added).bg(row_bg),
@@ -1694,7 +1707,10 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             None
         };
+        let moved_bg = || moved_background(&app.colors, app.colors.bg_editor);
         let (old_marker, new_marker, bg, bg_hl, fg) = match cached_row.kind {
+            '-' if aligned_row.left_moved => ("", "→", moved_bg(), moved_bg(), app.colors.fg_accent_blue),
+            '+' if aligned_row.right_moved => ("←", "", moved_bg(), moved_bg(), app.colors.fg_accent_blue),
             '-' => (
                 "",
                 "-",
@@ -1956,6 +1972,26 @@ mod tests {
             .filter_map(|x| buffer.cell((x, y)))
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn smart_diff_renders_move_arrows_in_both_layouts() {
+        let mut app = app_with_diff(
+            "begin\nmove me\nkeep one\nkeep two\nend\n",
+            "begin\nkeep one\nkeep two\nmove me\nend\n",
+        );
+        app.show_minimap = false;
+        for (mode, render) in [
+            (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
+            (DiffMode::SideBySide, draw_side_by_side_diff),
+        ] {
+            app.diff_mode = mode;
+            let mut terminal = Terminal::new(TestBackend::new(96, 14)).unwrap();
+            terminal.draw(|frame| render(frame, &mut app, frame.area())).unwrap();
+            let text: String = (0..14).map(|y| buffer_row(terminal.backend().buffer(), y, 96)).collect();
+            assert!(text.contains('→'));
+            assert!(text.contains('←'));
+        }
     }
 
     #[test]

@@ -110,6 +110,7 @@ impl ChatCache {
 
 #[derive(PartialEq)]
 struct ChatContext {
+    diff_algorithm: crate::diff_algorithm::DiffAlgorithm,
     preserve_theme_colors: bool,
     output_detail: OutputDetail,
     session: p::SessionId,
@@ -122,6 +123,7 @@ struct ChatContext {
 }
 
 struct ChatTheme<'a> {
+    diff_algorithm: crate::diff_algorithm::DiffAlgorithm,
     colors: &'a ThemeColors,
     highlighter: &'a crate::highlight::Highlighter,
     syntax_name: &'a str,
@@ -287,6 +289,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             session,
             transcript.width,
             ChatTheme {
+                diff_algorithm: app.diff_algorithm,
                 colors: &app.colors,
                 highlighter: &app.highlighter,
                 syntax_name: &app.syntax_theme,
@@ -1911,6 +1914,7 @@ impl ChatCache {
         ];
         colors.extend(c.ui.contrast_palette);
         let context = ChatContext {
+            diff_algorithm: theme.diff_algorithm,
             preserve_theme_colors: c.ui.preserve_theme_colors,
             output_detail,
             session: session.id.clone(),
@@ -1949,7 +1953,7 @@ impl ChatCache {
             {
                 continue;
             }
-            let rows = entry_rows_detail(session, index, width as usize, c, open, agent_name, syntax, output_detail)
+            let rows = entry_rows_detail(session, index, width as usize, c, open, agent_name, syntax, output_detail, theme.diff_algorithm)
                 .into_iter()
                 .map(Arc::new)
                 .collect();
@@ -1980,9 +1984,10 @@ impl ChatCache {
 
 #[cfg(test)]
 fn entry_rows(session: &Session, index: usize, width: usize, c: &ThemeColors, open: bool, agent_name: &str, syntax: ChatSyntax<'_>) -> Vec<ChatRow> {
-    entry_rows_detail(session, index, width, c, open, agent_name, syntax, OutputDetail::Compact)
+    entry_rows_detail(session, index, width, c, open, agent_name, syntax, OutputDetail::Compact, Default::default())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn entry_rows_detail(
     session: &Session,
     index: usize,
@@ -1992,6 +1997,7 @@ fn entry_rows_detail(
     agent_name: &str,
     syntax: ChatSyntax<'_>,
     output_detail: OutputDetail,
+    diff_algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) -> Vec<ChatRow> {
     let mut rows = Vec::new();
     let entry = &session.entries[index];
@@ -2104,7 +2110,7 @@ fn entry_rows_detail(
                     Some(ChatAction::ToggleEntry(index)),
                 );
                 if open || output_detail != OutputDetail::Minimal {
-                    tools::body(&mut rows, tool, width, c, open, syntax);
+                    tools::body(&mut rows, tool, width, c, open, syntax, diff_algorithm);
                 }
             }
         }
@@ -2116,7 +2122,7 @@ fn entry_rows_detail(
             }
             let diff =
                 p::Diff::new(edit.path.clone(), edit.after.clone()).old_text(edit.before.clone());
-            diff_rows(&mut rows, &diff, width, c, 8);
+            diff_rows(&mut rows, &diff, width, c, 8, diff_algorithm);
         }
         ChatEntry::Terminal(id) => {
             if let Some(terminal) = session.terminals.get(id) {
@@ -2149,7 +2155,14 @@ fn entry_rows_detail(
     rows
 }
 
-fn diff_rows(rows: &mut Vec<ChatRow>, diff: &p::Diff, width: usize, c: &ThemeColors, limit: usize) {
+fn diff_rows(
+    rows: &mut Vec<ChatRow>,
+    diff: &p::Diff,
+    width: usize,
+    c: &ThemeColors,
+    limit: usize,
+    algorithm: crate::diff_algorithm::DiffAlgorithm,
+) {
     let before = diff.old_text.as_deref().unwrap_or_default();
     // Avoid doing expensive full-file diff work on a streamed transcript frame.
     // The complete snapshots remain available in the native Review action.
@@ -2168,14 +2181,18 @@ fn diff_rows(rows: &mut Vec<ChatRow>, diff: &p::Diff, width: usize, c: &ThemeCol
         );
         return;
     }
-    let changes =
-        crate::app::compute_file_diff(diff.old_text.as_deref().unwrap_or_default(), &diff.new_text);
-    let added = changes.iter().filter(|(kind, _)| *kind == '+').count();
-    let removed = changes.iter().filter(|(kind, _)| *kind == '-').count();
+    let changes = crate::diff_algorithm::file_diff(before, &diff.new_text, algorithm);
+    let moved = (algorithm == crate::diff_algorithm::DiffAlgorithm::Smart)
+        .then(|| crate::diff_algorithm::moved_lines(&changes))
+        .flatten();
+    let changed_rows = changes.iter().enumerate().filter_map(|(index, (kind, text))| {
+        (*kind != ' ').then_some((*kind, text, moved.as_ref().is_some_and(|moved| moved[index])))
+    });
+    let added = changed_rows.clone().filter(|(kind, _, moved)| *kind == '+' && !moved).count();
+    let removed = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && !moved).count();
+    let moved_count = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && *moved).count();
     let review = ChatAction::Review(Arc::new(diff.clone()));
-    row(
-        rows,
-        Line::from(vec![
+    let mut header = vec![
             Span::styled(
                 format!(
                     "  ↗ {}  ",
@@ -2189,22 +2206,22 @@ fn diff_rows(rows: &mut Vec<ChatRow>, diff: &p::Diff, width: usize, c: &ThemeCol
                 format!("−{removed}"),
                 Style::default().fg(c.ui.fg_chat_removed),
             ),
-            Span::styled("  Review", Style::default().fg(c.fg_md_link)),
-        ]),
-        Some(review.clone()),
-        None,
-    );
-    let mut count = 0;
-    for (kind, text) in changes.iter().filter(|(kind, _)| *kind != ' ').take(limit) {
-        let (fg, bg) = if *kind == '+' {
-            (c.ui.fg_gutter_added, c.bg_diff_added)
-        } else {
-            (c.ui.fg_gutter_deleted, c.bg_diff_removed)
-        };
-        wrapped(rows, &format!("{kind} {text}"), width, fg, Some(bg));
-        count += 1;
+    ];
+    if moved_count > 0 {
+        header.push(Span::styled(format!(" ↔{moved_count}"), Style::default().fg(c.fg_accent_blue)));
     }
-    if added + removed > count {
+    header.push(Span::styled("  Review", Style::default().fg(c.fg_md_link)));
+    row(rows, Line::from(header), Some(review.clone()), None);
+    for (kind, text, moved) in changed_rows.take(limit) {
+        let (marker, fg, bg) = match (kind, moved) {
+            ('+', true) => ('←', c.fg_accent_blue, crate::ui_diff_display::moved_background(c, c.bg_sidebar)),
+            ('-', true) => ('→', c.fg_accent_blue, crate::ui_diff_display::moved_background(c, c.bg_sidebar)),
+            ('+', false) => ('+', c.ui.fg_gutter_added, c.bg_diff_added),
+            _ => ('-', c.ui.fg_gutter_deleted, c.bg_diff_removed),
+        };
+        wrapped(rows, &format!("{marker} {text}"), width, fg, Some(bg));
+    }
+    if added + removed + 2 * moved_count > limit {
         plain(rows, "  … open full diff".into(), c.fg_dim, Some(review));
     }
 }
