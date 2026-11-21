@@ -18,6 +18,9 @@ const OFFSETS: [MotionPoint; 4] = [
 ];
 const NAVIGATION_LIMIT: f32 = 16.0;
 const TYPING_LIMIT: f32 = 1.4;
+const SHORT_MOVE_START: f32 = 1.0;
+const SHORT_MOVE_FULL: f32 = 5.0;
+const SHORT_MOVE_FLOOR: f32 = 0.1;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SmearSample {
@@ -198,6 +201,16 @@ fn bound(
     )
 }
 
+/// Single-cell steps should barely smear, while jumps of a few cells or more
+/// keep the full elastic stretch. `travel` is in physical units (one row is
+/// two columns), so a one-row step is damped less than a one-column step.
+fn short_move_damping(travel: f32) -> f32 {
+    let phase =
+        ((travel - SHORT_MOVE_START) / (SHORT_MOVE_FULL - SHORT_MOVE_START)).clamp(0.0, 1.0);
+    let ease = phase * phase * (3.0 - 2.0 * phase);
+    SHORT_MOVE_FLOOR + (1.0 - SHORT_MOVE_FLOOR) * ease
+}
+
 impl SmearMotion {
     pub(crate) fn retarget(
         origin: MotionPoint,
@@ -242,8 +255,9 @@ impl SmearMotion {
         let (raw_deformation, raw_velocity) =
             unbound(deformation, deformation_velocity, limit_from);
         let center_rate = if editing { 24.0 } else { 18.0 };
-        let contrast =
-            (if editing { 0.5 } else { 0.7 }) * (0.5 + 0.5 * (travel_length / 3.0).clamp(0.0, 1.0));
+        let contrast = (if editing { 0.5 } else { 0.7 })
+            * (0.5 + 0.5 * (travel_length / 3.0).clamp(0.0, 1.0))
+            * short_move_damping(travel_length);
         let projection_extent = direction.x.abs() * 0.5 + direction.y.abs();
         let corner_rates = OFFSETS.map(|offset| {
             let projection = dot(physical(offset), direction) / projection_extent;
