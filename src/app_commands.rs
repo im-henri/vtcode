@@ -1084,6 +1084,27 @@ impl App {
                     self.notify(format!("Tab {state}"));
                 }
             }
+            id if id.strip_prefix("goto_tab_").is_some_and(|n| n.parse::<usize>().is_ok()) => {
+                let index = id["goto_tab_".len()..].parse::<usize>().unwrap_or(0);
+                if (1..=self.tabs.len()).contains(&index) {
+                    self.clear_transient_editor_state();
+                    self.active_tab = index - 1;
+                    self.active_pane = crate::app::ActivePane::Editor;
+                    self.terminal_panel_focused = false;
+                    self.validate_diff_state_for_active_tab();
+                    self.touch_tab_mru(self.active_tab);
+                }
+            }
+            "trigger_suggest" => {
+                self.update_vtcomplete_explicit();
+                if self.request_lsp_suggestions(false) {
+                    self.vtcomplete_active = false;
+                    self.completion_ui.explicit = true;
+                }
+            }
+            "trigger_parameter_hints" => {
+                self.request_lsp_suggestions(true);
+            }
             "move_tab_left" => {
                 if self.active_tab > 0 {
                     self.swap_tabs(self.active_tab, self.active_tab - 1);

@@ -599,7 +599,8 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 return;
             }
             KeyCode::Char('t' | 'T') => {
-                app.reopen_closed_tab();
+                // Alt+T is the advertised Macro: Replay default.
+                app.execute_palette_command("macro_replay");
                 return;
             }
             KeyCode::Enter => {

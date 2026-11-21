@@ -568,6 +568,12 @@ pub(crate) fn default_when(binding: &KeyBinding) -> &'static When {
         "global_search" if binding.default_modifiers == crossterm::event::KeyModifiers::ALT => {
             &NON_SHELL
         }
+        // Editor-only Alt aliases; shells and other views keep these keys.
+        "show_explorer" | "toggle_problems"
+            if binding.default_modifiers == crossterm::event::KeyModifiers::ALT =>
+        {
+            &EDITOR
+        }
         "new_terminal" | "palette" | "source_control" | "extensions" | "global_search"
         | "toggle_explorer" | "show_explorer" | "toggle_panel" | "toggle_problems" | "acp_chat"
         | "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page" | "navigate_back"

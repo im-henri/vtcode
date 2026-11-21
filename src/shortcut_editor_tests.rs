@@ -666,3 +666,57 @@ fn assignment_dialog_conflict_and_chord_previews_show_the_pending_change() {
         }
     }
 }
+
+#[test]
+fn formerly_hardcoded_aliases_work_by_default_and_follow_reassignment() {
+    let position = |app: &App, id: &str, key: &str| {
+        app.keybindings
+            .iter()
+            .position(|binding| binding.id == id && binding.display() == key)
+            .unwrap()
+    };
+    let mut app = fixture();
+    app.tabs.push(Tab::new_file(Editor::test_with_text("second\n")));
+    let text = |app: &App| app.tabs[0].editor.rope.to_string();
+    let original = text(&app);
+    app.tabs[0].editor.select_all();
+    key(&mut app, KeyCode::Char('u'), KeyModifiers::ALT);
+    assert_ne!(text(&app), original, "Alt+U default toggles case");
+    key(&mut app, KeyCode::Char('2'), KeyModifiers::ALT);
+    assert_eq!(app.active_tab, 1, "Alt+2 default opens the second editor");
+
+    let mut app = fixture();
+    app.tabs.push(Tab::new_file(Editor::test_with_text("second\n")));
+    let case = position(&app, "toggle_case", "Alt+U");
+    let tab = position(&app, "goto_tab_2", "Alt+2");
+    let delete = position(&app, "delete_line", "Alt+D");
+    app.settings_global.keybindings = Some(vec![
+        custom("toggle_case", "F7", Some(case)),
+        custom("goto_tab_2", "Ctrl+F9", Some(tab)),
+        custom("delete_line", "Unassigned", Some(delete)),
+    ]);
+    app.apply_effective_settings();
+    app.tabs[0].editor.select_all();
+    key(&mut app, KeyCode::Char('u'), KeyModifiers::ALT);
+    key(&mut app, KeyCode::Char('d'), KeyModifiers::ALT);
+    assert_eq!(text(&app), original, "reassigned defaults stop firing");
+    key(&mut app, KeyCode::F(7), KeyModifiers::NONE);
+    assert_ne!(text(&app), original);
+    key(&mut app, KeyCode::Char('2'), KeyModifiers::ALT);
+    assert_eq!(app.active_tab, 0);
+    key(&mut app, KeyCode::F(9), KeyModifiers::CONTROL);
+    assert_eq!(app.active_tab, 1);
+}
+
+#[test]
+fn alt_view_aliases_stay_in_the_editor() {
+    let app = fixture();
+    for id in ["show_explorer", "toggle_problems"] {
+        let binding = app
+            .keybindings
+            .iter()
+            .find(|binding| binding.id == id && binding.default_modifiers == KeyModifiers::ALT)
+            .unwrap();
+        assert_eq!(binding.default_when().text(), "editorTextFocus", "{id}");
+    }
+}

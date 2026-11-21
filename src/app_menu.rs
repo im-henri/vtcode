@@ -324,6 +324,8 @@ impl App {
             PaletteCommand { name: "Edit: Transform to Uppercase".into(), shortcut: String::new(), id: Cow::Borrowed("to_uppercase") },
             PaletteCommand { name: "Edit: Transform to Lowercase".into(), shortcut: String::new(), id: Cow::Borrowed("to_lowercase") },
             PaletteCommand { name: "Edit: Toggle Case".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_case") },
+            PaletteCommand { name: "Edit: Trigger Suggest".into(), shortcut: "Ctrl+Space".into(), id: Cow::Borrowed("trigger_suggest") },
+            PaletteCommand { name: "Edit: Trigger Parameter Hints".into(), shortcut: "Ctrl+Shift+Space".into(), id: Cow::Borrowed("trigger_parameter_hints") },
             PaletteCommand { name: "Edit: Trim Trailing Whitespace".into(), shortcut: String::new(), id: Cow::Borrowed("trim_trailing") },
             PaletteCommand { name: "Edit: Insert Line Above".into(), shortcut: "Alt+Enter".into(), id: Cow::Borrowed("insert_line_above") },
             PaletteCommand { name: "Edit: Insert Line Below".into(), shortcut: "Ctrl+Enter".into(), id: Cow::Borrowed("insert_line_below") },
