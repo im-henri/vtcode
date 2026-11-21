@@ -21,6 +21,8 @@ const TYPING_LIMIT: f32 = 1.4;
 const SHORT_MOVE_START: f32 = 1.0;
 const SHORT_MOVE_FULL: f32 = 5.0;
 const SHORT_MOVE_FLOOR: f32 = 0.1;
+/// Fraction of the duration over which the destination hold takes effect.
+const HOLD_FADE_IN: f32 = 0.12;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SmearSample {
@@ -254,10 +256,14 @@ impl SmearMotion {
         let limit_from = limit_to.max(norm(&deformation) * 1.0001 + 0.0001);
         let (raw_deformation, raw_velocity) =
             unbound(deformation, deformation_velocity, limit_from);
-        let center_rate = if editing { 24.0 } else { 18.0 };
-        let contrast = (if editing { 0.5 } else { 0.7 })
+        let damping = short_move_damping(travel_length);
+        // Single steps stay crisp; longer jumps glide so the head visibly
+        // travels instead of covering most of the distance in one frame.
+        let glide = (damping - SHORT_MOVE_FLOOR) / (1.0 - SHORT_MOVE_FLOOR);
+        let center_rate = if editing { 24.0 } else { 18.0 - 6.0 * glide };
+        let contrast = (if editing { 0.5 } else { 0.9 })
             * (0.5 + 0.5 * (travel_length / 3.0).clamp(0.0, 1.0))
-            * short_move_damping(travel_length);
+            * damping;
         let projection_extent = direction.x.abs() * 0.5 + direction.y.abs();
         let corner_rates = OFFSETS.map(|offset| {
             let projection = dot(physical(offset), direction) / projection_extent;
@@ -368,24 +374,47 @@ impl SmearMotion {
             scale(raw_center_velocity, finish),
             scale(center_error, finish_velocity),
         );
-        self.result(
-            std::array::from_fn(|index| {
-                add(
-                    add(center, OFFSETS[index]),
-                    cell_units(scale(deformation[index], finish)),
-                )
-            }),
-            std::array::from_fn(|index| {
-                add(
-                    center_velocity,
-                    cell_units(add(
-                        scale(velocity[index], finish),
-                        scale(deformation[index], finish_velocity),
-                    )),
-                )
-            }),
-            self.shade_direction(time / seconds),
-        )
+        let mut corners: [MotionPoint; 4] = std::array::from_fn(|index| {
+            add(
+                add(center, OFFSETS[index]),
+                cell_units(scale(deformation[index], finish)),
+            )
+        });
+        let mut velocities: [MotionPoint; 4] = std::array::from_fn(|index| {
+            add(
+                center_velocity,
+                cell_units(add(
+                    scale(velocity[index], finish),
+                    scale(deformation[index], finish_velocity),
+                )),
+            )
+        });
+        // The stretched body is centered on a lagging center, so its leading
+        // edge would otherwise sail past the destination and spring back.
+        // Hold every corner at the destination cell's leading boundary; the
+        // hold fades in so the inherited shape is untouched at a retarget.
+        let hold_phase = (time / (HOLD_FADE_IN * seconds)).clamp(0.0, 1.0);
+        let hold = hold_phase * hold_phase * (3.0 - 2.0 * hold_phase);
+        if hold > 0.0 {
+            for index in 0..4 {
+                let boundary = add(target_center, OFFSETS[index]);
+                let overshoot = dot(physical(sub(corners[index], boundary)), self.shade_to);
+                if overshoot > 0.0 {
+                    corners[index] = sub(
+                        corners[index],
+                        cell_units(scale(self.shade_to, overshoot * hold)),
+                    );
+                    let outward = dot(physical(velocities[index]), self.shade_to);
+                    if outward > 0.0 {
+                        velocities[index] = sub(
+                            velocities[index],
+                            cell_units(scale(self.shade_to, outward * hold)),
+                        );
+                    }
+                }
+            }
+        }
+        self.result(corners, velocities, self.shade_direction(time / seconds))
     }
 
     fn shade_direction(&self, progress: f32) -> MotionPoint {
@@ -685,6 +714,38 @@ mod tests {
             close(before.velocities[index], at_start.velocities[index], 0.02);
         }
         assert!(extent(&typing.sample(&settings, Duration::from_millis(64))) < 4.3);
+    }
+
+    #[test]
+    fn long_and_diagonal_jumps_never_overshoot_the_destination() {
+        let settings = AnimationSettings::default();
+        for target in [
+            MotionPoint { x: 29.0, y: 0.0 },
+            MotionPoint { x: 5.0, y: 5.0 },
+            MotionPoint { x: -12.0, y: 7.0 },
+        ] {
+            let motion = SmearMotion::retarget(MotionPoint::default(), target, None, false);
+            let direction = motion.shade_to;
+            let limit = dot(
+                physical(add(target, MotionPoint { x: 0.5, y: 0.5 })),
+                direction,
+            ) + dot(
+                physical(MotionPoint { x: 0.5, y: 0.5 }),
+                MotionPoint {
+                    x: direction.x.abs(),
+                    y: direction.y.abs(),
+                },
+            );
+            for milliseconds in 0..=240 {
+                let sample = motion.sample(&settings, Duration::from_millis(milliseconds));
+                for corner in sample.corners {
+                    assert!(
+                        dot(physical(corner), direction) <= limit + 0.001,
+                        "overshoot toward {target:?} at {milliseconds}ms"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -14,6 +14,9 @@ const SAMPLE_COUNT: f64 = (SAMPLE_COLUMNS * SAMPLE_ROWS) as f64;
 /// cap also bounds accidental oversized or synthetic polygons passed by callers.
 const MAX_RASTER_CELLS: usize = 4_096;
 const MIN_COVERAGE: f64 = 0.000_001;
+/// Fraction of subcell samples a block may get wrong before the cell is drawn
+/// as a coverage-blended full block instead.
+const SLANTED_EDGE_MISMATCH: f64 = 0.08;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SmearCell {
@@ -53,11 +56,46 @@ fn cross(a: Point, b: Point, c: Point) -> f64 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
+#[cfg(test)]
 fn convex_hull(corners: [MotionPoint; 4]) -> Polygon {
-    let mut points = corners.map(Point::from);
+    hull_of(&mut corners.map(Point::from))
+}
+
+/// Unit-cell offsets of the four ribbon corners, ordered like the corners.
+const CELL_CORNERS: [Point; 4] = [
+    Point { x: -0.5, y: -0.5 },
+    Point { x: 0.5, y: -0.5 },
+    Point { x: 0.5, y: 0.5 },
+    Point { x: -0.5, y: 0.5 },
+];
+
+/// The cursor cell swept along the ribbon: each corner names where the cell
+/// center would be if that corner were in place, and the hull of those four
+/// cells is drawn. A diagonal ribbon keeps a full cell of thickness instead of
+/// collapsing into a thin slanted stick, while axis-aligned ribbons of at
+/// least one cell are unchanged.
+fn swept_hull(corners: [MotionPoint; 4]) -> Polygon {
+    let mut points = [Point::default(); 16];
+    for (index, corner) in corners.iter().enumerate() {
+        let anchor = Point::from(*corner);
+        let center = Point {
+            x: anchor.x - CELL_CORNERS[index].x,
+            y: anchor.y - CELL_CORNERS[index].y,
+        };
+        for (offset_index, offset) in CELL_CORNERS.iter().enumerate() {
+            points[index * 4 + offset_index] = Point {
+                x: center.x + offset.x,
+                y: center.y + offset.y,
+            };
+        }
+    }
+    hull_of(&mut points)
+}
+
+fn hull_of(points: &mut [Point]) -> Polygon {
     points.sort_by(|a, b| a.x.total_cmp(&b.x).then_with(|| a.y.total_cmp(&b.y)));
     let mut lower = Polygon::empty();
-    for &point in &points {
+    for &point in points.iter() {
         while lower.len >= 2
             && cross(
                 lower.points[lower.len - 2],
@@ -393,6 +431,12 @@ fn edge_glyph(polygon: &Polygon, x: f64, y: f64, coverage: f64, centroid: Point)
             best_score = candidate_score;
         }
     }
+    // A slanted edge has no matching block. Picking the nearest one anyway
+    // gives a ragged staircase of mismatched pieces, so blend a full cell by
+    // its coverage instead: the edge then reads as a soft antialiased line.
+    if (best.mask ^ occupancy).count_ones() as f64 / SAMPLE_COUNT > SLANTED_EDGE_MISMATCH {
+        return FULL;
+    }
     best
 }
 
@@ -424,22 +468,47 @@ pub(crate) fn rasterize(
 }
 
 /// Emit cells directly without allocating a frame-sized result or hull.
+#[cfg(test)]
 pub(crate) fn rasterize_with(
     area: Rect,
     corners: [MotionPoint; 4],
     tail: MotionPoint,
     head: MotionPoint,
-    mut emit: impl FnMut(SmearCell),
+    emit: impl FnMut(SmearCell),
 ) {
-    if area.is_empty()
-        || corners
+    if finite(area, corners, tail, head) {
+        rasterize_hull(area, convex_hull(corners), tail, head, emit);
+    }
+}
+
+/// Like [`rasterize_with`], but draws the cursor cell swept along the ribbon.
+pub(crate) fn rasterize_swept_with(
+    area: Rect,
+    corners: [MotionPoint; 4],
+    tail: MotionPoint,
+    head: MotionPoint,
+    emit: impl FnMut(SmearCell),
+) {
+    if finite(area, corners, tail, head) {
+        rasterize_hull(area, swept_hull(corners), tail, head, emit);
+    }
+}
+
+fn finite(area: Rect, corners: [MotionPoint; 4], tail: MotionPoint, head: MotionPoint) -> bool {
+    !area.is_empty()
+        && corners
             .iter()
             .chain([&tail, &head])
-            .any(|point| !point.x.is_finite() || !point.y.is_finite())
-    {
-        return;
-    }
-    let hull = convex_hull(corners);
+            .all(|point| point.x.is_finite() && point.y.is_finite())
+}
+
+fn rasterize_hull(
+    area: Rect,
+    hull: Polygon,
+    tail: MotionPoint,
+    head: MotionPoint,
+    mut emit: impl FnMut(SmearCell),
+) {
     if hull.len < 3 {
         return;
     }
@@ -546,6 +615,55 @@ mod tests {
             point(right, bottom),
             point(left, bottom),
         ]
+    }
+
+    #[test]
+    fn swept_ribbon_keeps_a_full_cell_of_thickness_on_diagonals() {
+        // A thin slanted stick: trailing corner top-left, leading bottom-right.
+        let corners = [
+            point(0.0, 0.0),
+            point(2.6, 2.4),
+            point(5.0, 5.0),
+            point(2.4, 2.6),
+        ];
+        let mut thin = Vec::new();
+        rasterize_with(
+            Rect::new(0, 0, 8, 8),
+            corners,
+            point(0.0, 0.0),
+            point(5.0, 5.0),
+            |cell| thin.push(cell),
+        );
+        let mut swept = Vec::new();
+        rasterize_swept_with(
+            Rect::new(0, 0, 8, 8),
+            corners,
+            point(0.0, 0.0),
+            point(5.0, 5.0),
+            |cell| swept.push(cell),
+        );
+        let area = |cells: &[SmearCell]| cells.iter().map(|cell| cell.coverage).sum::<f32>();
+        assert!(area(&swept) > area(&thin) * 2.0);
+        // Every row the ribbon crosses holds at least one full cell of coverage.
+        for row in 0..5 {
+            let covered: f32 = swept
+                .iter()
+                .filter(|cell| cell.y == row)
+                .map(|cell| cell.coverage)
+                .sum();
+            assert!(covered >= 0.99, "row {row} covers only {covered}");
+        }
+        // A settled cell sweeps to exactly itself.
+        let mut settled = Vec::new();
+        rasterize_swept_with(
+            Rect::new(0, 0, 4, 4),
+            rectangle(1.0, 1.0, 2.0, 2.0),
+            point(1.0, 1.5),
+            point(2.0, 1.5),
+            |cell| settled.push(cell),
+        );
+        assert_eq!(settled.len(), 1);
+        assert_eq!((settled[0].x, settled[0].y, settled[0].symbol), (1, 1, "█"));
     }
 
     fn one_cell(corners: [MotionPoint; 4]) -> SmearCell {

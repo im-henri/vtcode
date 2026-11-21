@@ -1715,7 +1715,7 @@ fn draw_fire(
     let mut core_cells = std::mem::take(&mut painter.fire_core);
     core_cells.clear();
     if let Some(sample) = core {
-        crate::cursor_smear_raster::rasterize_with(
+        crate::cursor_smear_raster::rasterize_swept_with(
             painter.area,
             sample.corners,
             sample.tail,
@@ -1875,72 +1875,82 @@ fn draw_smear(
                 ),
             )
         });
-    let tail_opacity = 0.16 + strength * 0.64;
-    crate::cursor_smear_raster::rasterize_with(painter.area, sample.corners, tail, head, |pixel| {
-        let color = if fire_heat > 0.0 {
-            lerp_color(color, fire_color(0.28 + 0.72 * pixel.shade), fire_heat)
-        } else {
-            color
-        };
-        let position = (pixel.x, pixel.y);
-        if !painter.allowed(pixel.x, pixel.y) {
-            return;
-        }
-        let primary = geometry
-            .primary_cursor
-            .is_some_and(|(area, _)| area.contains(position.into()));
-        if painter.is_caret(position) && !primary {
-            return;
-        }
-        // The leading edge remains a clear caret at any intensity. The setting
-        // controls its tail, rather than making the editing position disappear.
-        let shade = 1.0 - (1.0 - pixel.shade) * stretched;
-        let mut opacity = tail_opacity + (1.0 - tail_opacity) * shade.powf(0.75);
-        if painter.is_protected(position) && !primary {
-            // Preserve selected text while letting the moving head remain legible.
-            opacity *= 0.45 + pixel.shade * 0.55;
-        }
-        let cell = &mut painter.buffer[position];
-        if cell.skip {
-            return;
-        }
-        if let Some((area, projection)) = &deferred_gradient
-            && cell.bg == painter.colors.bg_editor
-            && area.contains(position.into())
-        {
-            cell.set_bg(lerp_color(
-                gradient.start,
-                gradient.end,
-                projection.t_at(pixel.x - area.x, pixel.y - area.y),
-            ));
-        }
-        if cell.symbol() == " " && !wide_cells.contains(&position) {
-            let shade = cursor_blend(
-                cell.bg,
-                color,
-                opacity * (pixel.coverage / pixel.glyph_coverage.max(0.001)).min(1.0),
-            );
-            let surface = cell.bg;
-            cell.set_symbol(pixel.symbol);
-            if pixel.inverse {
-                cell.set_fg(surface).set_bg(shade);
+    let tail_opacity = 0.02 + strength * 0.2;
+    crate::cursor_smear_raster::rasterize_swept_with(
+        painter.area,
+        sample.corners,
+        tail,
+        head,
+        |pixel| {
+            let color = if fire_heat > 0.0 {
+                lerp_color(color, fire_color(0.28 + 0.72 * pixel.shade), fire_heat)
             } else {
-                cell.set_fg(shade);
+                color
+            };
+            let position = (pixel.x, pixel.y);
+            if !painter.allowed(pixel.x, pixel.y) {
+                return;
             }
-        } else {
-            // Text is never replaced by a block glyph. Its background carries
-            // the same fractional silhouette and its foreground follows contrast.
-            let background = cursor_blend(cell.bg, color, opacity * pixel.coverage);
-            let foreground =
-                cursor_blend(cell.fg, painter.colors.fg_cursor, opacity * pixel.coverage);
-            cell.set_bg(background).set_fg(
-                painter
-                    .colors
-                    .ui
-                    .readable_foreground(foreground, background, 4.5),
-            );
-        }
-    });
+            let primary = geometry
+                .primary_cursor
+                .is_some_and(|(area, _)| area.contains(position.into()));
+            if painter.is_caret(position) && !primary {
+                return;
+            }
+            // The leading edge remains a clear caret at any intensity. The setting
+            // controls its tail, rather than making the editing position disappear.
+            let shade = 1.0 - (1.0 - pixel.shade) * stretched;
+            // Comet profile: the head stays a solid caret, the body thins out and
+            // the far tail dissolves into the surface instead of ending in a slab.
+            let along = ((shade - 0.35) / 0.65).clamp(0.0, 1.0);
+            let mut opacity =
+                tail_opacity + (1.0 - tail_opacity) * along * along * (3.0 - 2.0 * along);
+            if painter.is_protected(position) && !primary {
+                // Preserve selected text while letting the moving head remain legible.
+                opacity *= 0.45 + pixel.shade * 0.55;
+            }
+            let cell = &mut painter.buffer[position];
+            if cell.skip {
+                return;
+            }
+            if let Some((area, projection)) = &deferred_gradient
+                && cell.bg == painter.colors.bg_editor
+                && area.contains(position.into())
+            {
+                cell.set_bg(lerp_color(
+                    gradient.start,
+                    gradient.end,
+                    projection.t_at(pixel.x - area.x, pixel.y - area.y),
+                ));
+            }
+            if cell.symbol() == " " && !wide_cells.contains(&position) {
+                let shade = cursor_blend(
+                    cell.bg,
+                    color,
+                    opacity * (pixel.coverage / pixel.glyph_coverage.max(0.001)).min(1.0),
+                );
+                let surface = cell.bg;
+                cell.set_symbol(pixel.symbol);
+                if pixel.inverse {
+                    cell.set_fg(surface).set_bg(shade);
+                } else {
+                    cell.set_fg(shade);
+                }
+            } else {
+                // Text is never replaced by a block glyph. Its background carries
+                // the same fractional silhouette and its foreground follows contrast.
+                let background = cursor_blend(cell.bg, color, opacity * pixel.coverage);
+                let foreground =
+                    cursor_blend(cell.fg, painter.colors.fg_cursor, opacity * pixel.coverage);
+                cell.set_bg(background).set_fg(
+                    painter
+                        .colors
+                        .ui
+                        .readable_foreground(foreground, background, 4.5),
+                );
+            }
+        },
+    );
 }
 
 #[path = "ui_animation_context.rs"]
@@ -3428,14 +3438,14 @@ mod tests {
         };
         let sample = SmearSample {
             corners: [
-                MotionPoint { x: 7.0, y: 5.0 },
-                MotionPoint { x: 10.0, y: 5.0 },
+                MotionPoint { x: 7.0, y: 4.25 },
+                MotionPoint { x: 10.0, y: 4.25 },
                 MotionPoint { x: 10.0, y: 5.25 },
                 MotionPoint { x: 7.0, y: 5.25 },
             ],
             velocities: [MotionPoint::default(); 4],
-            head: MotionPoint { x: 10.0, y: 5.125 },
-            tail: MotionPoint { x: 7.0, y: 5.125 },
+            head: MotionPoint { x: 10.0, y: 4.75 },
+            tail: MotionPoint { x: 7.0, y: 4.75 },
             shade_direction: MotionPoint { x: 1.0, y: 0.0 },
         };
         // This models the existing outer pane pass, which replaces only cells
