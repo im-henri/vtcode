@@ -293,18 +293,34 @@ fn ghost_is_painted_before_the_rest_of_the_line_without_editing() {
 }
 
 #[test]
-fn further_predicted_lines_overlay_the_rows_below() {
-    use ratatui::layout::Rect;
+fn further_predicted_lines_push_the_rows_below_down() {
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
     let mut app = app_with("    if ready {\nnext();\n");
     let editor = app.editor_mut().unwrap();
     editor.cursor_line = 0;
     editor.cursor_col = 14;
     show(&mut app, "\n        start();\n    }");
-    app.code_area = Some(Rect::new(0, 0, 40, 4));
-    let terminal = render(&mut app, 40, 4);
-    assert!(row(&terminal, 1, 0, 40).starts_with("        start();"));
-    assert!(row(&terminal, 2, 0, 40).starts_with("    }"));
-    assert!(row(&terminal, 3, 0, 40).starts_with("...."));
+    app.gutter_area = Some(Rect::new(0, 0, 3, 5));
+    app.code_area = Some(Rect::new(3, 0, 40, 5));
+    let mut terminal = Terminal::new(TestBackend::new(43, 5)).unwrap();
+    terminal
+        .draw(|frame| {
+            // Each rendered row: its line number, then its code.
+            for (y, (number, code)) in [("1 ", "    if ready {"), ("2 ", "next();"), ("3 ", "after")]
+                .into_iter()
+                .enumerate()
+            {
+                frame.buffer_mut().set_string(0, y as u16, number, ratatui::style::Style::default());
+                frame.buffer_mut().set_string(3, y as u16, code, ratatui::style::Style::default());
+            }
+            draw_ghost(frame, &mut app);
+        })
+        .unwrap();
+    assert!(row(&terminal, 0, 0, 43).starts_with("1      if ready {"));
+    assert!(row(&terminal, 1, 0, 43).starts_with("           start();"));
+    assert!(row(&terminal, 2, 0, 43).starts_with("       }"));
+    assert!(row(&terminal, 3, 0, 43).starts_with("2  next();"));
+    assert!(row(&terminal, 4, 0, 43).starts_with("3  after"));
     assert_eq!(text(&app), "    if ready {\nnext();\n");
 }
 

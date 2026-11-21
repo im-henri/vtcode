@@ -882,8 +882,8 @@ fn next_word_end(text: &str) -> usize {
 }
 
 /// Paint the prediction after the caret and shift the visible rest of the
-/// line, without touching the source. Further predicted lines overlay the
-/// rows below until the prediction is accepted or dismissed.
+/// line, without touching the source. Further predicted lines push the rows
+/// below down, as accepting the prediction would.
 pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
     use ratatui::{
         layout::Rect,
@@ -946,8 +946,32 @@ pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
     let size = editor.tab_size.max(1);
     let mut lines = ghost.text.split('\n');
     let first = lines.next().unwrap_or("");
+    let count = ghost.text.matches('\n').count();
+    let multiline = count > 0;
+    // Further predicted lines get rows of their own: the rendered rows below
+    // the caret, gutter included, move down to make room for them.
+    let left = app
+        .gutter_area
+        .filter(|gutter| gutter.right() <= area.x && gutter.y <= y && gutter.bottom() > y)
+        .map_or(area.x, |gutter| gutter.x);
+    if multiline {
+        push_rows_down(frame.buffer_mut(), left, right, y + 1, bottom, count as u16);
+        for row in y + 1..(y + 1 + count as u16).min(bottom) {
+            for column in left..area.x {
+                let bg = frame.buffer_mut()[(column, y)].bg;
+                let cell = &mut frame.buffer_mut()[(column, row)];
+                cell.reset();
+                cell.set_bg(bg);
+            }
+        }
+    }
     for column in x..right {
-        frame.buffer_mut()[(column, y)].set_bg(background(column, y));
+        let cell = &mut frame.buffer_mut()[(column, y)];
+        if multiline {
+            // The rest of the caret line moves to the last predicted line.
+            cell.set_symbol(" ");
+        }
+        cell.set_bg(background(column, y));
     }
     let mut phase = size
         - crate::editor_columns::tab_width_at(
@@ -956,7 +980,6 @@ pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
             size,
         );
     let ghost_text = expand_tabs(first, &mut phase, size);
-    let multiline = ghost.text.contains('\n');
     let suffix_text = if multiline {
         String::new()
     } else {
@@ -970,9 +993,8 @@ pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
         .style(style),
         Rect::new(x, y, right.saturating_sub(x), 1),
     );
-    // Following lines cover the rows below; the last one carries the text
+    // Following lines fill the rows made free; the last one carries the text
     // that was right of the caret.
-    let count = ghost.text.matches('\n').count();
     for (index, text) in lines.enumerate() {
         let row = y + 1 + index as u16;
         if row >= bottom {
@@ -1002,6 +1024,25 @@ pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
         frame.buffer_mut()[(x, y)]
             .modifier
             .insert(Modifier::UNDERLINED);
+    }
+}
+
+/// Move the rows `top..bottom` of the columns `left..right` down by `by`
+/// rows; rows pushed past `bottom` drop out of view.
+fn push_rows_down(buffer: &mut ratatui::buffer::Buffer, left: u16, right: u16, top: u16, bottom: u16, by: u16) {
+    let area = buffer.area;
+    let (left, right) = (left.max(area.x), right.min(area.right()));
+    let bottom = bottom.min(area.bottom());
+    if left >= right || by == 0 {
+        return;
+    }
+    let width = (right - left) as usize;
+    // One slice copy per row, reusing each cell's storage: no allocation.
+    for row in (top.saturating_add(by)..bottom).rev() {
+        let source = buffer.index_of(left, row - by);
+        let target = buffer.index_of(left, row);
+        let (above, below) = buffer.content.split_at_mut(target);
+        below[..width].clone_from_slice(&above[source..source + width]);
     }
 }
 
